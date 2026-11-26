@@ -14,6 +14,7 @@ import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/wor
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1, PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ACTION_OPERATION_RPC_METHODS_V1, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { AccountSettingsSchema } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
@@ -114,7 +115,8 @@ vi.mock('node:child_process', async original => {
     const home = nativeOs.home;
     // A native member effect runs the real member entrypoint against the member home backing.
     if (home && memberEffect.isMemberAgentLaunchSpawn(args[0], args[1])) {
-      const child = memberEffect.spawnMemberEffectWorker({ actualSpawn: actual.spawn, options, backing: home.backing });
+      const child = memberEffect.spawnMemberEffectWorker({ actualSpawn: actual.spawn, options, backing: home.backing,
+        workspace: { root: home.workspaceRoot, backing: home.workspaceBacking } });
       child.stderr?.on('data', chunk => nativeOs.memberEffectErrors.push(String(chunk)));
       return child;
     }
@@ -524,6 +526,13 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     await f.processes[0]!.waitForSettlement();
     expect(await readFile(join(f.workspaceBacking, 'finite-result.txt'), 'utf8')).toBe('useful-member-edit');
     expect(f.processes[0]!.frames[0]!.nativeIdentity).toMatchObject({ username: f.member.username, home: f.member.home });
+    // The finite operation retires its native lease after the PTY settles; observe it settle before teardown.
+    const scope = { accountId: f.accountId, machineId: f.machineId };
+    const operations: Pick<HostActionOperationRuntime, 'store'> = Reflect.get(f.machine, 'actionOperationRuntime');
+    const scripts = operations.store.list(scope).items.filter(item => item.actionId === 'projects.script.run');
+    expect(scripts).toHaveLength(1);
+    await f.machine.waitForActionOperationCompletion(scope, scripts[0]!.operationId);
+    expect(operations.store.get(scope, scripts[0]!.operationId)).toMatchObject({ state: 'succeeded' });
   });
 
   it('requires the requester Ask for a member script even when the host Account waives approval', async () => {

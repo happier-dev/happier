@@ -50,7 +50,7 @@ import { selectProjectDefinitionRead } from './projectDefinitionRead';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import type { ProjectDotenvPreparation } from './projectDotenv';
-import { createProjectRuntimeDotenvPreparation } from './projectSetupReadiness';
+import { createProjectRuntimeDotenvPreparation, isProjectCheckoutReadAsMember, withProjectMemberWorkspaceSource } from './projectSetupReadiness';
 import { startProjectSetupAutostartServices } from './projectSetupAutostart';
 import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan } from './projectSetupPreparation';
@@ -101,7 +101,7 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
         & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles' | 'effectiveDefinition'>>;
     resolveWorkerTarget?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>) => Promise<WorkspaceSyncWorkerTargetBasis>;
     /** Real B7 Sync/dequeue preparation; revalidation follows this callback. */
-    prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal; recheckCurrent?: boolean }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
+    prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
 }>;
 
 const failure = (errorCode: string, details?: unknown): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode,
@@ -322,6 +322,24 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             await assertNotCancelled();
             return operation ? { operation } : failure('project_setup_review_unavailable');
         }
+        // An isolated member's checkout is private to its member user: every checkout read of this
+        // admission, and of the operation it starts, goes through the one member workspace source owner.
+        const memberCheckout = isProjectCheckoutReadAsMember({ requesterIdentity, agentIsolation: runtime.agentIsolation });
+        const withCheckout = async <T>(checkoutSignal: AbortSignal, read: () => Promise<T>,
+            native?: Parameters<typeof withProjectMemberWorkspaceSource>[0]['native']): Promise<T | ActionExecuteFailure> => {
+            if (!memberCheckout) return await read();
+            let entered = false;
+            try {
+                return await withProjectMemberWorkspaceSource({ runtime, ingress, context: { ...args.context, signal: checkoutSignal },
+                    workspace: request.input.workspace, accepted: association.workspace, ...(native ? { native } : {}),
+                    read: () => { entered = true; return read(); } });
+            } catch (error) {
+                // The source owner's typed refusal precedes every checkout read.
+                if (!entered) return failure(codeOf(error));
+                throw error;
+            }
+        };
+        return await withCheckout(signal, async () => {
         const sourceAssociation = association;
         const setupForTarget = (sourceSetup: ProjectSetupReadV1 | undefined) =>
             sourceAssociation.project.serverId === association.project.serverId
@@ -831,12 +849,11 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const operationSignal = AbortSignal.any([signal, operation.signal]);
             const material = Object.freeze({ materializationKey: operationId, environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
             let lastCleanSyncAtMs: ProjectSetupExecutionInput['lastCleanSyncAtMs'];
-            let wasQueued = false;
-            const prepareDequeue = (recheckCurrent = false) => stage('project.sync.prepare', async () => {
+            const prepareDequeue = () => stage('project.sync.prepare', async () => {
                 try {
                     if (workerBasis) await assertNotCancelled();
                     const prepared = await runtime.prepareDequeue?.({ workspace: workerBasis?.source ?? association.workspace, choice: acceptedChoice!,
-                        ...(workerBasis ? { basis: workerBasis } : {}), ...(recheckCurrent ? { recheckCurrent: true } : {}), signal: operationSignal });
+                        ...(workerBasis ? { basis: workerBasis } : {}), signal: operationSignal });
                     // Primary preparation performs no copy. Keep its accepted root
                     // until an actual setup/native effect needs fresh association.
                     if (workerBasis) association = await resolveAccepted();
@@ -896,7 +913,6 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     ...commandIdentity, ...(originRun ? { originRun } : {}) });
                     if (!removal) operation.operationAcceptance?.accept(handle); },
                 onQueue: ahead => {
-                    wasQueued = true;
                     traceExternalActionStage(args.actionId, rootRequestId, 'project.reservation.queued');
                     operation.operationProgress.update({ phase: 'queued', queueAhead: ahead, label: `Queued — ${ahead} ahead` });
                 },
@@ -933,7 +949,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             // writing Trust, not discover changed SOURCE only after
                             // a stale grant has woken this retained invocation.
                             preparationPhase('copying');
-                            await prepareDequeue(true);
+                            await prepareDequeue();
                             preparationPhase('setup');
                             const refreshed = await prepareProjectSetup(preparation());
                             await assertNotCancelled();
@@ -961,7 +977,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         await assertSourceExecutionCurrent(source);
                         if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) throw coded('project_script_effect_changed');
                         preparationPhase('copying');
-                        await prepareDequeue(true);
+                        await prepareDequeue();
                         return true;
                     };
                     const reviewBeforeEffects = async (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>): Promise<Review> => {
@@ -987,13 +1003,16 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                                 readMaterial: () => materialLive ? material : undefined });
                             runtime = { ...runtime, agentIsolation: nativePreparation.agentIsolation };
                         }
+                        // The operation can outlive the admitting request's reader: it reads its checkout
+                        // through the native operation it already holds, retired with that operation.
+                        const continueRun = async () => {
                         const source = await reviewSourcePlacement();
                         if (!projectExecutionChoicesEqualV1(source.choice, acceptedChoice!)
                             || source.memoryDemand?.bytes !== acceptedMemory?.bytes) return finish(failure('project_script_effect_changed'));
                         await assertSourceExecutionCurrent(source);
                         if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) return finish(failure('project_script_effect_changed'));
                         preparationPhase('copying');
-                        await prepareDequeue(wasQueued);
+                        await prepareDequeue();
                         // A real Sync copy may await remote work and change policy.
                         const current = await reviewBeforeEffects(workerBasis ? undefined : source);
                         if (current.kind === 'failed') return finish(current.result);
@@ -1086,6 +1105,9 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) kind = 'outcome_uncertain';
                             throw error;
                         } finally { if (kind !== 'outcome_uncertain') launch.release(); }
+                        };
+                        const checked = await withCheckout(operationSignal, continueRun, nativePreparation);
+                        return 'ok' in checked ? finish(checked) : checked;
                     } catch (error) {
                         const cancelledBuiltinEnvironment = operationSignal.aborted
                             && baseline?.plan.toolchain.kind === 'toolchain' && nativeInvocations.size > 0;
@@ -1164,6 +1186,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             sessionId: ingress.sessionActionOrigin?.caller.sessionId,
             execute: run });
         return result.ok ? result.result : withRequestedConsentScope(result);
+        });
         } catch (error) {
             nativeUncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             throw error;

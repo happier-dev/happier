@@ -25,7 +25,20 @@ void (async () => {
       process.stdin.destroy();
       return;
     }
-    if (!['agent-install-effect', 'filesystem-effect'].includes(frame.args[0])) throw new Error('Unexpected native effect');
+    if (!['agent-install-effect', 'filesystem-effect', 'workspace-effect'].includes(frame.args[0])) throw new Error('Unexpected native effect');
+    // The member workspace root is a logical OS path; its disposable backing stands in for it.
+    const workspaceRoot = process.env.HAPPIER_TEST_MEMBER_WORKSPACE_ROOT, workspaceBacking = process.env.HAPPIER_TEST_MEMBER_WORKSPACE_BACKING;
+    if (frame.args[0] === 'workspace-effect' && workspaceRoot && workspaceBacking) {
+      const promises = require('node:fs/promises');
+      const swap = (value, from, to) => typeof value === 'string' && (value === from || value.startsWith(from + '/')) ? to + value.slice(from.length) : value;
+      for (const name of ['readFile', 'stat', 'lstat', 'readdir', 'open', 'access']) {
+        const original = promises[name];
+        promises[name] = (path, ...rest) => original(swap(path, workspaceRoot, workspaceBacking), ...rest);
+      }
+      const realpath = promises.realpath;
+      promises.realpath = async (path, ...rest) => swap(await realpath(swap(path, workspaceRoot, workspaceBacking), ...rest), workspaceBacking, workspaceRoot);
+      require('node:module').syncBuiltinESMExports();
+    }
     for (const key of Object.keys(process.env)) if (!key.startsWith('HAPPIER_TEST_') && key !== 'TSX_TSCONFIG_PATH') delete process.env[key];
     Object.assign(process.env, Object.fromEntries(Object.entries(frame.environment).map(([key, value]) => [key, map(value)])));
     const fs = await import('node:fs/promises');
@@ -34,6 +47,11 @@ void (async () => {
       const { runMemberAgentInstallEffect } = await import(process.env.HAPPIER_TEST_INSTALL_ENTRY);
       setImmediate(() => process.stdin.resume());
       await runMemberAgentInstallEffect(process.stdin, process.stdout, new AbortController().signal);
+    } else if (frame.args[0] === 'workspace-effect') {
+      const { runWorkspaceEffectWorker } = await import(process.env.HAPPIER_TEST_WORKSPACE_EFFECT_ENTRY);
+      setImmediate(() => process.stdin.resume());
+      await runWorkspaceEffectWorker([], { input: process.stdin, output: process.stdout, signal: new AbortController().signal,
+        currentDirectory: () => frame.cwd });
     } else {
       const { runFilesystemEffectInternal } = await import(process.env.HAPPIER_TEST_FILESYSTEM_ENTRY);
       setImmediate(() => process.stdin.resume());
@@ -59,6 +77,8 @@ export function spawnMemberEffectWorker(
     actualSpawn: typeof spawn;
     options: SpawnOptions | undefined;
     backing: string;
+    /** Logical member workspace root and its disposable backing, for member workspace reads. */
+    workspace?: Readonly<{ root: string; backing: string }>;
   }>,
 ): ChildProcess {
   return input.actualSpawn(
@@ -77,6 +97,11 @@ export function spawnMemberEffectWorker(
         PATH: process.env.PATH,
         TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath(),
         HAPPIER_TEST_MEMBER_BACKING: input.backing,
+        ...(input.workspace ? { HAPPIER_TEST_MEMBER_WORKSPACE_ROOT: input.workspace.root,
+          HAPPIER_TEST_MEMBER_WORKSPACE_BACKING: input.workspace.backing } : {}),
+        HAPPIER_TEST_WORKSPACE_EFFECT_ENTRY: entry(
+          'src/workspaces/activation/workspaceEffectWorker.ts',
+        ),
         HAPPIER_TEST_FRAME_ENTRY: entry(
           'src/daemon/agentIsolation/agentLaunchFrame.ts',
         ),

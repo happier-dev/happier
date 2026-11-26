@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { HostAgentIsolationLaunchContext, HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createMemberWorkspaceReadServices, createMemberWorkspaceReadSource, type MemberWorkspaceReadServices } from './memberWorkspaceSource';
 import { authorizeWorkspaceEffectLaunch, runWorkspaceEffectChild } from './workspaceEffectProcess';
@@ -41,16 +41,16 @@ export async function readProjectAsMember<T>(input: Readonly<{
     return result.value;
 }
 
-/** Child-only root admission precedes every Project-file or adapter read. */
+/** Child-only root admission precedes every Project-file or adapter read: the Project root is
+ * the member's own workspace root or a directory inside it, physically as well as lexically. */
 export async function executeMemberProjectRead(effect: MemberProjectReadEffect, signal: AbortSignal,
     services: Readonly<{ readProject: MemberProjectReadService }>): Promise<void> {
     signal.throwIfAborted();
-    if (canonicalAbsolutePathsEqual(effect.workspaceRoot, effect.root)
-        || !isCanonicalAbsolutePathInsideRoot(effect.workspaceRoot, effect.root)) throw unavailable();
+    if (!isCanonicalAbsolutePathInsideRoot(effect.workspaceRoot, effect.root)) throw unavailable();
     const info = await lstat(effect.root);
     if (!info.isDirectory() || info.isSymbolicLink()) throw unavailable();
     const [workspaceRoot, root] = await Promise.all([realpath(effect.workspaceRoot), realpath(effect.root)]);
-    if (canonicalAbsolutePathsEqual(workspaceRoot, root) || !isCanonicalAbsolutePathInsideRoot(workspaceRoot, root)) throw unavailable();
+    if (!isCanonicalAbsolutePathInsideRoot(workspaceRoot, root)) throw unavailable();
     signal.throwIfAborted();
     await services.readProject(createMemberWorkspaceReadServices());
 }

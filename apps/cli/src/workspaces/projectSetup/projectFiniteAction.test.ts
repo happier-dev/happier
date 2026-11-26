@@ -1230,12 +1230,12 @@ describe('authenticated finite Project Action owner', () => {
                 : { workspace: h.address, executable: '/managed/checked', argv: [], cwd: h.root,
                     environmentBindings: { v: 1, bindings: { API_KEY: { ref: 'bob-key' } } } },
             context: { serverId: homeId, authority: 'account_automation', actionRequestId: 'request' } });
-        expect(result).toMatchObject({ operation: { scope: { accountId: 'bob' } } });
-        await admitted.dispose();
         // With Machine isolation enabled, Account custody cannot replace the
-        // missing prepared Agent isolation/material context with host Exec.
-        expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'bob', machineId: 'machine' }, 'operation'))
-            .toMatchObject({ state: 'failed', error: { errorCode: 'agent_isolation_unavailable' } });
+        // missing prepared Agent isolation context: the requester's private
+        // checkout source refuses before any checkout read or host Exec.
+        expect(result).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+        expect(h.operationRuntime.store.get({ accountId: 'bob', machineId: 'machine' }, 'operation')).toBeFalsy();
+        await admitted.dispose();
         expect(h.spawned).toEqual([]);
         expect(JSON.stringify(result)).not.toContain('bob-private-value');
         for (const [url, , options] of h.post.mock.calls.filter(([url]) => !String(url).endsWith('/verify'))) {

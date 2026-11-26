@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -16,8 +17,7 @@ import type { ProjectManifestInspectionSnapshot } from '@happier-dev/protocol/ac
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
 import { projectSetupInspectionFailure } from './projectSetupInspectionFailure';
-import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
-import { resolvePrivateProjectCheckoutRoot } from '@/workspaces/activation/privateProjectCheckout';
+import { canonicalAbsolutePathsEqual, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import { readProjectAsMember } from '@/workspaces/activation/memberProjectInspection';
 import { createProjectDotenvPreparation } from './projectDotenv';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
@@ -26,9 +26,19 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
+/** A requester separated from the Machine's people keeps its Project checkout private to its
+ * member user wherever the placement owner does not place its work on the daemon (owner ruling
+ * 2026-11-23: isolation off). Such a checkout is read only through the member workspace source. */
+export function isProjectCheckoutReadAsMember(runtime: Pick<ProjectFiniteActionRuntime, 'requesterIdentity' | 'agentIsolation'>): boolean {
+    const identity = runtime.requesterIdentity;
+    return identity?.kind === 'isolated' && identity.separationRequired
+        && resolveHostRequesterAgentPlacementForHost({ identity, snapshot: runtime.agentIsolation?.read() }) !== 'daemon';
+}
+
 /** The requester Account supplies the accepted checkout: only a WorkspaceRef in the requester's
  * own Account rows is read. `placement: 'daemon'` is the placement owner's decision for this
- * requester's own Project (isolation off); otherwise the native member invocation reads it. */
+ * requester's own Project (isolation off); otherwise the native member invocation reads it.
+ * `accepted` is a ref the containing owner already resolved from those same rows. */
 export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     runtime: ProjectRuntimeAccountAccess & Pick<ProjectFiniteActionRuntime, 'serverId' | 'serverHttpBaseUrl' | 'requesterIdentity' | 'agentIsolation'> & Readonly<{
         nativeOperationRuntime?: Pick<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>, 'prepareNativeOperation'>;
@@ -36,6 +46,10 @@ export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     ingress: RpcHandlerContext; workspace: ProjectDefinitionWorkspace;
     context: ActionExecutorContext; read(root: string): Promise<T>;
     placement?: 'daemon';
+    accepted?: WorkspaceRefV1;
+    /** The native operation the caller already prepared for this requester; the caller retires it. */
+    native?: Pick<Awaited<ReturnType<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>['prepareNativeOperation']>>,
+        'memberIdentity' | 'agentIsolation'>;
 }>): Promise<T> {
     // A typed refusal before any effect: the Action executor carries it as this code, never a generic failure.
     const unavailable = (code = 'project_workspace_unavailable'): never => {
@@ -43,9 +57,9 @@ export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     };
     const identity = input.runtime.requesterIdentity;
     const nativeRuntime = input.runtime.nativeOperationRuntime;
-    if (identity?.kind !== 'isolated' || !nativeRuntime && input.placement !== 'daemon') return unavailable('agent_isolation_unavailable');
+    if (identity?.kind !== 'isolated' || !nativeRuntime && !input.native && input.placement !== 'daemon') return unavailable('agent_isolation_unavailable');
     const signal = input.context.signal ? AbortSignal.any([input.ingress.signal, input.context.signal]) : input.ingress.signal;
-    const accepted = await resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
+    const accepted = input.accepted ? { workspace: input.accepted } : await resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
         ...projectRuntimeAccountRowsInput(input.runtime), serverId: input.runtime.serverId,
         serverHttpBaseUrl: input.runtime.serverHttpBaseUrl, signal, allowUnassociated: true, allowProjectless: true });
     if (!accepted || accepted.workspace.machineId !== identity.requester.machineId) return unavailable();
@@ -53,19 +67,23 @@ export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
         if (!canonicalAbsolutePathsEqual(accepted.workspace.rootPath, input.workspace.rootPath)) return unavailable();
         return await input.read(accepted.workspace.rootPath);
     }
-    if (!nativeRuntime) return unavailable('agent_isolation_unavailable');
-    const material = Object.freeze({ materializationKey: input.context.actionRequestId ?? input.ingress.transportRequestId ?? accepted.workspace.id,
+    // A reader without its caller's native operation holds its own runtime-home lease: one request may
+    // open several readers (its admission, a dotenv snapshot), and a retire must end only its own.
+    const material = Object.freeze({ materializationKey: randomUUID(),
         environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
-    const native = await nativeRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: input.ingress,
-        signal, readMaterial: () => material, allowMemberPreparation: false });
+    const prepared = input.native || !nativeRuntime ? undefined : await nativeRuntime.prepareNativeOperation({ requesterIdentity: identity,
+        ingress: input.ingress, signal, readMaterial: () => material, allowMemberPreparation: false });
+    const native = input.native ?? prepared;
+    if (!native) return unavailable('agent_isolation_unavailable');
     try {
+        // A requester's checkout is its own member workspace: an Open private checkout or a repository
+        // its Session registered there. The member reader re-checks this placement through realpath.
         if (!native.memberIdentity || accepted.workspace.machineId !== identity.requester.machineId
-            || !canonicalAbsolutePathsEqual(accepted.workspace.rootPath,
-                resolvePrivateProjectCheckoutRoot(native.memberIdentity.workspaceRoot, accepted.workspace.id))) return unavailable();
+            || !isCanonicalAbsolutePathInsideRoot(native.memberIdentity.workspaceRoot, accepted.workspace.rootPath)) return unavailable();
         return await readProjectAsMember({ agentIsolation: native.agentIsolation, requesterIdentity: identity,
             workspaceRoot: native.memberIdentity.workspaceRoot, root: accepted.workspace.rootPath, signal,
             read: () => input.read(accepted.workspace.rootPath) });
-    } finally { await native.dispose(); }
+    } finally { await prepared?.dispose(); }
 }
 
 
@@ -74,9 +92,7 @@ export function createProjectRuntimeDotenvPreparation(input: Readonly<Pick<Param
     'runtime' | 'ingress' | 'context'> & { workspace: ProjectDefinitionWorkspace | WorkspaceRefV1; originalEnvironment: ProcessEnvInput }>) {
     const workspace = 'id' in input.workspace ? workspaceAddressFromRefV1(input.workspace) : input.workspace;
     return createProjectDotenvPreparation(workspace.rootPath, input.originalEnvironment,
-        input.runtime.requesterIdentity?.kind === 'isolated' && resolveHostRequesterAgentPlacementForHost({
-            identity: input.runtime.requesterIdentity, snapshot: input.runtime.agentIsolation?.read() }) === 'member'
-            ? read => withProjectMemberWorkspaceSource({ ...input, workspace, read }) : undefined);
+        isProjectCheckoutReadAsMember(input.runtime) ? read => withProjectMemberWorkspaceSource({ ...input, workspace, read }) : undefined);
 }
 
 /** Demand-only definition read under the same admitted requester and accepted checkout as setup. */
