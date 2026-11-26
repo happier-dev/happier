@@ -9,10 +9,11 @@ import { decodeBase64 } from '../crypto/base64.js';
 import type { UsageWorkEvidence } from '../usage/usageOutcomeAllocation.js';
 import { resolveInputOptions } from '../inputs/inputOptions.js';
 import { bundledUsageModelPriceCatalog } from '../usage/usageModelPriceCatalog.js';
+import { UsageModelPriceCatalogSchema } from '../usage/usageModelPriceSchemas.js';
 import * as usageDelivery from '../usage/projectUsageQueryDelivery.js';
 import * as strictJson from '../plugins/contributions/strictJsonValue.js';
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
-import { USAGE_QUERY_ACTION_ID_V1 } from '../usage/usageActionIdsV1.js';
+import { USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '../usage/usageActionIdsV1.js';
 
 const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
   tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
@@ -27,18 +28,25 @@ describe('personal usage Action execution', () => {
     const outside = 'app_calls:production';
     const environmentGrant = ApiTokenGrantV1Schema.parse({
       ...API_TOKEN_FULL_GRANT_V1,
-      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1] },
+      actions: { families: [], ids: [USAGE_QUERY_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS.get] },
       targets: { sessions: [], machines: ['machine-1'], environments: ['staging'] },
     });
 
     function read(sources: string[], grant: ApiTokenGrantV1) {
       // Simulate the usage data transport with one priced event per read source.
-      const queryUsage: NonNullable<ActionExecutorDeps['usageActions']>['query'] = async ({ queries }) =>
-        resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({
+      const queryUsage: NonNullable<ActionExecutorDeps['usageActions']>['query'] = async ({ queries }, _context, readChild) => {
+        const modelIds = Object.keys(bundledUsageModelPriceCatalog.models).slice(0, 1);
+        if (!readChild) throw new Error('Expected the App calls price reader');
+        const prices = await readChild(USAGE_PRICE_ACTION_IDS.get, { modelIds });
+        if (!prices.ok) return prices;
+        return resolveUsagePageAggregation({ queries, accounting: queries.map(query => ({
           query, status: 'available', value: { ...accounting, totals: { ...accounting.totals,
             eventCount: query.sources.length, cost: { ...accounting.totals.cost, reportedUsd: query.sources.length } } },
-        })) }, bundledUsageModelPriceCatalog);
-      const executor = createActionExecutor({ usageActions: { query: queryUsage } } as ActionExecutorDeps);
+        })) }, UsageModelPriceCatalogSchema.parse(prices.result));
+      };
+      const executor = createActionExecutor({ usageActions: { query: queryUsage,
+        prices: { get: async () => bundledUsageModelPriceCatalog, refresh: async () => bundledUsageModelPriceCatalog },
+      } } as ActionExecutorDeps);
       return executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [{ sources }] }, {
         surface: 'api',
         externalActionTarget: { kind: 'machine', machineId: 'machine-1' },

@@ -4140,9 +4140,14 @@ and breakdown remain own values.
 For an admitted API-token invocation that names Environment targets,
 `apiTokenGrant` projects the usage read onto the requested app sources in
 those Environments. The reader and delivery both consume the projected queries.
-When the batch has no permitted app sources, the grant owner returns
-`credential_scope_denied` with reason `environment_not_granted`. A grant
-without Environment targets retains its existing usage scope.
+The grant owner permits the Usage query, accounting export and private recap
+paths to use this projection. App calls can still read the public model price
+catalog under the Action grant. The grant owner refuses Usage Actions that
+cannot scope their Account evidence or effects to app sources, including
+history reads, quota calendar exports and Coach, before dispatch. Those Actions
+and queries without a permitted app source return `credential_scope_denied`
+with reason `environment_not_granted`.
+Tokens with Account-wide grants can access Usage across the Account.
 
 A named All period resolves to an end-only accounting request. Its calendar uses
 the first observed day of the selected population, while retaining every real
@@ -9747,10 +9752,12 @@ For a deployed database, the read result identifies the Environment policy and
 its revision. Environment managers change that policy through
 `deployments.environments.update`. A Preview uses its template's policy.
 
-Generic Worktree capture reads by agents return `database_target_required`.
-An agent can read attributed capture through an exact Worktree database target
-when that database's own access policy allows reads. People can read the generic
-partition under the existing Worktree admission.
+Worktree capture status, trace lists, endpoints, logs and costs follow ordinary
+Worktree access. Agents must select an exact Worktree database target to list or
+open queries or open trace details with SQL evidence. Without that selection,
+those Actions return `database_target_required`. The selected database's own
+agent access policy governs the read. People can read the generic partition
+under the existing Worktree admission.
 
 The selected target's agent level is **None**, **Read**, **Read and write (asks
 first)** or **Read and write (no approval)**. The person must also have the

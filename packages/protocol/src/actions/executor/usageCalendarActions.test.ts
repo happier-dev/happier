@@ -1,6 +1,9 @@
 import { bundledUsageModelPriceCatalog } from '../../usage/usageModelPriceCatalog.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { executeUsageAction } from './usageActions.js';
+import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
+import { createEmptyActionAutomationPortV1 } from './actionAutomationAdmission.testkit.js';
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, type ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
 import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from '../../usage/resolveUsagePageAggregation.js';
 import { UsageFileResultSchema } from '../../usage/usageExport.js';
@@ -27,6 +30,41 @@ const read = (reads: readonly ConnectedServiceQuotaGetResultV1[]) => async (requ
   resolveUsagePageAggregation({ queries: request, quota: { value: reads, status: 'available', asOfMs: 100 } }, bundledUsageModelPriceCatalog);
 
 describe('calendar export through admitted Usage Action reads', () => {
+  it.each(['usage.calendar.export', 'usage.history.read'] as const)(
+    'requires Account-wide usage scope for %s', async actionId => {
+    const readQuota = vi.fn(async () => quota);
+    const history = vi.fn(async () => ({ status: 'idle' as const, progress: { selected: 0, notRead: 0, completed: 0, failed: 0 } }));
+    const executor = createActionExecutor({
+      usageActions: { query: request => read([])(request.queries), readQuota },
+      clientActionExecute: async () => ({ ok: true, result: await history() }),
+      actionAutomations: createEmptyActionAutomationPortV1(),
+    } as ActionExecutorDeps);
+    const accountGrant = ApiTokenGrantV1Schema.parse({
+      ...API_TOKEN_FULL_GRANT_V1, actions: { families: ['usage'], ids: [] },
+    });
+    const environmentGrant = ApiTokenGrantV1Schema.parse({
+      ...accountGrant, targets: { sessions: [], machines: ['machine-1'], environments: ['staging'] },
+    });
+    const calendar = actionId === 'usage.calendar.export';
+    const run = (grant: ApiTokenGrantV1) => executor.execute(actionId,
+      calendar ? { query, selectedEvents } : { query, operation: 'status' }, {
+        surface: 'api',
+        externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
+        externalActionCredential: { accountId: 'account-1', principalId: 'account-1', credentialId: 'token-1', grant },
+      });
+
+    expect(await run(accountGrant)).toMatchObject({
+      ok: true, result: calendar ? { mediaType: 'text/calendar' } : { status: 'idle' },
+    });
+    const port = calendar ? readQuota : history;
+    expect(port).toHaveBeenCalledOnce();
+    port.mockClear();
+    expect(await run(environmentGrant)).toMatchObject({
+      ok: false, errorCode: 'credential_scope_denied', details: { reason: 'environment_not_granted' },
+    });
+    expect(port).not.toHaveBeenCalled();
+  });
+
   it('returns only selected witnessed reset/renewal instants, stable identities and escaped calendar text', async () => {
     const result = await executeUsageAction('usage.calendar.export', { query, selectedEvents }, {
       query: async request => read([quota])(request.queries),

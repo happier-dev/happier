@@ -131,7 +131,7 @@ async function setup(canClear = false) {
 }
 
 describe('R2-A3 local capture Source/project admission through the real manifest', () => {
-  it('requires an exact database target for agent capture reads and applies its access policy', async () => {
+  it('admits Worktree app telemetry for agents while enforcing the exact target for database evidence', async () => {
     const entries = new Map<string, JsonValue>();
     const storage: StorageScopeService = {
       async get<T extends JsonValue = JsonValue>(key: string) { return (entries.get(key) ?? null) as T | null; },
@@ -228,6 +228,23 @@ describe('R2-A3 local capture Source/project admission through the real manifest
       await workbench.invokeAction(local(database.DATABASE_ACCESS_SET_ACTION_ID_V1), { target: databaseTarget, agentAccess: 'none' }, person);
       await expect(invoke(list, { ...scoped, page }, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
       await expect(invoke(list, { source, page }, agent)).rejects.toMatchObject({ code: 'database_target_required' });
+      await expect(invoke(detail, { source, id: 'selected-1' }, agent))
+        .rejects.toMatchObject({ code: 'database_target_required' });
+      await expect(invoke(trace, { source, traceId, page }, agent))
+        .rejects.toMatchObject({ code: 'database_target_required' });
+
+      const appReads = [
+        [database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source }],
+        [database.DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, { source, page }],
+        [database.DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, { source, page }],
+        [database.DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1, { source, page }],
+        [database.TELEMETRY_COSTS_READ_ACTION_ID_V1, { source, since: 0, until: 10, granularity: 'hour' }],
+      ] as const;
+      for (const [action, input] of appReads) {
+        const personResult = await invoke(local(action), input, person);
+        expect(personResult).toMatchObject({ ok: true, source });
+        await expect(invoke(local(action), input, agent)).resolves.toEqual(personResult);
+      }
     } finally {
       await f.close();
       if (retained.kind === 'unchanged') await retained.release?.();

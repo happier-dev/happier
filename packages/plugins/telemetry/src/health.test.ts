@@ -19,6 +19,30 @@ function histogram(status: number, counts: string[]): NormalizedMetricPoint {
 }
 
 describe('published selected key-flow reads', () => {
+    it('preserves a remote Spend collector failure in the saved check response', async () => {
+        const failure = { ok: false, status: 'failed', code: 'collector_unavailable',
+            reason: 'collector_read_failed', cause: { source: 'transport', code: 'disconnected', message: 'Collector disconnected' } } as const;
+        const healthChecks = {
+            async readSource() {
+                return { v: 1, subject: { kind: 'environment', environmentId: 'env' }, checks: [{
+                    checkId: 'spend', kind: database.TELEMETRY_KEY_FLOW_HEALTH_KIND_V1,
+                    binding: { kind: 'healthCheck' }, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1,
+                    config: { environmentId: 'env', serviceName: 'checkout', measure: { kind: 'spend', costMode: 'api_equivalent' },
+                        windowMs: 3_600_000, threshold: { operator: 'above', value: 10 } },
+                }] };
+            },
+            async readCollectorTelemetry() { return { kind: 'remote', result: failure }; },
+        } satisfies Partial<PluginServices['healthChecks']>;
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { healthChecks } });
+        try {
+            await expect(host.invokeAction(database.databaseActionLocalIdV1(database.TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1),
+                { sourceInstanceId: 'health:environment:env', checkId: 'spend' },
+                { chosenMachine: { machineId: 'observer', installationId: 'installed' } }))
+                .rejects.toMatchObject({ code: failure.code, details: { reason: failure.reason, cause: failure.cause } });
+        } finally { await host.dispose(); }
+    });
+
     it('opens a selected Environment metrics overview for a metrics-only service version', async () => {
         const fixture = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);

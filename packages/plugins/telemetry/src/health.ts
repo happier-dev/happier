@@ -242,7 +242,16 @@ async function readRemoteKeyFlow(input: Omit<KeyFlowReadInput, 'serverId'>, cont
     const result = selection.result;
     if (measure.kind === 'spend') {
         const operands = DatabaseCaptureCostsReadResultV1Schema.parse(result);
-        if (!operands.ok) throw new PluginError({ code: operands.code });
+        if (!operands.ok) {
+            const reason = 'reason' in operands ? operands.reason : undefined;
+            const cause = 'cause' in operands ? operands.cause : undefined;
+            throw new PluginError({ code: operands.code,
+                ...(reason !== undefined || cause !== undefined ? { details: {
+                    ...(reason === undefined ? {} : { reason }),
+                    ...(cause === undefined ? {} : { cause }),
+                } } : {}),
+            });
+        }
         const pricing = await loadCaptureCostPricingContext(context, appCallsPricingModelIds([operands]));
         return projectKeyFlowSpend(input, measure.costMode, operands, pricing);
     }

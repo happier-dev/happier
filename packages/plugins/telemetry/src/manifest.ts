@@ -2,7 +2,8 @@ import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAME
 import { definePlugin, isDelegatedActionRequesterV1, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { DATABASE_PLUGIN_ID_V1 } from '@happier-dev/plugin-sdk/database';
-import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
+ DATABASE_CAPTURE_RESOURCE_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1, DATABASE_ACCESS_READ_ACTION_ID_V1, DatabaseAccessReadResultV1Schema, type DatabaseActionIdV1, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
@@ -35,7 +36,9 @@ async function admitCaptureSource(source: DatabaseCaptureSourceV1, context: Capt
  deployments: PluginInvocationContext['services']['deploymentDatabases'], actionId: DatabaseActionIdV1) {
  if (source.kind === 'worktree') {
   const accountId = localCaptureOwner(source.machineId, context);
-  if (actionId !== DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 && isDelegatedActionRequesterV1(context)) {
+  const readsDatabaseEvidence = actionId === DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1
+   || actionId === DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1 || actionId === DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1;
+  if (readsDatabaseEvidence && isDelegatedActionRequesterV1(context)) {
    throw new PluginError({ code: 'database_target_required' });
   }
   return { source, partition: captureSourcePartition(source, accountId) };

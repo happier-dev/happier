@@ -29,6 +29,7 @@ import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.
 import type { ManagedAcquireInputV1 } from '../machines/managed/actionsV1.js';
 import type { UsageQueryBatchInput } from '../inputs/usageQuery.js';
 import { usageAppCallsSourceId } from '../usage/usageVocabularyV1.js';
+import { isUsagePrivateRecapActionIdV1, USAGE_EXPORT_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '../usage/usageActionIdsV1.js';
 
 /** Exact non-content preset route captured by Session root admission. */
 export const ApiTokenSessionPresetAcquisitionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -263,6 +264,13 @@ export function evaluateApiTokenGrantV1(input: Readonly<{
 }>): { ok: true } | { ok: false; reason: ApiTokenGrantDenialReasonV1; deniedActionId?: string } {
   const { grant, actionId, target } = input;
   if (!actionGranted(grant, actionId, input.contributedQualifiedId, input.contributedActionAdmission)) return { ok: false, reason: 'action_not_granted' };
+  // Scope Usage evidence before dispatch, including Actions that run on a
+  // client. The public price catalog supplies reference data for App calls.
+  if (grant.targets?.environments?.length && ACTION_ID_FAMILIES_V1.usage.some(id => id === actionId)
+    && actionId !== USAGE_QUERY_ACTION_ID_V1 && actionId !== USAGE_EXPORT_ACTION_ID_V1
+    && actionId !== USAGE_PRICE_ACTION_IDS.get && !isUsagePrivateRecapActionIdV1(actionId)) {
+    return { ok: false, reason: 'environment_not_granted' };
+  }
   if (actionId === 'deployments.deploy' || 'environmentId' in input || input.environmentAdmission !== undefined) {
     const environment = DeploymentIdentifierV1Schema.safeParse(input.environmentId);
     const environmentAction = API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === actionId);
