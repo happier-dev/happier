@@ -9,7 +9,17 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, it } from 'vitest';
 import { InternalTaskMutationOutputSchema } from '@happier-dev/protocol/actions/internalTaskActions';
-import { connectUiTriageActionClient } from '@happier-tests/ui-action-client';
+import { connectUiPersonActionClient, connectUiTriageActionClient, mountUiInboxJourney } from '@happier-tests/ui-action-client';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ReviewCommentCreateResponseV1Schema, ReviewCommentTransitionResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
+import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
+import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
+import { startFinJourneyFixture } from '../../src/testkit/finJourney';
+import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../../plugins/triage/src/actions/listEntriesProtocol';
 import {
   TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -107,5 +117,77 @@ it('keeps pins across fresh clients and daemon restart, and reads them with the 
   } finally {
     for (const client of clients.reverse()) await client.close();
     await daemon.stop(); await server.stop();
+  }
+}, 0);
+
+it('publishes daemon Review attention into the person Inbox and resolves the same entry after the final shared decision', async () => {
+  const postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
+  const fixture = await startFinJourneyFixture({ testDir: run.testDir(`review-attention-${randomUUID()}`), dbProvider: 'postgres',
+    serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } }).catch(async error => { await postgres.stop(); throw error; });
+  let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
+  let inbox: Awaited<ReturnType<typeof mountUiInboxJourney>> | undefined;
+  try {
+    const actor = await fixture.createAccount('review-attention-owner');
+    // Real stored terminal sign-in, daemon activation and ApiMachine changes
+    // ingress own this producer. Do not start a second attention lifecycle here.
+    const machine = await fixture.enrollDaemon(actor);
+    ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl, accountSecret: actor.auth.accountSigningSeed });
+    await waitFor(() => ui!.isMachineActive(machine.target.machineId), { context: 'Review attention daemon is visible to the person' });
+    inbox = await mountUiInboxJourney();
+    const reviewId = randomUUID();
+    const title = `Private Review attention ${randomUUID()}`;
+    const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(actor.credentials)));
+    await runWithServerHttpBaseUrl(fixture.server.baseUrl, async () => {
+      const round = await records.start({ reviewId, title, subjectKind: 'repository', sourceKind: 'direct', reviewerIds: [], startedAt: Date.now() });
+      await records.settle({ ...round, outcome: 'completed', finishedAt: Date.now(), runs: [] });
+    });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const }, serverId: ui.serverId };
+    const createFinding = async (findingTitle: string) => {
+      const path = `${findingTitle}.ts`;
+      const fingerprint = { normalizedMessageHash: createReviewFindingMessageHashV1(findingTitle) };
+      const response = await ui!.execute('reviews.comments.create', { reviewId, body: findingTitle,
+        finding: { id: findingTitle, title: findingTitle, summary: findingTitle, severity: 'high', category: 'correctness' },
+        findingIdentity: createReviewFindingIdentityV1({ title: findingTitle, path, fingerprint }), fingerprint,
+        anchor: { kind: 'file', filePath: path }, snapshot: { kind: 'none', capturedAt: 1 },
+        authorIntent: 'open', clientMutationId: randomUUID() }, context);
+      if (!response.ok) throw new Error(`Create Review finding refused (${response.errorCode})`);
+      return ReviewCommentCreateResponseV1Schema.parse(response.result).comment;
+    };
+    const first = await createFinding('First pending decision');
+    const second = await createFinding('Second pending decision');
+    const notices = () => inbox!.getCurrent()?.openAccountNotices.filter(entry => entry.header.title === title) ?? [];
+    await waitFor(() => notices().length === 1, { context: 'Daemon attention reaches the mounted person Inbox through real Account sync' });
+    const noticeId = notices()[0]!.artifact.id;
+    expect(notices()[0]!.header).toMatchObject({ source: { kind: 'plugin', pluginId: 'happier.triage' },
+      type: 'decision', resolved: false, reviewAttention: { requestedVerdict: false, subjectKind: 'repository' } });
+    expect(inbox.getCurrent()!.items).toEqual(expect.arrayContaining([expect.objectContaining({ title, view: 'needs_you' })]));
+    const outsider = await fixture.createAccount('unshared-review-observer');
+    const outside = await outsider.execute('artifact.list', { artifactIds: [reviewId, noticeId] });
+    if (!outside.ok) throw new Error(`Unshared Account inventory refused (${outside.errorCode})`);
+    expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(outside.result).items).toEqual([]);
+    const transition = async (comment: typeof first) => {
+      // A second device writes through the ordinary credentialed CLI Action
+      // owner. The mounted UI must consume its pushed change, never refresh.
+      const result = await actor.execute('reviews.comments.transition', buildReviewTriageTransitionRequestV1({ comment,
+        decision: 'reject', clientMutationId: randomUUID() }));
+      if (!result.ok) throw new Error(`Review finding decision refused (${result.errorCode})`);
+      return ReviewCommentTransitionResponseV1Schema.parse(result.result);
+    };
+    await transition(first);
+    await waitFor(async () => {
+      const current = await actor.execute('review.get', { reviewId });
+      if (!current.ok) throw new Error(current.errorCode);
+      return ReviewGetResponseV1Schema.parse(current.result).review.counts.needsDecision === 1;
+    }, { context: 'One decision remains authoritative after the first transition' });
+    expect(notices().map(entry => entry.artifact.id)).toEqual([noticeId]);
+    await transition(second);
+    await waitFor(() => notices().length === 0, { context: 'Final decision resolves the daemon-produced Inbox entry without a manual refresh' });
+    const retained = await actor.execute('artifact.get', { artifactId: noticeId });
+    expect(retained).toMatchObject({ ok: true, result: { artifact: { header: { title, resolved: true } } } });
+    expect(inbox.getCurrent()!.items).not.toEqual(expect.arrayContaining([expect.objectContaining({ title })]));
+  } finally {
+    await inbox?.unmount();
+    await ui?.close();
+    try { await fixture.stop(); } finally { await postgres.stop(); }
   }
 }, 0);
