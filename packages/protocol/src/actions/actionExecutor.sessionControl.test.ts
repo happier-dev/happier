@@ -1873,6 +1873,9 @@ describe('createActionExecutor (session control)', () => {
   it('uses the direct Session stop decision for a person-started Workflow', async () => {
     const effects: string[] = [];
     const executor = createExecutor({
+      readActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {
+        'session.stop': { disabledSurfaces: ['agent'] },
+      } }),
       sessionStop: async ({ sessionId, context }) => {
         if (sessionId === 'shared-view') return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
         if (sessionId !== 'owned-other' || context?.runtimeAccountId !== 'starter-account') {
@@ -1888,7 +1891,9 @@ describe('createActionExecutor (session control)', () => {
     const workflow = { ...direct, surface: 'agent', authority: 'account_automation',
       actionCaller: { kind: 'workflowRun', runId: 'run', authorization: {
         principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
-      } }, workflowSessionInput: { purpose: 'invocation', runId: 'run', invocationRecordId: 'leaf' } } as const;
+      }, authenticatedStarterV1: { requestRef: 'start-request', requester: { serverId: 'home', accountId: 'starter-account' } },
+      authenticatedStarterPolicySurface: 'cli' },
+      workflowSessionInput: { purpose: 'invocation', runId: 'run', invocationRecordId: 'leaf' } } as const;
 
     const allowed = await executor.execute('session.stop', { sessionId: 'owned-other' }, direct);
     expect(allowed).toMatchObject({ ok: true, result: { stopped: true } });
@@ -1905,6 +1910,16 @@ describe('createActionExecutor (session control)', () => {
       .resolves.toMatchObject({ ok: true, result: { status: 'accepted' } });
     await expect(executor.execute('session.stop', { sessionId: 'owned-other' }, { ...workflow, runtimeAccountId: 'guest' }))
       .resolves.toEqual(refused);
+    const agent = { kind: 'session', sessionId: 'origin', starterDepth: 0, turnDepth: 0 } as const;
+    const directAgent = await executor.execute('session.stop', { sessionId: 'owned-other' }, {
+      ...workflow, actionCaller: agent,
+    });
+    expect(directAgent).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    await expect(executor.execute('session.stop', { sessionId: 'owned-other' }, { ...workflow,
+      actionCaller: { kind: 'workflowRun', runId: 'agent-run', authorization: {
+        principal: { kind: 'session', sessionId: 'origin' }, admittedPermissionCeiling: 'default',
+      } },
+    })).resolves.toEqual(directAgent);
     expect(effects).toEqual(['owned-other', 'owned-other']);
   });
 

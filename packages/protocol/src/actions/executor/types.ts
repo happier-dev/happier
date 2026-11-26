@@ -523,6 +523,8 @@ export type ActionWorkflowRunCaller = Readonly<{
   authorization: WorkflowAcceptedAuthorizationV1;
   /** Exact person retained in the accepted origin; never a Session or an authority grant. */
   authenticatedStarterV1?: NonNullable<import('../../workflows/workflowDefinitionV1.js').WorkflowAcceptedOriginV1['authenticatedStarterV1']>;
+  /** The admitted person's Session Action policy, without present-person authority. */
+  authenticatedStarterPolicySurface?: Extract<keyof ActionSurfaces, 'cli' | 'ui'>;
   /** Host-owned contained invitation; the Workflow retains ordinary Session startup. */
   discussionModelReservation?: Readonly<{ discussionId: string; participantSlotId: string; policySurface?: keyof ActionSurfaces }>;
 }>;

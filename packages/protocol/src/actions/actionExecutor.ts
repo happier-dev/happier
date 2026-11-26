@@ -1042,9 +1042,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       identifier === ctx.serverId && ctx.serverIdentityId ? ctx.serverIdentityId
         : identifier === ctx.serverIdentityId ? ctx.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
   const actionPolicyContext = (actionId: string, ctx: ActionExecutorContext): ActionExecutorContext => {
-    const reservation = isDiscussionInviteActionIdV1(actionId) && ctx.actionCaller?.kind === 'workflowRun'
-      ? ctx.actionCaller.discussionModelReservation : undefined;
-    return reservation?.policySurface ? { ...ctx, surface: reservation.policySurface } : ctx;
+    const caller = ctx.actionCaller;
+    if (caller?.kind !== 'workflowRun') return ctx;
+    const reservation = isDiscussionInviteActionIdV1(actionId) ? caller.discussionModelReservation : undefined;
+    if (reservation?.policySurface) return { ...ctx, surface: reservation.policySurface };
+    const action = ActionIdSchema.safeParse(actionId);
+    const surface = caller.authenticatedStarterV1 ? caller.authenticatedStarterPolicySurface : undefined;
+    return surface && action.success && getActionSpec(action.data).sessionTarget ? { ...ctx, surface } : ctx;
   };
   const policyAllowsAction = (id: ActionId, ctx: ActionExecutorContext) =>
     deps.isActionEnabled ? deps.isActionEnabled(id, actionPolicyContext(id, ctx)) : true;

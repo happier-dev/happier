@@ -9094,8 +9094,10 @@ the Run presentation extraction changes none of those data formats.
 
 Ordinary Workflow Session Actions use the Run starter's Session access. The
 Session owner decides each Action under the same capability rules as a direct
-call. Agent starters retain their existing own and led Session scope. A Run on
-a shared Machine uses the starter's Account for Session access.
+call. A person-started Run uses the starter's Action settings for Session
+Actions. The Run keeps its automation transport authority. Agent starters
+retain their existing own and led Session scope. A Run on a shared Machine
+uses the starter's Account for Session access.
 
 Typed Session inputs confer no authority by themselves. Review admission records
 per-leaf `sessionAuthorityBindings` only after exact target resolution and the

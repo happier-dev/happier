@@ -27,6 +27,7 @@ export function buildWorkflowActionContext(execution: Readonly<{
     throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
   }
   const starter = execution.origin?.authenticatedStarterV1;
+  const starterSurface = execution.origin?.actionPolicy?.surface;
   const originSessionId = execution.origin?.originSessionId;
   const approvalProfileId = execution.approvalProfileId !== undefined
     ? execution.approvalProfileId : execution.origin?.actionPolicy?.approvalProfileId;
@@ -59,7 +60,10 @@ export function buildWorkflowActionContext(execution: Readonly<{
       ...(execution.source && 'definitionId' in execution.source && execution.source.definitionId
         ? { workflowId: execution.source.definitionId } : {}),
       authorization: execution.authorization,
-      ...(starter && !execution.origin?.actionRequestAttributionV1 ? { authenticatedStarterV1: starter } : {}),
+      ...(starter && !execution.origin?.actionRequestAttributionV1 ? {
+        authenticatedStarterV1: starter,
+        ...(starterSurface === 'cli' || starterSurface === 'ui' ? { authenticatedStarterPolicySurface: starterSurface } : {}),
+      } : {}),
     },
     executionRunWorkflowRunId: execution.runId,
     ...(execution.automationCause ? { workflowAutomationCause: execution.automationCause } : {}),

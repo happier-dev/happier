@@ -6,6 +6,20 @@ import { WorkflowAcceptedAuthorizationV1Schema } from '@happier-dev/protocol/wor
 import { buildWorkflowActionContext } from './workflowActionContext';
 
 describe('retained Workflow authority at local Action execution', () => {
+  it('carries the admitted person’s Session policy without changing Workflow transport authority', () => {
+    const authorization = WorkflowAcceptedAuthorizationV1Schema.parse({ admittedPermissionCeiling: 'default',
+      principal: { kind: 'host' } });
+    const policy = { surface: 'cli', authority: 'present_user' } as const;
+    const authenticatedStarterV1 = { requestRef: 'request', requester: { serverId: 'home', accountId: 'starter' } };
+    const context = buildWorkflowActionContext({ runId: 'run', authorization,
+      origin: { kind: 'direct', actionPolicy: policy, authenticatedStarterV1 } });
+    expect(context).toMatchObject({ surface: 'agent', authority: 'account_automation',
+      actionCaller: { authenticatedStarterV1, authenticatedStarterPolicySurface: 'cli' } });
+    const unstamped = buildWorkflowActionContext({ runId: 'run', authorization,
+      origin: { kind: 'direct', actionPolicy: policy } });
+    expect(unstamped.actionCaller).not.toHaveProperty('authenticatedStarterPolicySurface');
+  });
+
   it.each([
     { source: { kind: 'saved' as const, definitionId: 'saved-hunt', revision: { headerVersion: 2, bodyVersion: 2 }, savedBy: null }, workflowId: 'saved-hunt' },
     { source: { kind: 'automation' as const, automationId: 'schedule', definitionId: 'saved-hunt', revision: { headerVersion: 2, bodyVersion: 2 }, savedBy: null }, workflowId: 'saved-hunt' },
