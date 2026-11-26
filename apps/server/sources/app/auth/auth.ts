@@ -1125,6 +1125,7 @@ class AuthModule {
         if (!machine) throw refuse('machine', 'target_unavailable');
         const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...root,
             machineId: machine.machineId, installationId: machine.installationId, custodianAccountId: machine.custodianAccountId,
+            admittedMachineRole: machine.role,
             actionId: phase.actionId, target: { kind: 'machine', machineId: machine.machineId },
             requestEnvelopeDigest: phase.requestEnvelopeDigest,
             ...(phase.kind === 'preflight'

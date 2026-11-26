@@ -424,7 +424,7 @@ async function readHandoffContinuation(request: FastifyRequest, actionId: string
     const peer = await readAdmittedExternalActionHandoffMachineInTx(db, root, body.machineId);
     if (!peer) return null;
     const child = { ...root, machineId: body.machineId, actionId, target: body.envelope.target,
-        custodianAccountId: peer.custodianAccountId,
+        custodianAccountId: peer.custodianAccountId, admittedMachineRole: peer.role,
         installationId: body.machineId === handoff.sourceMachineId ? handoff.sourceInstallationId : handoff.targetInstallationId,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
         handoffContinuation: { rootRequestId: root.requestId, rootRequestEnvelopeDigest: root.requestEnvelopeDigest,
@@ -466,7 +466,7 @@ async function readHandoffPreflight(request: FastifyRequest, actionId: string,
     const peer = await readAdmittedExternalActionHandoffMachineInTx(db, root, body.machineId);
     if (!peer) return null;
     const child = { ...root, machineId: body.machineId, actionId, target: body.envelope.target,
-        custodianAccountId: peer.custodianAccountId,
+        custodianAccountId: peer.custodianAccountId, admittedMachineRole: peer.role,
         installationId: body.machineId === handoff.sourceMachineId ? handoff.sourceInstallationId : handoff.targetInstallationId,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
         handoffPreflight: { rootRequestId: root.requestId, rootRequestEnvelopeDigest: root.requestEnvelopeDigest } };

@@ -15,7 +15,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import * as z from 'zod/mini';
 import { isProjectWorkspaceSyncPreparationActionV1, isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { readWorkspaceSyncSeedProofKindV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceSyncRelationshipWriteActionId, readWorkspaceSyncSeedProofKindV1 } from '@happier-dev/protocol/actions/actionIds';
 import { buildRequesterTargetPhaseContext, projectRequesterStandingAdmission } from './requesterTargetPhaseContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readReviewedExternalActionInput } from '@/api/externalActionExecutionAuthorization';

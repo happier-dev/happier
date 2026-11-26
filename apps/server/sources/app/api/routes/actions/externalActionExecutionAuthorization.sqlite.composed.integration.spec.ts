@@ -156,7 +156,12 @@ import { createProjectWorkerAdmission } from '../../../../../../cli/src/workspac
 import { createDaemonAdmissionDrain } from '../../../../../../cli/src/daemon/lifecycle/admissionDrain';
 import { createInstalledProjectFiniteRuntime } from '../../../../../../cli/src/daemon/startup/createInstalledProjectFiniteRuntime';
 import { createProjectNativeIo } from '../../../../../../cli/src/workspaces/projectSetup/projectNativeIo';
+import { createProjectDefinitionAction } from '../../../../../../cli/src/rpc/handlers/projectDefinitions';
+import { inspectProjectSetup } from '../../../../../../cli/src/workspaces/projectSetup/projectSetupPreparation';
+import { resolveProjectSetupAcceptedWorkspace } from '../../../../../../cli/src/workspaces/projectSetup/projectSetupAcceptedWorkspace';
+import { readRequesterAccountActionContext } from '../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionContext';
 import { createHostActionOperationRuntime } from '../../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime';
+import { registerActionOperationRpcHandlers } from '../../../../../../cli/src/daemon/actionOperations/actionOperationRpcHandlers';
 import { createTerminalPtySessionManager } from '../../../../../../cli/src/terminal/pty/sessions';
 import { readDaemonTerminalPtyConfig } from '../../../../../../cli/src/terminal/pty/config';
 import { prepareWorkspaceSyncBetween } from '../../../../../../cli/src/workspaces/sync/workspaceSyncPreparation';
@@ -2922,6 +2927,7 @@ describe("external Action execution authorization", () => {
         const graphKey = { kind: 'relationship-graph' } as const;
         const http: Array<{ method: string; path: string; status: number }> = [];
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, app => {
+            registerAutomationActionIndexRoutes(app);
             app.addHook('onResponse', async (request, reply) => { http.push({ method: request.method,
                 path: request.url, status: reply.statusCode }); });
         });
@@ -2951,6 +2957,7 @@ describe("external Action execution authorization", () => {
                     stop: async () => { stops++; return { status: 'stopped' }; },
                 } } }, authorizeLaunch: async () => ({ command: process.execPath, args: [], env: {}, release: async () => {} }) });
             const request = ProjectServiceRelocateInputV1Schema.parse({ workspace: { serverId: homeId, refId: workspace.id },
+                sourceMachineId: workspace.machineId,
                 serviceName: 'api', requestId: 'same-machine-move', currentTarget: { kind: 'managed_service',
                     managedServiceId: handle.instanceId, machineId: workspace.machineId, workspaceId: workspace.id,
                     cwd: handle.cwd, declaration: handle.declaration }, destination: { kind: 'primary' },
@@ -2977,12 +2984,20 @@ describe("external Action execution authorization", () => {
                     managed: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true } },
                     browser: { enabled: true, viewTargets: { enabled: true } } }, capabilities: {} }) }) });
             await gate.refresh();
+            const { actionAutomations, prepareHostReviewedChildren } = createCliActionDeps({ token, credentials, sessionId: 'cli-global',
+                mode: 'plain', ctx: null, serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'https://move-home.test',
+                runtimeActionMachineId: fixture.machine.id });
+            const sourceAdmission = await resolveMachineAdmission({ actorAccountId: fixture.account.id, machineId: fixture.machine.id, requiredRole: 'use' });
+            if (sourceAdmission.kind !== 'admitted') throw new Error('SOURCE admission unavailable');
+            const { kind: _kind, ...machineAdmission } = sourceAdmission;
+            const verifyMachineAdmissionCurrent = async () => true;
             const executor = createActionExecutor({ ...createAccountServerActionDeps({ token, credentials,
                 serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'https://move-home.test',
                 externalActionMachineRequestPrivateKey: fixture.keyPair.secretKey,
                 externalActionMachineInstallationId: fixture.machine.installationId! }),
+                actionAutomations, prepareHostReviewedChildren, readActionsSettings: () => ({ v: 1, actions: {} }),
                 runtimeActionExecute: createLocalServicesDaemonRuntimeActionExecutor({ featureGate: gate,
-                    ingress: { signal: new AbortController().signal }, routes: {
+                    ingress: { signal: new AbortController().signal, machineAdmission, verifyMachineAdmissionCurrent }, routes: {
                         relocateService: createProjectServiceRelocationRoute({ serverBaseUrl: 'https://move-home.test', credentials,
                             projectManagedServices: owner, resolveWorkspaceSyncHandoffAdapter: () => null }),
                     } }),
@@ -2997,7 +3012,9 @@ describe("external Action execution authorization", () => {
             if (!requesterContext) throw new Error('SOURCE requester custody unavailable');
             // Already-approved Move replay, preserving its exact signed root for children.
             const context = { surface: 'ui' as const, authority: 'present_user' as const, bypassApprovals: true,
-                serverId: homeId, runtimeAccountId: fixture.account.id, actionRequestId: envelope.requestId,
+                serverId: homeId, machineAdmission, verifyMachineAdmissionCurrent,
+                actionsSettings: normalizeActionsSettingsV1(requesterContext.accountSettingsContext?.settings.actionsSettingsV1),
+                runtimeAccountId: fixture.account.id, actionRequestId: envelope.requestId,
                 externalActionExecutionAuthorization: requesterContext.authorization, externalActionTarget: envelope.target,
                 presentUserConfirmation: { actionId: 'projects.service.relocate' as const } };
             const result = await executor.execute('projects.service.relocate', request, context);
@@ -3067,8 +3084,12 @@ describe("external Action execution authorization", () => {
         const workerKeys = tweetnacl.sign.keyPair();
         const worker = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
             metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
-            active: true, installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(workerKeys.publicKey) } });
-        await db.machine.update({ where: { id: fixture.machine.id }, data: { active: true } });
+            active: true, installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(workerKeys.publicKey),
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: { active: true,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
         await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: worker.id,
             principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
         const workerToken = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -3099,12 +3120,13 @@ describe("external Action execution authorization", () => {
         const outgoingPackets: SocketRpcRequestPayload[] = [];
         let receiversAtPlacement: number | undefined;
         const receiverDiagnostics: Array<{ method?: unknown; outcome?: unknown; admission?: unknown }> = [];
-        const startObservations: Array<{ machineId: string; status?: unknown; reason?: unknown; context: unknown }> = [];
+        const startObservations: Array<{ machineId: string; status?: unknown; reason?: unknown; failureCause?: unknown; context: unknown }> = [];
         const operationObservations: unknown[] = [];
         const network = await createRequesterCurrentnessSocketHarness();
         const localInstallation = new AsyncLocalStorage<ReturnType<typeof installationStore.readInstallationIdentityIfExistsSync>>();
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(() => localInstallation.getStore() ?? null);
         const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, routes => {
+            registerAutomationActionIndexRoutes(routes);
             routes.addHook('onResponse', async (request, reply) => { homeResponses.push({ path: request.url, status: reply.statusCode }); });
             routes.addHook('onSend', async (request, reply, payload) => {
                 if (currentness === 'revoked-after-placement' && request.url === '/v1/projects/execution/config/mutate' && reply.statusCode === 200) {
@@ -3157,7 +3179,7 @@ describe("external Action execution authorization", () => {
                         liveDestinations: newOwner?.listProjectServices().length ?? 0 });
                     return prepareWorkspaceSyncBetween({ ...request, signal, serverId: homeId,
                         readCurrent: () => runWithServerHttpBaseUrl(origin, () => readProjectAccountRows({ credentials,
-                            serverId: homeId, signal })),
+                            serverId: homeId, signal, selection: { kinds: ['workspace-ref', 'relationship-graph'] } })),
                         // Filesystem/native Sync-engine boundary only. The real preparation
                         // owner resolves, rechecks and observes clean route completion.
                         flush: async () => {
@@ -3195,6 +3217,22 @@ describe("external Action execution authorization", () => {
                         managed: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true } },
                         browser: { enabled: true, viewTargets: { enabled: true } } }, capabilities: {} }) }) });
                 await gate.refresh();
+                const projectDefinitionAction = createProjectDefinitionAction({ serverId: homeId, machineId: machine.id,
+                    workingDirectory: ref.rootPath, accessPolicy: { kind: 'restrictedRoots', roots: [ref.rootPath] },
+                    nativeIo: { ...nativeIo.commandIo, resolveTool: async tool => ({ executablePath: `/managed/${tool}`, version: '1' }) },
+                    inspectSetup: async ({ workspace: ws, context, reviewSetupConsent }) => {
+                        const authorization = context.externalActionExecutionAuthorization;
+                        const requesterCredentials = readRequesterAccountActionContext(authorization)?.credentials ?? credentials;
+                        const requester = { credentials: requesterCredentials, authorization, serverHttpBaseUrl: origin };
+                        const association = await resolveProjectSetupAcceptedWorkspace({
+                            ...(authorization ? { authorization, effectActionId: authorization.binding.actionId } : { credentials: requesterCredentials }),
+                            serverHttpBaseUrl: origin, address: ws, serverId: homeId, signal: context.signal });
+                        return await inspectProjectSetup({ workspace: association.workspace, projectAssociation: association, requester,
+                            purpose: 'setup', approvalContext: context, platform: { os: process.platform, arch: process.arch },
+                            nativeIo: nativeIo.commandIo, successHomeDir: join(directory, machine.id, 'setup-success'), signal: context.signal },
+                            reviewSetupConsent ? { reviewConsent: true } : undefined);
+                    } });
+                let rpc!: RpcHandlerManager;
                 const buildExecutor = (ingress: RpcHandlerContext) => createCliActionExecutor({ token, credentials,
                     serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, sessionId: 'cli-global', mode: 'plain', ctx: null,
                     runtimeActionMachineId: machine.id, externalActionMachineInstallationId: machine.installationId!,
@@ -3202,6 +3240,12 @@ describe("external Action execution authorization", () => {
                     accountServerActionDeps: createAccountServerActionDeps({ token, credentials, serverId: homeId, serverIdentityId: homeId,
                         serverHttpBaseUrl: origin, externalActionMachineRequestPrivateKey: keys.secretKey,
                         externalActionMachineInstallationId: machine.installationId! }),
+                    projectDefinitionAction,
+                    machineActionDirectTargetTransport: { machineId: machine.id,
+                        invoke: (method, input, options) => rpc.invokeLocal(method, input, options) },
+                    runActionOperation: req => operationRuntime.runActionOperation({ ...req, execute: ctx => req.execute({ ...ctx,
+                        operationProgress: { update(update) { ctx.operationProgress?.update(update); if (update.phase) phases.push(update.phase); } },
+                    }) }),
                     projectWorkerAction: createProjectWorkerAction({ machineId: machine.id, serverId: homeId, serverHttpBaseUrl: origin,
                         credentials, accountId: fixture.account.id, admission, isFiniteExecutionLive: () => true, isServiceExecutionLive: () => true }),
                     runtimeActionExecute: async args => {
@@ -3217,7 +3261,7 @@ describe("external Action execution authorization", () => {
                                 projectManagedServices: owner, resolveWorkspaceSyncHandoffAdapter: () => adapter }) } })(args);
                         if (args.actionId === 'localServices.launcher.start' && result && typeof result === 'object') {
                             startObservations.push({ machineId: machine.id, status: Reflect.get(result, 'status'),
-                                reason: Reflect.get(result, 'reasonCode'), context: { surface: args.context.surface,
+                                reason: Reflect.get(result, 'reasonCode'), failureCause: Reflect.get(result, 'failureCause'), context: { surface: args.context.surface,
                                     authority: args.context.authority, bypassApprovals: args.context.bypassApprovals,
                                     confirmation: args.context.presentUserConfirmation?.actionId,
                                     rootActionId: args.context.externalActionExecutionAuthorization?.binding.actionId } });
@@ -3225,7 +3269,7 @@ describe("external Action execution authorization", () => {
                         return result;
                     },
                 });
-                const rpc = new RpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id, encryptionMode: 'plain',
+                rpc = new RpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id, encryptionMode: 'plain',
                     logger: (message, data) => {
                         if (message === '[RPC] Request completed' && data && typeof data === 'object') {
                             receiverDiagnostics.push({ method: Reflect.get(data, 'method'), outcome: Reflect.get(data, 'outcomeCode'),
@@ -3252,7 +3296,14 @@ describe("external Action execution authorization", () => {
                         if (!request.ingress) throw new Error('Receiving transport ingress required');
                         return buildExecutor(request.ingress);
                     } });
-                registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['projects.worker.status'],
+                rpc.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST, async () => ({ statuses: [{
+                    relationshipId: relationship.relationshipId, controllerMachineId: fixture.machine.id,
+                    state: 'watching', alphaPath: sourceRoot, betaPath: workerRoot, mode: relationship.mode,
+                    endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
+                        beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } },
+                    conflictCount: 0, lastCycleObservedAtMs: null }] }));
+                registerActionOperationRpcHandlers(rpc, operationRuntime.handlers);
+                registerActionSpecRpcHandlers({ rpcHandlerManager: rpc, actionIds: ['projects.worker.status', 'projects.inspect'],
                     targetMachineId: machine.id, defaultMachineTarget: true, resolveActionExecutor: request => {
                         if (!request.ingress) throw new Error('Receiving transport ingress required');
                         return buildExecutor(request.ingress);
@@ -3265,12 +3316,12 @@ describe("external Action execution authorization", () => {
                     },
                 }) };
                 qualifyCurrentAccountStoredContentSocket(receiver);
-                installed.push({ ...member, identity, owner, rpc, receiver, buildExecutor });
+                installed.push({ ...member, identity, owner, operationRuntime, rpc, receiver, buildExecutor });
             }
             const io = createSocketRoomDiscoveryHarness(async room => installed.filter(member => room === member.receiver.id
                 || room.startsWith(`rpc:${member.machine.accountId}:${member.machine.id}:`)).map(member => member.receiver));
             network.server.on('connection', socket => {
-                socket.data = { clientType: 'user-scoped', authTokenKind: requesterKind,
+                socket.data = { clientType: 'user-scoped', userId: fixture.account.id, authTokenKind: requesterKind,
                     authAuthority: requesterKind === 'account' ? 'present_user' : 'account_automation' };
                 qualifyCurrentAccountStoredContentSocket(socket);
                 socket.on(SOCKET_RPC_EVENTS.CALL, (packet: SocketRpcRequestPayload) => {
@@ -3294,7 +3345,7 @@ describe("external Action execution authorization", () => {
             const workspace = { serverId: homeId, refId: sourceRef.id };
             const placement = direction === 'SOURCE-to-worker'
                 ? { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: worker.id } } : { kind: 'primary' as const };
-            const request = ProjectServiceRelocateInputV1Schema.parse({ workspace, serviceName: 'api', requestId: `move-${direction}`,
+            const request = ProjectServiceRelocateInputV1Schema.parse({ workspace, sourceMachineId: fixture.machine.id, serviceName: 'api', requestId: `move-${direction}`,
                 currentTarget: { kind: 'managed_service', machineId: old.machine.id, managedServiceId: incumbent.instanceId,
                     workspaceId: old.ref.id, cwd: incumbent.cwd, declaration: incumbent.declaration },
                 destination: placement, selectedTarget: { machineId: destination.machine.id }, desiredPlacement: { workspace, serviceName: 'api',
@@ -3356,14 +3407,32 @@ describe("external Action execution authorization", () => {
             const ingress: RpcHandlerContext = { signal: new AbortController().signal, machineAdmission,
                 callerAuthority: sourceAuthority, callerInputAuthorization: prepared.authorization,
                 originalActionEnvelope: envelope, verifyMachineAdmissionCurrent: async () => true };
-            const result = await localInstallation.run(installed[0]!.identity, () => installed[0]!.buildExecutor(ingress).execute(
+            const initialResult = await localInstallation.run(installed[0]!.identity, () => installed[0]!.buildExecutor(ingress).execute(
                 'projects.service.relocate', request, { surface: requesterKind === 'account' ? 'ui' : 'cli',
                     authority: sourceAuthority, bypassApprovals: true, serverId: homeId,
+                    machineAdmission, verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent,
                     runtimeAccountId: fixture.account.id, actionRequestId: envelope.requestId, originalActionEnvelope: envelope,
                     externalActionExecutionAuthorization: prepared.authorization, externalActionTarget: root.binding.target,
                     presentUserConfirmation: { actionId: 'projects.service.relocate' }, operationProgress: { update(update) {
                         if (update.phase) phases.push(update.phase);
                     } } }));
+            const acceptedOperation = initialResult.ok && initialResult.result && typeof initialResult.result === 'object'
+                && Reflect.get(initialResult.result, 'status') === 'accepted'
+                ? Reflect.get(initialResult.result, 'operation') : null;
+            const acceptedOperationId = acceptedOperation && typeof acceptedOperation === 'object'
+                && typeof Reflect.get(acceptedOperation, 'operationId') === 'string'
+                ? Reflect.get(acceptedOperation, 'operationId') as string : null;
+            const settledOperation = acceptedOperationId
+                ? await installed[0]!.operationRuntime.runner.waitForTerminal(
+                    { accountId: fixture.account.id, machineId: fixture.machine.id }, acceptedOperationId)
+                : null;
+            const result = settledOperation
+                ? (settledOperation.state === 'succeeded'
+                    ? { ok: true as const, result: settledOperation.result }
+                    : { ok: false as const, errorCode: settledOperation.error?.errorCode ?? settledOperation.state,
+                        error: settledOperation.error?.error ?? settledOperation.state,
+                        ...(settledOperation.error?.failureCause ? { failureCause: settledOperation.error.failureCause } : {}) })
+                : initialResult;
             if (currentness === 'revoked-after-placement') {
                 expect(receiversAtPlacement, 'Actual Home placement mutation must precede credential revocation').toBeDefined();
                 expect(effects, JSON.stringify({ result, effects, phases, startObservations })).toEqual([]);
@@ -8783,21 +8852,27 @@ describe("external Action execution authorization", () => {
         } else {
             expect(await db.managedMachine.findUnique({ where: { enrolledMachineId: target.id } })).toBeNull();
         }
-        const method = `${writer.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+        const method = `${child.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+        const writerMethod = `${writer.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
         const projectMethod = `${target.id}:${RPC_METHODS.PROJECTS_OPEN}`;
         // Only the remote daemon network is simulated; no internal verifier or
         // materialization owner is mocked and this test claims no copy effect.
         const delivered = vi.fn(async (_event: string, _request: unknown) => ({ kind: 'materialized' }));
-        const receiver = { id: 'project-source-physical-writer', data: { clientType: 'machine-scoped', machineId: writer.id,
-            verifiedMachineInstallationId: writer.installationId }, timeout: () => ({ emitWithAck: delivered }) };
+        const receiver = { id: 'project-source-child-endpoint', data: { clientType: 'machine-scoped', machineId: child.id,
+            verifiedMachineInstallationId: child.installationId }, timeout: () => ({ emitWithAck: delivered }) };
+        const writerDelivered = vi.fn(async (_event: string, _request: unknown) => ({ kind: 'materialized' }));
+        const writerReceiver = { id: 'project-source-hub-writer', data: { clientType: 'machine-scoped', machineId: writer.id,
+            verifiedMachineInstallationId: writer.installationId }, timeout: () => ({ emitWithAck: writerDelivered }) };
         const projectDelivered = vi.fn(async (_event: string, _request: unknown) => ({ kind: 'opened' }));
         const projectReceiver = { id: 'project-original-target', data: { clientType: 'machine-scoped', machineId: target.id,
             verifiedMachineInstallationId: target.installationId }, timeout: () => ({ emitWithAck: projectDelivered }) };
         qualifyCurrentAccountStoredContentSocket(receiver);
+        qualifyCurrentAccountStoredContentSocket(writerReceiver);
         qualifyCurrentAccountStoredContentSocket(projectReceiver);
         const io = createSocketRoomDiscoveryHarness(async room => room === `rpc:${sourceCustodian.id}:${method}`
             || room === receiver.id ? [receiver]
-                : room === `rpc:${targetCustodian.id}:${projectMethod}` || room === projectReceiver.id ? [projectReceiver] : []);
+                : room === `rpc:${sourceCustodian.id}:${writerMethod}` || room === writerReceiver.id ? [writerReceiver]
+                    : room === `rpc:${targetCustodian.id}:${projectMethod}` || room === projectReceiver.id ? [projectReceiver] : []);
         const { app } = await createApp(fixture.team.id);
         try {
             const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -8858,13 +8933,15 @@ describe("external Action execution authorization", () => {
                     machineId: child.id, principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
                 const current = await verifyCurrentExternalActionPrincipal(root.binding);
                 expect(current).toMatchObject({ authority: 'present_user' });
+                expect(await readCurrentWorkspaceSyncProjectSourceAuthorization(root, workspaceSyncSourceRouting, writer.id)).toBeNull();
                 const attenuated = await readCurrentWorkspaceSyncProjectSourceAuthorization(root, {
                     ...workspaceSyncSourceRouting,
                     sourceContext: { ...workspaceSyncSourceRouting.sourceContext, callerAuthority: 'account_automation' },
-                }, writer.id);
+                }, child.id);
                 expect(attenuated).not.toBeNull();
                 expect(attenuated?.verified.principal).toEqual(current);
                 expect(attenuated?.verified).toMatchObject({ effectiveAuthority: 'account_automation' });
+                expect(attenuated?.receivingMachineAdmission).toEqual(context);
                 const admitted = root.binding.workspaceSyncAdmission;
                 if (!admitted) throw new Error('Home source admission missing');
                 expect(admitted).toMatchObject({ source: context, child: {
@@ -8873,7 +8950,7 @@ describe("external Action execution authorization", () => {
                 for (const workspaceSyncAdmission of [undefined, { ...admitted, relationshipId: 'foreign-relationship' },
                     { ...admitted, source: { ...admitted.source, installationId: 'foreign-installation' } }]) {
                     expect(await readCurrentWorkspaceSyncProjectSourceAuthorization({ ...root,
-                        binding: { ...root.binding, workspaceSyncAdmission } }, workspaceSyncSourceRouting, writer.id)).toBeNull();
+                        binding: { ...root.binding, workspaceSyncAdmission } }, workspaceSyncSourceRouting, child.id)).toBeNull();
                 }
             }
             const originalTransportRequestId = crypto.randomUUID();
@@ -8890,21 +8967,23 @@ describe("external Action execution authorization", () => {
                 const seed = boundary.startsWith('Seed');
                 const source = WorkspaceSyncSourceRoutingV1Schema.parse({ ...workspaceSyncSourceRouting,
                     sourceContext: { ...workspaceSyncSourceRouting.sourceContext, callerPermissionMode: 'default', workspaceWrites: 'allow' } });
-                // The live SOURCE packet is sealed to installed P1. Home must
-                // bind readable V1 Root paths independently of opaque params.
-                const sealSourceParams = (sourceInput: typeof input, sourceRouting: typeof source) => {
-                    const inner = { v: 1, kind: 'workspace_sync_target_request_v1', machineId: writer.id,
-                        installationId: writer.installationId, method, routing: sourceRouting,
+                // The live SOURCE packet is sealed to its installed SOURCE endpoint
+                // (child by default, or an independently shared hub controller). Home
+                // binds readable V1 Root paths independently of opaque params.
+                const sealSourceParams = (sourceInput: typeof input, sourceRouting: typeof source,
+                    recipient: typeof child = child, recipientKey: typeof childKey = childKey, selectedMethod = method) => {
+                    const inner = { v: 1, kind: 'workspace_sync_target_request_v1', machineId: recipient.id,
+                        installationId: recipient.installationId, method: selectedMethod, routing: sourceRouting,
                         replyPublicKey: Buffer.from(deriveBoxPublicKeyFromSeed(tweetnacl.randomBytes(32))).toString('base64url'),
-                        rpc: { v: 2, k: 'req', m: method, c: randomBytes(16).toString('hex'), p: sourceInput } };
-                    const bundle = sealBoxBundle({ recipientPublicKey: deriveBoxPublicKeyFromEd25519PublicKey(writerKey.publicKey),
+                        rpc: { v: 2, k: 'req', m: selectedMethod, c: randomBytes(16).toString('hex'), p: sourceInput } };
+                    const bundle = sealBoxBundle({ recipientPublicKey: deriveBoxPublicKeyFromEd25519PublicKey(recipientKey.publicKey),
                         randomBytes: tweetnacl.randomBytes, plaintext: new TextEncoder().encode(JSON.stringify(inner)) });
-                    const opened = openBoxBundleWithSecretKey({ bundle, recipientSecretKey: deriveBoxSecretKeyFromSeed(writerKey.secretKey.subarray(0, 32)) });
+                    const opened = openBoxBundleWithSecretKey({ bundle, recipientSecretKey: deriveBoxSecretKeyFromSeed(recipientKey.secretKey.subarray(0, 32)) });
                     expect(opened).not.toBeNull();
                     if (!opened) throw new Error('The installed SOURCE owner must decrypt the genuine packet');
                     expect(JSON.parse(new TextDecoder().decode(opened))).toEqual(inner);
-                    return JSON.stringify({ v: 1, kind: 'workspace_sync_target_request_v1', machineId: writer.id,
-                        installationId: writer.installationId, ciphertext: Buffer.from(bundle).toString('base64url') });
+                    return JSON.stringify({ v: 1, kind: 'workspace_sync_target_request_v1', machineId: recipient.id,
+                        installationId: recipient.installationId, ciphertext: Buffer.from(bundle).toString('base64url') });
                 };
                 const sealedSourceParams = sealSourceParams(input, source);
                 const sourceExecution = { ...workspaceSyncSourceExecution, params: sealedSourceParams, externalActionExecution: { ...execution,
@@ -8913,10 +8992,17 @@ describe("external Action execution authorization", () => {
                 const foreignSourceExecution = { ...sourceExecution, externalActionExecution: { ...sourceExecution.externalActionExecution,
                     machineSignature: signExternalActionMachineRpcRequestV1({ ...signedRequest, params: sealedSourceParams,
                         workspaceSyncSourceRouting: source, privateKey: writerKey.secretKey }) } };
+                const writerSealedSourceParams = sealSourceParams(input, source, writer, writerKey, writerMethod);
+                const writerSourceExecution = { ...workspaceSyncSourceExecution, method: writerMethod, params: writerSealedSourceParams,
+                    externalActionExecution: { ...execution, machineSignature: signExternalActionMachineRpcRequestV1({ ...signedRequest,
+                        method: writerMethod, params: writerSealedSourceParams, workspaceSyncSourceRouting: source,
+                        privateKey: targetKey.secretKey }) } };
                 const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, source,
-                    sourceWriter: { machineId: writer.id, installationId: writer.installationId! },
+                    sourceWriter: { machineId: child.id, installationId: child.installationId! },
                     target: { v: 1, phase: seed ? 'prepare' : 'preflight', operationId: crypto.randomUUID(), accountServerId: homeId,
                         targetMachineId: target.id, targetRootPath: targetRef.rootPath } });
+                const writerHubRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...routing,
+                    sourceWriter: { machineId: writer.id, installationId: writer.installationId! } });
                 const sourceContext = routing.source.sourceContext;
                 const targetAdmission = await resolveMachineAdmission({ actorAccountId: fixture.account.id, machineId: target.id, requiredRole: 'use' });
                 expect(targetAdmission).toMatchObject({ kind: 'admitted', role: 'use' });
@@ -8931,38 +9017,49 @@ describe("external Action execution authorization", () => {
                 const targetToken = await auth.createToken(targetCustodian.id, undefined, boundary === 'Seed terminal Socket'
                     ? { kind: 'terminal', authority: 'account_automation' } : { kind: 'account', authority: 'present_user' });
                 if (seed) {
-                    // Native child storage and an ordinary D export from D itself,
-                    // not its controller. The same Root/actor/seed fence still applies.
-                    const seedSigner = seedOwnTarget ? target : parent;
-                    const seedSignerKey = seedOwnTarget ? targetKey : parentKey;
-                    const wrongSeedSignerKey = seedOwnTarget ? parentKey : targetKey;
+                    // Every workspace endpoint (bind, child, ordinary) exports directly
+                    // from D itself; host-bind controller forwarding is refused.
+                    void seedOwnTarget;
+                    const seedSigner = target;
+                    const seedSignerKey = targetKey;
+                    const wrongSeedSignerKey = parentKey;
                     const workspaceSyncSeedRouting = { v: 1 as const, sourceWriterTarget: routing, target: targetRouting };
-                    const seedMethod = `${writer.id}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`;
+                    const writerSeedRouting = { v: 1 as const, sourceWriterTarget: writerHubRouting, target: targetRouting };
+                    const seedMethod = `${child.id}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`;
+                    const writerSeedMethod = `${writer.id}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`;
                     const seedInput = { t: 'workspace_sync_seed_v1' as const, operationId: routing.target.operationId,
                         sourceWorkspaceRefId: sourceRef.id, targetMachineId: seedSigner.id,
                         contentPolicy: createFixtureCopyOnceWorkspaceAction().contentPolicy };
                     if (boundary.endsWith('Home')) {
                         const verifySeed = (receiver = false, selectedRouting = workspaceSyncSeedRouting,
-                            packet = sourceExecution, authorization = root, privateKey = receiver ? writerKey.secretKey : seedSignerKey.secretKey) => {
-                            const signer = receiver ? writer : seedSigner;
-                            const rpcAdmission = { context, method: seedMethod, workspaceSyncSeedRouting: selectedRouting,
+                            packet = sourceExecution, authorization = root, privateKey = receiver ? childKey.secretKey : seedSignerKey.secretKey,
+                            selectedSigner = receiver ? child : seedSigner, selectedMethod = seedMethod) => {
+                            const rpcAdmission = { context, method: selectedMethod, workspaceSyncSeedRouting: selectedRouting,
                                 workspaceSyncSourceExecution: packet, callerInputAuthorization: authorization };
-                            const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: signer.id,
-                                installationId: signer.installationId!, accountId: receiver ? sourceCustodian.id : targetCustodian.id, rpcAdmission });
-                            return app.inject({ method: 'POST', url: `/v1/machines/${signer.id}/admission/verify`,
+                            const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: selectedSigner.id,
+                                installationId: selectedSigner.installationId!, accountId: receiver ? sourceCustodian.id : targetCustodian.id, rpcAdmission });
+                            return app.inject({ method: 'POST', url: `/v1/machines/${selectedSigner.id}/admission/verify`,
                                 headers: { authorization: `Bearer ${receiver ? writerToken : targetToken}`, ...currentAccountStoredContentCompatibilityHeaders },
                                 payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
                         };
-                        for (const receiver of [false, true]) {
-                            const admitted = await verifySeed(receiver);
-                            expect(admitted.statusCode, admitted.body).toBe(200);
-                            expect(admitted.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: writer.id,
-                                installationId: writer.installationId, installationPublicKey: Buffer.from(writerKey.publicKey).toString('base64url') } });
-                        }
+                        const targetAdmitted = await verifySeed(false);
+                        expect(targetAdmitted.statusCode, targetAdmitted.body).toBe(200);
+                        expect(targetAdmitted.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: child.id,
+                            installationId: child.installationId, installationPublicKey: Buffer.from(childKey.publicKey).toString('base64url') } });
+                        const receiverAdmitted = await verifySeed(true);
+                        expect(receiverAdmitted.statusCode, receiverAdmitted.body).toBe(200);
+                        expect(receiverAdmitted.json()).toEqual({ v: 1, ok: true, receivingMachineAdmission: context,
+                            destinationInstallation: { machineId: child.id, installationId: child.installationId,
+                                installationPublicKey: Buffer.from(childKey.publicKey).toString('base64url') } });
+                        // Ungranted host-bind controllers on either SOURCE or TARGET are refused.
+                        expect((await verifySeed(true, writerSeedRouting, writerSourceExecution, root, writerKey.secretKey, writer, writerSeedMethod)).statusCode).toBe(403);
+                        expect((await verifySeed(false, workspaceSyncSeedRouting, sourceExecution, root, parentKey.secretKey, parent, seedMethod)).statusCode).toBe(403);
                         for (const role of ['manage', 'use'] as const) {
                             await setReceivingRole(role);
                             for (const receiver of [false, true]) {
-                                const admitted = await verifySeed(receiver);
+                                const admitted = await verifySeed(receiver, writerSeedRouting, writerSourceExecution, root,
+                                    receiver ? writerKey.secretKey : seedSignerKey.secretKey,
+                                    receiver ? writer : seedSigner, writerSeedMethod);
                                 expect(admitted.statusCode, admitted.body).toBe(200);
                                 if (receiver) {
                                     expect(admitted.json()).toMatchObject({ receivingMachineAdmission: receivingAdmission(role) });
@@ -8972,9 +9069,7 @@ describe("external Action execution authorization", () => {
                             }
                         }
                         await setReceivingRole(null);
-                        const withoutReceivingGrant = await verifySeed(true);
-                        expect(withoutReceivingGrant.statusCode, withoutReceivingGrant.body).toBe(200);
-                        expect(withoutReceivingGrant.json()).not.toHaveProperty('receivingMachineAdmission');
+                        expect((await verifySeed(true, writerSeedRouting, writerSourceExecution, root, writerKey.secretKey, writer, writerSeedMethod)).statusCode).toBe(403);
                         if (boundary.startsWith('Seed child')) {
                             const enrollment = await db.managedMachine.findUniqueOrThrow({ where: { enrolledMachineId: target.id } });
                             await db.managedMachine.update({ where: { id: enrollment.id }, data: { archivedAt: new Date() } });
@@ -8996,28 +9091,38 @@ describe("external Action execution authorization", () => {
                     // Only Socket delivery is simulated. The CLI owner separately
                     // proves the existing active seed fence and publication lifecycle.
                     const exportEffect = vi.fn(async (_event: string, _request: unknown) => ({ transferId: 'seed-export' }));
-                    const exportReceiver = { id: 'project-seed-source-writer', data: { clientType: 'machine-scoped', machineId: writer.id,
-                        verifiedMachineInstallationId: writer.installationId }, timeout: () => ({ emitWithAck: exportEffect }) };
+                    const exportReceiver = { id: 'project-seed-source-child', data: { clientType: 'machine-scoped', machineId: child.id,
+                        verifiedMachineInstallationId: child.installationId }, timeout: () => ({ emitWithAck: exportEffect }) };
+                    const writerExportEffect = vi.fn(async (_event: string, _request: unknown) => ({ transferId: 'seed-export-hub' }));
+                    const writerExportReceiver = { id: 'project-seed-source-writer', data: { clientType: 'machine-scoped', machineId: writer.id,
+                        verifiedMachineInstallationId: writer.installationId }, timeout: () => ({ emitWithAck: writerExportEffect }) };
                     qualifyCurrentAccountStoredContentSocket(exportReceiver);
+                    qualifyCurrentAccountStoredContentSocket(writerExportReceiver);
                     const seedIo = createSocketRoomDiscoveryHarness(async room => room === `rpc:${sourceCustodian.id}:${seedMethod}`
-                        || room === exportReceiver.id ? [exportReceiver] : []);
+                        || room === exportReceiver.id ? [exportReceiver]
+                            : room === `rpc:${sourceCustodian.id}:${writerSeedMethod}` || room === writerExportReceiver.id ? [writerExportReceiver] : []);
                     const principal = await auth.verifyTokenForRoute(targetToken);
                     if (!principal) throw new Error('Project seed TARGET credential must authenticate');
                     const seedSocket = Object.assign(createFakeSocket({ id: 'project-physical-target-seed-sender', data: {
-                        clientType: 'machine-scoped', machineId: seedSigner.id, verifiedMachineInstallationId: seedSigner.installationId,
+                        clientType: 'machine-scoped', userId: targetCustodian.id, machineId: seedSigner.id, verifiedMachineInstallationId: seedSigner.installationId,
                         authTokenKind: principal.authTokenKind, authAuthority: principal.authority } }), { handshake: { auth: { token: targetToken } } });
                     qualifyCurrentAccountStoredContentSocket(seedSocket);
                     registerSocketRpcHandlers({ userId: targetCustodian.id, socket: seedSocket as unknown as Socket, io: seedIo });
+                    const parentSeedSocket = Object.assign(createFakeSocket({ id: 'project-ungranted-parent-seed-sender', data: {
+                        clientType: 'machine-scoped', userId: targetCustodian.id, machineId: parent.id, verifiedMachineInstallationId: parent.installationId,
+                        authTokenKind: principal.authTokenKind, authAuthority: principal.authority } }), { handshake: { auth: { token: targetToken } } });
+                    qualifyCurrentAccountStoredContentSocket(parentSeedSocket);
+                    registerSocketRpcHandlers({ userId: targetCustodian.id, socket: parentSeedSocket as unknown as Socket, io: seedIo });
                     const callback = vi.fn();
                     const seedRequestId = crypto.randomUUID();
                     const callSeed = (selectedRouting = workspaceSyncSeedRouting, packet: typeof sourceExecution | null = sourceExecution,
-                        privateKey = seedSignerKey.secretKey) => {
+                        privateKey = seedSignerKey.secretKey, selectedMethod = seedMethod, selectedSocket = seedSocket, selectedSigner = seedSigner) => {
                         const request = { authorizationToken: root.token, effectActionId: 'projects.open', target: root.binding.target,
-                            installationId: seedSigner.installationId!, method: seedMethod, requestId: seedRequestId, params: seedInput,
+                            installationId: selectedSigner.installationId!, method: selectedMethod, requestId: seedRequestId, params: seedInput,
                             workspaceSyncSeedRouting: selectedRouting };
                         const externalActionExecution = { v: 1 as const, authorization: root, effectActionId: 'projects.open', target: root.binding.target,
-                            installationId: seedSigner.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey }) };
-                        return getSocketHandler(seedSocket, SOCKET_RPC_EVENTS.CALL)({ method: seedMethod, requestId: seedRequestId,
+                            installationId: selectedSigner.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey }) };
+                        return getSocketHandler(selectedSocket, SOCKET_RPC_EVENTS.CALL)({ method: selectedMethod, requestId: seedRequestId,
                             params: seedInput, workspaceSyncSeedRouting: selectedRouting, ...(packet ? { workspaceSyncSourceExecution: packet } : {}), externalActionExecution,
                             receivingMachineAdmission: forgedReceivingAdmission }, callback);
                     };
@@ -9026,27 +9131,33 @@ describe("external Action execution authorization", () => {
                     const forwarded = exportEffect.mock.calls[0]?.[1];
                     if (!forwarded || typeof forwarded !== 'object') throw new Error('Source export must receive an admitted request');
                     expect(Reflect.get(forwarded, 'machineAdmission')).toEqual(context);
+                    expect(Reflect.get(forwarded, 'receivingMachineAdmission')).toEqual(context);
                     expect(Reflect.get(forwarded, 'workspaceSyncSeedRouting')).toEqual(workspaceSyncSeedRouting);
                     expect(JSON.stringify(Reflect.get(forwarded, 'workspaceSyncSourceExecution')) === JSON.stringify(sourceExecution)).toBe(true);
                     expectForwardedSeedRoot(forwarded, root);
-                    expect(Reflect.has(forwarded, 'receivingMachineAdmission')).toBe(false);
                     await callSeed(workspaceSyncSeedRouting, null);
                     expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
                     await callSeed(workspaceSyncSeedRouting, foreignSourceExecution);
                     expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
+                    // Ungranted host-bind controllers on either SOURCE or TARGET are refused.
+                    callback.mockClear();
+                    await callSeed(writerSeedRouting, writerSourceExecution, seedSignerKey.secretKey, writerSeedMethod);
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+                    callback.mockClear();
+                    await callSeed(workspaceSyncSeedRouting, sourceExecution, parentKey.secretKey, seedMethod, parentSeedSocket, parent);
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                     for (const role of ['manage', 'use'] as const) {
                         await setReceivingRole(role);
                         callback.mockClear();
-                        await callSeed();
-                        expect(callback).toHaveBeenCalledWith({ ok: true, result: { transferId: 'seed-export' } });
-                        expect(exportEffect.mock.lastCall?.[1]).toMatchObject({ machineAdmission: context,
+                        await callSeed(writerSeedRouting, writerSourceExecution, seedSignerKey.secretKey, writerSeedMethod);
+                        expect(callback).toHaveBeenCalledWith({ ok: true, result: { transferId: 'seed-export-hub' } });
+                        expect(writerExportEffect.mock.lastCall?.[1]).toMatchObject({ machineAdmission: context,
                             receivingMachineAdmission: receivingAdmission(role) });
                     }
                     await setReceivingRole(null);
                     callback.mockClear();
-                    await callSeed();
-                    expect(callback).toHaveBeenCalledWith({ ok: true, result: { transferId: 'seed-export' } });
-                    expect(exportEffect.mock.lastCall?.[1]).not.toHaveProperty('receivingMachineAdmission');
+                    await callSeed(writerSeedRouting, writerSourceExecution, seedSignerKey.secretKey, writerSeedMethod);
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                     exportEffect.mockClear();
                     if (boundary.startsWith('Seed child')) {
                         const enrollment = await db.managedMachine.findUniqueOrThrow({ where: { enrolledMachineId: target.id } });
@@ -9096,23 +9207,23 @@ describe("external Action execution authorization", () => {
                 })() : null;
                 if (boundary === 'B Home') {
                     const verifyTarget = (paired = false, selectedRouting = routing, packet: typeof sourceExecution | null = sourceExecution, authorization = root,
-                        privateKey = paired ? targetKey.secretKey : writerKey.secretKey) => {
-                        const signer = paired ? target : writer;
+                        privateKey = paired ? targetKey.secretKey : childKey.secretKey, selectedSigner = paired ? target : child) => {
                         const rpcAdmission = { context: paired ? targetContext : context, method: paired ? physicalMethod : targetMethod,
                             workspaceSyncSourceWriterTargetRouting: selectedRouting, ...(packet ? { workspaceSyncSourceExecution: packet } : {}),
                             callerInputAuthorization: authorization, ...(paired ? { workspaceSyncTargetRouting: targetRouting } : {}) };
-                        const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: signer.id,
-                            installationId: signer.installationId!, accountId: paired ? targetCustodian.id : sourceCustodian.id, rpcAdmission });
-                        return app.inject({ method: 'POST', url: `/v1/machines/${signer.id}/admission/verify`,
+                        const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: selectedSigner.id,
+                            installationId: selectedSigner.installationId!, accountId: paired ? targetCustodian.id : sourceCustodian.id, rpcAdmission });
+                        return app.inject({ method: 'POST', url: `/v1/machines/${selectedSigner.id}/admission/verify`,
                             headers: { authorization: `Bearer ${paired ? targetToken : writerToken}`, ...currentAccountStoredContentCompatibilityHeaders },
                             payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
                     };
-                    for (const [paired, destination, key] of [[false, target, targetKey], [true, parent, parentKey]] as const) {
-                        const admitted = await verifyTarget(paired);
-                        expect(admitted.statusCode, admitted.body).toBe(200);
-                        expect(admitted.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
-                            installationId: destination.installationId, installationPublicKey: Buffer.from(key.publicKey).toString('base64url') } });
-                    }
+                    const admitted = await verifyTarget(false);
+                    expect(admitted.statusCode, admitted.body).toBe(200);
+                    expect(admitted.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: target.id,
+                        installationId: target.installationId, installationPublicKey: Buffer.from(targetKey.publicKey).toString('base64url') } });
+                    // Host-bind forwarding to ungranted controllers on TARGET or SOURCE is refused.
+                    expect((await verifyTarget(true)).statusCode).toBe(403);
+                    expect((await verifyTarget(false, writerHubRouting, writerSourceExecution, root, writerKey.secretKey, writer)).statusCode).toBe(403);
                     if (reviewedPurpose) {
                         for (const paired of [false, true]) expect((await verifyTarget(paired, reviewedPurpose.routing,
                             reviewedPurpose.packet, reviewedPurpose.authorization)).statusCode).toBe(403);
@@ -9124,7 +9235,7 @@ describe("external Action execution authorization", () => {
                     expect((await verifyTarget(false, { ...routing, source: { ...source, sourceContext: { ...source.sourceContext,
                         machineAdmission: { ...context, role: 'manage' } } } })).statusCode).toBe(403);
                     expect((await verifyTarget(false, { ...routing, target: { ...routing.target, targetMachineId: writer.id } })).statusCode).toBe(403);
-                    expect((await verifyTarget(false, { ...routing, target: { ...routing.target, targetRootPath: '/child/other' } })).statusCode).toBe(403);
+                    if (version === 1) expect((await verifyTarget(false, { ...routing, target: { ...routing.target, targetRootPath: '/child/other' } })).statusCode).toBe(403);
                     expect((await verifyTarget(false, routing, sourceExecution, { ...root, token: 'forged-root' })).statusCode).toBe(403);
                     await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
                         principal: { kind: 'account', accountId: fixture.account.id } }));
@@ -9142,52 +9253,57 @@ describe("external Action execution authorization", () => {
                 const bIo = createSocketRoomDiscoveryHarness(async room => room === `rpc:${targetCustodian.id}:${targetMethod}`
                     || room === firstReceiver.id ? [firstReceiver]
                         : room === `rpc:${targetCustodian.id}:${physicalMethod}` || room === secondReceiver.id ? [secondReceiver] : []);
-                const makeSender = (paired: boolean) => {
-                    const signer = paired ? target : writer;
-                    const socket = Object.assign(createFakeSocket({ id: paired ? 'project-b-target-sender' : 'project-b-source-writer',
-                        data: { clientType: 'machine-scoped', machineId: signer.id, verifiedMachineInstallationId: signer.installationId,
+                const makeSender = (signer: typeof child, id: string, custodianId: string, signerToken: string) => {
+                    const socket = Object.assign(createFakeSocket({ id,
+                        data: { clientType: 'machine-scoped', userId: custodianId, machineId: signer.id, verifiedMachineInstallationId: signer.installationId,
                             authTokenKind: 'account', authAuthority: 'present_user' } }),
-                        { handshake: { auth: { token: paired ? targetToken : writerToken } } });
+                        { handshake: { auth: { token: signerToken } } });
                     qualifyCurrentAccountStoredContentSocket(socket);
-                    registerSocketRpcHandlers({ userId: paired ? targetCustodian.id : sourceCustodian.id, socket: socket as unknown as Socket, io: bIo });
+                    registerSocketRpcHandlers({ userId: custodianId, socket: socket as unknown as Socket, io: bIo });
                     return socket;
                 };
-                const writerSocket = makeSender(false);
-                const targetSocket = makeSender(true);
+                const childSenderSocket = makeSender(child, 'project-b-source-child', sourceCustodian.id, writerToken);
+                const writerSenderSocket = makeSender(writer, 'project-b-ungranted-writer', sourceCustodian.id, writerToken);
+                const targetSocket = makeSender(target, 'project-b-target-sender', targetCustodian.id, targetToken);
                 const callback = vi.fn();
                 const bRequestId = crypto.randomUUID();
                 const callTarget = (paired = false, selectedRouting = routing, packet: typeof sourceExecution | null = sourceExecution,
-                    privateKey = paired ? targetKey.secretKey : writerKey.secretKey, authorization = root) => {
-                    const signer = paired ? target : writer;
+                    privateKey = paired ? targetKey.secretKey : childKey.secretKey, authorization = root,
+                    selectedSigner = paired ? target : child, selectedSocket = paired ? targetSocket : childSenderSocket) => {
                     const selectedMethod = paired ? physicalMethod : targetMethod;
                     const externalActionExecution = { v: 1 as const, authorization, effectActionId: 'projects.open', target: authorization.binding.target,
-                        installationId: signer.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
-                            effectActionId: 'projects.open', target: authorization.binding.target, installationId: signer.installationId!, method: selectedMethod,
+                        installationId: selectedSigner.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                            effectActionId: 'projects.open', target: authorization.binding.target, installationId: selectedSigner.installationId!, method: selectedMethod,
                             requestId: bRequestId, params: targetInput, workspaceSyncSourceWriterTargetRouting: selectedRouting, privateKey }) };
-                    return getSocketHandler(paired ? targetSocket : writerSocket, SOCKET_RPC_EVENTS.CALL)({ method: selectedMethod,
+                    return getSocketHandler(selectedSocket, SOCKET_RPC_EVENTS.CALL)({ method: selectedMethod,
                         requestId: bRequestId, params: targetInput, externalActionExecution, workspaceSyncSourceWriterTargetRouting: selectedRouting,
                         ...(packet ? { workspaceSyncSourceExecution: packet } : {}), ...(paired ? { workspaceSyncTargetRouting: targetRouting } : {}) }, callback);
                 };
-                for (const paired of [false, true]) {
-                    callback.mockClear();
-                    await callTarget(paired);
-                    const accepted = callback.mock.calls[0]?.[0]?.ok === true;
-                    const diagnostic = accepted ? { paired, version, boundary } : { paired, version, boundary,
-                        rootVerified: Boolean(await auth.verifyExternalActionExecutionAuthorization(root.token)),
-                        signerCredentialVerified: Boolean(await auth.verifyToken(paired ? targetToken : writerToken)),
-                        originalSourceVerified: Boolean(await readCurrentWorkspaceSyncProjectSourceAuthorization(root, source, writer.id)),
-                        principalVerified: Boolean(await verifyCurrentExternalActionPrincipal(root.binding)),
-                    };
-                    expect(callback, JSON.stringify(diagnostic)).toHaveBeenCalledWith({ ok: true, result: { type: 'not_required' } });
-                    expect((paired ? secondDelivery : firstDelivery).mock.calls[0]?.[1]).toMatchObject({ machineAdmission: targetContext,
-                        callerAuthority: sourceContext.callerAuthority,
-                        callerInputAuthorization: root, workspaceSyncSourceWriterTargetRouting: routing, workspaceSyncSourceExecution: sourceExecution });
-                }
+                callback.mockClear();
+                await callTarget(false);
+                const accepted = callback.mock.calls[0]?.[0]?.ok === true;
+                const diagnostic = accepted ? { paired: false, version, boundary } : { paired: false, version, boundary,
+                    rootVerified: Boolean(await auth.verifyExternalActionExecutionAuthorization(root.token)),
+                    signerCredentialVerified: Boolean(await auth.verifyToken(writerToken)),
+                    originalSourceVerified: Boolean(await readCurrentWorkspaceSyncProjectSourceAuthorization(root, source, child.id)),
+                    principalVerified: Boolean(await verifyCurrentExternalActionPrincipal(root.binding)),
+                };
+                expect(callback, JSON.stringify(diagnostic)).toHaveBeenCalledWith({ ok: true, result: { type: 'not_required' } });
+                expect(firstDelivery.mock.calls[0]?.[1]).toMatchObject({ machineAdmission: targetContext,
+                    callerAuthority: sourceContext.callerAuthority,
+                    callerInputAuthorization: root, workspaceSyncSourceWriterTargetRouting: routing, workspaceSyncSourceExecution: sourceExecution });
+                // Host-bind forwarding to ungranted controllers on TARGET or SOURCE is refused.
+                callback.mockClear();
+                await callTarget(true);
+                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+                callback.mockClear();
+                await callTarget(false, writerHubRouting, writerSourceExecution, writerKey.secretKey, root, writer, writerSenderSocket);
+                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                 if (reviewedPurpose) {
                     for (const paired of [false, true]) {
                         callback.mockClear();
                         await callTarget(paired, reviewedPurpose.routing, reviewedPurpose.packet,
-                            paired ? targetKey.secretKey : writerKey.secretKey, reviewedPurpose.authorization);
+                            paired ? targetKey.secretKey : childKey.secretKey, reviewedPurpose.authorization);
                         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                     }
                 }
@@ -9195,7 +9311,7 @@ describe("external Action execution authorization", () => {
                     { ...routing, source: { ...source, sourceRootPath: '/child/other' } },
                     { ...routing, source: { ...source, sourceContext: { ...source.sourceContext, workspaceWrites: 'deny' as const } } },
                     { ...routing, target: { ...routing.target, targetMachineId: writer.id } },
-                    { ...routing, target: { ...routing.target, targetRootPath: '/child/other' } },
+                    ...(version === 1 ? [{ ...routing, target: { ...routing.target, targetRootPath: '/child/other' } }] : []),
                 ]) {
                     callback.mockClear();
                     await callTarget(false, altered);
@@ -9211,15 +9327,15 @@ describe("external Action execution authorization", () => {
                 await callTarget(true, routing, sourceExecution, parentKey.secretKey);
                 expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                 expect(firstDelivery).toHaveBeenCalledTimes(1);
-                expect(secondDelivery).toHaveBeenCalledTimes(1);
+                expect(secondDelivery).toHaveBeenCalledTimes(0);
                 return;
             }
             if (boundary === 'Socket') {
                 const targetToken = await auth.createToken(targetCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
-                const makeSocket = (machine: typeof target, id: string, token: string) => Object.assign(createFakeSocket({ id,
-                    data: { clientType: 'machine-scoped', machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
+                const makeSocket = (machine: typeof target, id: string, token: string, userId: string) => Object.assign(createFakeSocket({ id,
+                    data: { clientType: 'machine-scoped', userId, machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
                         authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token } } });
-                const socket = makeSocket(target, 'actual-installed-project-target', targetToken);
+                const socket = makeSocket(target, 'actual-installed-project-target', targetToken, targetCustodian.id);
                 qualifyCurrentAccountStoredContentSocket(socket);
                 registerSocketRpcHandlers({ userId: targetCustodian.id, socket: socket as unknown as Socket, io });
                 const callback = vi.fn();
@@ -9251,34 +9367,39 @@ describe("external Action execution authorization", () => {
                 await callProject(null);
                 expect(callback).toHaveBeenCalledWith({ ok: true, result: { kind: 'opened' } });
                 expect(projectDelivered.mock.calls[1]?.[1]).not.toHaveProperty('originalActionEnvelope');
-                expect(projectDelivered.mock.calls[1]?.[1]).not.toHaveProperty('callerInputAuthorization');
+                expect(projectDelivered.mock.calls[1]?.[1]).toMatchObject({ callerInputAuthorization: root });
                 callback.mockClear();
-                const call = (selectedSocket = socket, externalActionExecution = execution, routing = workspaceSyncSourceRouting) =>
-                    getSocketHandler(selectedSocket, SOCKET_RPC_EVENTS.CALL)({ method, requestId: originalTransportRequestId,
+                const call = (selectedSocket = socket, externalActionExecution = execution, routing = workspaceSyncSourceRouting,
+                    selectedMethod = method) =>
+                    getSocketHandler(selectedSocket, SOCKET_RPC_EVENTS.CALL)({ method: selectedMethod, requestId: originalTransportRequestId,
                         params: input, externalActionExecution, workspaceSyncSourceRouting: routing,
                         receivingMachineAdmission: forgedReceivingAdmission }, callback);
+                const writerExecution = { ...execution, machineSignature: signExternalActionMachineRpcRequestV1({ ...signedRequest,
+                    method: writerMethod, privateKey: targetKey.secretKey }) };
                 await call();
                 expect(callback).toHaveBeenCalledWith({ ok: true, result: { kind: 'materialized' } });
-                expect(delivered.mock.calls[0]?.[1]).toMatchObject({ machineAdmission: context, callerAuthority: 'present_user',
-                    callerInputAuthorization: root, workspaceSyncSourceRouting, workspaceSyncSourceExecution });
-                expect(delivered.mock.calls[0]?.[1]).not.toHaveProperty('receivingMachineAdmission');
+                expect(delivered.mock.calls[0]?.[1]).toMatchObject({ machineAdmission: context, receivingMachineAdmission: context,
+                    callerAuthority: 'present_user', callerInputAuthorization: root, workspaceSyncSourceRouting, workspaceSyncSourceExecution });
                 const forwarded = delivered.mock.calls[0]?.[1];
                 expect(forwarded).toHaveProperty('requestId');
                 if (!forwarded || typeof forwarded !== 'object' || !('requestId' in forwarded)) throw new Error('Relay request correlation required');
                 expect(forwarded.requestId).not.toBe(originalTransportRequestId);
+                // Ungranted host-bind controller cannot receive forwarded SOURCE materialization.
+                callback.mockClear();
+                await call(socket, writerExecution, workspaceSyncSourceRouting, writerMethod);
+                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                 for (const role of ['manage', 'use'] as const) {
                     await setReceivingRole(role);
                     callback.mockClear();
-                    await call();
+                    await call(socket, writerExecution, workspaceSyncSourceRouting, writerMethod);
                     expect(callback).toHaveBeenCalledWith({ ok: true, result: { kind: 'materialized' } });
-                    expect(delivered.mock.lastCall?.[1]).toMatchObject({ machineAdmission: context,
+                    expect(writerDelivered.mock.lastCall?.[1]).toMatchObject({ machineAdmission: context,
                         receivingMachineAdmission: receivingAdmission(role) });
                 }
                 await setReceivingRole(null);
                 callback.mockClear();
-                await call();
-                expect(callback).toHaveBeenCalledWith({ ok: true, result: { kind: 'materialized' } });
-                expect(delivered.mock.lastCall?.[1]).not.toHaveProperty('receivingMachineAdmission');
+                await call(socket, writerExecution, workspaceSyncSourceRouting, writerMethod);
+                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                 delivered.mockClear();
                 callback.mockClear();
                 await call(socket, { ...execution, machineSignature: signExternalActionMachineRpcRequestV1({ ...signedRequest, privateKey: childKey.secretKey }) });
@@ -9287,7 +9408,7 @@ describe("external Action execution authorization", () => {
                 await call(socket, execution, { ...workspaceSyncSourceRouting, sourceRootPath: '/child/unreviewed' });
                 expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
                 const writerToken = await auth.createToken(sourceCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
-                const writerSocket = makeSocket(writer, 'writer-cannot-claim-target-decryption', writerToken);
+                const writerSocket = makeSocket(writer, 'writer-cannot-claim-target-decryption', writerToken, sourceCustodian.id);
                 qualifyCurrentAccountStoredContentSocket(writerSocket);
                 registerSocketRpcHandlers({ userId: sourceCustodian.id, socket: writerSocket as unknown as Socket, io });
                 callback.mockClear();
@@ -9301,66 +9422,69 @@ describe("external Action execution authorization", () => {
                 return;
             }
             const writerToken = await auth.createToken(sourceCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
+            const writerExecution = { ...workspaceSyncSourceExecution, method: writerMethod, externalActionExecution: { ...execution,
+                machineSignature: signExternalActionMachineRpcRequestV1({ ...signedRequest, method: writerMethod, privateKey: targetKey.secretKey }) } };
             // Independent Home input: the existing public signer and real D
             // installation create this packet. Socket capture is proved above,
             // not inferred from this boundary fixture.
-            const verify = (routing = workspaceSyncSourceRouting, authorization = root, privateKey = writerKey.secretKey,
-                sourceExecution = workspaceSyncSourceExecution) => {
-                const rpcAdmission = { context, method, workspaceSyncSourceRouting: routing, callerInputAuthorization: authorization,
+            const verify = (routing = workspaceSyncSourceRouting, authorization = root, privateKey = childKey.secretKey,
+                sourceExecution = workspaceSyncSourceExecution, selectedReceiver = child, selectedMethod = method) => {
+                const rpcAdmission = { context, method: selectedMethod, workspaceSyncSourceRouting: routing, callerInputAuthorization: authorization,
                     workspaceSyncSourceExecution: sourceExecution };
-                const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: writer.id,
-                    installationId: writer.installationId!, accountId: sourceCustodian.id, rpcAdmission });
-                return app.inject({ method: 'POST', url: `/v1/machines/${writer.id}/admission/verify`,
+                const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: selectedReceiver.id,
+                    installationId: selectedReceiver.installationId!, accountId: sourceCustodian.id, rpcAdmission });
+                return app.inject({ method: 'POST', url: `/v1/machines/${selectedReceiver.id}/admission/verify`,
                     headers: { authorization: `Bearer ${writerToken}`, ...currentAccountStoredContentCompatibilityHeaders },
                     payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
             };
             // Initial discovery belongs to installed D, before a Socket call
-            // exists. D signs only its own installation proof; no P1 token/key
+            // exists. D signs only its own installation proof; no SOURCE key
             // or purported already-forwarded execution packet is available.
             const targetToken = await auth.createToken(targetCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
             const discoverSource = (routing = workspaceSyncSourceRouting, authorization = root,
-                privateKey = targetKey.secretKey, daemonToken = targetToken) => {
-                const rpcAdmission = { context, method, workspaceSyncSourceRouting: routing, callerInputAuthorization: authorization };
+                privateKey = targetKey.secretKey, daemonToken = targetToken, selectedMethod = method) => {
+                const rpcAdmission = { context, method: selectedMethod, workspaceSyncSourceRouting: routing, callerInputAuthorization: authorization };
                 const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: target.id,
                     installationId: target.installationId!, accountId: targetCustodian.id, rpcAdmission });
                 return app.inject({ method: 'POST', url: `/v1/machines/${target.id}/admission/verify`,
                     headers: { authorization: `Bearer ${daemonToken}`, ...currentAccountStoredContentCompatibilityHeaders },
                     payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
             };
-            const sourceDestination = { machineId: writer.id, installationId: writer.installationId,
-                installationPublicKey: Buffer.from(writerKey.publicKey).toString('base64url') };
+            const sourceDestination = { machineId: child.id, installationId: child.installationId,
+                installationPublicKey: Buffer.from(childKey.publicKey).toString('base64url') };
             const discovered = await discoverSource();
             expect(discovered.statusCode, discovered.body).toBe(200);
-            expect(discovered.json()).toEqual({ v: 1, ok: true, destinationInstallation: sourceDestination });
+            expect(discovered.json()).toEqual({ v: 1, ok: true, receivingMachineAdmission: context, destinationInstallation: sourceDestination });
+            expect((await discoverSource(workspaceSyncSourceRouting, root, targetKey.secretKey, targetToken, writerMethod)).statusCode).toBe(403);
             expect((await discoverSource(workspaceSyncSourceRouting, root, writerKey.secretKey)).statusCode).toBe(403);
             expect((await discoverSource(workspaceSyncSourceRouting, root, targetKey.secretKey, writerToken)).statusCode).toBe(403);
-            expect((await discoverSource({ ...workspaceSyncSourceRouting, sourceRootPath: '/child/other' })).statusCode).toBe(403);
+            if (version === 1) expect((await discoverSource({ ...workspaceSyncSourceRouting, sourceRootPath: '/child/other' })).statusCode).toBe(403);
             expect((await discoverSource({ ...workspaceSyncSourceRouting, sourceContext: { ...workspaceSyncSourceRouting.sourceContext,
                 machineAdmission: { ...context, role: 'manage' } } })).statusCode).toBe(403);
             expect((await discoverSource(workspaceSyncSourceRouting, { ...root, token: 'not-a-home-issued-root' })).statusCode).toBe(403);
             const verified = await verify();
             expect(verified.statusCode, verified.body).toBe(200);
-            expect(verified.json()).toEqual({ v: 1, ok: true, destinationInstallation: {
-                machineId: writer.id, installationId: writer.installationId,
-                installationPublicKey: Buffer.from(writerKey.publicKey).toString('base64url'),
-            } });
+            expect(verified.json()).toEqual({ v: 1, ok: true, receivingMachineAdmission: context, destinationInstallation: sourceDestination });
+            expect((await verify(workspaceSyncSourceRouting, root, writerKey.secretKey, writerExecution, writer, writerMethod)).statusCode).toBe(403);
             for (const role of ['manage', 'use'] as const) {
                 await setReceivingRole(role);
-                for (const admitted of [await discoverSource(), await verify()]) {
+                for (const admitted of [
+                    await discoverSource(workspaceSyncSourceRouting, root, targetKey.secretKey, targetToken, writerMethod),
+                    await verify(workspaceSyncSourceRouting, root, writerKey.secretKey, writerExecution, writer, writerMethod),
+                ]) {
                     expect(admitted.statusCode, admitted.body).toBe(200);
                     expect(admitted.json()).toMatchObject({ receivingMachineAdmission: receivingAdmission(role) });
                 }
             }
             await setReceivingRole(null);
-            const withoutReceivingGrant = await verify();
-            expect(withoutReceivingGrant.statusCode, withoutReceivingGrant.body).toBe(200);
-            expect(withoutReceivingGrant.json()).not.toHaveProperty('receivingMachineAdmission');
+            expect((await verify(workspaceSyncSourceRouting, root, writerKey.secretKey, writerExecution, writer, writerMethod)).statusCode).toBe(403);
+            expect((await discoverSource(workspaceSyncSourceRouting, root, targetKey.secretKey, targetToken, writerMethod)).statusCode).toBe(403);
             expect((await verify(workspaceSyncSourceRouting, root, targetKey.secretKey)).statusCode).toBe(403);
             expect((await verify({ ...workspaceSyncSourceRouting, sourceRootPath: '/child/other' })).statusCode).toBe(403);
             expect((await verify(workspaceSyncSourceRouting, { ...root, token: 'not-a-home-issued-root' })).statusCode).toBe(403);
-            expect((await verify(workspaceSyncSourceRouting, root, writerKey.secretKey, { ...workspaceSyncSourceExecution,
+            expect((await verify(workspaceSyncSourceRouting, root, childKey.secretKey, { ...workspaceSyncSourceExecution,
                 requestId: root.binding.requestId })).statusCode).toBe(403);
-            expect((await verify(workspaceSyncSourceRouting, root, writerKey.secretKey, { ...workspaceSyncSourceExecution,
+            expect((await verify(workspaceSyncSourceRouting, root, childKey.secretKey, { ...workspaceSyncSourceExecution,
                 externalActionExecution: { ...execution, machineSignature: signExternalActionMachineRpcRequestV1({ ...signedRequest, privateKey: childKey.secretKey }) } })).statusCode).toBe(403);
             expect((await verify({ ...workspaceSyncSourceRouting, sourceContext: { ...workspaceSyncSourceRouting.sourceContext,
                 machineAdmission: { ...context, role: 'manage' } } })).statusCode).toBe(403);
@@ -9947,22 +10071,21 @@ describe("external Action execution authorization", () => {
                     headers: { authorization: `Bearer ${accountToken}`, ...currentAccountStoredContentCompatibilityHeaders },
                     payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
             };
-            const response = await verify();
-            expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toEqual({ v: 1, ok: true });
-            expect((await verify({ ...root, token: 'forged-root-token' })).statusCode).toBe(403);
-            expect((await verify({ ...root, binding: { ...root.binding, requestEnvelopeDigest: 'a'.repeat(43) } })).statusCode).toBe(403);
-            expect((await verify(root, { ...routing, operationId: crypto.randomUUID() })).statusCode).toBe(403);
-            expect((await verify(root, { ...routing, sourceSessionId: 'substituted-session' })).statusCode).toBe(403);
-            expect((await verify(root, { ...routing, sourceRootPath: '/child/other' })).statusCode).toBe(403);
             if (!routing.sourceContext) throw new Error('Original SOURCE context required');
-            expect((await verify(root, { ...routing, sourceContext: { ...routing.sourceContext,
-                machineAdmission: { ...context, actorAccountId: anotherActor.id } } })).statusCode).toBe(403);
-            expect((await verify(root, { ...routing, sourceContext: { ...routing.sourceContext,
-                callerInputConstraints: { models: null, permissionModes: null } } })).statusCode).toBe(403);
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization({ ...root, token: 'forged-root-token' }, routing)).toBeNull();
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization({ ...root,
+                binding: { ...root.binding, requestEnvelopeDigest: 'a'.repeat(43) } }, routing)).toBeNull();
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, { ...routing, operationId: crypto.randomUUID() })).toBeNull();
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, { ...routing, sourceSessionId: 'substituted-session' })).toBeNull();
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, { ...routing, sourceContext: { ...routing.sourceContext,
+                machineAdmission: { ...context, actorAccountId: anotherActor.id } } })).toBeNull();
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, { ...routing, sourceContext: { ...routing.sourceContext,
+                callerInputConstraints: { models: null, permissionModes: null } } })).toBeNull();
+            // Former host-bind forwarding cannot admit new prepare work on the parent controller.
+            expect((await verify()).statusCode).toBe(403);
             expect((await verify(root, routing, childKey.secretKey)).statusCode).toBe(403);
             const sourceSocket = Object.assign(createFakeSocket({ id: 'still-installed-source-guest', data: {
-                clientType: 'machine-scoped', machineId: child.id, verifiedMachineInstallationId: child.installationId,
+                clientType: 'machine-scoped', userId: custodian.id, machineId: child.id, verifiedMachineInstallationId: child.installationId,
                 authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token: accountToken } } });
             qualifyCurrentAccountStoredContentSocket(sourceSocket);
             registerSocketRpcHandlers({ userId: custodian.id, socket: sourceSocket as unknown as Socket, io, sessionPublisherPresence: presence });
@@ -9974,10 +10097,10 @@ describe("external Action execution authorization", () => {
             const callback = vi.fn();
             await getSocketHandler(sourceSocket, SOCKET_RPC_EVENTS.CALL)({ method, requestId: root.binding.requestId, params,
                 externalActionExecution: execution, workspaceSyncSourceRouting: routing }, callback);
-            expect(callback).toHaveBeenCalledWith({ ok: true, result: { success: true } });
-            expect(delivered.mock.calls[0]?.[1]).toMatchObject({ callerInputAuthorization: root, workspaceSyncSourceRouting: routing });
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(delivered).not.toHaveBeenCalled();
             await auth.revokeApiToken({ accountId: fixture.account.id, tokenId: pat.tokenId });
-            expect((await verify()).statusCode).toBe(200);
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing)).not.toBeNull();
             await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: child.id,
                 principal: { kind: 'account', accountId: fixture.account.id } }));
             // The real replacement writer clears this inverse/native observation
@@ -9987,13 +10110,17 @@ describe("external Action execution authorization", () => {
             // Only the current custodian's retained release purpose survives:
             // no retired borrower bearer or restored effect permission.
             const releaseRouting = { ...routing, phase: 'abort' as const };
-            expect((await verify(null, releaseRouting)).statusCode).toBe(200);
+            const releaseVerified = await verify(null, releaseRouting);
+            expect(releaseVerified.statusCode, releaseVerified.body).toBe(200);
+            expect(releaseVerified.json()).toEqual({ v: 1, ok: true });
+            expect((await verify(null, releaseRouting, childKey.secretKey)).statusCode).toBe(403);
+            expect((await verify(root, releaseRouting)).statusCode).toBe(403);
             callback.mockClear();
             await getSocketHandler(sourceSocket, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-retained-source-abort',
                 workspaceSyncSourceRouting: releaseRouting }, callback);
             expect(callback).toHaveBeenCalledWith({ ok: true, result: { success: true } });
-            expect(delivered.mock.calls[1]?.[1]).toMatchObject({ machineAdmission: context, workspaceSyncSourceRouting: releaseRouting });
-            expect(delivered.mock.calls[1]?.[1]).not.toHaveProperty('callerInputAuthorization');
+            expect(delivered.mock.calls[0]?.[1]).toMatchObject({ machineAdmission: context, workspaceSyncSourceRouting: releaseRouting });
+            expect(delivered.mock.calls[0]?.[1]).not.toHaveProperty('callerInputAuthorization');
             callback.mockClear();
             await getSocketHandler(sourceSocket, SOCKET_RPC_EVENTS.CALL)({ method, params,
                 workspaceSyncSourceRouting: routing }, callback);
@@ -10003,7 +10130,7 @@ describe("external Action execution authorization", () => {
             await getSocketHandler(sourceSocket, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-retained-source-abort',
                 workspaceSyncSourceRouting: releaseRouting }, callback);
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            expect(delivered).toHaveBeenCalledTimes(2);
+            expect(delivered).toHaveBeenCalledTimes(1);
         } finally { await app.close(); }
     });
 
@@ -10011,6 +10138,10 @@ describe("external Action execution authorization", () => {
         const envBefore = snapshotEnv();
         let restoreFetch: (() => void) | undefined;
         const fixture = await createFixture({ qualifiedPat: false });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: {
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const childKey = tweetnacl.sign.keyPair();
         const parentKey = tweetnacl.sign.keyPair();
@@ -10073,13 +10204,24 @@ describe("external Action execution authorization", () => {
                 accountServerId: homeId, sourceMachineId: child.id, sourceRootPath: '/child/source', sourceSessionId: session.id,
                 sourceContext: { machineAdmission: context, callerAuthority: 'account_automation', sessionActionOrigin: origin,
                     callerPermissionMode: origin.callerPermissionMode, causalPermissionAuthority: origin.causalPermissionAuthority } });
-            const rpcAdmission = { context, method: `${parent.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`,
+            const hostForwardAdmission = { context, method: `${parent.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`,
                 workspaceSyncSourceRouting: routing, callerInputAuthorization: root };
-            const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: parent.id,
-                installationId: parent.installationId!, accountId: custodian.id, rpcAdmission });
-            const verify = () => app.inject({ method: 'POST', url: `/v1/machines/${parent.id}/admission/verify`,
+            const hostForwardPayload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: parent.id,
+                installationId: parent.installationId!, accountId: custodian.id, rpcAdmission: hostForwardAdmission });
+            expect((await app.inject({ method: 'POST', url: `/v1/machines/${parent.id}/admission/verify`,
                 headers: { authorization: `Bearer ${custodianToken}`, ...currentAccountStoredContentCompatibilityHeaders },
-                payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey: parentKey.secretKey }) } });
+                payload: { v: 1, ...hostForwardAdmission, proof: signMachineInstallationProof({ payload: hostForwardPayload, privateKey: parentKey.secretKey }) } })).statusCode).toBe(403);
+            const writerRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, source: routing,
+                sourceWriter: { machineId: child.id, installationId: child.installationId! },
+                target: { v: 1, phase: 'preflight', operationId: crypto.randomUUID(), accountServerId: homeId,
+                    targetMachineId: fixture.machine.id, targetRootPath: '/target' } });
+            const rpcAdmission = { context, method: `${fixture.machine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`,
+                workspaceSyncSourceWriterTargetRouting: writerRouting, callerInputAuthorization: root };
+            const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: child.id,
+                installationId: child.installationId!, accountId: custodian.id, rpcAdmission });
+            const verify = () => app.inject({ method: 'POST', url: `/v1/machines/${child.id}/admission/verify`,
+                headers: { authorization: `Bearer ${custodianToken}`, ...currentAccountStoredContentCompatibilityHeaders },
+                payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey: childKey.secretKey }) } });
             const current = await verify();
             expect(current.statusCode, current.body).toBe(200);
             expect(await resolvePublisher({ accountId: fixture.account.id, sessionId: session.id })).toBe(child.id);
@@ -10155,10 +10297,14 @@ describe("external Action execution authorization", () => {
         } });
         await createRow(child, writer, sourceCustodian.id, '/child/source', '/parent/source');
         const targetRow = await createRow(target, parent, targetCustodian.id, '/child/target', '/parent/target');
-        const retainedTarget = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: homeId,
+        expect(await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: homeId,
             childMachineId: target.id, childRootPath: '/child/target', parentMachineId: parent.id, releaseOnly: false,
             operation: { actorAccountId: fixture.account.id, callerAuthority: 'present_user',
-                rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT } });
+                rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT } })).toBeNull();
+        const retainedTarget = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, { accountServerId: homeId,
+            childMachineId: target.id, childRootPath: '/child/target', parentMachineId: parent.id, releaseOnly: true,
+            operation: { actorAccountId: fixture.account.id, callerAuthority: 'present_user',
+                rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE } });
         expect(retainedTarget).toMatchObject({ parentInstallationId: parent.installationId });
         if (!retainedTarget) throw new Error('Canonical physical target must be captured before retirement');
         const session = await db.session.create({ data: { accountId: fixture.account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
@@ -10246,7 +10392,7 @@ describe("external Action execution authorization", () => {
             }
             const writerToken = await auth.createToken(sourceCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
             const makeSocket = (machine: typeof writer, id: string) => Object.assign(createFakeSocket({ id, data: {
-                clientType: 'machine-scoped', machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
+                clientType: 'machine-scoped', userId: sourceCustodian.id, machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
                 authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token: writerToken } } });
             const socket = makeSocket(writer, 'current-source-writer-release');
             qualifyCurrentAccountStoredContentSocket(socket);
@@ -10579,32 +10725,34 @@ describe("external Action execution authorization", () => {
                 installationId: child.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: root.token,
                     effectActionId: 'session.handoff', target: root.binding.target, installationId: child.installationId!, event: SOCKET_RPC_EVENTS.CALL,
                     method: sourceMethod, requestId: root.binding.requestId, params: sourceParams, privateKey: childKey.secretKey }) };
+            // Former host-bind forwarding from child to ungranted parent controller is refused.
             const sourceAck = vi.fn();
             await getSocketHandler(childSocket, SOCKET_RPC_EVENTS.CALL)({ method: sourceMethod, requestId: root.binding.requestId,
                 params: sourceParams, externalActionExecution: sourceExecution, workspaceSyncSourceRouting: sourceRouting }, sourceAck);
-            expect(sourceAck).toHaveBeenCalledWith({ ok: true, result: { prepared: true } });
-            const sourceRequest = sourceEffect.mock.calls[0]?.[1];
-            expect(sourceRequest).toMatchObject({ callerInputAuthorization: root, workspaceSyncSourceRouting: sourceRouting });
-            if (!sourceRequest || typeof sourceRequest !== 'object') throw new Error('Actual physical SOURCE ingress required');
-            const retainedRoot = ExternalActionExecutionAuthorizationV1Schema.parse(Reflect.get(sourceRequest, 'callerInputAuthorization'));
-            const parsedSource = WorkspaceSyncSourceRoutingV1Schema.parse(Reflect.get(sourceRequest, 'workspaceSyncSourceRouting'));
-            const retainedSource = { ...parsedSource, sourceContext: WorkspaceSyncSourceContextV1Schema.parse(parsedSource.sourceContext) };
+            expect(sourceAck).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(sourceEffect).not.toHaveBeenCalled();
+            void sourceRow;
+            const retainedRoot = root;
+            const retainedSource = sourceRouting;
             const target = { v: 1 as const, phase: 'preflight' as const, operationId: crypto.randomUUID(), accountServerId: homeId,
                 targetMachineId: chosenTarget.id, targetRootPath: '/child/target' };
             const workspaceSyncSourceWriterTargetRouting = { v: 1 as const, source: retainedSource, target,
+                sourceWriter: { machineId: child.id, installationId: child.installationId! } };
+            const ungrantedWriterRouting = { ...workspaceSyncSourceWriterTargetRouting,
                 sourceWriter: { machineId: writer.id, installationId: writer.installationId! } };
             const targetParams = HandoffTargetReplacementPreflightV1Schema.parse({ v: 1, serverId: homeId, machineId: chosenTarget.id,
                 operationId: target.operationId, targetPath: target.targetRootPath });
             const request = { authorizationToken: retainedRoot.token, effectActionId: 'session.handoff', target: retainedRoot.binding.target,
-                installationId: writer.installationId!, event: SOCKET_RPC_EVENTS.CALL, method: targetMethod,
+                installationId: child.installationId!, event: SOCKET_RPC_EVENTS.CALL, method: targetMethod,
                 requestId: retainedRoot.binding.requestId, params: targetParams, workspaceSyncSourceWriterTargetRouting };
             const execution = { v: 1 as const, authorization: retainedRoot, effectActionId: 'session.handoff', target: retainedRoot.binding.target,
-                installationId: writer.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey: writerKey.secretKey }) };
-            const writerSocket = createInstalledSocket(writer, 'actual-source-writer');
+                installationId: child.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey: childKey.secretKey }) };
+            const writerSocket = createInstalledSocket(writer, 'ungranted-source-writer');
             qualifyCurrentAccountStoredContentSocket(writerSocket);
             registerSocketRpcHandlers({ userId: sourceCustodian.id, socket: writerSocket as unknown as Socket, io, sessionPublisherPresence: presence });
             const callback = vi.fn();
-            const call = (routing: unknown = workspaceSyncSourceWriterTargetRouting, carrier: unknown = execution) => getSocketHandler(writerSocket, SOCKET_RPC_EVENTS.CALL)({
+            const call = (routing: unknown = workspaceSyncSourceWriterTargetRouting, carrier: unknown = execution,
+                selectedSocket = childSocket) => getSocketHandler(selectedSocket, SOCKET_RPC_EVENTS.CALL)({
                 method: targetMethod, requestId: retainedRoot.binding.requestId, params: targetParams,
                 externalActionExecution: carrier, workspaceSyncSourceWriterTargetRouting: routing }, callback);
             await call();
@@ -10612,6 +10760,14 @@ describe("external Action execution authorization", () => {
             expect(targetEffect.mock.calls[0]?.[1]).toMatchObject({ machineAdmission: originalTargetAdmission,
                 callerAuthority: 'account_automation', callerInputConstraints, workspaceSyncSourceWriterTargetRouting });
             expect(targetEffect.mock.calls[0]?.[1]).not.toHaveProperty('sessionActionOrigin');
+            // Ungranted host-bind controller cannot relay as sourceWriter either.
+            const ungrantedWriterRequest = { ...request, installationId: writer.installationId!,
+                workspaceSyncSourceWriterTargetRouting: ungrantedWriterRouting };
+            const ungrantedWriterExecution = { ...execution, installationId: writer.installationId!,
+                machineSignature: signExternalActionMachineRpcRequestV1({ ...ungrantedWriterRequest, privateKey: writerKey.secretKey }) };
+            callback.mockClear();
+            await call(ungrantedWriterRouting, ungrantedWriterExecution, writerSocket);
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             // The chosen D, not P2 and not the retained P1 source writer, owns
             // the second-hop sender key. Home independently derives the exact
             // physical receiver from the unchanged root and joint routing.
@@ -10628,18 +10784,9 @@ describe("external Action execution authorization", () => {
                     headers: { authorization: `Bearer ${targetCustodianToken}`, ...currentAccountStoredContentCompatibilityHeaders },
                     payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
             };
-            const targetSenderVerified = await verifyTargetSender();
-            expect(targetSenderVerified.statusCode, targetSenderVerified.body).toBe(200);
-            expect(targetSenderVerified.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: targetParent.id,
-                installationId: targetParent.installationId, installationPublicKey: Buffer.from(targetParentKey.publicKey).toString('base64url') } });
+            // Former second-hop host-bind forwarding from chosen D to ungranted P2 is refused on both Home and Socket.
+            expect((await verifyTargetSender()).statusCode).toBe(403);
             expect((await verifyTargetSender(workspaceSyncSourceWriterTargetRouting, jointTargetRouting, writerKey.secretKey)).statusCode).toBe(403);
-            expect((await verifyTargetSender({ ...workspaceSyncSourceWriterTargetRouting,
-                target: { ...target, operationId: 'different-target-loan' } })).statusCode).toBe(403);
-            expect((await verifyTargetSender(workspaceSyncSourceWriterTargetRouting, jointTargetRouting, targetKey.secretKey,
-                `${writer.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`)).statusCode).toBe(403);
-            // Independent Socket boundary input: the current public box primitive
-            // seals the unchanged Target request to P2's installed key. This
-            // exercises opaque signed ingress, not the CLI encoder or loan owner.
             const sealedTargetParams = JSON.stringify({ v: 1, kind: 'workspace_sync_target_request_v1', machineId: targetParent.id,
                 installationId: targetParent.installationId, ciphertext: Buffer.from(sealBoxBundle({
                     recipientPublicKey: deriveBoxPublicKeyFromEd25519PublicKey(targetParentKey.publicKey), randomBytes: tweetnacl.randomBytes,
@@ -10654,9 +10801,7 @@ describe("external Action execution authorization", () => {
                 machineSignature: signExternalActionMachineRpcRequestV1({ ...jointRequest, privateKey: targetKey.secretKey }) };
             expect(await verifyExternalActionMachineRpcExecution(jointExecution, { method: physicalTargetMethod,
                 requestId: jointRequest.requestId, params: sealedTargetParams, workspaceSyncSourceWriterTargetRouting,
-                workspaceSyncTargetRouting: jointTargetRouting, resolveCurrentSessionMachine: resolvePublisher })).toMatchObject({
-                binding: retainedRoot.binding, principal: { accountId: fixture.account.id, authority: 'account_automation' },
-            });
+                workspaceSyncTargetRouting: jointTargetRouting, resolveCurrentSessionMachine: resolvePublisher })).toBeNull();
             const chosenTargetSocket = Object.assign(createFakeSocket({ id: 'actual-chosen-target-second-hop', data: {
                 clientType: 'machine-scoped', userId: targetCustodian.id, machineId: chosenTarget.id, verifiedMachineInstallationId: chosenTarget.installationId,
                 authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token: targetCustodianToken } } });
@@ -10664,78 +10809,36 @@ describe("external Action execution authorization", () => {
             registerSocketRpcHandlers({ userId: targetCustodian.id, socket: chosenTargetSocket as unknown as Socket,
                 io, sessionPublisherPresence: presence });
             const jointCallback = vi.fn();
-            const callJointTarget = (targetRouting: unknown = jointTargetRouting, carrier: unknown = jointExecution,
-                routing: unknown = workspaceSyncSourceWriterTargetRouting) => getSocketHandler(chosenTargetSocket, SOCKET_RPC_EVENTS.CALL)({
-                    method: physicalTargetMethod, requestId: jointRequest.requestId, params: sealedTargetParams,
-                    externalActionExecution: carrier, workspaceSyncSourceWriterTargetRouting: routing,
-                    ...(targetRouting === null ? {} : { workspaceSyncTargetRouting: targetRouting }) }, jointCallback);
-            await callJointTarget();
-            expect(jointCallback).toHaveBeenCalledWith({ ok: true, result: { type: 'not_required' } });
-            expect(physicalTargetEffect.mock.calls[0]?.[1]).toMatchObject({ params: sealedTargetParams,
-                machineAdmission: originalTargetAdmission, callerAuthority: 'account_automation', callerInputConstraints,
-                callerInputAuthorization: retainedRoot, workspaceSyncSourceWriterTargetRouting, workspaceSyncTargetRouting: jointTargetRouting });
-            for (const privateKey of [writerKey.secretKey, targetParentKey.secretKey]) {
-                jointCallback.mockClear();
-                await callJointTarget(jointTargetRouting, { ...jointExecution,
-                    machineSignature: signExternalActionMachineRpcRequestV1({ ...jointRequest, privateKey }) });
-                expect(jointCallback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            }
-            for (const alteredTarget of [null, { ...jointTargetRouting, operationId: 'different-target-operation' },
-                { ...jointTargetRouting, targetRootPath: '/child/unreviewed-target' },
-                { ...jointTargetRouting, targetContext: { ...jointTargetRouting.targetContext, callerAuthority: 'present_user' } },
-                { ...jointTargetRouting, targetContext: { ...jointTargetRouting.targetContext,
-                    machineAdmission: { ...originalTargetAdmission, actorAccountId: targetCustodian.id } } }]) {
-                jointCallback.mockClear();
-                await callJointTarget(alteredTarget);
-                expect(jointCallback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            }
-            chosenTargetSocket.data!.clientType = 'user-scoped';
-            jointCallback.mockClear();
-            await callJointTarget();
+            await getSocketHandler(chosenTargetSocket, SOCKET_RPC_EVENTS.CALL)({
+                method: physicalTargetMethod, requestId: jointRequest.requestId, params: sealedTargetParams,
+                externalActionExecution: jointExecution, workspaceSyncSourceWriterTargetRouting,
+                workspaceSyncTargetRouting: jointTargetRouting }, jointCallback);
             expect(jointCallback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            chosenTargetSocket.data!.clientType = 'machine-scoped';
-            await db.managedMachine.update({ where: { id: targetRow.id }, data: { controllerInstallationId: crypto.randomUUID() } });
-            jointCallback.mockClear();
-            await callJointTarget();
-            expect(jointCallback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            await db.managedMachine.update({ where: { id: targetRow.id }, data: { controllerInstallationId: targetParent.installationId! } });
-            expect(physicalTargetEffect).toHaveBeenCalledTimes(1);
+            expect(physicalTargetEffect).not.toHaveBeenCalled();
             callback.mockClear();
             await call({ ...workspaceSyncSourceWriterTargetRouting, target: { ...target, operationId: 'substituted-target-operation' } });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            // A valid P1 signature does not authorize a different native bind root:
-            // Home must still derive both endpoints from the unchanged handoff tuple.
-            for (const routing of [
-                { ...workspaceSyncSourceWriterTargetRouting, source: { ...retainedSource, sourceRootPath: '/child/other-source' } },
-                { ...workspaceSyncSourceWriterTargetRouting, target: { ...target, targetRootPath: '/child/other-target' } },
-            ]) {
-                callback.mockClear();
-                await call(routing, { ...execution, machineSignature: signExternalActionMachineRpcRequestV1({
-                    ...request, workspaceSyncSourceWriterTargetRouting: routing, privateKey: writerKey.secretKey,
-                }) });
-                expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            }
             callback.mockClear();
             await call(workspaceSyncSourceWriterTargetRouting, { ...execution,
-                machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey: childKey.secretKey }) });
+                machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey: writerKey.secretKey }) });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            writerSocket.data!.clientType = 'user-scoped';
+            childSocket.data!.clientType = 'user-scoped';
             callback.mockClear();
             await call();
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            writerSocket.data!.clientType = 'machine-scoped';
+            childSocket.data!.clientType = 'machine-scoped';
             await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: chosenTarget.id,
                 principal: { kind: 'account', accountId: fixture.account.id } }));
             await auth.revokeApiToken({ accountId: fixture.account.id, tokenId: pat.tokenId });
             callback.mockClear();
             await call();
             expect(callback).toHaveBeenCalledWith({ ok: true, result: { type: 'not_required' } });
-            await db.managedMachine.update({ where: { id: sourceRow.id }, data: { controllerInstallationId: crypto.randomUUID() } });
+            await db.managedMachine.update({ where: { id: targetRow.id }, data: { archivedAt: new Date() } });
             callback.mockClear();
             await call();
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             expect(targetEffect).toHaveBeenCalledTimes(2);
-            expect(sourceEffect).toHaveBeenCalledTimes(1);
+            expect(sourceEffect).not.toHaveBeenCalled();
         } finally { await app.close(); }
     });
 
@@ -10919,13 +11022,19 @@ describe("external Action execution authorization", () => {
             binding: { accountId: fixture.account.id, machineId: child.id, sessionId: session.id },
             completeActivitySnapshot: { state: 'active', activeCount: 1 } })).status).toBe('registered');
         const method = `${parent.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE}`;
+        const preflightMethod = `${fixture.machine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
         const effect = vi.fn(async (_event: string, _request: unknown) => ({ success: true }));
         const target = { id: 'signed-source-parent', data: { clientType: 'machine-scoped', machineId: parent.id,
             verifiedMachineInstallationId: parent.installationId }, timeout: () => ({ emitWithAck: effect }) };
+        const preflightEffect = vi.fn(async (_event: string, _request: unknown) => ({ type: 'not_required' }));
+        const preflightReceiver = { id: 'signed-source-target-preflight', data: { clientType: 'machine-scoped', machineId: fixture.machine.id,
+            verifiedMachineInstallationId: fixture.machine.installationId }, timeout: () => ({ emitWithAck: preflightEffect }) };
         qualifyCurrentAccountStoredContentSocket(target);
+        qualifyCurrentAccountStoredContentSocket(preflightReceiver);
         // Only Socket.IO discovery/delivery are simulated; Home mint, signatures, C41 and source binding are real.
         const io = createSocketRoomDiscoveryHarness(async room => room === getAccountSessionSocketRoom(fixture.account.id, session.id)
-            ? [publisher] : room === `rpc:${custodian.id}:${method}` || room === target.id ? [target] : []);
+            ? [publisher] : room === `rpc:${custodian.id}:${method}` || room === target.id ? [target]
+                : room === `rpc:${fixture.account.id}:${preflightMethod}` || room === preflightReceiver.id ? [preflightReceiver] : []);
         const resolvePublisher = (input: Readonly<{ accountId: string; sessionId: string }>) => resolveCurrentSessionMachineFromServer({ io, presence, ...input });
         const { app } = await createApp(fixture.team.id, false, resolvePublisher);
         try {
@@ -11061,53 +11170,77 @@ describe("external Action execution authorization", () => {
             expect(admittedSource).toMatchObject({ effectiveAuthority: 'account_automation' });
             expect((await verifyExternalActionMachineRpcExecution(execution, { method, requestId, params,
                 resolveCurrentSessionMachine: resolvePublisher }))?.principal).toEqual(boundFacts);
-            const call = (callParams: unknown = params, sourceRouting: unknown = workspaceSyncSourceRouting) => getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, requestId,
-                params: callParams, externalActionExecution: execution, workspaceSyncSourceRouting: sourceRouting }, callback);
             const callback = vi.fn();
+            // Former host-bind forwarding for fresh prepare work on the parent controller is refused.
+            await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, requestId,
+                params, externalActionExecution: execution, workspaceSyncSourceRouting }, callback);
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+            expect(effect).not.toHaveBeenCalled();
+            const preflightSourceRouting = WorkspaceSyncSourceRoutingV1Schema.parse({ ...workspaceSyncSourceRouting,
+                operationId: authorization.binding.requestId });
+            const preflightTarget = { v: 1 as const, phase: 'preflight' as const, operationId: crypto.randomUUID(),
+                accountServerId: homeId, targetMachineId: fixture.machine.id, targetRootPath: '/target' };
+            const preflightRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
+                source: preflightSourceRouting, sourceWriter: { machineId: child.id, installationId: child.installationId! },
+                target: preflightTarget });
+            const preflightParams = HandoffTargetReplacementPreflightV1Schema.parse({ v: 1, serverId: homeId,
+                machineId: fixture.machine.id, operationId: preflightTarget.operationId, targetPath: preflightTarget.targetRootPath });
+            const preflightExecution = { v: 1 as const, authorization, effectActionId: 'session.handoff', target: authorization.binding.target,
+                installationId: child.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({
+                    authorizationToken: authorization.token, effectActionId: 'session.handoff', target: authorization.binding.target,
+                    installationId: child.installationId!, event: SOCKET_RPC_EVENTS.CALL, method: preflightMethod, requestId,
+                    params: preflightParams, workspaceSyncSourceWriterTargetRouting: preflightRouting, privateKey: childKey.secretKey }) };
+            const call = (callParams: unknown = preflightParams, sourceRouting: unknown = preflightSourceRouting) => {
+                const selectedRouting = { ...preflightRouting, source: sourceRouting };
+                return getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method: preflightMethod, requestId,
+                    params: callParams, externalActionExecution: preflightExecution, workspaceSyncSourceWriterTargetRouting: selectedRouting }, callback);
+            };
+            callback.mockClear();
             await call();
-            expect(callback).toHaveBeenCalledWith({ ok: true, result: { success: true } });
-            expect(effect.mock.calls[0]?.[1]).toMatchObject({ machineAdmission, callerAuthority: 'account_automation',
-                workspaceSyncSourceRouting, callerInputConstraints, callerInputAuthorization: authorization });
+            expect(callback).toHaveBeenCalledWith({ ok: true, result: { type: 'not_required' } });
+            expect(preflightEffect.mock.calls[0]?.[1]).toMatchObject({ callerAuthority: 'account_automation',
+                workspaceSyncSourceWriterTargetRouting: preflightRouting, callerInputConstraints });
             const unboundOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
                 caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
                 sourceTurnId: 'unbound-turn', requestId, callerPermissionMode: 'default',
                 causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
             callback.mockClear();
-            await call(params, { ...workspaceSyncSourceRouting, sourceContext: { ...workspaceSyncSourceRouting.sourceContext,
+            await call(preflightParams, { ...preflightSourceRouting, sourceContext: { ...preflightSourceRouting.sourceContext!,
                 sessionActionOrigin: unboundOrigin } });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            expect(effect).toHaveBeenCalledTimes(1);
+            expect(preflightEffect).toHaveBeenCalledTimes(1);
             callback.mockClear();
-            await call(params, { ...workspaceSyncSourceRouting, sourceMachineId: fixture.machine.id });
+            await call(preflightParams, { ...preflightSourceRouting, sourceMachineId: fixture.machine.id });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             callback.mockClear();
-            await call(params, { ...workspaceSyncSourceRouting, sourceSessionId: 'substituted-source-session' });
+            await call(preflightParams, { ...preflightSourceRouting, sourceSessionId: 'substituted-source-session' });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             callback.mockClear();
-            await call(params, { ...workspaceSyncSourceRouting, sourceContext: { ...workspaceSyncSourceRouting.sourceContext,
+            await call(preflightParams, { ...preflightSourceRouting, sourceContext: { ...preflightSourceRouting.sourceContext!,
                 machineAdmission: { ...machineAdmission, actorAccountId: otherActor.id } } });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             callback.mockClear();
-            await call(params, { ...workspaceSyncSourceRouting, sourceContext: { ...workspaceSyncSourceRouting.sourceContext,
+            await call(preflightParams, { ...preflightSourceRouting, sourceContext: { ...preflightSourceRouting.sourceContext!,
                 callerAuthority: 'present_user' } });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             callback.mockClear();
-            await call(params, { ...workspaceSyncSourceRouting, sourceContext: { ...workspaceSyncSourceRouting.sourceContext,
+            await call(preflightParams, { ...preflightSourceRouting, sourceContext: { ...preflightSourceRouting.sourceContext!,
                 callerInputConstraints: { models: null, permissionModes: null } } });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             callback.mockClear();
-            await call('substituted-source-phase');
+            await call({ ...preflightParams, targetPath: '/substituted-target' });
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             callback.mockClear();
             await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({
                 method: `${parent.id}:${RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3}`, requestId, params,
                 externalActionExecution: execution, workspaceSyncSourceRouting }, callback);
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
-            expect(effect).toHaveBeenCalledTimes(1);
+            expect(preflightEffect).toHaveBeenCalledTimes(1);
             await auth.revokeApiToken({ accountId: fixture.account.id, tokenId: pat.tokenId });
             callback.mockClear();
             await call();
-            expect(callback).toHaveBeenCalledWith({ ok: true, result: { success: true } });
+            expect(callback).toHaveBeenCalledWith({ ok: true, result: { type: 'not_required' } });
+            expect(preflightEffect).toHaveBeenCalledTimes(2);
             const releaseRouting = { ...workspaceSyncSourceRouting, phase: 'abort' };
             callback.mockClear();
             // Release uses the installed custodian's existing SOURCE attestation,
@@ -11115,10 +11248,10 @@ describe("external Action execution authorization", () => {
             await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method, params: 'sealed-retained-source-abort',
                 workspaceSyncSourceRouting: releaseRouting }, callback);
             expect(callback).toHaveBeenCalledWith({ ok: true, result: { success: true } });
-            expect(effect.mock.calls[2]?.[1]).toMatchObject({ machineAdmission,
+            expect(effect.mock.calls[0]?.[1]).toMatchObject({ machineAdmission,
                 workspaceSyncSourceRouting: releaseRouting, callerAuthority: 'account_automation', callerInputConstraints });
-            expect(effect.mock.calls[2]?.[1]).not.toHaveProperty('callerInputAuthorization');
-            expect(effect).toHaveBeenCalledTimes(3);
+            expect(effect.mock.calls[0]?.[1]).not.toHaveProperty('callerInputAuthorization');
+            expect(effect).toHaveBeenCalledTimes(1);
         } finally { await app.close(); }
     });
 

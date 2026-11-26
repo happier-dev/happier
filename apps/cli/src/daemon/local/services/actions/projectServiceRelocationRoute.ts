@@ -94,8 +94,9 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
         };
         const coordinator = createProjectServiceRelocation({
             readService: async (_request, signal) => {
-                // Re-read the exact native binding after placement persistence;
-                // requester authority was admitted at the request boundary.
+                // The coordinator re-reads after placement persistence. Local
+                // native custody must not outlive the original requester's root.
+                if (requester && !await requester.isCurrent()) return refusal('project_requester_authority_unavailable');
                 const resolved = input.projectManagedServices.resolveProjectService(request.currentTarget);
                 if (resolved.status !== 'found') {
                     if (resolved.status === 'mismatch') return refusal('service_inputs_changed');
