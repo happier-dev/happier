@@ -22,13 +22,13 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
  * answers. A plugin's own failure state for that part (plugin-ui `ErrorState`, a failed `SurfaceState`)
  * claims the sentence and says it in its own place with its own action, so only the part that needed
  * the Machine changes; while nothing claims it (an optional part failed quietly), the host says it as
- * one line above the body, with one action, Retry, which asks the body afresh. When no Machine exists at
- * all, retrying cannot help, so the one action is the way forward — adding a machine, or opening the plugin when machines exist but none runs it — in either place.
+ * one line above the body, with one action, Retry, which asks the body afresh. With no Machine, the
+ * replacement body explains the prerequisite and links to Add a machine.
  */
 /** The surrounding surface already presents the Machines card's add recovery. */
 export const WidgetMachineAddRecoveryContext = React.createContext(false);
 
-export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; children: React.ReactNode }>): React.ReactElement {
+export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; children: React.ReactNode; missingMachineReason?: string }>): React.ReactElement {
     const surroundingAddRecovery = React.useContext(WidgetMachineAddRecoveryContext);
     const [source, setSource] = React.useState<WidgetFrameBodyNoticeSource | null>(null);
     const [attempt, setAttempt] = React.useState(0);
@@ -42,14 +42,30 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
     const sentence = storage(() => source?.()?.sentence ?? null, MACHINE_NOTICE_INPUTS);
     const addMachine = storage(() => source?.()?.addMachine === true, MACHINE_NOTICE_INPUTS);
     const managePluginId = storage(() => source?.()?.managePluginId ?? null, MACHINE_NOTICE_INPUTS);
-    const suppressedAdd = addMachine && surroundingAddRecovery;
+    const suppressedAdd = addMachine && surroundingAddRecovery && props.missingMachineReason === undefined;
     const action = React.useMemo(() => suppressedAdd ? null : addMachine
         ? { label: t('settings.addMachine'), onPress: () => { runGuardedNavigation(() => router.push(MACHINES_ADD_ROUTE as never)); } }
         : managePluginId
             ? { label: t('settingsPlugins.managePlugin'), onPress: () => { runGuardedNavigation(() => router.push(buildPluginDetailRoute('settings', managePluginId) as never)); } }
             : undefined, [suppressedAdd, addMachine, managePluginId, router]);
-    // A failure state that claims the sentence says it in its own place, and the body is then that one line.
-    const content = React.useMemo(() => (sentence === null ? null : { sentence, ...(action !== undefined ? { action } : {}) }), [sentence, action]);
+    const needsMachineTitle = t('widgetGlances.needsMachineTitle');
+    const replacement = React.useMemo(() => addMachine && sentence !== null ? (
+        <SurfaceStateCard
+            kind="unavailable"
+            replacesContent
+            scene="noMachines"
+            testID={`${props.testID}-machine-required`}
+            title={needsMachineTitle}
+            reason={props.missingMachineReason ?? sentence}
+            action={action ? { ...action, testID: `${props.testID}-machine-required-action` } : undefined}
+        />
+    ) : null, [action, addMachine, needsMachineTitle, props.missingMachineReason, props.testID, sentence]);
+    // A failure state that claims the notice renders it in its own place.
+    const content = React.useMemo(() => sentence === null ? null : {
+        sentence: replacement ? needsMachineTitle : sentence,
+        ...(action !== undefined ? { action } : {}),
+        ...(replacement ? { replacement } : {}),
+    }, [sentence, action, needsMachineTitle, replacement]);
     const { notice: surfaceNotice, claimed } = useClaimableSurfaceNotice(content);
     const recovery = action ?? { label: t('common.retry'), onPress: retry };
     const commands = useCurrentUiContextLocalCommands(sentence !== null && !claimed && !suppressedAdd
@@ -57,7 +73,7 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
     { contextKey: props.testID, unbound: 'local' });
     return (
         <WidgetFrameBodyNoticeContext.Provider value={lend}>
-            {sentence === null || claimed ? null : (
+            {sentence === null || claimed ? null : replacement ?? (
                 <SurfaceStateCard
                     testID={`${props.testID}-machine-notice`}
                     kind="unavailable"

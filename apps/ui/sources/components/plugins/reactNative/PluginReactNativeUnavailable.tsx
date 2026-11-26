@@ -4,6 +4,7 @@ import { resolvePluginSurfaceStateAction } from '@/components/sessions/panes/Plu
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
 import { isPluginSurfaceCauseOutsidePlugin, resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
 import { useClaimedHostFailureNotice } from '@/components/ui/surfaces/claimableSurfaceNotice';
+import { useSurfaceStateQuietActions } from '@/components/ui/surfaces/surfaceStateSize';
 import { t } from '@/text';
 
 import { PluginSurfaceMachineRecoveryContext, useOfflineSurfaceNotice } from '../shared/pluginSurfaceInteractionAvailability';
@@ -61,15 +62,18 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
     const offline = props.offline === true && !pending;
     // The host's line about this body (its widget's Machine notice) and this failure are one failure, said once.
     const hostNotice = useClaimedHostFailureNotice(!pending, isPluginSurfaceCauseOutsidePlugin(diagnostics[0]));
+    const inWidget = useSurfaceStateQuietActions();
     const claimedSentence = hostNotice?.sentence ?? null;
     const title = claimedSentence ?? (offline ? offlineNotice.title : card.title);
     usePublishPluginSurfaceStateTitle(pending ? null : title);
+    if (hostNotice?.replacement) return <>{hostNotice.replacement}</>;
     return (
         <SurfaceStateCard
             testID="plugin-rn-ui-unavailable"
+            replacesContent
             kind={claimedSentence !== null ? 'unavailable' : offline ? offlineNotice.kind : card.kind}
             title={title}
-            {...(claimedSentence !== null ? { size: 'line' as const }
+            {...(claimedSentence !== null ? { size: inWidget ? undefined : 'line' as const }
                 : { reason: offline ? offlineNotice.reason : card.reason })}
             action={claimedSentence !== null && hostNotice?.action !== undefined ? hostNotice.action ?? undefined
                 : action ?? (offline ? machineRecovery?.retry : undefined)}

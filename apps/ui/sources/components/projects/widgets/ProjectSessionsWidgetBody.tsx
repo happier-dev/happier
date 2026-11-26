@@ -82,7 +82,7 @@ export function ProjectSessionsWidgetBody(
         <View testID={props.testID}>
           <SurfaceStateCard
             testID={`${props.testID}.empty`}
-            size="line"
+            replacesContent
             kind="empty"
             title={t('projects.widgets.sessionsEmpty')}
           />
@@ -146,7 +146,7 @@ export function ProjectSessionsWidgetBody(
       {failed ? (
         <SurfaceStateCard
           testID={`${props.testID}.error`}
-          size="line"
+          {...(items.length === 0 ? { replacesContent: true } : { size: 'line' as const })}
           kind="error"
           title={t('sessionsList.queryRefreshFailedTitle')}
           action={{

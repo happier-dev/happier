@@ -160,7 +160,7 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
             : surface === 'column' ? <SurfaceStateCard testID="reviews:empty" kind="empty" size="line" layout="inline"
                 title={t('reviewWalkthrough.collection.columnEmpty')} />
             // Start a review, and the all-sessions review habit set up in place (lab list-empty, LE3).
-            : <ReviewsEmptyInvitation iconName={REVIEWS_GLYPH} startReview={scope ? startReview : undefined} />)} /></ReviewRowActionsContext.Provider>;
+            : <ReviewsEmptyInvitation startReview={scope ? startReview : undefined} />)} /></ReviewRowActionsContext.Provider>;
     const homeNotice = surface === 'hub' ? null : <HomeReachabilityGate variant="line" presentation="inline"
         relevantServerIds={scope ? [scope.serverId] : []}>{null}</HomeReachabilityGate>;
     if (surface !== 'home') return <CoreCollectionScope>
@@ -179,7 +179,7 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
  */
 function ReviewsNoneOpen({ hasReviews, startReview }: Readonly<{ hasReviews: boolean | null; startReview?: () => void }>): React.ReactElement | null {
     if (hasReviews === null) return null;
-    if (!hasReviews) return <ReviewsEmptyInvitation iconName={REVIEWS_GLYPH} startReview={startReview} />;
+    if (!hasReviews) return <ReviewsEmptyInvitation startReview={startReview} />;
     return <View testID="reviews:none-open" style={styles.noneOpen}>
         <EmptyState layout="page" iconName={REVIEWS_GLYPH} title={t('reviewWalkthrough.collection.noneOpenTitle')}
             subtitle={t('reviewWalkthrough.collection.noneOpenDescription')}

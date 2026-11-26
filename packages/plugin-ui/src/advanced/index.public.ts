@@ -34,6 +34,9 @@ export {
 /** The host's one sentence about a part that cannot run now, said by the failure state that claims it. */
 export {
   PluginUiSurfaceNoticeContext,
+  SurfaceStateContentContext,
+  useReportSurfaceStateContent,
+  type SurfaceStateContentReport,
   useClaimedPluginUiSurfaceNotice,
   type PluginUiSurfaceNotice,
 } from '../presentationHost/surfaceNotice.js';

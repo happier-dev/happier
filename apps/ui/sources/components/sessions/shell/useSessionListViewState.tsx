@@ -230,7 +230,7 @@ import {
 } from './selection/SessionListSelectionContext';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { transcriptSearchUnavailableHint } from '@/components/appShell/search/transcriptSearchUnavailableHint';
-import { SessionListFilterControl } from './search/SessionListFilterControl';
+import { SessionListFilterControl, SessionListMissingHomesNotice } from './search/SessionListFilterControl';
 import { useSessionListSpaceChrome } from './search/useSessionListSpaceChrome';
 import { retainPresentedSessionHomeObservations } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import type {
@@ -1215,10 +1215,13 @@ export function useSessionListViewStateFromPaneState(
         organizationProjectionsByServerId,
         surfaceOwnership.interactive,
     ]);
+    const showMissingHomesNotice = filterController.fixedShow !== 'runs'
+        && filterController.activeSpace !== null && filterController.savedSpaceHasUnavailableHomes;
     const searchChrome = React.useMemo(() => ({
         filterControl,
         subject: filterController.filters.show,
         spacesStrip: spaceChrome.strip,
+        spaceNotice: showMissingHomesNotice ? <SessionListMissingHomesNotice onEdit={spaceChrome.openEdit} /> : null,
         spaceSwipe: spaceChrome.spaceSwipe,
         filterTokens: spaceChrome.filterTokens,
         overlays: spaceChrome.overlays,
@@ -1244,6 +1247,7 @@ export function useSessionListViewStateFromPaneState(
     }), [
         filterControl,
         spaceChrome,
+        showMissingHomesNotice,
         filterController.fixedShow,
         filterController.filters.show,
         filterController.viewContext.kind,

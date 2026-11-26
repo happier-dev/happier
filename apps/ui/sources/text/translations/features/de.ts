@@ -19159,6 +19159,8 @@ const widgetGlanceTranslations = { de: {
         servicesLoading: 'Lokale Dienste werden geladen',
         servicesReadFailed: 'Lokale Dienste konnten nicht gelesen werden. Versuche es erneut.',
         noMachine: 'Diese Sitzung hat keinen Rechner, der gefragt werden kann.',
+        needsMachineTitle: 'Rechner erforderlich',
+        triageNeedsMachineReason: 'Pull Requests und Issues erscheinen hier, sobald ein Rechner verbunden ist.',
         appEmptyTitle: 'Nichts aktiv',
         appUnlistedTitle: 'Dienste nicht aufgelistet',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} ist offline.`,

@@ -557,9 +557,34 @@ describe('WidgetFrame', () => {
         expect(screen.findByTestId('frame.empty')).toBeTruthy();
         expect(screen.getTextContent()).toContain('No runs yet');
         expect(screen.getTextContent()).toContain('Runs of your automations show up here.');
+        expect(screen.findByTestId('frame.empty-scene')).not.toBeNull();
     });
 
-    it('draws a widget body\'s own empty state at the frame\'s step: centred in a card with room, one line in a compact one', async () => {
+    it('keeps a missing-Machine precondition centred in the widget room without a diagnostic disclosure', async () => {
+        const { PluginReactNativeUnavailable } = await import('@/components/plugins/reactNative/PluginReactNativeUnavailable');
+        const { WidgetMachineAddRecoveryContext, WidgetMachineNoticeBoundary } = await import('../surface/WidgetMachineNotice');
+        const { WidgetFrameBodyNoticeContext } = await import('./widgetFrameBodyCaption');
+        function RefusedBody() {
+            const lend = React.useContext(WidgetFrameBodyNoticeContext);
+            React.useEffect(() => {
+                lend?.(() => ({ sentence: 'A machine is required', addMachine: true }));
+            }, [lend]);
+            return <PluginReactNativeUnavailable diagnostics={['machine-target-unavailable']} />;
+        }
+        const screen = await renderFrame({ body: { kind: 'content', children: (
+            <WidgetMachineAddRecoveryContext.Provider value>
+                <WidgetMachineNoticeBoundary testID="mounted" missingMachineReason="PRs and issues show here once a machine is connected.">
+                    <RefusedBody />
+                </WidgetMachineNoticeBoundary>
+            </WidgetMachineAddRecoveryContext.Provider>
+        ) } });
+        expect(screen.findByTestId('mounted-machine-required-scene')).not.toBeNull();
+        expect(screen.findByTestId('mounted-machine-required-action')).not.toBeNull();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable-diagnostic-machine-target-unavailable')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('common.technicalDetails');
+    });
+
+    it('keeps the scene in a compact Home widget and uses the wider step on a full band', async () => {
         const stateOf = (screen: Awaited<ReturnType<typeof renderFrame>>) => {
             const state = screen.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!;
             return state.findByType(HappierSurfaceState).props as { size?: string; layout?: string };
@@ -573,7 +598,7 @@ describe('WidgetFrame', () => {
         standardCleanup();
         const compact = await renderFrame({ body, widgetPresentation: { size: 'wide',
             footprint: { columns: 2, columnSpan: 2, rowSpan: 1, height: 'compact', width: 'full' } } });
-        expect(stateOf(compact)).toMatchObject({ size: 'line' });
+        expect(compact.findByTestId('usage-empty-scene')).not.toBeNull();
         standardCleanup();
         // A card spanning the whole band reads its state at the wider measure, so a reason never wraps in a narrow column.
         const full = await renderFrame({ body, widgetPresentation: { size: 'full',
@@ -635,23 +660,20 @@ describe('WidgetFrame', () => {
         }
     });
 
-    it('draws an empty widget as its one line on a phone, so a first-run phone Home is not a stack of scenes', async () => {
+    it('shows the scene on phone Home and hugs the state without reserved rows', async () => {
         device.type = 'phone';
         const medium = { size: 'medium' as const,
             footprint: { columns: 2, columnSpan: 1, rowSpan: 2, height: 'regular' as const, width: 'half' as const } };
         const own = await renderFrame({ widgetPresentation: medium,
             body: { kind: 'empty', title: 'No runs yet', reason: 'Runs show here.', scene: 'noAutomations' } });
-        const ownState = own.findByTestId('frame.empty')!;
-        expect(own.root.findAllByType(HappierSurfaceState).find(state => state.props.testID === 'frame.empty')!.props.size).toBe('line');
-        expect(ownState).toBeTruthy();
-        // The card is its content's height: no reserved rows under the line.
+        expect(own.findByTestId('frame.empty-scene')).not.toBeNull();
+        // The card is its content's height: no reserved rows below the scene.
         expect(StyleSheet.flatten(own.findByTestId('frame.viewport')!.props.style).height).toBeUndefined();
         expect(StyleSheet.flatten(own.findByTestId('frame.viewport')!.props.style).minHeight).toBeUndefined();
         standardCleanup();
         const body = await renderFrame({ widgetPresentation: medium, body: { kind: 'content', children:
             <UsageBodyInsufficient testID="usage-empty" title="No subscription connected" reason="See what each plan has left." /> } });
-        expect(body.root.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'usage-empty')!
-            .findByType(HappierSurfaceState).props.size).toBe('line');
+        expect(body.findByTestId('usage-empty-scene')).not.toBeNull();
         standardCleanup();
         // Real content on a phone is its rows' height too: Home cards hug their content (owner 2026-11-18).
         const rows = await renderFrame({ widgetPresentation: medium });

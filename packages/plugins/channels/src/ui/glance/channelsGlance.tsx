@@ -4,6 +4,7 @@ import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
   BrandMark,
   EmptyState,
+  ErrorState,
   Icon,
   IconButton,
   Item,
@@ -317,17 +318,23 @@ function ChannelsHomeWidget(props: Readonly<{ snapshot: ChannelsConversationSnap
       />
     );
   }
+  if (bindings.length === 0 && props.snapshot.state === 'error') {
+    return (
+      <ErrorState
+        testID="channels-widget-empty"
+        kind="unavailable"
+        title={t('plugins.channels.column.unavailable', 'Conversations can’t be read right now.')}
+      />
+    );
+  }
   if (bindings.length === 0) {
     const noBots = !connections.some((connection) => connection.deletionState === 'none');
     return (
       <EmptyState
         testID="channels-widget-empty"
-        layout="line"
-        title={props.snapshot.state === 'error'
-          ? t('plugins.channels.column.unavailable', 'Conversations can’t be read right now.')
-          : noBots
-            ? t('plugins.channels.widget.noBotsAnyProvider', 'Connect a bot to talk to your sessions from a chat, a mailbox, a channel or an issue.')
-            : t('plugins.channels.widget.noConversations', 'Link a conversation to a session.')}
+        title={noBots
+          ? t('plugins.channels.widget.noBotsAnyProvider', 'Connect a bot to talk to your sessions from a chat, a mailbox, a channel or an issue.')
+          : t('plugins.channels.widget.noConversations', 'Link a conversation to a session.')}
       />
     );
   }

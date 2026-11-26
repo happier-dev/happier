@@ -14,6 +14,8 @@ export type WidgetGlanceTranslation = Readonly<{
     servicesLoading: string;
     servicesReadFailed: string;
     noMachine: string;
+    needsMachineTitle: string;
+    triageNeedsMachineReason: string;
     appEmptyTitle: string;
     appUnlistedTitle: string;
     appUnlistedOffline: (params: Readonly<{ machine: string }>) => string;
@@ -44,6 +46,8 @@ export const widgetGlanceTranslationsEnglish = { en: {
         servicesLoading: 'Loading local services',
         servicesReadFailed: 'Couldn’t read local services. Try again.',
         noMachine: 'This session has no machine to ask.',
+        needsMachineTitle: 'Needs a machine',
+        triageNeedsMachineReason: 'PRs and issues show here once a machine is connected.',
         appEmptyTitle: 'Nothing running',
         appUnlistedTitle: 'Services aren’t listed',
         appUnlistedOffline: ({ machine }) => `${machine} is offline.`,

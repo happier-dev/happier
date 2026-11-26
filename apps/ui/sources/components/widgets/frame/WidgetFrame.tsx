@@ -244,8 +244,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     }, []);
     const emptyBody = props.body?.kind === 'empty' || (props.body?.kind === 'content'
         && replacementStates.size > 0 && [...replacementStates.values()].every(report => report.empty));
-    // A phone stacks every card in one column, so a card with nothing to show is its one line (F2): a first-run
-    // phone page of scenes would run several screens. It takes its content's height; rows return with content.
+    // Phone cards with a whole-body state hug the composition. Data restores its ordinary footprint.
     const phoneEmpty = phone && emptyBody;
     // A body whose only content is one-line states (offline with nothing cached, "36 machines are offline") is that
     // line on every placement: no reserved rows, and it does not stretch to a taller card beside it (owner 2026-11-11).
@@ -364,11 +363,8 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     // The frame sizes every state inside it (W1 bodies, a refusal, a plugin's own): a card's states on
     // Home and a Board, one line under the header in a Companion or other column (lab ST "Compact").
     const stateSize = props.presentation === 'body' ? inheritedStateSize ?? (props.placement === 'companion' ? 'line' : 'pane')
-        : phoneEmpty ? 'line'
-        : props.grouped && emptyBody && props.widgetPresentation?.footprint.columnSpan === 1 ? 'line'
-        // A compact footprint (Small, Wide) has one row of room: its state is the line, balanced in that row.
-        : props.widgetPresentation?.footprint.height === 'compact' ? 'line'
         : props.placement === 'companion' ? 'line'
+        : emptyBody && (phone || props.widgetPresentation?.footprint.columnSpan === 1) ? 'pane'
         // A card spanning the whole band has a drawer's room: its state reads at that measure, not a side pane's.
         : props.widgetPresentation?.footprint.width === 'full' ? 'details' : 'pane';
 
@@ -705,7 +701,7 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
                     reason={body.reason}
                     {...(body.action ? { action: body.action } : {})}
                     {...(body.iconName ? { iconName: body.iconName } : {})}
-                    {...(body.scene ? { scene: body.scene } : {})}
+                    scene={body.scene}
                 />
             );
         case 'error':
@@ -713,6 +709,7 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
                 <SurfaceStateCard
                     testID={`${props.testID}.error`}
                     kind={body.tone ?? 'error'}
+                    replacesContent
                     title={body.title}
                     reason={body.reason}
                     accessibilitySemantics="status"

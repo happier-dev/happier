@@ -19653,6 +19653,8 @@ const widgetGlanceTranslations = { it: {
         servicesLoading: 'Caricamento dei servizi locali',
         servicesReadFailed: 'Impossibile leggere i servizi locali. Riprova.',
         noMachine: 'Questa sessione non ha una macchina da interrogare.',
+        needsMachineTitle: 'Serve una macchina',
+        triageNeedsMachineReason: 'Le pull request e le issue appaiono qui quando colleghi una macchina.',
         appEmptyTitle: 'Niente in esecuzione',
         appUnlistedTitle: 'Servizi non elencati',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} è offline.`,

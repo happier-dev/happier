@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { View } from 'react-native';
 import { collectionConditionValueLabels } from '@happier-dev/plugin-ui/components';
+import { hasHappierCollectionSpacesStrip } from '@happier-dev/plugin-ui/presentation';
 
 import { CollectionConditionTokens } from '@/components/ui/lists/collection/CollectionConditionTokens';
 import { CollectionSpacesStrip } from '@/components/ui/lists/collection/CollectionSpacesStrip';
@@ -215,7 +216,7 @@ export function useSessionListSpaceChrome(
     </SessionSpaceTabDropZone>
   ), [readSpaceDrop]);
   const strip = React.useMemo(() =>
-    controller.fixedShow === 'runs' || !controller.spacesEnabled ? null : (
+    controller.fixedShow === 'runs' || !controller.spacesEnabled || !hasHappierCollectionSpacesStrip(stripItems.length) ? null : (
       <CollectionSpacesStrip
         testIDPrefix="session-list-spaces"
         accessibilityLabel={t('sessionsList.spacesTitle')}

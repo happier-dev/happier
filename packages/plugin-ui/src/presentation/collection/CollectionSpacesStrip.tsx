@@ -92,6 +92,11 @@ const scrollerStyle: ViewStyle = { flexGrow: 0, flexShrink: 1, minWidth: 0 };
  * and arrow keys belong to the tab bar; drag belongs to `wrapList`/`wrapTab`. Layout facts live in refs: scrolling and
  * measuring never re-render the strip.
  */
+/** The title owns the only view when there are no tabs to switch between. */
+export function hasHappierCollectionSpacesStrip(spaceCount: number): boolean {
+  return spaceCount >= 2;
+}
+
 export const HappierCollectionSpacesStrip = memo(function HappierCollectionSpacesStrip(props: Readonly<{
   testIDPrefix: string;
   accessibilityLabel: string;
@@ -163,7 +168,7 @@ export const HappierCollectionSpacesStrip = memo(function HappierCollectionSpace
     ...(wrapTab === undefined ? {} : { wrapTab }),
   }), [accessibilityLabel, handleTabLayout, items, onSelect, renderTabs, selectedId, testIDPrefix, wrapTab]);
   // The title already names the sole view; creation remains available in its title menu.
-  if (items.length < 2) return null;
+  if (!hasHappierCollectionSpacesStrip(items.length)) return null;
   return (
     <View testID={props.testIDPrefix} style={stripStyle}>
       {mask.wrapScroller(

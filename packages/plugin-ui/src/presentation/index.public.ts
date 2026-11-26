@@ -480,6 +480,7 @@ export { HappierCollectionRowNeedsYouLayer } from './collection/CollectionRowNee
 export {
   HAPPIER_COLLECTION_SPACES_STRIP_METRICS,
   HappierCollectionSpacesStrip,
+  hasHappierCollectionSpacesStrip,
   neighbourHappierCollectionSpaceId,
   resolveHappierCollectionSpaceStripRevealX,
   type HappierCollectionSpacesStripEdgeMask,
@@ -1111,6 +1112,7 @@ export {
 } from './state/asOfTime.js';
 export {
   HAPPIER_SCENE_ART_METRICS,
+  HAPPIER_SURFACE_FAILURE_SCENE,
   HAPPIER_SCENE_IDS,
   HAPPIER_SCENE_PROP_IDS,
   HAPPIER_SCENE_RULES,

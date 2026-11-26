@@ -28,6 +28,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { isPublicProfileWidgetSurfaceV1 } from '@happier-dev/protocol/widgets';
 import { PublicProfileWidgetSurface } from '@/components/settings/account/publicProfile/PublicProfileWidgetSurface';
 import { useProjectContext } from '@/components/projects/useProjectContext';
+import { t } from '@/text';
 import { usePluginSessionSurfaceTarget } from '@/components/plugins/surfaces/pluginSurfaceContext';
 import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
 import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
@@ -251,7 +252,13 @@ export function WidgetSurface(props: WidgetSurfaceProps): React.ReactElement {
         {!isPublicProfileWidgetSurfaceV1(props.scope) && props.instance.definition.kind === 'installed' ? <PluginSurfaceProjectionDemand
             pluginId={props.instance.definition.surface.pluginId} accountScope={props.appRuntime.accountLifetime?.scope ?? null}
             enabled={props.enabled !== false && props.isCurrent?.() !== false} /> : null}
-        <WidgetMachineNoticeBoundary testID={props.testID}>
+        <WidgetMachineNoticeBoundary
+            testID={props.testID}
+            missingMachineReason={props.instance.definition.kind === 'installed'
+                && props.instance.definition.surface.pluginId === 'happier.triage'
+                && props.instance.definition.surface.localId === 'latest'
+                ? t('widgetGlances.triageNeedsMachineReason') : undefined}
+        >
             {isPublicProfileWidgetSurfaceV1(props.scope) ? <PublicProfileWidgetSurface instance={props.instance} descriptor={descriptor}
                 size={props.size} testID={props.testID} /> : <WidgetSurfaceBody {...props} />}
         </WidgetMachineNoticeBoundary>

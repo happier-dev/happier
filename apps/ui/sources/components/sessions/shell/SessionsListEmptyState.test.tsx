@@ -229,14 +229,14 @@ describe('SessionsListEmptyState', () => {
         expect(selectedDraft()).toMatchObject({ selectedMachineId: 'f874-machine', targetServerId: 'server-1' });
     });
 
-    // No machine yet (58d AF1): the setup page is desktop-only, so neither the phone's Sessions tab nor the
-    // sidebar offers it. One quiet line; New Session ("Run on…") is the way to start.
-    it.each(['default', 'sidebar'] as const)('keeps the %s surface to one quiet line with no machine yet', async (surface) => {
+    it.each(['default', 'sidebar'] as const)('shows the first-run scene and New session on the %s surface', async (surface) => {
         const { SessionsListEmptyState } = await import('./SessionsListEmptyState');
         const screen = await renderSessions(<SessionsListEmptyState kind="connect_machine" targetLabel="leeroy-mbp" surface={surface} />);
 
         expect(screen.findByProps({ testID: 'session-getting-started-kind-connect_machine' })).toBeTruthy();
         expect(screen.findByProps({ testID: 'sessions-empty-state-first-run' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'sessions-empty-state-first-run-scene' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'sessions-empty-state-first-run-action' })).toBeTruthy();
         expect(() => screen.findByProps({ testID: 'sessions-empty-state-summary' })).toThrow();
         expect(() => screen.findByProps({ testID: 'sessions-empty-state-open-setup' })).toThrow();
     });

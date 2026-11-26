@@ -17,7 +17,8 @@ import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachabi
 
 import type { SessionGettingStartedDecisionKind } from '@/components/sessions/guidance/gettingStartedModel';
 import { Icon } from '@/components/ui/icons/Icon';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useTabBarNewSessionPress } from '@/components/ui/navigation/TabBarNewSessionButton';
 import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -36,6 +37,7 @@ type SessionsListEmptyStateProps = Readonly<{
 export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const startNewSession = useTabBarNewSessionPress();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useActiveMachineFacts();
     useMachineReachabilityRevision();
@@ -60,14 +62,23 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
     const handleOpenSetup = React.useCallback(() => {
         router.push(buildMachineAddHref({ path: 'thisComputer' }) as never);
     }, [router]);
-    // No machine yet: Home's Machines and Capacity widgets and New Session's "Run on…" carry the first steps
-    // (58d AF1), so the list says only what will appear here (the phone's Sessions tab shows Home itself). Setting
-    // up this machine is desktop-only; the Add flow offers it where the device can do it.
     if (props.kind === 'connect_machine') {
         return (
             <ItemList presentation="grouped" testID="sessions-empty-state-list" containerStyle={{ paddingTop: theme.space.s12 }}>
                 <View testID={`session-getting-started-kind-${props.kind}`} style={{ width: 0, height: 0, overflow: 'hidden' }} />
-                <EmptyState layout="line" testID="sessions-empty-state-first-run" title={t('sessionsList.emptyState.firstRunLine')} />
+                <SurfaceStateCard
+                    testID="sessions-empty-state-first-run"
+                    kind="empty"
+                    size="pane"
+                    scene="firstRun"
+                    title={t('sessionsList.emptyState.title')}
+                    reason={t('sessionsList.emptyState.firstRunLine')}
+                    action={{
+                        testID: 'sessions-empty-state-first-run-action',
+                        label: t('commandPalette.commands.newSessionTitle'),
+                        onPress: startNewSession,
+                    }}
+                />
             </ItemList>
         );
     }

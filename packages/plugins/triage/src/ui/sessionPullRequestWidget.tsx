@@ -68,7 +68,6 @@ export function TriageSessionPullRequestWidget(props: Readonly<{
     return (
       <SurfaceState
         kind="empty"
-        size="line"
         title={text(
           'plugins.triage.prGlance.noSession',
           'Open a session to see its pull request',
@@ -92,7 +91,6 @@ export function TriageSessionPullRequestWidget(props: Readonly<{
     return (
       <SurfaceState
         kind="empty"
-        size="line"
         testID="pr-widget.empty"
         title={text(
           'plugins.triage.prGlance.empty',

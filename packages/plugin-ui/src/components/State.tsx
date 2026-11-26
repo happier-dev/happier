@@ -4,7 +4,7 @@ import type { ResourceContent } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiResourceSnapshot } from '../hostApi/resourceStore.js';
 
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
-import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice } from '../presentationHost/surfaceNotice.js';
+import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice, useReportSurfaceStateContent } from '../presentationHost/surfaceNotice.js';
 import { resolveHappierFreshnessText } from '../presentation/state/asOfTime.js';
 import { usePluginSurfaceActivity } from '../hostApi/context.js';
 import { HappierSkeletonRows, type HappierSkeletonRowGeometry } from '../presentation/feedback/Skeleton.js';
@@ -46,6 +46,7 @@ import { useHappierColumnEdgeRemainder } from '../presentation/layout/columnEdge
 import { useHappierUiAnimationActivityInternal, useOptionalHappierUiPalette } from '../environment/context.js';
 import {
   HAPPIER_SCENE_ART_METRICS,
+  HAPPIER_SURFACE_FAILURE_SCENE,
   resolveHappierScene,
   resolveHappierSceneArtSize,
   type HappierSceneInput,
@@ -263,7 +264,9 @@ function EmptyStateView(props: EmptyStateProps): ReactElement {
   // A line container makes an unplaced state its one quiet line; an explicit layout or size still wins.
   const layout = props.layout ?? (resolvedSize === 'line' ? 'line' : 'centered');
   const stateSize = resolvedSize === 'line' ? undefined : resolvedSize;
-  const scene = useStateScene(props.scene, layout, stateSize, props.testID);
+  const widgetState = useContext(PluginUiQuietStateActionContext) && layout === 'centered' && !props.variant;
+  useReportSurfaceStateContent(widgetState, true, false, false);
+  const scene = useStateScene(props.scene ?? (widgetState ? 'firstRun' : undefined), layout, stateSize, props.testID);
   const pageSheetInsetPx = useHappierColumnEdgeRemainder(HAPPIER_EMPTY_STATE_FRAME.page.marginHorizontal);
   const unavailableReason = resolveAuthorText(
     translate,
@@ -552,9 +555,13 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
   // failure state says that sentence in its own place, with its own action, instead of its own copy:
   // the cause is said once, where it failed, and the host draws nothing of its own beside it.
   const hostSentence = useClaimedPluginUiSurfaceNotice(authored.kind === 'loading' || authored.kind === 'error' || authored.kind === 'unavailable');
-  const hostAction = useContext(PluginUiSurfaceNoticeContext)?.action;
+  const hostNotice = useContext(PluginUiSurfaceNoticeContext);
+  const hostAction = hostNotice?.action;
+  const quietActions = useContext(PluginUiQuietStateActionContext);
+  const hostSize = useStateSize(undefined);
+  const authoredSize = authored.size ?? hostSize;
   const props = hostSentence === null ? authored : {
-    ...authored, kind: 'unavailable' as const, size: 'line' as const, title: hostSentence, titleKey: undefined,
+    ...authored, kind: 'unavailable' as const, size: quietActions ? authoredSize : 'line' as const, title: hostSentence, titleKey: undefined,
     ...(hostAction === null ? { action: undefined, actionSlot: undefined }
       : hostAction ? { action: { label: hostAction.label, onPress: hostAction.onPress }, actionSlot: undefined } : {}),
     description: undefined, descriptionKey: undefined, note: undefined, noteKey: undefined, details: undefined, icon: undefined,
@@ -564,12 +571,10 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
   const translate = usePluginTranslation();
   const theme = usePluginTheme();
   const surfaceActivity = usePluginSurfaceActivity();
-  const hostSize = useStateSize(undefined);
   const size = props.size ?? hostSize;
   const title = resolveAuthorText(translate, props.title, props.titleKey);
   const description = resolveAuthorText(translate, props.description, props.descriptionKey);
   const note = resolveAuthorText(translate, props.note, props.noteKey);
-  const quietActions = useContext(PluginUiQuietStateActionContext);
   const resolveAction = (action: SurfaceStateAction | undefined): HappierSurfaceStateAction | undefined => {
     if (!action) return undefined;
     const label = resolveAuthorText(translate, action.label, action.labelKey) ?? '';
@@ -577,6 +582,14 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
       ...(quietActions ? { invitation: false } : {}) };
   };
   const line = size === 'line';
+  const widgetState = quietActions && !line && props.placement !== 'start' && props.body === undefined;
+  const empty = props.kind === 'empty';
+  const unavailable = props.kind === 'unavailable';
+  const failure = unavailable || props.kind === 'error';
+  useReportSurfaceStateContent(widgetState && (empty || unavailable), true, false, false);
+  const scene = useStateScene(widgetState && (empty || failure)
+    ? empty ? 'firstRun' : HAPPIER_SURFACE_FAILURE_SCENE
+    : undefined, 'centered', line ? undefined : size, props.testID);
   const metrics = size && size !== 'line' ? HAPPIER_STATE_SIZE_METRICS[size] : null;
   const loadingLabel = title ?? translate(STATE_LOADING_TRANSLATION_KEY, 'Loading');
   const iconName = props.icon ?? resolveHappierStateFailureGlyph(props.kind) ?? STATE_DEFAULT_GLYPH[props.kind];
@@ -620,9 +633,9 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
         <HappierInfoTile
           size={tile.size}
           quietTitle={tile.quietTitle}
-          icon={tile.glyph ? (
+          icon={scene ?? (tile.glyph ? (
             <View style={{ marginBottom: tile.size ? HAPPIER_STATE_SIZE_METRICS[tile.size].glyphGapPx : UNSIZED_STATE_GLYPH_GAP_PX }}>{tile.glyph}</View>
-          ) : undefined}
+          ) : undefined)}
           title={title}
           description={description}
         />
@@ -633,6 +646,7 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
     focusRing: theme.colors.focus,
     pressedFill: theme.colors.control,
   };
+  if (hostSentence !== null && hostNotice?.replacement) return <>{hostNotice.replacement}</>;
   return (
     <HappierSurfaceState
       testID={props.testID}

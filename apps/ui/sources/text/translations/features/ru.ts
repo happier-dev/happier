@@ -19683,6 +19683,8 @@ const widgetGlanceTranslations = { ru: {
         servicesLoading: 'Загрузка локальных сервисов',
         servicesReadFailed: 'Не удалось прочитать локальные сервисы. Попробуйте ещё раз.',
         noMachine: 'У этой сессии нет машины для запроса.',
+        needsMachineTitle: 'Нужна машина',
+        triageNeedsMachineReason: 'Пул-реквесты и задачи появятся здесь после подключения машины.',
         appEmptyTitle: 'Ничего не запущено',
         appUnlistedTitle: 'Службы не показаны',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} не в сети.`,

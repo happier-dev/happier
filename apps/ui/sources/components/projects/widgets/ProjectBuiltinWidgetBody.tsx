@@ -213,10 +213,9 @@ function ReadmeBody(props: Props): React.ReactElement {
     // The README waits for its machine (lab p-code STATES 4); the page above says why.
     if (presence === 'unreachable' && read?.kind !== 'ready') return <CheckoutUnreachableState reachability={reachability} testID={`${props.testID}-unreachable`} />;
     if (!read || read.key !== key || (presence === 'pending' && read.kind === 'error')) return <UnavailableInstalledWidget unresolved={{ state: 'loading', reasonCode: 'widget_project_readme_loading' }} testID={props.testID} />;
-    // One state, one message, its next action beside it (the same line states as Local changes).
-    if (read.kind === 'error') return <SurfaceStateCard testID={props.testID} size="line" kind="error"
+    if (read.kind === 'error') return <SurfaceStateCard testID={props.testID} replacesContent kind="error"
         title={t('projects.code.readUnavailable')} action={{ label: t('common.retry'), onPress: () => setRefresh(value => value + 1) }} />;
-    if (!read.path) return <SurfaceStateCard testID={props.testID} size="line" kind="empty" title={t('projects.widgets.readmeMissing')} />;
+    if (!read.path) return <SurfaceStateCard testID={props.testID} replacesContent kind="empty" title={t('projects.widgets.readmeMissing')} />;
     return <View testID={props.testID}><WorkspaceFileDetailsView scopeId={scopeId} scope={scope} filePath={read.path} presentation="panel"
         embeddedActive={visible} targetKind="project" workspaceRefId={props.workspace.workspaceId} /></View>;
 }

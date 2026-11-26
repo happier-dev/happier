@@ -19589,6 +19589,8 @@ const widgetGlanceTranslations = { es: {
         servicesLoading: 'Cargando servicios locales',
         servicesReadFailed: 'No se pudieron leer los servicios locales. Inténtalo de nuevo.',
         noMachine: 'Esta sesión no tiene una máquina a la que preguntar.',
+        needsMachineTitle: 'Necesita una máquina',
+        triageNeedsMachineReason: 'Las solicitudes de cambios y las incidencias aparecen aquí cuando conectes una máquina.',
         appEmptyTitle: 'Nada en marcha',
         appUnlistedTitle: 'Los servicios no aparecen',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} está sin conexión.`,

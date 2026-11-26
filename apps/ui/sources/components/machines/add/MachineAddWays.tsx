@@ -11,8 +11,7 @@ import {
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
-import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSetting } from '@/sync/store/settingsReadHooks';
@@ -117,8 +116,6 @@ export function MachineAddWays(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  // The question starts on the rows' own edge (their glyph column), so it reads as the list's heading.
-  const rowInset = ITEM_ROW_PADDING_HORIZONTAL[useResolvedItemDensity()];
   const paths = useMachineAddPaths(props.serverId);
   const canCreate = useSetting('managedMachineCreationEnabled') !== false;
   const ways = React.useMemo(
@@ -139,16 +136,13 @@ export function MachineAddWays(
   );
   return (
     <View testID={`${props.testIDPrefix}.ways`}>
-      {/* Over columns the question starts on the card's title edge, as its first line; over rows it starts on
-          the rows' glyph column, as their heading. */}
-      <View style={columns ? styles.columnsLead : [styles.lead, { paddingHorizontal: rowInset }]}>
-        <Text style={styles.title}>
-          {t('machines.widgets.body.fleet.firstRun.title')}
-        </Text>
-        <Text style={styles.reason}>
-          {t('machines.widgets.body.fleet.firstRun.reason')}
-        </Text>
-      </View>
+      <SurfaceStateCard
+        kind="empty"
+        scene="noMachines"
+        testID={`${props.testIDPrefix}.firstRun`}
+        title={t('machines.widgets.body.fleet.firstRun.title')}
+        reason={t('machines.widgets.body.fleet.firstRun.reason')}
+      />
       {columns ? (
         <View style={styles.columns}>
           {ways.map((way, index) => (
@@ -187,25 +181,6 @@ export function MachineAddWays(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  lead: {
-    paddingTop: theme.space.s4,
-    paddingBottom: theme.space.s8,
-    gap: theme.space.s2,
-  },
-  title: {
-    ...Typography.variant('body'),
-    ...Typography.default('semiBold'),
-    color: theme.colors.text.primary,
-  },
-  reason: {
-    ...Typography.variant('meta'),
-    color: theme.colors.text.secondary,
-  },
-  // The card's description rhythm (frame title → description): the question, then its line, then the ways.
-  columnsLead: {
-    paddingBottom: theme.space.s12,
-    gap: theme.space.s2,
-  },
   // Each column reads top-down at the card's own rhythm: mark, title, line, then its button right after.
   columns: {
     flexDirection: 'row',

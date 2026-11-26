@@ -2,10 +2,12 @@ import * as React from 'react';
 import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice, type PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
 
 import { SurfaceStateContentContext } from './SurfaceStateCard';
+import { useSurfaceStateQuietActions } from './surfaceStateSize';
 
 export type ClaimableSurfaceNoticeContent = Readonly<{
   sentence: string;
   action?: PluginUiSurfaceNotice['action'];
+  replacement?: PluginUiSurfaceNotice['replacement'];
 }>;
 
 /**
@@ -22,6 +24,7 @@ export function useClaimableSurfaceNotice(
   claimed: boolean;
 }> {
   const reportContent = React.useContext(SurfaceStateContentContext);
+  const inWidget = useSurfaceStateQuietActions();
   // A surrounding host already knows the cause and recovery (for example, no Machine can run this plugin).
   // An inner offline notice relays that offer instead of replacing it with a generic failure.
   const outer = React.useContext(PluginUiSurfaceNoticeContext);
@@ -57,10 +60,10 @@ export function useClaimableSurfaceNotice(
   const claimed = notice !== null && claimants.size > 0;
   const [reportKey] = React.useState(() => Symbol('claimed-surface-notice'));
   React.useEffect(() => {
-    if (!claimed || !reportContent) return;
+    if (!claimed || inWidget || notice?.replacement || !reportContent) return;
     reportContent(reportKey, { empty: false, line: true, loading: false });
     return () => reportContent(reportKey, null);
-  }, [claimed, reportContent, reportKey]);
+  }, [claimed, inWidget, notice?.replacement, reportContent, reportKey]);
   return { notice, claimed };
 }
 
@@ -75,8 +78,10 @@ const NO_CLAIMANTS: ReadonlySet<string> = new Set();
 export function useClaimedHostFailureNotice(
   failure: boolean,
   ownCauseOutranks: boolean,
-): Readonly<{ sentence: string; action: PluginUiSurfaceNotice['action'] }> | null {
+): Readonly<{ sentence: string; action: PluginUiSurfaceNotice['action']; replacement: PluginUiSurfaceNotice['replacement'] }> | null {
   const notice = React.useContext(PluginUiSurfaceNoticeContext);
   const sentence = useClaimedPluginUiSurfaceNotice(failure);
-  return sentence === null || ownCauseOutranks ? null : { sentence, action: notice?.action };
+  return sentence === null || ownCauseOutranks
+    ? null
+    : { sentence, action: notice?.action, replacement: notice?.replacement };
 }

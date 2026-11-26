@@ -15,7 +15,6 @@ import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/bo
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { useSessionPluginPolicyContext } from '@/components/sessions/plugins/useSessionPluginPolicyContext';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useProjectDashboardOwner } from '@/components/projects/overview/useProjectDashboardOwner';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { WidgetFrameLoadingBody } from '@/components/widgets/frame/WidgetFrameLoadingBody';
@@ -133,46 +132,24 @@ function UnavailableWidgetFact(props: Readonly<{
     diagnosticCode: string | null;
     action?: SurfaceStateAction;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const about = React.useContext(WidgetAboutContext);
     const aboutAction: SurfaceStateAction | undefined = about
         ? { label: t('widgetDefinition.aboutMenu'), onPress: about, testID: `${props.testID}-about` } : undefined;
     const primary = props.action ?? aboutAction;
     const secondary = props.action ? aboutAction : undefined;
     useWidgetManagementCommand(props.action?.onPress, props.testID);
-    // A missing plugin is a fact about the card, not an event in it: one quiet line under the card's own
-    // title, its next step on the line. The rest of the surface works, so it asks nothing else of the person.
-    if (props.kind === 'plugin') {
-        return (
-            <SurfaceStateCard
-                testID={`${props.testID}-state`}
-                kind="unavailable"
-                size="line"
-                iconName="plug"
-                title={props.title}
-                diagnosticCode={props.diagnosticCode}
-                accessibilitySemantics="status"
-                {...(primary ? { action: primary } : {})}
-                {...(secondary ? { secondaryAction: secondary } : {})}
-            />
-        );
-    }
     return (
-        <View style={[styles.fact, { backgroundColor: theme.colors.surface.inset }]}>
-            <SurfaceStateCard
-                testID={`${props.testID}-state`}
-                kind="unavailable"
-                size="details"
-                layout="inline"
-                iconName="lock"
-                title={props.title}
-                reason={props.reason}
-                diagnosticCode={props.diagnosticCode}
-                accessibilitySemantics="status"
-                {...(primary ? { action: primary } : {})}
-                {...(secondary ? { secondaryAction: secondary } : {})}
-            />
-        </View>
+        <SurfaceStateCard
+            testID={`${props.testID}-state`}
+            kind="unavailable"
+            replacesContent
+            title={props.title}
+            reason={props.kind === 'definition' ? props.reason : undefined}
+            diagnosticCode={props.diagnosticCode}
+            accessibilitySemantics="status"
+            action={primary}
+            secondaryAction={secondary}
+        />
     );
 }
 
@@ -543,13 +520,3 @@ export function ConfiguredWidgetRefusal(props: Readonly<{
         {...(action ? { action } : {})}
     />;
 }
-
-const styles = StyleSheet.create((theme) => ({
-    /** The fact sits on the inset fill, so it reads as the widget's place rather than a page notice (lab `.pj-ua`). */
-    fact: {
-        alignSelf: 'stretch',
-        borderRadius: theme.borderRadius.lg,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-    },
-}));

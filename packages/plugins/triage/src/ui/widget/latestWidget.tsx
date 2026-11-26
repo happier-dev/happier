@@ -175,9 +175,8 @@ export function TriageLatestWidget({ tasksOnly = false }: Readonly<{ tasksOnly?:
       ? <Status testID="triage-latest-widget.degraded" tone="muted" presentation="inline"
         label={text('plugins.triage.surface.empty.incomplete.title', 'This list is not complete yet')} /> : null;
 
-  // Under the host's outage band with nothing to show, the card's one line: a failure state that claims the host's
-  // sentence and Retry ("Offline · nothing cached yet"), so the host draws none and the card is that line.
-  const offlineNothingCached = <ErrorState testID="triage-latest-widget.offline" layout="line"
+  // A cold outage claims the host's recovery and occupies the whole widget body.
+  const offlineNothingCached = <ErrorState testID="triage-latest-widget.offline" kind="unavailable"
     titleKey="plugins.triage.widget.error" title="The latest entries could not be read" />;
 
   if (hostOutage.settled && shellState.kind === 'unavailable' && rows?.length === 0) return <>{header}{offlineNothingCached}</>;

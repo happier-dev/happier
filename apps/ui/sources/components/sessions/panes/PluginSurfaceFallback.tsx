@@ -11,6 +11,7 @@ import { usePublishPluginSurfaceStateTitle } from '@/components/plugins/shared/p
 import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { useClaimedHostFailureNotice } from '@/components/ui/surfaces/claimableSurfaceNotice';
+import { useSurfaceStateQuietActions } from '@/components/ui/surfaces/surfaceStateSize';
 import {
     SurfaceStateCard,
     type SurfaceStateAction,
@@ -133,6 +134,7 @@ export function PluginSurfaceFallback(props: Readonly<{
     }
     // The host's line about this body (a widget's Machine notice) and this failure are one failure, said once.
     const hostNotice = useClaimedHostFailureNotice(card.kind !== 'loading', isPluginSurfaceCauseOutsidePlugin(props.reasonCode));
+    const inWidget = useSurfaceStateQuietActions();
     const title = hostNotice?.sentence ?? card.title;
     usePublishPluginSurfaceStateTitle(card.kind === 'loading' ? null : title);
     const action = card.kind === 'loading' ? undefined : hostNotice && hostNotice.action !== undefined
@@ -161,13 +163,15 @@ export function PluginSurfaceFallback(props: Readonly<{
             ? <View style={{ flex: 1 }}>{pageHeader}{skeleton}</View>
             : <PageFrame content="column" style={{ flex: 1 }}>{pageHeader}{skeleton}</PageFrame>;
     }
+    if (hostNotice?.replacement) return <>{pageHeader}{hostNotice.replacement}</>;
     return (
         <>
         {pageHeader}
         <SurfaceStateCard
             testID={props.testID}
+            replacesContent
             kind={hostNotice ? 'unavailable' : card.kind}
-            size={hostNotice ? 'line' : pageHeader ? pageStateSize : undefined}
+            size={hostNotice && !inWidget ? 'line' : pageHeader ? pageStateSize : undefined}
             title={title}
             titleContent={props.renderText?.('title', title)}
             reason={hostNotice ? undefined : props.reason ?? card.reason}

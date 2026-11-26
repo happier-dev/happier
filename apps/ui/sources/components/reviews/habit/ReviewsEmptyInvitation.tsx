@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
-import type { IconName } from '@/components/ui/icons/Icon';
 import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
@@ -28,7 +27,6 @@ const REVIEW_HABIT_SETS = Object.freeze({ workflow: REVIEW_HABIT_WORKFLOW_ID });
  */
 export function ReviewsEmptyInvitation(
   props: Readonly<{
-    iconName: IconName;
     startReview: (() => void) | undefined;
   }>,
 ) {
@@ -70,7 +68,7 @@ export function ReviewsEmptyInvitation(
     <SurfaceStateCard
       testID="reviews:empty"
       kind="empty"
-      iconName={props.iconName}
+      scene="checksPassed"
       title={t('reviewWalkthrough.detail.emptyTitle')}
       reason={t('reviewWalkthrough.detail.emptyReason')}
       replacesContent

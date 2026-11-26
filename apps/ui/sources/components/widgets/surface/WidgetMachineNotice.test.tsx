@@ -160,7 +160,7 @@ describe('WidgetMachineNoticeBoundary', () => {
             const sentence = useClaimedPluginUiSurfaceNotice(true);
             return <Text testID="plugin-error">{sentence ?? 'The latest entries could not be read'}</Text>;
         }
-        const notice: WidgetFrameBodyNoticeSource = () => ({ sentence: 'Add or connect a machine to use this here.', addMachine: true });
+        const notice: WidgetFrameBodyNoticeSource = () => ({ sentence: 'The machine is offline.' });
         const render = (claims: boolean) => (
             <SurfaceStateContentContext.Provider value={report}>
                 <WidgetMachineNoticeBoundary testID="widget"><Lending notice={notice} />{claims ? <Claimant /> : null}</WidgetMachineNoticeBoundary>
@@ -168,7 +168,7 @@ describe('WidgetMachineNoticeBoundary', () => {
         );
         const screen = await renderScreen(render(true));
         await flushHookEffects({ cycles: 3 });
-        expect(screen.findByTestId('plugin-error')?.props.children).toBe('Add or connect a machine to use this here.');
+        expect(screen.findByTestId('plugin-error')?.props.children).toBe('The machine is offline.');
         expect([...reports.values()]).toEqual([{ empty: false, line: true, loading: false }]);
         // Unclaimed, the host says it above a body that keeps its rows: nothing claims the body is one line.
         await screen.update(render(false));
@@ -183,7 +183,7 @@ describe('WidgetMachineNoticeBoundary', () => {
             <WidgetMachineNoticeBoundary testID="widget"><Lending notice={notice} /></WidgetMachineNoticeBoundary>,
         );
         await flushHookEffects({ cycles: 2 });
-        const action = screen.findByTestId('widget-machine-notice-action')!;
+        const action = screen.findByTestId('widget-machine-required-action')!;
         expect(JSON.stringify(screen.getTextContent())).toContain('settings.addMachine');
         expect(JSON.stringify(screen.getTextContent())).not.toContain('common.retry');
         await act(async () => { action.props.onPress(); });

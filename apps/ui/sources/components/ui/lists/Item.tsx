@@ -541,8 +541,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: ITEM_ICON_BOX_SIZE.comfortable,
         alignItems: 'center',
         justifyContent: 'center',
-        // Optical, not geometric — see ICON_LABEL_OPTICAL_NUDGE_STYLE.
-        ...ICON_LABEL_OPTICAL_NUDGE_STYLE,
     },
     iconContainerCompact: {
         // The list's row gap (the gap owner the text and divider insets read), never a second number.
@@ -1544,7 +1542,12 @@ function ItemRow(props: ItemProps & Readonly<{
             : isCozy
                 ? [styles.iconContainer, styles.iconContainerCozy, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
             : [styles.iconContainer, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null];
-    const iconContainerStyle = disabledPartFade ? [iconContainerBaseStyle, disabledPartFade] : iconContainerBaseStyle;
+    // Tight title-only rows align the mark and label on the same centre line.
+    const iconContainerStyle = [
+        iconContainerBaseStyle,
+        isTight && !hasSubtitleContent ? null : ICON_LABEL_OPTICAL_NUDGE_STYLE,
+        disabledPartFade,
+    ];
     const resolvedIconMarginRight = isMenuRow
         ? MENU_ROW_METRICS.iconMarginRightPx
         : catalogGeometry ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap

@@ -32,10 +32,26 @@ import type { SessionListConditionCopy } from './sessionListConditionFields';
 import { buildSessionListFacets } from './sessionListFacets';
 
 const styles = StyleSheet.create((theme) => ({
-    missingHomes: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, paddingHorizontal: 8 },
-    missingHomesReason: { color: theme.colors.text.secondary, flexShrink: 1 },
+    missingHomes: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+        paddingHorizontal: theme.space.s8,
+    },
+    missingHomesReason: { color: theme.colors.text.secondary, flex: 1 },
     missingHomesEdit: { color: theme.colors.text.link },
 }));
+
+export function SessionListMissingHomesNotice(props: Readonly<{ onEdit: () => void }>) {
+    return (
+        <View style={styles.missingHomes} testID="session-list-space-missing-homes">
+            <Text variant="meta" style={styles.missingHomesReason}>{t('sessionsList.spacesMissingHomes')}</Text>
+            <Pressable accessibilityRole="button" onPress={props.onEdit} testID="session-list-space-missing-homes-edit">
+                <Text variant="meta" style={styles.missingHomesEdit}>{t('sessionsList.spacesEdit')}</Text>
+            </Pressable>
+        </View>
+    );
+}
 
 /** The collapsed control's name for a scope ("My work"). Shared with any surface that edits a Sessions filter. */
 export function readSessionListScopeLabel(scope: SessionListScopeV1): string {
@@ -369,14 +385,6 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
                 onEdit={spaceChrome.openEdit}
             />
             </SettingAnchor>
-            {controller.activeSpace && controller.savedSpaceHasUnavailableHomes && (
-                <View style={styles.missingHomes} testID="session-list-space-missing-homes">
-                    <Text variant="meta" style={styles.missingHomesReason}>{t('sessionsList.spacesMissingHomes')}</Text>
-                    <Pressable accessibilityRole="button" onPress={spaceChrome.openEdit} testID="session-list-space-missing-homes-edit">
-                        <Text variant="meta" style={styles.missingHomesEdit}>{t('sessionsList.spacesEdit')}</Text>
-                    </Pressable>
-                </View>
-            )}
             {editorControl}
         </>
     );

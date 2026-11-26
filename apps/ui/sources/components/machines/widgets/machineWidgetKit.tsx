@@ -14,7 +14,6 @@ import type { StorageTabView } from '@/components/machines/storage/storageViewMo
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useWidgetFrameBodyMeta, useWidgetFrameBodySubjectState, useWidgetFrameSubjectStateSaidAbove } from '@/components/widgets/frame/widgetFrameBodyCaption';
@@ -264,12 +263,10 @@ export function MachineWidgetState(
     );
   }
   if (props.kind === 'offline') {
-    // Under a group header that already says "Offline · Last seen …", the body says only what comes back, as one
-    // quiet line: a card-sized illustration would restate the header (LABPARITY-ACCEPT-F fix 3). Guard's detail
-    // is that line.
+    // The group header carries presence and last-seen time. The body explains what returns when it reconnects.
     if (offlineSaidAbove) {
       return (
-        <SurfaceStateCard testID={`${props.testID}.offline`} kind="unavailable" replacesContent size="line"
+        <SurfaceStateCard testID={`${props.testID}.offline`} kind="unavailable" replacesContent
           title={props.detail || t('machines.widgets.body.common.readingsReturn')} />
       );
     }
@@ -334,21 +331,15 @@ export function MachineWidgetState(
       />
     );
   }
-  // A widget's empty body is part of a page of cards, not a page of its own (lab rw G "Not set up", AC
-  // "Nothing this week", FL "One machine"): the sentence and what it means start on the body's edge, and its
-  // one way forward is a quiet bordered button, so a Home of widgets never reads as a row of filled primaries.
-  // With nothing to do, the sentence itself stays quiet.
   return (
-    <View testID={`${props.testID}.empty`} style={styles.empty}>
-      <Text accessibilityRole="header" style={props.action ? styles.emptyTitle : styles.emptyTitleQuiet}>{props.title}</Text>
-      {props.reason ? <Text style={styles.emptyReason}>{props.reason}</Text> : null}
-      {props.action ? (
-        <View style={styles.emptyActions}>
-          <RoundButton size="small" display="secondary" title={props.action.label} testID={`${props.testID}.empty.action`}
-            onPress={props.action.onPress} />
-        </View>
-      ) : null}
-    </View>
+    <SurfaceStateCard
+      testID={`${props.testID}.empty`}
+      kind="empty"
+      replacesContent
+      title={props.title}
+      reason={props.reason}
+      action={props.action ? { ...props.action, testID: `${props.testID}.empty.action` } : undefined}
+    />
   );
 }
 
@@ -380,11 +371,6 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     color: theme.colors.text.tertiary,
   },
-  empty: { gap: theme.space.s4, minWidth: 0 },
-  emptyTitle: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary },
-  emptyTitleQuiet: { ...Typography.variant('label', 'medium'), color: theme.colors.text.secondary },
-  emptyReason: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
-  emptyActions: { flexDirection: 'row', marginTop: theme.space.s8 },
   offlineMeta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, flexShrink: 1, minWidth: 0 },
   column: {
     flexGrow: 1,

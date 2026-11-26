@@ -229,8 +229,7 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
       <SurfaceStateCard
         testID={`${props.testID}.invalid`}
         kind="unavailable"
-        layout="inline"
-        size="line"
+        replacesContent
         title={t('usage.board.page.queryInvalidTitle')}
         reason={t('usage.board.page.queryInvalidReason')}
       />
@@ -243,8 +242,7 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
         <SurfaceStateCard
           testID={`${props.testID}.unavailable`}
           kind="unavailable"
-          layout="inline"
-          size="line"
+          replacesContent
           title={t('usage.board.page.signedOutTitle')}
         />
       );

@@ -19667,6 +19667,8 @@ const widgetGlanceTranslations = { ca: {
         servicesLoading: 'Carregant els serveis locals',
         servicesReadFailed: 'No s’han pogut llegir els serveis locals. Torna-ho a provar.',
         noMachine: 'Aquesta sessió no té cap màquina a qui preguntar.',
+        needsMachineTitle: 'Cal una màquina',
+        triageNeedsMachineReason: 'Les sol·licituds de canvi i les incidències es mostren aquí quan connectis una màquina.',
         appEmptyTitle: 'Res en marxa',
         appUnlistedTitle: 'Els serveis no apareixen',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} està fora de línia.`,

@@ -577,6 +577,11 @@ export function defineHappierScene(definition: HappierSceneDefinition): HappierS
   return Object.freeze({ ...definition });
 }
 
+/** Shared art for a whole surface that could not load. */
+export const HAPPIER_SURFACE_FAILURE_SCENE = defineHappierScene({
+  name: 'happier.surfaceFailed', horizon: 'ridge', moment: 'dusk', planet: 'failed',
+});
+
 /** The composition behind an id or definition: a base scene's parts, replaced and extended by the definition's. */
 function compose(input: HappierSceneInput): HappierSceneComposition {
   if (typeof input === 'string') {

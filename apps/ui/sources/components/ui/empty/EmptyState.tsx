@@ -55,6 +55,7 @@ type EmptyStateProps = Readonly<{
      * states keep their glyph.
      */
     scene?: HappierSceneInput;
+    sceneTestID?: string;
     /** Whether the scene may play its one-shot rise (false for a surface the viewer is not looking at). */
     animationEnabled?: boolean;
     /** Already-translated title string. */
@@ -224,7 +225,7 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
             scene={props.scene}
             size={sceneSize}
             still={props.animationEnabled === false}
-            testID={props.testID ? `${props.testID}-scene` : undefined}
+            testID={props.sceneTestID ?? (props.testID ? `${props.testID}-scene` : undefined)}
         />
     ) : props.icon ?? (props.iconName
         ? <Icon name={props.iconName} size={sizeMetrics?.glyphPx ?? ICON_SIZE.xl} color={theme.colors.text.secondary} />

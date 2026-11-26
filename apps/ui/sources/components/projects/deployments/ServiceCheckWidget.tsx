@@ -12,6 +12,7 @@ import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/man
 import { useAccountConfiguredChecks } from '@/components/store/inventory/managedOperationalInventory';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import {
   useWidgetFrameBodyCaption,
   useWidgetFrameBodyIdentity,
@@ -57,12 +58,7 @@ export function ServiceCheckWidgetBody(props: Readonly<{ input: Readonly<Record<
 }
 
 function ServiceCheckWidgetState(props: Readonly<{ text: string; testID: string }>) {
-  const { theme } = useUnistyles();
-  return (
-    <Text testID={props.testID} style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary }}>
-      {props.text}
-    </Text>
-  );
+  return <SurfaceStateCard testID={props.testID} kind="unavailable" replacesContent title={props.text} />;
 }
 
 /**

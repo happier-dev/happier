@@ -33,6 +33,7 @@ export type SessionListSearchChromeProps = Readonly<{
     filterControl?: React.ReactNode;
     /** The spaces strip under the title (lab `clspaces`); its presence makes the conditions the tokens below. */
     spacesStrip?: React.ReactNode;
+    spaceNotice?: React.ReactNode;
     /** Conditions on top of the space, as removable tokens (lab `clfilter:filter`). */
     filterTokens?: React.ReactNode;
     /** Floating surfaces the space chrome hangs from this header (the save form). */
@@ -270,9 +271,9 @@ const SessionListColumnChrome = React.memo(function SessionListColumnChrome(
                 </View>
                 {columnControls}
             </View>
-            {/* The spaces strip is the column's band: one rail step under the title row and one above the first row,
-                which keeps the column's header gap itself (SHELL-ACCEPT-1116). */}
-            {spaceChrome ? <View testID="session-list-spaces-band" style={SPACES_BAND_STYLE}>{props.spacesStrip}</View> : null}
+            {props.spaceNotice}
+            {/* Only a visible strip takes the column's band. */}
+            {spaceChrome && props.spacesStrip != null ? <View testID="session-list-spaces-band" style={SPACES_BAND_STYLE}>{props.spacesStrip}</View> : null}
             </CollectionSpaceSwipeZone>
             {props.filterSummary && props.presentation !== 'runs' && !spaceChrome ? (
                 <View testID="session-list-filter-summary" style={styles.searchChromeStatusRow}>

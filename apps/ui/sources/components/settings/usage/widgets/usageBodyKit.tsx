@@ -697,8 +697,8 @@ export function UsageBodyReadFailed(props: Readonly<{
       {(!refusal || canRetry) && <SurfaceStateCard
         testID={`${props.testID}.${resourceFailure ? 'error' : 'unavailable'}`}
         kind={failed ? 'error' : 'unavailable'}
-        layout="inline"
-        {...(resourceFailure ? { diagnosticCode: props.errorCode } : { size: 'line' as const, replacesContent: false })}
+        {...(pageHasDetail ? { layout: 'inline' as const, size: 'line' as const } : { replacesContent: true })}
+        diagnosticCode={resourceFailure ? props.errorCode : undefined}
         title={t('usage.board.page.readFailedTitle')}
         reason={t('usage.board.page.readFailedReason')}
         {...(canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
@@ -717,9 +717,7 @@ export function UsageBodyInsufficient(
     action?: Readonly<{ label: string; onPress: (callerContext?: ActionExecutorContext) => void }>;
   }>,
 ) {
-  // Not enough data (or a measured zero) is one quiet line at every footprint: a full-width card never grows a
-  // page-size empty state for it (USAGE-ACCEPT #5). Replacing the body, it still reports itself to the frame so the
-  // card holds a line's height; a sub-section beside admitted facts also sits inline.
+  // Whole-body states use the frame's room. An insufficient sub-section stays at the content edge.
   const replacesContent = props.replacesContent !== false;
   const action = props.action;
   const commands = useCurrentUiContextLocalCommands(action ? [{ key: 'action', title: action.label,
@@ -729,8 +727,7 @@ export function UsageBodyInsufficient(
       testID={props.testID}
       kind="empty"
       replacesContent={replacesContent}
-      size="line"
-      {...(replacesContent ? {} : { layout: 'inline' as const })}
+      {...(replacesContent ? {} : { layout: 'inline' as const, size: 'line' as const })}
       title={props.title}
       {...(props.reason ? { reason: props.reason } : {})}
       {...(props.action

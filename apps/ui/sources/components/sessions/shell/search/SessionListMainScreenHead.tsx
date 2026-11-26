@@ -248,7 +248,7 @@ export const SessionListMainScreenHead = React.memo(
                 serverId={props.organizationServerId}
               />
             }
-            band={band}
+            band={props.spaceNotice ? <>{props.spaceNotice}{band}</> : band}
             status={status}
           />
         </CollectionSpaceSwipeZone>

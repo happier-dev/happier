@@ -30,7 +30,8 @@ import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessio
 import { useSessionListViewFilterController } from './useSessionListViewFilterController';
 import { useSessionListSpaceNavigation } from './useSessionListSpaceNavigation';
 import { clearSessionListViewFilterRetentionForTests } from './useSessionListViewFilters';
-import { SessionListFilterControl } from './SessionListFilterControl';
+import { SessionListFilterControl, SessionListMissingHomesNotice } from './SessionListFilterControl';
+import { SessionListSearchChrome } from './SessionListSearchChrome';
 import { resolveSessionListViewEmptyState } from '../sessionListViewEmptyStateModel';
 import { useSessionListRowsByServerId, useSessionOrganizationProjections } from '@/sync/domains/state/storage';
 import { useSessionListSpaceChrome } from './useSessionListSpaceChrome';
@@ -112,7 +113,13 @@ describe('saved Session spaces through the mounted query transport', () => {
                 const drop = React.useRef<SessionSpaceDrop | null>(null);
                 const organization = useSessionOrganizationProjections(homes);
                 const chrome = useSessionListSpaceChrome({ controller, organizationProjectionsByServerId: organization, spaceDropRef: drop });
-                return <SessionListFilterControl controller={controller} spaceChrome={chrome} organizationProjectionsByServerId={organization} />;
+                return <SessionListSearchChrome
+                    filterControl={<SessionListFilterControl controller={controller} spaceChrome={chrome} organizationProjectionsByServerId={organization} />}
+                    spaceNotice={controller.activeSpace && controller.savedSpaceHasUnavailableHomes
+                        ? <SessionListMissingHomesNotice onEdit={chrome.openEdit} /> : null}
+                    searchQuery=""
+                    onSearchQueryChange={() => {}}
+                />;
             }
             const screen = await renderScreen(<MountedSpace />);
             try {
@@ -140,6 +147,8 @@ describe('saved Session spaces through the mounted query transport', () => {
                 }
                 expect.soft(screen.findByTestId('session-list-space-missing-homes')).not.toBeNull();
                 expect.soft(screen.findByTestId('session-list-space-missing-homes-edit')).not.toBeNull();
+                expect.soft(screen.findByTestId('session-list-search-primary-controls')
+                    ?.findAllByProps({ testID: 'session-list-space-missing-homes' })).toHaveLength(0);
             } finally { await screen.unmount(); }
         } finally { await boundary.dispose(); }
     });

@@ -19529,6 +19529,8 @@ const widgetGlanceTranslations = { 'zh-Hans': {
         servicesLoading: '正在加载本地服务',
         servicesReadFailed: '无法读取本地服务。请重试。',
         noMachine: '此会话没有可查询的机器。',
+        needsMachineTitle: '需要连接机器',
+        triageNeedsMachineReason: '连接机器后，拉取请求和议题会显示在这里。',
         appEmptyTitle: '没有正在运行的服务',
         appUnlistedTitle: '未列出服务',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} 已离线。`,

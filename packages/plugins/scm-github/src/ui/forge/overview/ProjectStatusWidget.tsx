@@ -88,7 +88,6 @@ export function GithubProjectStatusWidget({
     return (
       <SurfaceState
         kind="unavailable"
-        size="line"
         title={t(
           'plugins.github.overview.noRepository',
           'This Project’s repository isn’t on GitHub',

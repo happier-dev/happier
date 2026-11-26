@@ -9,7 +9,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAtmosphereMoment } from '@/components/atmosphere/atmosphereMoments';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
 import { MACHINES_ADD_ROUTE } from '@/components/settings/machines/collection/machineCollectionModel';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -86,6 +86,7 @@ function YourHomeWidget(props: Readonly<{ testID: string }>) {
     [factCount, factKind, props.testID],
   );
   useWidgetFrameBodyMeta(meta);
+  if (model.machines.length === 0) return <EmptyHome testID={props.testID} />;
   const geometry = presentation?.geometry;
   if (!geometry) return <View testID={props.testID} />;
   const size = resolveYourHomeLayout(presentation?.size, geometry.width);
@@ -126,18 +127,6 @@ const YourHomeComposition = React.memo(function YourHomeComposition(
 ) {
   const { size, width: sw, height: bodyH, model } = props;
   const machines = model.machines;
-  if (machines.length === 0) {
-    const tall = size === 'medium' || size === 'full';
-    const h = tall ? bodyH - 112 : bodyH - 30;
-    const k = fit(sw, h, size === 'small' || size === 'medium' ? 262 : 564, tall ? 186 : 88);
-    const scene = layoutHomeOrbitScene(sw, h, orbitBodies(machines), { small: !tall, pr: (tall ? 34 : 18) * k });
-    return (
-      <View style={styles.fill}>
-        <HomeOrbitMap scene={scene} small={!tall} accessibilityLabel={t('homeWidgets.yourHomeOnline', { online: model.online, total: machines.length })} />
-        <EmptyHome tall={tall} testID={props.testID} />
-      </View>
-    );
-  }
   if (size === 'small') {
     const h = bodyH - 22;
     const scene = layoutHomeOrbitScene(sw, h, orbitBodies(machines.slice(0, SMALL_ORBITS)), { small: true, pr: 18 * fit(sw, h, 262, 96), angles: [-14, 196, 166] });
@@ -352,42 +341,22 @@ function HeaderFact(
   );
 }
 
-/** An empty Home: two quiet orbits, then what to do — add the first machine. */
-function EmptyHome(props: Readonly<{ tall: boolean; testID: string }>) {
+function EmptyHome(props: Readonly<{ testID: string }>) {
   const router = useRouter();
-  const { theme } = useUnistyles();
-  const add = React.useCallback(
-    () => router.push(MACHINES_ADD_ROUTE as never),
-    [router],
-  );
   return (
-    <View
+    <SurfaceStateCard
       testID={`${props.testID}.empty`}
-      style={props.tall ? styles.emptyFlow : styles.emptyRow}
-    >
-      <Text style={styles.emptyTitle}>
-        {t('homeWidgets.yourHomeEmptyTitle')}
-      </Text>
-      {props.tall ? (
-        <Text style={styles.emptyBody}>
-          {t('homeWidgets.yourHomeEmptyBody')}
-        </Text>
-      ) : null}
-      <RoundButton
-        testID={`${props.testID}.addMachine`}
-        size="small"
-        display="secondary"
-        title={t('settings.addMachine')}
-        onPress={add}
-        leading={
-          <Icon
-            name="plus"
-            size={ICON_SIZE.xs}
-            color={theme.colors.text.primary}
-          />
-        }
-      />
-    </View>
+      kind="empty"
+      replacesContent
+      scene="noMachines"
+      title={t('homeWidgets.yourHomeEmptyTitle')}
+      reason={t('homeWidgets.yourHomeEmptyBody')}
+      action={{
+        label: t('settings.addMachine'),
+        onPress: () => router.push(MACHINES_ADD_ROUTE as never),
+        testID: `${props.testID}.addMachine`,
+      }}
+    />
   );
 }
 
@@ -463,28 +432,5 @@ const styles = StyleSheet.create((theme) => ({
   needText: {
     ...happierPageTextMetrics('meta'),
     fontVariant: ['tabular-nums'],
-  },
-  emptyFlow: { marginTop: theme.space.s6, alignItems: 'center', gap: theme.space.s2 },
-  emptyRow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: theme.space.s10,
-  },
-  emptyTitle: {
-    ...Typography.default('semiBold'),
-    ...happierPageTextMetrics('sectionDescription'),
-    color: theme.colors.text.primary,
-  },
-  emptyBody: {
-    ...Typography.default(),
-    ...happierPageTextMetrics('sectionDescription'),
-    color: theme.colors.text.secondary,
-    marginBottom: theme.space.s8,
-    textAlign: 'center',
   },
 }));

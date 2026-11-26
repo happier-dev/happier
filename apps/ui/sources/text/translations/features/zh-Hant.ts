@@ -19529,6 +19529,8 @@ const widgetGlanceTranslations = { 'zh-Hant': {
         servicesLoading: '正在載入本機服務',
         servicesReadFailed: '無法讀取本機服務。請再試一次。',
         noMachine: '此工作階段沒有可查詢的機器。',
+        needsMachineTitle: '需要連接機器',
+        triageNeedsMachineReason: '連接機器後，提取要求和議題會顯示在這裡。',
         appEmptyTitle: '沒有正在執行的服務',
         appUnlistedTitle: '未列出服務',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} 已離線。`,

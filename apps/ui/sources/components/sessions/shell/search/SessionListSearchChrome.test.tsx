@@ -73,6 +73,39 @@ afterEach(() => {
 });
 
 describe('SessionListSearchChrome', () => {
+    it('leaves no band between the title and the leading rows when the spaces strip is absent', async () => {
+        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
+        const screen = await renderScreen(
+            <SessionListSearchChrome
+                filterControl={<Text>My work</Text>}
+                spacesStrip={null}
+                searchQuery=""
+                onSearchQueryChange={vi.fn()}
+            />,
+        );
+        expect(screen.findByTestId('session-list-search-primary-controls')).not.toBeNull();
+        expect(screen.findByTestId('session-list-spaces-band')).toBeNull();
+    });
+
+    it('puts the missing-Home notice below the controls and offers Edit space', async () => {
+        const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
+        const { SessionListMissingHomesNotice } = await import('./SessionListFilterControl');
+        const onEdit = vi.fn();
+        const screen = await renderScreen(
+            <SessionListSearchChrome
+                filterControl={<Text>My work</Text>}
+                spaceNotice={<SessionListMissingHomesNotice onEdit={onEdit} />}
+                searchQuery=""
+                onSearchQueryChange={vi.fn()}
+            />,
+        );
+        const primary = firstByTestId(screen.root, 'session-list-search-primary-controls');
+        expect(primary.findAllByProps({ testID: 'session-list-space-missing-homes' })).toHaveLength(0);
+        expect(screen.findByTestId('session-list-space-missing-homes')).not.toBeNull();
+        await screen.pressByTestIdAsync('session-list-space-missing-homes-edit');
+        expect(onEdit).toHaveBeenCalledOnce();
+    });
+
     it('keeps the canonical corpus filter control beside the stable search field', async () => {
         const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
         const screen = await renderScreen(

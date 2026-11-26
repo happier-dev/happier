@@ -19589,6 +19589,8 @@ const widgetGlanceTranslations = { ja: {
         servicesLoading: 'ローカルサービスを読み込んでいます',
         servicesReadFailed: 'ローカルサービスを読み込めませんでした。もう一度お試しください。',
         noMachine: 'このセッションには問い合わせるマシンがありません。',
+        needsMachineTitle: 'マシンが必要です',
+        triageNeedsMachineReason: 'マシンを接続すると、プルリクエストと Issue がここに表示されます。',
         appEmptyTitle: '実行中のものはありません',
         appUnlistedTitle: 'サービスを表示できません',
         appUnlistedOffline: ({ machine }: { machine: string }) => `${machine} はオフラインです。`,
