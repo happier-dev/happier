@@ -1,11 +1,12 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryBatchResponse, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageRecapExportResultSchema} from '@happier-dev/protocol/usage/usageRecap';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { standardCleanup } from '@/dev/testkit';
+import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -311,6 +312,455 @@ describe('recap export through the real captured UI Account Action', () => {
       expect(decodeUsageQueryResource(page.getSnapshot().value!).results[0]?.accounting?.totals.tokens.total).toBe(12);
     } finally { release(); }
   });
+
+  it.each(['comparison missing', 'current first', 'comparison first'] as const)('waits for both requested Accounting operands (%s)', async order => {
+    const finish = createDeferred<void>();
+    const period = { startMs: 2000, endMs: 3000 };
+    const query = normalizeUsageQuery({ period, includeComparison: true, includeQuota: false, includeCoach: false,
+      includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
+    const caller = await context(false, request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      const current = queries.find(row => row.dateRange?.startMs === period.startMs)!;
+      const comparison = queries.find(row => row.dateRange?.endMs === period.startMs)!;
+      const chunk = (operand: typeof current, eventCount: number) => new TextEncoder().encode(JSON.stringify({
+        v: 1, results: [{ query: operand, value: { ...accounting, totals: { ...accounting.totals, eventCount } } }],
+      }) + '\n');
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(order === 'comparison first' ? chunk(comparison, 7) : chunk(current, 3));
+        },
+        async pull(controller) {
+          await finish.promise;
+          if (order === 'comparison first') controller.enqueue(chunk(current, 3));
+          else if (order === 'current first') controller.enqueue(chunk(comparison, 7));
+          controller.close();
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+    const captured = captureUiUsageQueryAccountContext(credentials)!;
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    const settled: ActionExecuteResult[] = [];
+    const pending = createDefaultActionExecutor().execute('usage.query', { queries: [query] }, caller)
+      .then(result => { settled.push(result); return result; });
+    try {
+      await vi.waitFor(() => expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]).toMatchObject(
+        order === 'comparison first' ? {
+          sources: expect.arrayContaining([expect.objectContaining({ source: 'accounting', status: 'pending' })]),
+          comparison: { source: { status: 'available' }, accounting: { totals: { eventCount: 7 } } },
+        } : {
+          accounting: { totals: { eventCount: 3 } },
+          comparison: { source: { status: 'pending' } },
+        }));
+      await flushHookEffects();
+      expect.soft(settled).toEqual([]);
+      finish.resolve();
+      const result = await pending;
+      if (order === 'comparison missing') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'usage_query_result_invalid',
+          details: { issues: [{ code: 'incomplete_batch', path: ['results'] }] } });
+        await vi.waitFor(() => {
+          const snapshot = entry.getSnapshot();
+          expect(decodeUsageQueryResource(snapshot.value!).results[0]).toMatchObject({
+            accounting: { totals: { eventCount: 3 } }, pending: false,
+            comparison: { source: { status: 'error', errorCode: 'usage_query_result_invalid' } },
+          });
+        });
+      } else {
+        expect(result).toMatchObject({ ok: true, result: { results: [{
+          accounting: { totals: { eventCount: 3 } },
+          comparison: { source: { status: 'available' }, accounting: { totals: { eventCount: 7 } } },
+        }] } });
+      }
+    } finally {
+      finish.resolve();
+      await pending;
+      release();
+    }
+  });
+
+  const comparisonMatrix = (['fixed', 'rolling'] as const).flatMap(window =>
+    (['succeeds', 'fails', 'held'] as const).flatMap(current =>
+      (['not requested', 'succeeds', 'fails with body', 'fails without body', 'held'] as const)
+        .map(comparison => ({ window, current, comparison, priorFailure: false, wireFault: undefined }))));
+
+  it.each([
+    ...comparisonMatrix,
+    { window: 'rolling', current: 'fails', comparison: 'succeeds', priorFailure: true, wireFault: undefined },
+    { window: 'rolling', current: 'fails', comparison: 'held', priorFailure: false, wireFault: 'incomplete_batch' },
+    { window: 'fixed', current: 'succeeds', comparison: 'succeeds', priorFailure: false, wireFault: 'result_membership' },
+  ] as const)(
+    'settles the mounted Action on $window refresh: current $current, comparison $comparison (prior failure: $priorFailure, wire fault: $wireFault)', async ({
+    window, current, comparison, priorFailure, wireFault,
+  }) => {
+    const W0 = Date.UTC(2026, 9, 12, 12);
+    const W1 = W0 + 86_400_000;
+    let now = W0;
+    const query = normalizeUsageQuery({
+      period: window === 'fixed' ? { startMs: W0 - 86_400_000, endMs: W0 } : { relative: '7days' },
+      includeComparison: comparison !== 'not requested', includeQuota: false, includeCoach: false,
+      includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+    });
+    const currentPeriod = (atMs: number) => resolveUsageQueryPeriod(query, atMs);
+    const priorPeriod = (atMs: number) => {
+      const { startMs, endMs } = currentPeriod(atMs);
+      return { startMs: 2 * startMs! - endMs!, endMs: startMs };
+    };
+    const errorCode = 'usage_query_failed';
+    const failure = { status: 'error', errorCode };
+    const holds = current === 'held' || comparison === 'held';
+    const admit = createDeferred<void>();
+    const releaseHeld = createDeferred<void>();
+    let transportIssued = false;
+    let phase: 'initial' | 'old error with body' | 'refresh' = 'initial';
+    const caller = await context(false, request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      const rows = queries.map(operand => {
+        const comparisonOperand = operand.dateRange?.endMs === currentPeriod(now).startMs;
+        const failed = comparisonOperand ? priorFailure && phase === 'initial' || comparison === 'fails without body'
+          || comparison === 'fails with body' && phase !== 'initial' : current === 'fails' && phase === 'refresh';
+        const held = phase === 'refresh' && (comparisonOperand ? comparison === 'held' : current === 'held');
+        const eventCount = (phase === 'refresh' ? 30 : 10) + (comparisonOperand ? 1 : 0);
+        const value: UsageAnalyticsQueryBatchResponse['results'][number] = failed ? { query: operand, error: errorCode }
+          : { query: operand, value: { ...accounting, totals: { ...accounting.totals, eventCount },
+            coverage: { status: 'complete', reasons: [], sources: [], missingDimensions: [],
+              range: { ...operand.dateRange, complete: true }, ranked: [] } } };
+        return { value, held };
+      });
+      if (phase !== 'refresh') return Response.json({ v: 1, results: rows.map(row => row.value) });
+      const chunk = (held: boolean) => new TextEncoder().encode(JSON.stringify({
+        v: 1, results: rows.filter(row => row.held === held).map(row => row.value),
+      }) + '\n');
+      transportIssued = true;
+      return new Response(new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await admit.promise;
+          if (rows.some(row => !row.held)) controller.enqueue(chunk(false));
+          await releaseHeld.promise;
+          if (wireFault === 'result_membership') controller.enqueue(chunk(false));
+          else if (wireFault !== 'incomplete_batch' && rows.some(row => row.held)) controller.enqueue(chunk(true));
+          controller.close();
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+    const captured = captureUiUsageQueryAccountContext(credentials)!;
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const read = () => {
+      const value = entry.getSnapshot().value;
+      return value && decodeUsageQueryResource(value).results[0];
+    };
+    const release = entry.subscribe(() => {}, true);
+    const actionLifetime = new AbortController();
+    let refresh: ReturnType<typeof entry.refresh> | undefined;
+    let action: Promise<void> | undefined;
+    let result: ActionExecuteResult | undefined;
+    try {
+      await vi.waitFor(() => expect(read()?.accounting?.totals.eventCount).toBe(10));
+      await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({ pending: 'idle' }));
+      if (window === 'rolling' && comparison === 'fails with body') {
+        phase = 'old error with body';
+        await entry.refresh();
+        expect(read()?.comparison).toMatchObject({ query: { period: priorPeriod(W0) }, source: failure,
+          accounting: { totals: { eventCount: 11 } } });
+      }
+
+      phase = 'refresh';
+      now = window === 'rolling' ? W1 : W0;
+      refresh = entry.refresh();
+      await vi.waitFor(() => expect(transportIssued).toBe(true));
+      action = createDefaultActionExecutor().execute('usage.query', { queries: [query] }, { ...caller, signal: actionLifetime.signal })
+        .then(settled => { result = settled; });
+      await flushHookEffects();
+      expect(result).toBeUndefined();
+      const startingPage = read();
+      expect(startingPage?.sources.find(source => source.source === 'accounting')?.status).toMatch(/^(pending|available|stale|error)$/);
+      if (comparison !== 'not requested') expect(startingPage?.comparison?.source.status).toMatch(/^(pending|available|stale|error)$/);
+      admit.resolve();
+
+      const retainsOldWindow = window === 'rolling' && current === 'fails';
+      const displayedWindow = retainsOldWindow ? W0 : now;
+      const comparisonSummary = (slice: NonNullable<ReturnType<typeof read>>) => ({
+        current: slice.sources.find(source => source.source === 'accounting')?.status,
+        currentCause: slice.sources.find(source => source.source === 'accounting')?.errorCode,
+        currentCount: slice.accounting?.totals.eventCount,
+        currentWindow: slice.accounting?.coverage?.range?.endMs,
+        comparison: slice.comparison?.source.status,
+        comparisonCause: slice.comparison?.source.errorCode,
+        comparisonCount: slice.comparison?.accounting?.totals.eventCount,
+        comparisonPeriod: slice.comparison?.query.period,
+      });
+      const failedComparison = comparison === 'fails with body' || comparison === 'fails without body';
+      if (holds) {
+        await vi.waitFor(() => {
+          const page = comparisonSummary(read()!);
+          expect(page.current).toBe(current === 'held' ? 'pending' : current === 'fails' ? 'error' : 'available');
+          if (comparison === 'not requested') {
+            expect(page.comparison).toBeUndefined();
+          } else if (window === 'rolling' && current === 'held') {
+            // While current has no W1 body the page can only compare its W0 facts.
+            expect(page.comparisonPeriod).toEqual(priorPeriod(W0));
+            expect(page.comparison).toBe(failedComparison ? 'error' : 'pending');
+            expect(page.comparisonCause).toBe(failedComparison ? errorCode : undefined);
+          } else {
+            const status = failedComparison ? 'error' : comparison === 'succeeds' ? 'available'
+              : retainsOldWindow ? 'stale' : 'pending';
+            expect(page.comparison).toBe(status);
+            expect(page.comparisonCause).toBe(failedComparison ? errorCode : undefined);
+          }
+        });
+        await flushHookEffects();
+        // The selected W0 pair does not make an issued W1 operand optional.
+        expect.soft(result).toBeUndefined();
+      }
+      if (wireFault === 'result_membership') {
+        await vi.waitFor(() => expect(result).toMatchObject({ ok: true }));
+        await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({ pending: 'idle' }));
+      }
+      releaseHeld.resolve();
+      await refresh;
+      const comparisonCount = comparison === 'not requested' || comparison === 'fails without body' || priorFailure ? undefined
+        : retainsOldWindow ? 11
+          : failedComparison ? (window === 'fixed' ? 11 : undefined)
+            : 31;
+      const expected = {
+        current: current === 'fails' ? 'error' : 'available',
+        currentCause: current === 'fails' ? errorCode : undefined,
+        currentCount: current === 'fails' ? 10 : 30,
+        currentWindow: displayedWindow,
+        comparison: comparison === 'not requested' ? undefined : failedComparison || priorFailure ? 'error' : retainsOldWindow ? 'stale' : 'available',
+        comparisonCause: failedComparison || priorFailure ? errorCode : undefined,
+        comparisonCount,
+        comparisonPeriod: comparison === 'not requested' ? undefined : priorPeriod(displayedWindow),
+      };
+      expect.soft(comparisonSummary(read()!)).toEqual(expected);
+      await vi.waitFor(() => expect(result).toBeDefined());
+      if (wireFault === 'incomplete_batch') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'usage_query_result_invalid',
+          details: { issues: [{ code: wireFault, path: ['results'] }] } });
+        expect(entry.getSnapshot().pending).toBe('idle');
+        expect(entry.getSnapshot().error).toMatchObject({ code: 'usage_query_result_invalid',
+          details: { issues: [{ code: 'incomplete_batch', path: ['results'] }] } });
+        return;
+      }
+      expect(result).toMatchObject({ ok: true });
+      if (!result?.ok) throw new Error('Expected admitted Accounting source states');
+      const batch = UsageQueryBatchResultSchema.parse(result.result);
+      expect(comparisonSummary(batch.results[0]!)).toEqual(expected);
+      expect(entry.getSnapshot().pending).toBe('idle');
+    } finally {
+      admit.resolve();
+      releaseHeld.resolve();
+      actionLifetime.abort();
+      await action?.catch(error => { if (error?.name !== 'AbortError') throw error; });
+      await refresh;
+      release();
+      clock.mockRestore();
+    }
+  });
+
+  it.each(['cold single', 'two entries', 'duplicate within first frame', 'duplicate while Work waits for current'] as const)(
+    'shares only settled operands across entry reads (%s)', async scenario => {
+    const end = createDeferred<void>();
+    const period = { startMs: 2000, endMs: 3000 };
+    const duplicate = scenario === 'duplicate within first frame' || scenario === 'duplicate while Work waits for current';
+    const single = normalizeUsageQuery({ period, includeComparison: false, includeQuota: false, includeCoach: false,
+      includeWorkEvidence: scenario === 'duplicate while Work waits for current', includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeActivity: false });
+    const paired = normalizeUsageQuery({ ...single, includeComparison: true });
+    const executorInput = { queries: [scenario === 'two entries' ? paired : single] };
+    let requests = 0;
+    const caller = await context(false, request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      requests++;
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      const current = queries.find(row => row.dateRange?.startMs === period.startMs)!;
+      const row = { query: current, value: { ...accounting, totals: { ...accounting.totals, eventCount: 3 } } };
+      return new Response(new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({
+            v: 1, results: duplicate ? [row, row] : [row],
+          }) + '\n'));
+          await end.promise;
+          controller.close();
+        },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+    const captured = captureUiUsageQueryAccountContext(credentials)!;
+    const store = getUsageQueryResourceStore(captured);
+    const page = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(executorInput) });
+    const release = page.subscribe(() => {}, true);
+    const executor = createDefaultActionExecutor();
+    let result: ActionExecuteResult | undefined;
+    const action = executor.execute('usage.query', executorInput, caller).then(reply => { result = reply; });
+    const view = () => {
+      const content = page.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0];
+    };
+    const failure = (code: string) => ({ errorCode: 'usage_query_result_invalid', details: { issues: [{ code, path: ['results'] }] } });
+    const success = { ok: true, result: { results: [{ accounting: { totals: { eventCount: 3 } } }] } };
+    try {
+      if (duplicate) {
+        await vi.waitFor(() => expect(result).toMatchObject({ ok: false, ...failure('result_membership') }));
+        expect(page.getSnapshot()).toMatchObject({ pending: 'idle', error: { code: 'usage_query_result_invalid',
+          details: failure('result_membership').details } });
+        expect(view()?.accounting).toBeUndefined();
+        expect(view()?.sources).toContainEqual(expect.objectContaining({ source: 'accounting', status: 'error',
+          errorCode: 'usage_query_result_invalid' }));
+        if (scenario === 'duplicate while Work waits for current') {
+          expect(view()?.pending).toBe(false);
+          expect(view()?.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'error',
+            errorCode: 'usage_query_result_invalid' }));
+        }
+        return;
+      }
+      await vi.waitFor(() => expect(view()?.accounting?.totals.eventCount).toBe(3));
+      if (scenario === 'cold single') {
+        await vi.waitFor(() => expect(result).toMatchObject(success));
+        expect(page.getSnapshot()).toMatchObject({ pending: 'idle' });
+      } else {
+        const siblingInput = { queries: [single] };
+        const sibling = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(siblingInput) });
+        const stopSibling = sibling.subscribe(() => {}, true);
+        try {
+          expect(await executor.execute('usage.query', siblingInput, caller)).toMatchObject(success);
+          expect(sibling.getSnapshot()).toMatchObject({ pending: 'idle' });
+          expect(requests).toBe(1);
+          expect(view()?.comparison?.source.status).toBe('pending');
+          expect.soft(result).toBeUndefined();
+          end.resolve();
+          await action;
+          expect(result).toMatchObject({ ok: false, ...failure('incomplete_batch') });
+          expect(page.getSnapshot()).toMatchObject({ pending: 'idle', error: { code: 'usage_query_result_invalid',
+            details: failure('incomplete_batch').details } });
+          expect(view()?.accounting?.totals.eventCount).toBe(3);
+          expect(sibling.getSnapshot().error).toBeUndefined();
+        } finally { stopSibling(); }
+      }
+    } finally {
+      end.resolve();
+      await action;
+      release();
+    }
+  });
+
+  it('keeps a withdrawn Session out of an already-settled Accounting handoff while detail is held', async () => {
+    const detail = createDeferred<Response>();
+    const detailStarted = createDeferred<void>();
+    const sessionId = 'handoff-withdrawal';
+    const original = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, session: [sessionId],
+      includeComparison: false, includeQuota: false, includeCoach: false, includeWorkEvidence: false,
+      includeSessionEvidence: true, includeTranscriptEvidence: false });
+    const refusal = normalizeUsageQuery({ ...original, period: { startMs: 3000, endMs: 4000 }, includeSessionEvidence: false });
+    const caller = await context(false, request => {
+      if (request.path === '/v2/usage/query-batch') {
+        const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+        return Response.json({ v: 1, results: queries.map(query => query.dateRange?.startMs === 3000
+          ? { query, error: 'not_found' } : { query, value: accounting }) });
+      }
+      if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+        detailStarted.resolve();
+        return detail.promise;
+      }
+      if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+      return undefined;
+    });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+    const owner = getUsageQueryResourceStore(captureUiUsageQueryAccountContext(credentials)!);
+    const first = { queries: [original] };
+    const entry = owner.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(first) });
+    const release = entry.subscribe(() => {}, true);
+    const executor = createDefaultActionExecutor();
+    const withdrawn = { sources: expect.arrayContaining([expect.objectContaining({ source: 'accounting', errorCode: 'denied' })]) };
+    try {
+      await detailStarted.promise;
+      expect(await executor.execute('usage.query', first, caller)).toMatchObject({ ok: true,
+        result: { results: [{ accounting: { totals: { eventCount: 1 } } }] } });
+      expect(await executor.execute('usage.query', { queries: [refusal] }, caller)).toMatchObject({ ok: true,
+        result: { results: [withdrawn] } });
+      const page = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+      expect(page).toMatchObject(withdrawn);
+      expect(page.accounting).toBeUndefined();
+      const reply = await executor.execute('usage.query', first, caller);
+      expect(reply).toMatchObject({ ok: true, result: { results: [withdrawn] } });
+      if (reply.ok) expect(UsageQueryBatchResultSchema.parse(reply.result).results[0]?.accounting).toBeUndefined();
+    } finally {
+      detail.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
+      release();
+    }
+  });
+
+  it.each(['coach_evidence', 'public_profile'] as const)(
+    'returns a terminal %s error after successful Accounting and a new page fallback',
+    async usageQueryReadiness => {
+      const coach = usageQueryReadiness === 'coach_evidence';
+      const sessionId = 'terminal-evidence';
+      const detail = createDeferred<Response>();
+      const privateRead = createDeferred<void>();
+      const query = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, session: [sessionId],
+        includeComparison: false, includeQuota: false, includeCoach: coach, includeWorkEvidence: false,
+        includeSessionEvidence: true, includeTranscriptEvidence: false });
+      const kv = createAccountKvHttpFixture();
+      const caller = await context(false, async request => {
+        if (request.path === '/v2/usage/query-batch') {
+          const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+          return Response.json({ v: 1, results: queries.map(query => ({ query, value: accounting })) });
+        }
+        if (request.path === '/v1/kv/bulk' && request.accountId !== null) {
+          return (await kv.handleFetch(request.url, { method: request.method, body: JSON.stringify(request.body) })) ?? undefined;
+        }
+        if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+          privateRead.resolve();
+          return detail.promise.then(response => response.clone());
+        }
+        if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+        return undefined;
+      });
+      const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+      const input = { queries: [query] };
+      const entry = getUsageQueryResourceStore(captureUiUsageQueryAccountContext(credentials)!)
+        .getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
+      const release = entry.subscribe(() => {}, true);
+      const executor = createDefaultActionExecutor();
+      const abort = new AbortController();
+      let evidenceResult: ActionExecuteResult | undefined;
+      const wanted = executor.execute('usage.query', input, { ...caller, usageQueryReadiness, signal: abort.signal })
+        .then(result => { evidenceResult = result; });
+      try {
+        await privateRead.promise;
+        const early = await executor.execute('usage.query', input, caller);
+        expect(early).toMatchObject({ ok: true, result: { results: [{ accounting: { totals: { eventCount: 1 } }, pending: true }] } });
+        expect(evidenceResult).toBeUndefined();
+        const progress = entry.getSnapshot().value;
+        detail.resolve(Response.json({ requests: [], results: [] }));
+        await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+          pending: 'idle', error: { code: 'usage_query_failed' },
+        }));
+        const failed = entry.getSnapshot();
+        expect(failed.value).toBeDefined();
+        expect(failed.value).not.toBe(progress);
+        expect(decodeUsageQueryResource(failed.value!).results[0]).toMatchObject({ pending: false,
+          accounting: { totals: { eventCount: 1 } },
+          sources: expect.arrayContaining([expect.objectContaining({
+            source: 'how_you_work', status: 'error', errorCode: 'usage_query_failed',
+          })]),
+        });
+        await flushHookEffects({ cycles: 15 });
+        expect(evidenceResult).toMatchObject({ ok: false, errorCode: failed.error?.code });
+      } finally {
+        abort.abort();
+        detail.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
+        await wanted.catch(() => undefined);
+        release();
+      }
+    });
 
   it('shares the progressing page Resource and leaves its subscriber alive after a one-shot Action settles', async () => {
     const query = normalizeUsageQuery({ ...input.query, includeWorkEvidence: false, includeCoach: false, includeQuota: false });

@@ -290,14 +290,18 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
             sources: quota.sources, nowMs: accountingNowMs });
     }
     const sourceLocations = input.sourceLocations;
-    // A rolling reread requests a new absolute window. Until current
-    // accounting answers, the displayed window still owns its exact old
-    // comparison; it is being replaced, not definitively absent.
+    // A rolling reread requests a new absolute window. While the old window
+    // is displayed, keep its comparison's terminal failure even without facts.
     const witnessedComparison = previous?.results.flatMap(slice => {
         const comparison = slice.comparison;
-        if (!comparison?.accounting || accounting.has(getUsageQueryKey(comparison.query))) return [];
-        return [{ query: comparison.query, value: comparison.accounting,
-            status: accounting.get(slice.key)?.status === 'pending' ? 'pending' as const : 'stale' as const,
+        if (!comparison || accounting.has(getUsageQueryKey(comparison.query))) return [];
+        const failed = comparison.source.status === 'error';
+        if (!comparison.accounting && !failed) return [];
+        const status: UsageAccountingSourceSnapshot['status'] = failed ? 'error'
+            : accounting.get(slice.key)?.status === 'pending' ? 'pending' : 'stale';
+        return [{ query: comparison.query, status,
+            ...(comparison.accounting === undefined ? {} : { value: comparison.accounting }),
+            ...(comparison.source.errorCode === undefined ? {} : { errorCode: comparison.source.errorCode }),
             ...(comparison.source.asOfMs === undefined ? {} : { asOfMs: comparison.source.asOfMs }) }];
     }) ?? [];
     // Aggregation retains rich operands; its previous input must be the rich

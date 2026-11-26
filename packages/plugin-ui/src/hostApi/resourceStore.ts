@@ -34,6 +34,8 @@ export type PluginUiResourceClient = Readonly<{
     options?: Parameters<PluginUiHostApi['readResource']>[1] & Readonly<{
       /** Host-private progress is admitted by this read's existing entry and lifetime. */
       onProgress?: (value: ResourceContent) => void;
+      /** Host-private, retained presentation of this read's terminal failure. */
+      onFailureContent?: (value: ResourceContent) => void;
     }>) => ReturnType<PluginUiHostApi['readResource']>;
   /** A host client may normalize Action-specific semantic input through its canonical owner. */
   resourceKey?: (resource: PluginUiResourceReference) => string;
@@ -569,6 +571,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     subscription: PluginUiResourceSnapshot['subscription'],
     pending: PluginUiResourceSnapshot['pending'] = 'idle',
     replace?: () => void,
+    failureContent?: ResourceContent,
   ): void {
     const authorityLost = hasLostResourceReadAuthority(error);
     const previous = entry.snapshot;
@@ -583,10 +586,11 @@ export function createPluginUiResourceStore(input: Readonly<{
       entry.readQueuedExpectedDigest = null;
       stopWatch(entry, false);
     }
-    const hasValue = !authorityLost && previous.value !== undefined;
+    const value = authorityLost ? undefined : failureContent ?? previous.value;
     publish(entry, {
-      ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
-      freshness: hasValue ? 'stale' : 'unknown',
+      ...(value === undefined ? {} : { value, digest: value === previous.value ? previous.digest
+        : contentIdentity(value) === undefined ? value.digest : undefined }),
+      freshness: value === undefined ? 'unknown' : 'stale',
       pending: replace ? 'initial' : authorityLost ? 'idle' : pending,
       error,
       subscription: authorityLost && !replace ? 'ended' : subscription,
@@ -695,8 +699,10 @@ export function createPluginUiResourceStore(input: Readonly<{
       if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
       admitContent(entry, value, pending, 'read');
     };
+    let failureContent: ResourceContent | undefined;
     void input.client.readResource(entry.resource, { signal: controller.signal,
       onProgress: value => admitValue(value, requestedPending),
+      onFailureContent: value => { failureContent = value; },
     }).then(
       (value) => {
         if (!isEntryCurrent(entry) || controller.signal.aborted || entry.readController !== controller) return;
@@ -716,7 +722,7 @@ export function createPluginUiResourceStore(input: Readonly<{
         if (!isEntryCurrent(entry) || controller.signal.aborted) return;
         const previous = entry.snapshot;
         const retryable = isRetryableResourceReadFailure(error);
-        publishResourceFailure(entry, readError(error), previous.subscription);
+        publishResourceFailure(entry, readError(error), previous.subscription, 'idle', undefined, failureContent);
         settleRefreshWaiters(entry);
         if (!retryable) {
           // A terminal read failure cannot be made current by replaying a

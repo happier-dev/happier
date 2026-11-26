@@ -6847,6 +6847,83 @@ describe('usage query captured Resource adapter', () => {
     } finally { held.resolve(Response.json(value)); release(); }
   });
 
+  it.each(['outstanding', 'completed'] as const)('settles a malformed refresh when the comparison is %s and reacquires Accounting on an allowance wake', async completion => {
+    const held = createDeferred<void>();
+    const range = { startMs: 2000, endMs: 3000 };
+    let generation = 1;
+    let malformed = false;
+    const captured = await context(async request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      const results = queries.map(query => ({ query, value: { ...value, totals: { ...value.totals,
+        eventCount: generation + (query.dateRange?.startMs === range.startMs ? 0 : 10) } } }));
+      if (!malformed) return Response.json({ v: 1, results });
+      if (completion === 'outstanding') {
+        await held.promise;
+        return Response.json({ v: 1, results: [] });
+      }
+      const comparison = results.find(row => row.query.dateRange?.endMs === range.startMs)!;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ v: 1, results: [comparison] }) + '\n'));
+        },
+        async pull(controller) { await held.promise; controller.close(); },
+      }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const query = normalizeUsageQuery({ period: range, includeComparison: true, includeQuota: true,
+      includeQuotaHistory: false, includeCoach: false, includeWorkEvidence: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const slice = () => {
+      const content = entry.getSnapshot().value;
+      return content && decodeUsageQueryResource(content).results[0];
+    };
+    const reads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
+    const release = entry.subscribe(() => {}, true);
+    let refresh: Promise<unknown> | undefined;
+    try {
+      await expect.poll(() => entry.getSnapshot().pending === 'idle' && entry.getSnapshot().subscription === 'live'
+        && slice()?.comparison?.accounting?.totals.eventCount === 11).toBe(true);
+      const before = reads();
+      generation = 2;
+      malformed = true;
+      refresh = entry.refresh();
+      await expect.poll(reads).toBe(before + 1);
+      await expect.poll(() => slice()?.sources.find(source => source.source === 'accounting')?.status).toBe('pending');
+      if (completion === 'completed') {
+        await expect.poll(() => slice()?.comparison).toMatchObject({ source: { status: 'available' },
+          accounting: { totals: { eventCount: 12 } } });
+      } else {
+        expect(slice()?.comparison?.source.status).toBe('pending');
+      }
+      held.resolve();
+      await refresh;
+      const code = 'usage_query_result_invalid';
+      expect(entry.getSnapshot()).toMatchObject({ pending: 'idle', freshness: 'stale', error: { code } });
+      expect.soft(slice()).toMatchObject({ pending: false, accounting: { totals: { eventCount: 1 } },
+        sources: expect.arrayContaining([expect.objectContaining({ source: 'accounting', status: 'error', errorCode: code })]) });
+      const expectedComparison = completion === 'completed'
+        ? { source: { status: 'available' }, accounting: { totals: { eventCount: 12 } } }
+        : { source: { status: 'error', errorCode: code }, accounting: { totals: { eventCount: 11 } } };
+      expect.soft(slice()?.comparison).toMatchObject(expectedComparison);
+
+      generation = 3;
+      malformed = false;
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['provider-account-usage'],
+        { changeKinds: ['account'], usageQueryAffects: true, usageAccountingAffects: false });
+      await expect.poll(reads).toBe(before + 2);
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(entry.getSnapshot().error).toBeUndefined();
+      expect(slice()).toMatchObject({ pending: false, accounting: { totals: { eventCount: 3 } },
+        comparison: { source: { status: 'available' }, accounting: { totals: { eventCount: completion === 'completed' ? 12 : 13 } } } });
+    } finally {
+      held.resolve();
+      await refresh;
+      release();
+    }
+  });
+
   it('retains comparison facts when an exact query moves to another Resource batch', async () => {
     const held = createDeferred<Response>();
     let rereading = false;

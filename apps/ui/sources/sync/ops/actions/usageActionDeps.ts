@@ -4,6 +4,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { decodeUsageQueryResource, getUsageQueryResourceStore, readUiQuota, readUiUsageModelPrices, getUiUsageHistoryState, readUiUsageHistory, cancelUiUsageHistory, type UsageQueryAccountContext } from '@/sync/api/account/usageQueryResource';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { HappyError } from '@/utils/errors/errors';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -124,24 +125,33 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       throwIfAborted(context.signal);
       account.assertCurrent();
       let release: (() => void) | undefined;
-      let abort: (() => void) | undefined;
       try {
         // A one-shot Action returns its current truthful snapshot; it does not
         // harvest every optional source. This exact Resource also belongs to
         // mounted consumers, whose subscriptions own subsequent progression.
         const entry = getUsageQueryResourceStore(account).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
+        const joined = entry.acquire(context);
+        const needsEvidence = joined.workAwaitingOwnRead || context.usageQueryReadiness === 'coach_evidence'
+          || context.usageQueryReadiness === 'public_profile';
         const result = await new Promise<UsageQueryBatchResult>((resolve, reject) => {
+          let accounting: UsageQueryBatchResult | undefined;
+          const requireJoinedRead = () => {
+            account.assertCurrent();
+            throwIfAborted(context.signal);
+            if (joined.signal?.aborted) throw new HappyError('Usage Resource read was cancelled', false, { code: 'plugin_resource_aborted' });
+          };
           const inspect = () => {
             try {
-              account.assertCurrent();
-              throwIfAborted(context.signal);
-              const snapshot = entry.getCurrentSnapshot();
-              if (!snapshot) return;
-              if (snapshot.error) throw new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details });
-              if (!snapshot.value || snapshot.freshness !== 'fresh') return;
-              const batch = decodeUsageQueryResource(snapshot.value);
-              // Coach must inspect the requested private evidence, rather than
-              // refuse advice from the earlier accounting-only revision.
+              requireJoinedRead();
+              if (!accounting) return;
+              if (!needsEvidence) {
+                resolve(accounting);
+                return;
+              }
+              const content = joined.getEvidenceContent();
+              if (!content) return;
+              const batch = decodeUsageQueryResource(content);
+              // Coach and public profile explicitly request this private evidence.
               if (context.usageQueryReadiness === 'coach_evidence' && batch.results.some(slice =>
                 slice.requestedQuery.includeSessionEvidence && slice.sources.some(source =>
                   source.source === 'how_you_work' && ['pending', 'not_loaded'].includes(source.status)))) return;
@@ -149,21 +159,31 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
                 (source.source === 'how_you_work' && slice.requestedQuery.includeSessionEvidence
                   || source.source === 'work' && slice.requestedQuery.includeWorkEvidence)
                 && ['pending', 'not_loaded'].includes(source.status)))) return;
-              if (batch.results.every(slice => slice.sources.some(source => source.source === 'accounting'
-                && !['pending', 'not_loaded'].includes(source.status)))) resolve(batch);
+              resolve(batch);
             } catch (error) { reject(error); }
           };
-          // Join ordinary admission, retaining its terminal result even when
-          // the Resource is retired. A user's explicit Refresh replaces Account
-          // accounting; a one-shot query must not request that replacement.
-          const baseline = entry.acquire(context);
+          const cancellation = mergeAbortSignals([context.signal, joined.signal]);
           release = entry.subscribe(inspect, false);
-          void baseline.then(snapshot => {
-            if (snapshot.error) reject(new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details }));
-            else inspect();
+          cancellation.signal?.addEventListener('abort', inspect, { once: true });
+          const unsubscribe = release;
+          release = () => {
+            cancellation.signal?.removeEventListener('abort', inspect);
+            cancellation.dispose();
+            unsubscribe();
+          };
+          void joined.accounting.then(outcome => {
+            if (!outcome.ok) { reject(outcome.error); return; }
+            accounting = decodeUsageQueryResource(outcome.value);
+            inspect();
           }, reject);
-          abort = inspect;
-          context.signal?.addEventListener('abort', abort, { once: true });
+          if (needsEvidence) {
+            void joined.evidenceCompletion?.then(content => {
+              try {
+                requireJoinedRead();
+                resolve(decodeUsageQueryResource(content));
+              } catch (error) { reject(error); }
+            }, reject);
+          }
           inspect();
         });
         account.assertCurrent();
@@ -172,12 +192,14 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       } catch (error) {
         account.assertCurrent();
         throwIfAborted(context.signal);
-        if (error instanceof HappyError && error.code) return { ok: false, errorCode: error.code, error: error.code,
-          ...(error.code === 'usage_query_result_invalid' && error.details !== undefined ? { details: error.details } : {}) };
+        if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && error.code) {
+          const details = error instanceof HappyError || isPluginError(error) ? error.details : undefined;
+          return { ok: false, errorCode: error.code, error: error.code,
+            ...(error.code === 'usage_query_result_invalid' && details !== undefined ? { details } : {}) };
+        }
         throw error;
       } finally {
         release?.();
-        if (abort) context.signal?.removeEventListener('abort', abort);
       }
     },
     renderRecap: async (compose, context) => {
