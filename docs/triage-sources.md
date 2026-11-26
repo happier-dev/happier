@@ -345,7 +345,10 @@ In 0.3 development source, `get` accepts the optional source-minted
 identity codec to fetch the exact immutable provider resource, then validate the
 returned repository and identity under the same credential before continuing
 through its ordinary exact-get path. GitHub uses the numeric repository id to
-read its current path, then validates the requested PR/issue identity. Denied,
+read its current path, then validates the requested PR/issue identity. Azure
+DevOps reads the exact PR by repository GUID and number under the selected
+organization or collection. The verified response supplies the project and
+repository for subsequent detail reads. Denied,
 mismatched or unresolvable identity stays typed `unresolved`. This permits no
 guessed slug, configuration fallback, scan or new storage; the target never
 parses a source identity or owns provider routing. A supplied malformed locator

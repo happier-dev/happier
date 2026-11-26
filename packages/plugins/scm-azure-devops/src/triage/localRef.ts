@@ -45,9 +45,8 @@ export function parseAzureEntryLocalRef(
 /**
  * Confirms that an authoritative provider body names the exact public local ref.
  *
- * The local ref's collision scope remains identity-only: this compares a provider-supplied
- * repository id against it after the provider was reached through the source's locator token;
- * it never recovers a repository route from the scope.
+ * This compares the provider-supplied repository id after an exact read by locator or by
+ * the source's validated immutable address.
  */
 export function matchesAzureEntryLocalRef(input: Readonly<{
   localRef: TriageSourceEntryLocalRefV1;

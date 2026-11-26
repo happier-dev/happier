@@ -690,11 +690,13 @@ export async function runAzureTriageGet(input: Readonly<{
       }),
     };
   }
-  const route = readAzurePullRequestLocatorRoute({
-    origin,
-    locator: request.lastKnownLocator,
-    pullRequestId: entryIdentity.pullRequestId,
-  });
+  const route: AzurePullRequestRoute | null = request.lastKnownLocator === undefined
+    ? { kind: 'identity', ...entryIdentity }
+    : readAzurePullRequestLocatorRoute({
+      origin,
+      locator: request.lastKnownLocator,
+      pullRequestId: entryIdentity.pullRequestId,
+    });
   if (route === null) return { kind: 'unresolved', localRef, failure: unroutablePullRequest() };
 
   const client = await openClient({ services, instance: request.instance, origin, signal });
@@ -788,9 +790,8 @@ export async function rereadAzurePullRequest(input: Readonly<{
   signal: AbortSignal;
 }>): Promise<AzurePullRequestReread> {
   const response = await input.client.request({
-    // This source's opaque locator is the only route input. Its current project/repository names
-    // reach Azure here; the existing mutation path carries an already validated immutable address.
-    // In both cases the public collision scope is checked only against the returned GUID.
+    // A locator carries project and repository names. Cold reads and mutations carry the
+    // validated repository GUID. Both prove the exact local ref against the response below.
     route: {
       resource: 'pullRequest',
       ...(input.route.kind === 'locator' ? { project: input.route.project } : {}),
@@ -1436,6 +1437,6 @@ function unroutablePullRequest(): TriageSourceFailureV1 {
   return createAzureSourceFailure({
     class: 'unsupportedContract',
     code: 'azure-devops/pull-request-route-unavailable',
-    detail: 'This Azure DevOps pull request has no usable retained source route.',
+    detail: 'The supplied Azure DevOps pull request locator is unusable.',
   });
 }

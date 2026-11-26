@@ -110,11 +110,16 @@ export async function getAzureDevOpsSourceEntryAction(
     // invocation is refused rather than answered about an invented entry.
     throw new TypeError('Azure DevOps triage get received an invalid input');
   }
-  return await runAzureTriageGet({
+  const result = await runAzureTriageGet({
     services: toReadServices(context),
     request: parsed.data,
     signal: context.signal,
   });
+  const requestId = context.requestId ?? context.invocationId;
+  if (result.kind === 'unresolved' && result.failure.requestId === undefined && requestId !== undefined) {
+    return { ...result, failure: { ...result.failure, requestId } };
+  }
+  return result;
 }
 
 /**

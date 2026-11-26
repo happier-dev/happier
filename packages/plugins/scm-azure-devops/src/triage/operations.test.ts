@@ -22,6 +22,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
+import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS } from './detailActions.js';
 import {
   AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
   AZURE_DEVOPS_TRIAGE_PURPOSE,
@@ -1529,8 +1530,7 @@ describe('Azure DevOps Triage get', () => {
     expect(TriageGetResultV1Schema.parse(present.result)).toEqual(present.result);
     expect(present.result.kind).toBe('present');
     expect(present.result.localRef).toEqual({ ...localRef, collisionScope: scopeFor() });
-    // The opaque locator is this source's only endpoint route. The immutable collision scope is
-    // checked against the provider response, but it is never unpacked into a REST path.
+    // A supplied locator selects the project/repository route.
     expect(present.recorder.urls.join('\n')).toContain(
       '/Payments/_apis/git/repositories/checkout/pullrequests/17?',
     );
@@ -1596,7 +1596,7 @@ describe('Azure DevOps Triage get', () => {
     expect(result.failure.class).toBe('unsupportedContract');
   });
 
-  it('fails a first read with no locator instead of reconstructing an endpoint from identity', async () => {
+  it('refuses a malformed supplied locator before contacting the provider', async () => {
     const recorder = createRecorder(pullRequestRoute({ body: pullRequest(17) }));
     const result = await runAzureTriageGet({
       services: recorder.services,
@@ -1604,11 +1604,15 @@ describe('Azure DevOps Triage get', () => {
         v: 1,
         instance: configuredInstance(),
         localRef: { ...localRef, collisionScope: scopeFor() },
+        lastKnownLocator: { v: 1, routingToken: 'malformed' },
       },
       signal: new AbortController().signal,
     });
 
-    expect(result.kind).toBe('unresolved');
+    expect(result).toMatchObject({
+      kind: 'unresolved',
+      failure: { code: 'azure-devops/pull-request-route-unavailable' },
+    });
     expect(recorder.urls).toHaveLength(0);
   });
 });
@@ -2257,9 +2261,8 @@ describe('Azure DevOps final review-workspace verification', () => {
 });
 
 
-it('scans through Account registration and selected credentials over HTTP without a Machine', async () => {
-  const recorder = createRecorder(happyPath());
-  const kit = await createPluginTestkit({ manifest: AZURE_DEVOPS_PLUGIN.manifest,
+function createAzureSourceActionTestkit(recorder: Recorder) {
+  return createPluginTestkit({ manifest: AZURE_DEVOPS_PLUGIN.manifest,
     module: { activate: AZURE_DEVOPS_PLUGIN.activate, activateAccount }, services: {
       connectedAccounts: recorder.services.connectedAccounts,
       http: createPluginHttpFixture({ async request(input, options) {
@@ -2272,6 +2275,11 @@ it('scans through Account registration and selected credentials over HTTP withou
       } }),
     },
   });
+}
+
+it('scans through Account registration and selected credentials over HTTP without a Machine', async () => {
+  const recorder = createRecorder(happyPath());
+  const kit = await createAzureSourceActionTestkit(recorder);
   try {
     expect(await kit.invokeAction(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan, {
       v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 20 },
@@ -2282,4 +2290,83 @@ it('scans through Account registration and selected credentials over HTTP withou
     expect(recorder.urls.filter(url => url.includes('searchCriteria.creatorId'))).toHaveLength(1);
     expect(recorder.urls.filter(url => url.includes('searchCriteria.reviewerId'))).toHaveLength(0);
   } finally { await kit.dispose(); }
+});
+
+describe('Azure pull request opened from an identity-only link', () => {
+  const instance = configuredInstance({
+    localInstanceKey: SERVER_BASE_URL,
+    configuration: encodeAzureSourceConfiguration(configuredOrigin(SERVER_BASE_URL)),
+  });
+  // The deployed deep link carries a collection-scoped repository GUID and PR number.
+  const localRef = {
+    kindId: 'pull-request',
+    collisionScope: `azure-devops:${Buffer.from(SERVER_BASE_URL).toString('base64url')}:${REPOSITORY_ID}`,
+    entryId: '22',
+  };
+  const input = { v: 1 as const, instance, localRef };
+  const requestId = 'cold-azure-source-get-request';
+  const identityPath = `/tfs/DefaultCollection/_apis/git/repositories/${REPOSITORY_ID}/pullrequests/22`;
+  const retainedPath = '/tfs/DefaultCollection/Payments/_apis/git/repositories/checkout/pullrequests/22';
+
+  it('reads PR status and reviewer evidence and supplies the route for checks without a list read', async () => {
+    const body = pullRequest(22, {
+      reviewers: [{ id: VIEWER_ID, displayName: 'Ada', vote: 10, isRequired: true }],
+    });
+    const recorder = createRecorder((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/connectionData')) return { body: CONNECTION_DATA };
+      if (path === identityPath || path === retainedPath) return { body };
+      if (path.endsWith('/pullRequests/22/statuses')) {
+        return { body: { value: [{ id: 4, state: 'succeeded', context: { genre: 'ci', name: 'gate' } }] } };
+      }
+      if (path.endsWith('/Payments/_apis/policy/evaluations')) return { body: { value: [] } };
+      throw new Error(`Unexpected Azure request path: ${path}`);
+    });
+    const kit = await createAzureSourceActionTestkit(recorder);
+    try {
+      const result = TriageGetResultV1Schema.parse(await kit.invokeAction(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get, input));
+      expect(result).toMatchObject({
+        kind: 'present', localRef,
+        snapshot: {
+          state: { presentation: 'active' },
+          facts: expect.arrayContaining([
+            expect.objectContaining({ id: 'azure-devops/merge-status' }),
+            expect.objectContaining({ id: 'azure-devops/reviewer-vote' }),
+          ]),
+        },
+      });
+      if (result.kind !== 'present') throw new Error('Expected an authoritative pull request');
+      expect(recorder.urls.map((url) => new URL(url).pathname)).toEqual([
+        '/tfs/DefaultCollection/_apis/connectionData', identityPath,
+      ]);
+      const routingToken = result.locator.routingToken;
+      if (routingToken === undefined) throw new Error('Expected a source-minted detail route');
+      expect(await kit.invokeAction(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies, {
+        v: 1, instance, localRef, routingToken,
+      })).toMatchObject({ kind: 'policies', statuses: [{ state: 'succeeded', contextName: 'ci/gate' }] });
+    } finally {
+      await kit.dispose();
+    }
+  });
+
+  it.each([
+    ['an unknown or hidden PR', { status: 404, body: {} }, 'azure-devops/not-found-or-forbidden'],
+    ['a different repository', { body: pullRequest(22, { repository: repository(FORK_REPOSITORY_ID) }) }, 'azure-devops/malformed-pull-request'],
+  ] as const)('returns a typed and correlated refusal for %s', async (_name, response, code) => {
+    const recorder = createRecorder((request) => {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/connectionData')) return { body: CONNECTION_DATA };
+      if (path === identityPath) return response;
+      throw new Error(`Unexpected Azure request path: ${path}`);
+    });
+    const kit = await createAzureSourceActionTestkit(recorder);
+    try {
+      const result = TriageGetResultV1Schema.parse(await kit.invokeAction(
+        AZURE_DEVOPS_TRIAGE_ACTION_IDS.get, input, { requestId },
+      ));
+      expect(result).toMatchObject({ kind: 'unresolved', localRef, failure: { code, requestId } });
+    } finally {
+      await kit.dispose();
+    }
+  });
 });

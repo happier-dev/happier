@@ -64,8 +64,8 @@ export type AzureDevOpsRoute =
     resource: Extract<AzureDevOpsResource, 'pullRequest'>;
     /**
      * Optional, deliberately. Locator-authorized `get`, detail, and review-workspace preparation
-     * route through the source's project/repository locator, while retained mutation routes carry
-     * an already validated immutable repository GUID with no project segment.
+     * route through the source's project/repository locator. Cold `get` and mutations address
+     * the validated immutable repository GUID with no project segment.
      */
     project?: string;
     repositoryId: string;
