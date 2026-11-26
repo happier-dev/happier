@@ -5,7 +5,7 @@ import type {
   TerminalHostHandle,
 } from '@happier-dev/agents';
 import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surfaces.js';
-import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPreferenceV1, AgentUsageObservedPayloadV1 } from './sessionProtocolTypes.js';
+import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPreferenceV1, AgentUsageObservedPayloadV1, AssistantMessagePhaseV1 } from './sessionProtocolTypes.js';
 export type { AgentSessionIdleCompactionPreferenceV1 } from './sessionProtocolTypes.js';
 
 import type { JsonValue, PluginJsonSchema } from '../identity.js';
@@ -392,6 +392,8 @@ export type AgentSessionRuntimeEvent =
       messageId?: string;
       channel: 'assistant' | 'reasoning';
       text: string;
+      /** Agent-provided assistant message phase. Settlement is reported by the turn lifecycle. */
+      phase?: AssistantMessagePhaseV1;
       /** Sidechain output is Session scoped, even when an originating host turn is known. */
       sidechainId?: string;
     }>

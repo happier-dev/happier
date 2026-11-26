@@ -20,3 +20,5 @@ export const HostIdSchema = lazyZodSchema(() => exactString(LIMITS.hostIndexedId
  */
 export const ProviderIdSchema = lazyZodSchema(() => opaqueNonBlankString(LIMITS.providerIdMaxCodeUnits));
 export const SafeIntegerSchema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(LIMITS.safeIntegerMax)));
+export const AssistantMessagePhaseV1Schema = lazyZodSchema(() => z.enum(['commentary', 'partial_answer', 'final_answer']));
+export type AssistantMessagePhaseV1 = z.infer<typeof AssistantMessagePhaseV1Schema>;

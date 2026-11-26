@@ -2,6 +2,7 @@ export type {
     AgentSessionCatalogChangedEventV1,
     AgentSessionIdleCompactionPreferenceV1,
 } from '@happier-dev/protocol/runtime/agentSessionV1';
+export type { AssistantMessagePhaseV1 } from '@happier-dev/protocol/runtime/agentSessionScalarsV1';
 export type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 export type {
     AgentSessionCompactionCapability,

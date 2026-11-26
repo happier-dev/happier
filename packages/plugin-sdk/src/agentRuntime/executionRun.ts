@@ -567,7 +567,8 @@ function createExecutionRunRuntimeFromConversation<Event extends AgentExecutionR
     switch (event.kind) {
       case 'message-delta':
         lifecycle.emit({ kind: 'output-delta', channel: event.channel, text: event.text,
-          ...(event.messageId ? { messageId: event.messageId } : {}) }, event.emittedAtMs);
+          ...(event.messageId ? { messageId: event.messageId } : {}),
+          ...(event.phase ? { phase: event.phase } : {}) }, event.emittedAtMs);
         return;
       case 'transcript-message-committed':
         if (event.role !== 'assistant') return;

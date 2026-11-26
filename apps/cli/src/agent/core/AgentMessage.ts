@@ -12,6 +12,8 @@
  * @module AgentMessage
  */
 
+import type { AgentExecutionRunEventV1 } from '@happier-dev/protocol/runtime/agentExecutionRunV1';
+
 /** Unique identifier for an agent session */
 export type SessionId = string;
 
@@ -34,6 +36,8 @@ export interface ModelOutputMessage {
   fullText?: string;
   /** Stable identity shared by a message's streamed deltas and final snapshot. */
   messageId?: string;
+  /** Provider classification of an assistant delta. The turn lifecycle carries settlement. */
+  phase?: Extract<AgentExecutionRunEventV1, { kind: 'output-delta' }>['phase'];
 }
 
 /**

@@ -529,7 +529,8 @@ function mapCodexAppServerEvent(event: CodexAppServerEvent): NativeSessionEventI
     case 'message-delta': {
       const delta = readTextDelta(event.delta);
       return delta
-        ? { kind: 'message-delta', ...(event.turnId ? { turnId: event.turnId } : {}), ...(event.messageId ? { messageId: event.messageId } : {}), channel: delta.channel, text: delta.text, ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}) }
+        ? { kind: 'message-delta', ...(event.turnId ? { turnId: event.turnId } : {}), ...(event.messageId ? { messageId: event.messageId } : {}),
+            channel: delta.channel, text: delta.text, ...(event.phase ? { phase: event.phase } : {}), ...(event.sidechainId ? { sidechainId: event.sidechainId } : {}) }
         : null;
     }
     case 'tool-call':

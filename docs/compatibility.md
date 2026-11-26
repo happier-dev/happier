@@ -10791,6 +10791,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 native Session and Execution Run assistant deltas can include
+`phase` with the Agent's `commentary`, `partial_answer`, or `final_answer`
+classification. Codex joins it by item ID. An omitted phase means the Agent
+supplied no classification for that delta. The existing turn and Run lifecycle
+still reports success, failure and cancellation. Load matching development
+hosts, Protocol and Plugin SDK for these closed event shapes.
+
 Unreleased 0.3 Workflow progress retains the canonical JSON Schema validation
 issue's `schemaPath` and `keyword` alongside its existing `pointer` and `message`.
 The issue and enclosing invocation facts remain closed. Current readers still

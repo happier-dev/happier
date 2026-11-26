@@ -59,6 +59,7 @@ export type CodexAppServerEvent =
       kind: 'message-delta';
       turnId?: string;
       messageId?: string;
+      phase?: Extract<AgentSessionRuntimeEvent, { kind: 'message-delta' }>['phase'];
       delta: unknown;
     }>)
   | (CodexAppServerEventBase & Readonly<{

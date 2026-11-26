@@ -699,7 +699,8 @@ function toHostMessage(
         case 'output-delta':
             return event.channel === 'assistant'
                 ? { type: 'model-output', textDelta: event.text,
-                    ...(event.messageId ? { messageId: event.messageId } : {}) }
+                    ...(event.messageId ? { messageId: event.messageId } : {}),
+                    ...(event.phase ? { phase: event.phase } : {}) }
                 : { type: 'event', name: 'thinking', payload: { textDelta: event.text } };
         case 'output-message-committed':
             return { type: 'model-output', messageId: event.messageId, fullText: event.text };
@@ -739,7 +740,8 @@ function sessionEventToHostMessage(
             if (event.turnId === undefined || event.sidechainId !== undefined) return null;
             return event.channel === 'assistant'
                 ? { type: 'model-output', textDelta: event.text,
-                    ...(event.messageId ? { messageId: event.messageId } : {}) }
+                    ...(event.messageId ? { messageId: event.messageId } : {}),
+                    ...(event.phase ? { phase: event.phase } : {}) }
                 : { type: 'event', name: 'thinking', payload: { textDelta: event.text } };
         case 'transcript-message-committed':
             return event.role === 'assistant' && event.turnId !== undefined && event.sidechainId === undefined
@@ -1381,7 +1383,9 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             }
             case 'message-delta':
                 if (event.sidechainId !== undefined) return;
-                emitRunEvent({ kind: 'output-delta', channel: event.channel, text: event.text, ...(event.messageId ? { messageId: event.messageId } : {}) });
+                emitRunEvent({ kind: 'output-delta', channel: event.channel, text: event.text,
+                    ...(event.messageId ? { messageId: event.messageId } : {}),
+                    ...(event.phase ? { phase: event.phase } : {}) });
                 return;
             case 'transcript-message-committed':
                 if (event.sidechainId !== undefined || event.role !== 'assistant') return;

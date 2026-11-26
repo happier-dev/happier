@@ -246,7 +246,8 @@ describe('native Session Run parity', () => {
             ]) {
                 for (const channel of ['assistant', 'reasoning'] as const) {
                     publishRuntimeEvent!({ sequence: ++sequence, sessionId: 'session-parent', emittedAtMs: sequence,
-                        kind: 'message-delta', channel, text: `${label} ${channel} draft`, messageId: `${label}-${channel}`, ...scope });
+                        kind: 'message-delta', channel, text: `${label} ${channel} draft`, messageId: `${label}-${channel}`,
+                        ...(channel === 'assistant' ? { phase: 'final_answer' as const } : {}), ...scope });
                 }
                 publishRuntimeEvent!({ sequence: ++sequence, sessionId: 'session-parent', emittedAtMs: sequence,
                     kind: 'transcript-message-committed', role: 'assistant', text: `${label} final answer`, messageId: `${label}-assistant`, ...scope });
@@ -256,7 +257,7 @@ describe('native Session Run parity', () => {
                     kind: 'tool-result', toolCallId: `${label}-tool`, output: null, ...scope });
             }
             expect(messages.filter(message => message.type === 'model-output' || (message.type === 'event' && message.name === 'thinking'))).toEqual([
-                { type: 'model-output', textDelta: 'foreground assistant draft', messageId: 'foreground-assistant' },
+                { type: 'model-output', textDelta: 'foreground assistant draft', messageId: 'foreground-assistant', phase: 'final_answer' },
                 { type: 'event', name: 'thinking', payload: { textDelta: 'foreground reasoning draft' } },
                 { type: 'model-output', fullText: 'foreground final answer', messageId: 'foreground-assistant' },
             ]);

@@ -2631,6 +2631,49 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     expect(clientState.requests.filter(({ method }) => method === 'thread/rollback')).toHaveLength(rollbackCallCount);
   });
 
+  it('joins assistant phases by item ID and projects each arriving delta once before typed failure', async () => {
+    const runtime = createRuntime({ executionRunId: 'run-phases' });
+    const native = createCodexNativeAppServerExecutionRunConversationRuntime(runtime, 'run-phases');
+    const events: AgentExecutionRunConversationEventV1[] = [];
+    native.watch(event => events.push(event));
+    const turn = { threadId: 'thread-1', turnId: 'turn-1' };
+    const startItem = (id: string, phase: string | null) => emitNotification('item/started', {
+      ...turn, item: { type: 'agentMessage', id, text: '', phase },
+    });
+    const delta = (itemId: string, text: string) => emitNotification('item/agentMessage/delta', { ...turn, itemId, delta: text });
+    try {
+      await expect(native.send({ inputIds: ['input'], input: { text: 'reply' },
+        delivery: { kind: 'newTurn', turnId: 'host-turn' },
+      })).resolves.toMatchObject({ status: 'admitted' });
+      startItem('progress', 'commentary');
+      delta('progress', 'Checking.');
+      startItem('partial', 'partial_answer');
+      delta('partial', 'Part.');
+      startItem('answer', 'final_answer');
+      delta('progress', ' Still checking.');
+      for (let index = 0; index < 64; index++) {
+        const before = events.length;
+        delta('answer', String(index));
+        expect(events.length - before).toBe(1);
+      }
+      startItem('legacy', null);
+      delta('legacy', 'Unknown phase.');
+      emitNotification('turn/completed', failedUsageLimitTurn(turn.turnId));
+      await expect(waitForCodexAppServerRuntimeTurnCompletion(runtime)).rejects.toBeInstanceOf(Error);
+      const output = events.filter(event => event.kind === 'message-delta');
+      expect(output).toHaveLength(68);
+      expect(output.slice(0, 3)).toEqual([
+        expect.objectContaining({ text: 'Checking.', phase: 'commentary' }),
+        expect.objectContaining({ text: 'Part.', phase: 'partial_answer' }),
+        expect.objectContaining({ text: ' Still checking.', phase: 'commentary' }),
+      ]);
+      expect(output.slice(3, -1)).toEqual(Array.from({ length: 64 }, (_, index) =>
+        expect.objectContaining({ text: String(index), phase: 'final_answer' })));
+      expect(output.at(-1)).not.toHaveProperty('phase');
+      expect(events.at(-1)).toMatchObject({ kind: 'turn-failed', diagnostic: { code: 'usage_limit' } });
+    } finally { await native.dispose(); }
+  });
+
   it('enforces each detached input permission intent at the native turn boundary', async () => {
     const runtime = createRuntime({ executionRunId: 'run-policy' });
     await runtime.updateConfig?.({ permissionMode: 'yolo' });

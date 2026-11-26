@@ -3603,7 +3603,7 @@ describe('VoiceAgentManager', () => {
     }
   });
 
-  it('never flushes provisional native narration after a provider failure', async () => {
+  it.each([undefined, 'final_answer'] as const)('withholds native text with phase %s after a provider failure', async phase => {
     const failureCause = {
       code: 'codex_app_server_turn_failed', phase: 'turn',
       failureReason: 'unclassified_provider_error', httpStatus: 429,
@@ -3612,7 +3612,8 @@ describe('VoiceAgentManager', () => {
     const runtime = createDeterministicBackend('failed-native-speech', {
       onSend(request, publish) {
         const turnId = request.delivery.turnId;
-        publish({ kind: 'message-delta', turnId, channel: 'assistant', text: 'I will inspect the session and report back. ' });
+        publish({ kind: 'message-delta', turnId, channel: 'assistant',
+          text: 'The update is complete.', ...(phase ? { phase } : {}) });
         publish({ kind: 'turn-failed', turnId, diagnostic: { code: 'provider_error', severity: 'error', message: 'Provider failed', details: { failureCause } } });
       },
     });

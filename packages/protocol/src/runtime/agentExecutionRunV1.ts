@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import { AgentUsageObservedPayloadV1Schema, type AgentUsageObservedPayloadV1 } from './agentUsageObservedPayloadV1.js';
+import { AssistantMessagePhaseV1Schema, type AssistantMessagePhaseV1 } from './agentSessionScalarsV1.js';
 
 import { AGENT_SESSION_RUNTIME_LIMITS_CANDIDATE_V1 as LIMITS } from './agentSessionLimitsV1.js';
 import {
@@ -40,6 +41,7 @@ export type AgentExecutionRunEventV1 =
       channel: 'assistant' | 'reasoning';
       text: string;
       messageId?: string;
+      phase?: AssistantMessagePhaseV1;
     }>
   | Readonly<{
       sequence: number;
@@ -82,6 +84,7 @@ export const AgentExecutionRunEventV1Schema: z.ZodMiniType<AgentExecutionRunEven
     channel: z.enum(['assistant', 'reasoning']),
     text: z.string(),
     messageId: z.optional(MessageIdSchema),
+    phase: z.optional(AssistantMessagePhaseV1Schema),
   })),
   z.strictObject({
     ...BaseShape,

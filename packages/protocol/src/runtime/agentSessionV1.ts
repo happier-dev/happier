@@ -1,4 +1,4 @@
-import { exactString, opaqueNonBlankString, HostIdSchema, ProviderIdSchema, SafeIntegerSchema } from './agentSessionScalarsV1.js';
+import { AssistantMessagePhaseV1Schema, exactString, opaqueNonBlankString, HostIdSchema, ProviderIdSchema, SafeIntegerSchema } from './agentSessionScalarsV1.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import * as zMini from '../zodRuntimePolicy.js';
@@ -287,6 +287,7 @@ const OutputSchemas = [
     messageId: zMini.optional(ProviderIdSchema),
     channel: z.enum(['assistant', 'reasoning']),
     text: z.string(),
+    phase: z.optional(AssistantMessagePhaseV1Schema),
     sidechainId: z.optional(HostIdSchema),
   })),
   lazyZodSchema(() => z.strictObject({

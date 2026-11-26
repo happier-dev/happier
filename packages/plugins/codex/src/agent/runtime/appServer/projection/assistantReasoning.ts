@@ -1,11 +1,16 @@
+import type { CodexAppServerEvent } from '../core.js';
+
+type AssistantPhase = Extract<CodexAppServerEvent, { kind: 'message-delta' }>['phase'];
+
 export type CodexAppServerAssistantReasoningStreamUpdate =
-    Readonly<{ type: string; itemId?: unknown; text?: unknown }>;
+    Readonly<{ type: string; itemId?: unknown; text?: unknown; phase?: AssistantPhase }>;
 
 type AssistantReasoningBridge = Readonly<{
     appendAssistantDelta: (args: Readonly<{
         deltaText: string;
         streamKey: string;
         sidechainId: string | null;
+        phase?: AssistantPhase;
     }>) => void;
     appendThinkingDelta: (args: Readonly<{
         deltaText: string;
@@ -48,6 +53,7 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
     bridge: AssistantReasoningBridge;
 }>) {
     const assistantTextByItemId = new Map<string, string>();
+    const assistantPhaseByItemKey = new Map<string, NonNullable<AssistantPhase>>();
     const reasoningTextByItemId = new Map<string, string>();
     const latestAssistantItemIdByStreamScope = new Map<string, string>();
     const normalizedAssistantFinalItemKeys = new Set<string>();
@@ -154,6 +160,7 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
     const clearState = (): void => {
         compacting = false;
         assistantTextByItemId.clear();
+        assistantPhaseByItemKey.clear();
         reasoningTextByItemId.clear();
         latestAssistantItemIdByStreamScope.clear();
         normalizedAssistantFinalItemKeys.clear();
@@ -172,6 +179,12 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
                 return true;
             }
             if (compacting) return true;
+            if (update.type === 'assistant-text-started') {
+                const itemId = readString(update.itemId);
+                if (!itemId || !update.phase) return false;
+                assistantPhaseByItemKey.set(buildItemStateKey(context.streamScopeId, itemId), update.phase);
+                return true;
+            }
             if (update.type === 'assistant-text-delta') {
                 const itemId = readString(update.itemId);
                 const text = readString(update.text);
@@ -179,11 +192,14 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
                 commitPendingRawAssistantFinals({ includeFallbackRawFinals: false,
                     beforeItem: { streamScopeId: context.streamScopeId, itemId } });
                 latestAssistantItemIdByStreamScope.set(context.streamScopeId, itemId);
-                appendStreamDelta(buildItemStateKey(context.streamScopeId, itemId), text, assistantTextByItemId, (deltaText) => {
+                const itemKey = buildItemStateKey(context.streamScopeId, itemId);
+                const phase = assistantPhaseByItemKey.get(itemKey);
+                appendStreamDelta(itemKey, text, assistantTextByItemId, (deltaText) => {
                     params.bridge.appendAssistantDelta({
                         deltaText,
                         streamKey: buildAssistantItemStreamKey(context.streamScopeId, itemId),
                         sidechainId: context.sidechainId,
+                        ...(phase ? { phase } : {}),
                     });
                 });
                 return true;
@@ -197,6 +213,8 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
                     beforeItem: { streamScopeId: context.streamScopeId, itemId } });
                 latestAssistantItemIdByStreamScope.set(context.streamScopeId, itemId);
                 const itemKey = buildItemStateKey(context.streamScopeId, itemId);
+                const phase = update.phase ?? assistantPhaseByItemKey.get(itemKey);
+                assistantPhaseByItemKey.delete(itemKey);
                 normalizedAssistantFinalItemKeys.add(itemKey);
                 deletePendingRawAssistantFinalForNormalizedItem(context.streamScopeId, itemId);
                 appendStreamFinal(itemKey, text, assistantTextByItemId, (deltaText) => {
@@ -204,6 +222,7 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
                         deltaText,
                         streamKey: buildAssistantItemStreamKey(context.streamScopeId, itemId),
                         sidechainId: context.sidechainId,
+                        ...(phase ? { phase } : {}),
                     });
                 }, (finalText) => {
                     params.bridge.overrideAssistantText({
@@ -280,6 +299,7 @@ export function createCodexAppServerAssistantReasoningProjector(params: Readonly
 
         supersedeUnfinishedAssistantMessages(context: CodexAppServerAssistantReasoningProjectionContext): void {
             commitPendingRawAssistantFinals({ includeFallbackRawFinals: false });
+            assistantPhaseByItemKey.clear();
             const prefix = `${context.streamScopeId}:`;
             for (const itemKey of assistantTextByItemId.keys()) {
                 if (!itemKey.startsWith(prefix)) continue;

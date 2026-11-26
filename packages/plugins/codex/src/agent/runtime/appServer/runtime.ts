@@ -1240,7 +1240,7 @@ export function createCodexAppServerRuntime(
 
   const assistantReasoningProjector = createCodexAppServerAssistantReasoningProjector({
     bridge: {
-      appendAssistantDelta({ deltaText, streamKey, sidechainId }) {
+      appendAssistantDelta({ deltaText, streamKey, sidechainId, phase }) {
         updateBufferedTranscriptSegment(streamKey, 'assistant', sidechainId, deltaText, 'append');
         const activeTurn = pendingTurn;
         if (activeTurn) publishRuntimeEvent({
@@ -1248,6 +1248,7 @@ export function createCodexAppServerRuntime(
           turnId: activeTurn.sessionTurnId,
           messageId: `codex:${streamKey}`,
           delta: { text: deltaText, thinking: false },
+          ...(phase ? { phase } : {}),
           ...(sidechainId ? { sidechainId } : {}),
         });
       },
@@ -1759,6 +1760,18 @@ export function createCodexAppServerRuntime(
         type: method === 'item/started' ? 'context-compaction-started' : 'context-compaction-completed',
       }, context);
     }
+    const item = method === 'item/started' || method === 'item/completed'
+      ? readRecord(readRecord(notificationParams)?.item) : null;
+    const rawPhase = item?.type === 'agentMessage' ? item.phase : undefined;
+    const phase = rawPhase === 'commentary' || rawPhase === 'partial_answer' || rawPhase === 'final_answer'
+      ? rawPhase : undefined;
+    if (method === 'item/started' && phase) {
+      return projector.observeStreamUpdate({
+        type: 'assistant-text-started',
+        itemId: readProviderEventItemId(notificationParams),
+        phase,
+      }, context);
+    }
     const itemId = readProviderEventItemId(notificationParams)
       ?? `${method}:${context.streamScopeId}`;
     if (method === 'item/agentMessage/delta') {
@@ -1815,6 +1828,7 @@ export function createCodexAppServerRuntime(
         type: 'assistant-text-final',
         itemId,
         text,
+        ...(phase ? { phase } : {}),
       }, context);
     }
     return false;
