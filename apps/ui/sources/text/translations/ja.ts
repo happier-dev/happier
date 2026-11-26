@@ -8941,6 +8941,8 @@ localTailscale: {
         connected_services_default_settings_invalid: "既定の接続済みアカウントの設定が無効です。接続済みアカウントを確認してから再試行してください。",
         permission_denied: "この操作へのアクセスは許可されていません。権限を確認してください。",
         admission_unavailable: "リクエストを承認できませんでした。再試行する前にアクセス権を確認してください。",
+        execution_run_target_unavailable: "この実行に選ばれたマシンは利用できませんでした。オンラインか確認してから、もう一度お試しください。",
+        execution_run_protocol_unsupported: "この実行に選ばれたマシンには新しい Happier が必要です。マシン上の Happier を更新してから、もう一度お試しください。",
         controller_unavailable: "制御マシンを利用できません。再試行する前に接続を確認してください。",
         controller_retired: "制御マシンはこの操作で有効ではなくなりました。マシンの設定を確認してください。",
         credential_unavailable: "選択した認証情報を利用できません。再試行する前に認証情報を確認してください。",

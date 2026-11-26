@@ -130,6 +130,22 @@ describe('a suggestion card’s data (PLAN Facts: stores are managed database ta
   });
 });
 
+describe('a suggestion card on your own server (DESIGN-ACCEPT-4 K3)', () => {
+  const machine = (machineId: string, label: string, online = true) =>
+    ({ machineId, label, online, homeDir: '/home/me', readiness: 'ready' as const });
+  const onOwn = { ...site, targetId: 'own' };
+  const runsOn = (machines: ReturnType<typeof machine>[]) => presentDeploySuggestionCard(onOwn,
+    DeploySuggestionCatalogV1Schema.parse({ ...catalog, machines }), 0, null, () => null, 'machine-mark')
+    .facts.find((fact) => fact.key === 'runsOn');
+  it('names the one Machine it can run on, with that Machine’s mark', () => {
+    expect(runsOn([machine('m1', 'bakery-box'), machine('m2', 'old-laptop', false)]))
+      .toEqual({ key: 'runsOn', value: 'bakery-box', mark: 'machine-mark' });
+  });
+  it('keeps the target’s name while the person still chooses between Machines', () => {
+    expect(runsOn([machine('m1', 'bakery-box'), machine('m2', 'studio-mini')])).toEqual({ key: 'runsOn', value: 'Own server' });
+  });
+});
+
 describe('a suggestion card on a platform the Account has not connected (PLAN connection state)', () => {
   it('says to connect the platform, and says nothing once it is connected', () => {
     const unconnected = DeploySuggestionCatalogV1Schema.parse({ ...catalog,

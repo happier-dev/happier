@@ -686,6 +686,13 @@ it('says why no agent can suggest, per Machine, starting no run; Choose a starte
         screen.findByTestId('newApp.auto.noAgent.devbox.action'),
       ).toBeTruthy(),
     );
+    // The row names the agent and what it needs, in the readiness owner's words (DESIGN-ACCEPT-4 N1).
+    const { describeAgentReadinessCause } = await import('@/components/sessions/model/sessionReadinessPresentation');
+    const { resolveAgentCatalogTitle } = await import('@/agents/backendCatalog/agentCatalogProjection');
+    const { parseBackendTargetKeyV2 } = await import('@happier-dev/protocol/backends/targets/backendTargetRefV2');
+    const target = parseBackendTargetKeyV2(runner.modelSelection.agentTargetKey);
+    expect(row(screen, 'newApp.auto.noAgent.devbox')?.props.subtitle).toBe(describeAgentReadinessCause({
+      title: target.kind === 'agent' ? resolveAgentCatalogTitle(target.identity.localId) : '', state: 'needsSignIn' }));
     expect(calls('execution.run.start')).toHaveLength(0);
     await screen.pressByTestIdAsync('newApp.auto.chooseStarter');
     await waitForHomeGovernance(() =>
@@ -839,6 +846,20 @@ it('a run that hit a usage limit names the Machine it ran on and offers choosing
   const { t } = await import('@/text');
   expect(reason.startsWith(t('session.usageLimitRecovery.banner.title')), 'the cause reads first, then where it ran').toBe(true);
   expect(runnerPicker).toBe(true);
+});
+
+it('a run its Machine refused says why in words, then where it ran on its own line, each fact unbroken (DESIGN-ACCEPT-4 F1/F2)', async () => {
+  const run = terminal(undefined).run;
+  const { reason, diagnosticCode } = await failedSuggestionReason('auto-target-unavailable', {
+    executionRunWait: async () => ({ ok: true, status: 'failed', result: { run: { ...run, status: 'failed', error: {
+      code: 'execution_run_target_unavailable', message: 'Machine unavailable' } } } }),
+  });
+  expect(diagnosticCode, 'the code stays under Details').toBe('execution_run_target_unavailable');
+  const [cause, facts] = reason.split('\n');
+  expect(cause).not.toContain('execution_run_target_unavailable');
+  expect(facts).toContain('devbox');
+  // A Machine or model id never breaks inside itself: within a fact, no space or hyphen offers a line break.
+  expect(facts!.split(' · ').filter((fact) => /[ -]/.test(fact))).toEqual([]);
 });
 
 // Providers ORCH ruling (BOARD 11-21 17:11Z): after a usage limit, the failed card offers that Agent's other credential
@@ -1334,6 +1355,9 @@ it('a Session suggestion without the person\u2019s words opens with the descript
     suggestion={{ description: '', recommendation: recommendation as never, catalog }} />);
   try {
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
+    // The cards say a Session suggested them (DESIGN-ACCEPT-4 K4, lab jdF-autoRecs).
+    const { t } = await import('@/text');
+    expect(screen.getTextContent()).toContain(t('newApp.auto.sourceSession'));
     await screen.pressByTestIdAsync('newApp.auto.useSetup');
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
     expect(screen.findByTestId('newApp.description')?.props.value, 'never the model\u2019s whatToBuild').toBe('');
@@ -1353,8 +1377,14 @@ it('a Session suggestion without the person\u2019s words opens with the descript
 });
 
 it.each(['dialog', 'page'] as const)('opens the created Project with the build composer from a %s', async (host) => {
+  // The first message opens on the person's release, so Making can be seen between the two phases it awaits.
+  let openFirstMessage: () => void = () => {};
+  const firstMessageOpened = new Promise<void>((resolve) => { openFirstMessage = resolve; });
   suggestionBoundary({ registryActionExecute: async () => ({ pages: [] }),
-    sessionAuthoringOpen: async () => ({ kind: 'opened', draftId: 'draft', destination: 'newSession' }) });
+    sessionAuthoringOpen: async () => {
+      await firstMessageOpened;
+      return { kind: 'opened', draftId: 'draft', destination: 'newSession' };
+    } });
   const { storage } = await import('@/sync/domains/state/storageStore');
   const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
   const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
@@ -1401,6 +1431,11 @@ it.each(['dialog', 'page'] as const)('opens the created Project with the build c
     execute.mockClear();
     await screen.pressByTestIdAsync('newApp.create');
     await waitForHomeGovernance(() => expect(calls('session.authoring.open')).toHaveLength(1));
+    // Making shows the two phases it awaits: made, and the first message opening (DESIGN-ACCEPT-4 M1).
+    const { PlanChecklistCard } = await import('@/components/systemTasks/planChecklist/PlanChecklistCard');
+    const making = screen.findAllByType(PlanChecklistCard).find((node) => node.props.testID === 'newApp.making');
+    expect(making?.props.executionById).toMatchObject({ create: { status: 'done' }, open: { status: 'running' } });
+    await act(async () => openFirstMessage());
     expect(calls('projects.starters.create')).toHaveLength(1);
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining('/projects/workspace'));
     if (host === 'dialog') {

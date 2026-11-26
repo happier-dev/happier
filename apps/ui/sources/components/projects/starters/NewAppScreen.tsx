@@ -73,6 +73,7 @@ import type { TransientQuestionAnswerState } from '@/components/appShell/plugins
 import { useNewAppAutoSuggestions, type NewAppAutoChosen } from './auto/useNewAppAutoSuggestions';
 import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 } from '@happier-dev/protocol/projects/starters/createV1';
 import { applyDeploySuggestion, openStarterBuildSession } from './applyDeploySuggestion';
+import { NewAppMakingSteps } from './NewAppMakingSteps';
 import type { NewAppSuggestionContext } from './newAppPresentation';
 import { useNewAppForges, type ForgeOwnerFact } from './useNewAppForges';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
@@ -160,7 +161,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const openProject = useOpenProject();
   const devicePhone = useDeviceType() === 'phone';
   // Narrow is the body's measured width, not the device: 200% text or a narrow pane recomposes like a phone (tiles in
-  // one column, the summary's facts beneath their labels, the footer's actions stacked) (DESIGN-ACCEPT R1).
+  // one column, the summary's facts beneath their labels, the footer's note above its actions) (DESIGN-ACCEPT R1).
   const [bodyWidth, setBodyWidth] = React.useState<number | null>(null);
   const phone = devicePhone || (bodyWidth !== null && bodyWidth < PAGE_LIST_METRICS.rowStackBelowWidthPx);
   // The page's sections stand on PageFrame's reading column; the pinned bar's contents take the same one.
@@ -471,6 +472,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         catalog: suggestion.catalog, description: submittedDescription,
         create: { input: createInput, lifetime } });
       if (applied.kind === 'created') {
+        // Made: Making shows the first message opening, as the manual path's created outcome does.
+        setCreate(applied.creation);
         settleCreated(applied.creation, await startSession(applied.creation, lifetime));
         return;
       }
@@ -579,6 +582,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
   const autoKind = auto.view.kind;
   const adjustingNow = adjusting && autoKind === 'recommendations' && auto.chosen !== null;
+  // Making (DESIGN-ACCEPT-4 M1): the create Action, then the first message opening (a created outcome while startSession runs).
+  const making = step === 'create' && (create === null || create.kind === 'running' || create.kind === 'created');
+  const madeAndOpening = create?.kind === 'created';
   const primary = addingMachine ? null :
     step === 'deploy'
       ? deployFrame ? { ...deployFrame.primary, onPress: deployFrame.press } : null
@@ -662,6 +668,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     (deployStep === 'where' || deployStep === 'configure') && deployFrame?.waitingFor ? deployFrame.waitingFor :
     deployStep === 'where' || deployStep === 'configure' ? t('newApp.deploy.nothingCreated') :
     deployStep === 'review' && deployFrame?.refused ? t('newApp.deploy.plan.nothingWasCreated') :
+    making ? t('newApp.keepsGoing') :
     // A phone's start footer has room for its actions only (lab jdF-srcp), like the auto step's.
     step === 'start' && !phone && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
@@ -1098,18 +1105,20 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           />
         ) : (
-          <SurfaceStateCard
-            testID="newApp.creating"
-            kind="loading"
-            layout="inline"
-            title={t('newApp.keepsGoing')}
-          />
+          <NewAppMakingSteps opening={madeAndOpening} codeLivesOn={owner.kind === 'ready' ? codeLivesOnLine : null} />
         )}
       </>
     );
   }
 
   const settledHeading = heading as Readonly<{ title: string; description: string }> | null;
+  // Each step, and each settled phase of Describe your app, is its own screen. The source step and the deploy and starter
+  // steps hold the card's full bound from their first frame, so their sections settle inside it (PAGE-ACCEPT-176 R3-D3,
+  // R8-D8). Describe your app's answers and Making fit their content instead: a short answer never sits above an empty
+  // dialog, and a screen keeps its height while the person acts in it (DESIGN-ACCEPT-4 K1).
+  const fitsContent = !addingMachine && (step === 'auto' || step === 'create');
+  const screenKey = step === 'auto' ? `auto:${adjustingNow ? 'adjust' : autoKind}`
+    : step === 'create' ? `create:${making ? 'making' : create?.kind ?? 'making'}` : deployStep ? `deploy:${deployStep}` : step;
   const headingTitle = settledHeading?.title ?? t('newApp.title');
   const headingDescription = settledHeading?.description ?? null;
   const dialogChrome = React.useMemo(
@@ -1117,13 +1126,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       dialog
         ? {
             kind: 'card' as const,
-            // Each step, and each settled phase of Describe your app, is its own screen: the card fits it.
-            screenKey: step === 'auto' ? `auto:${autoKind}` : deployStep ? `deploy:${deployStep}` : step,
-            // The source step holds the card's full bound from its first frame, so its sections settle inside it
-            // rather than growing the card (PAGE-ACCEPT-176 R3-D3); every later step fits its own content.
-            // Every step holds the card's full bound from its first frame, so the dialog keeps one height as the person
-            // moves between steps (PAGE-ACCEPT-176 R3-D3, R8-D8); sections settle inside it.
-            scrollHost: 'body' as const,
+            screenKey,
+            scrollHost: fitsContent ? 'bounded' as const : 'body' as const,
             title: headingTitle,
             subtitle: headingDescription,
             actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
@@ -1174,6 +1178,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       primary?.title,
       step,
       autoKind,
+      screenKey,
+      fitsContent,
       autoStop,
       adjustingNow,
       adjustNote.trim() === '',
@@ -1199,7 +1205,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       <ItemList testID="newApp.body" style={styles.list}>
         {body}
       </ItemList>
-      {dialog || (!primary && !autoSecondary) ? null : (
+      {dialog || (!primary && !autoSecondary && !making) ? null : (
         <KeyboardStickyFooter>
           {/* On a wide page the bar's contents stand on the page's content column (QA #35), not across the pane. */}
           <PagePinnedBar style={phone ? styles.phoneFooter : [styles.wideFooter, { maxWidth: pageMaxWidth }]}>
@@ -1216,12 +1222,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             <View style={phone ? styles.phoneFooterActions : styles.wideFooterActions}>
               {autoSecondary?.map((action) => (
                 <RoundButton key={action.testID} testID={action.testID} size="normal" display="inverted"
+                  style={phone ? styles.phoneFooterAction : undefined}
                   title={action.title} loading={action.loading ?? false} disabled={action.disabled ?? false} onPress={action.onPress} />
               ))}
               {primary ? (
                 <RoundButton
                   testID={primary.testID}
                   size="normal"
+                  style={phone ? styles.phoneFooterAction : undefined}
                   title={primary.title}
                   disabled={primary.disabled}
                   onPress={primary.onPress}
@@ -1303,7 +1311,10 @@ const styles = StyleSheet.create((theme) => ({
   startNewStack: { gap: theme.space.s8 },
 
   phoneFooter: { gap: theme.space.s8 },
-  phoneFooterActions: { gap: theme.space.s8 },
+  // One row of actions, as the lab's phone footers (jdF-autoNoAgentp): at short heights a stacked pair covered the
+  // step's notice (DESIGN-ACCEPT-4 N1). Actions that don't fit side by side still wrap to a second row.
+  phoneFooterActions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
+  phoneFooterAction: { flexGrow: 1 },
   wideFooterActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12, marginLeft: 'auto', flexShrink: 0 },
   wideFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12,
     width: '100%', marginHorizontal: 'auto' },

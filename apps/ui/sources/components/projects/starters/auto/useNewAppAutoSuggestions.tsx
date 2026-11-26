@@ -21,6 +21,7 @@ import {
   type DeploySuggestionUnavailableMachine,
 } from '@/execution/llmTasks/suggestDeploySetup';
 import { isUsageLimitedRuntimeIssue, presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
 import { useDeploymentSuggestionRunner } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -53,6 +54,8 @@ type Phase =
       /** The person skipped the questions that came with these cards. */
       skippedQuestions?: boolean;
       retryChoice?: LlmTaskRunnerChoiceV1;
+      /** Cards a Session's agent checked and handed over: they say so, as the lab's Source row and footer do (jdF-autoRecs). */
+      origin?: 'session';
     }>;
 
 export type NewAppAutoChosen = Readonly<{
@@ -74,7 +77,7 @@ export function useNewAppAutoSuggestions(
   const runnerChoice = useDeploymentSuggestionRunner(binding ?? null);
   const [description, setDescription] = React.useState(params.initial?.description ?? '');
   const [phase, setPhase] = React.useState<Phase>(() => params.initial ? {
-    kind: 'settled', outcome: { kind: 'recommendations', recommendations: [params.initial.chosen.recommendation], catalog: params.initial.chosen.catalog, dropped: [] }, runner: null,
+    kind: 'settled', outcome: { kind: 'recommendations', recommendations: [params.initial.chosen.recommendation], catalog: params.initial.chosen.catalog, dropped: [] }, runner: null, origin: 'session',
   } : { kind: 'describe' });
   const [chosenCardId, setChosenCardId] = React.useState<string | null>(params.initial ? deploySuggestionCardId(0) : null);
   const abort = React.useRef<AbortController | null>(null);
@@ -234,7 +237,7 @@ export function useNewAppAutoSuggestions(
         kind: 'recommendations',
         source: phase.runner
           ? t('newApp.auto.sourceNote', { machine: phase.runner.label })
-          : null,
+          : phase.origin === 'session' ? t('newApp.auto.sourceSession') : null,
         cards: outcome.recommendations.map((recommendation, index) =>
           presentDeploySuggestionCard(
             recommendation,
@@ -246,6 +249,7 @@ export function useNewAppAutoSuggestions(
               color={theme.colors.text.secondary}
             />,
             declaredPlans,
+            <Icon name="desktop" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
           ),
         ),
       };
@@ -264,7 +268,7 @@ export function useNewAppAutoSuggestions(
       // With Auto, open a usage-limit recovery on the runner that hit the limit so its other routes are available.
       const previousRunner = runnerChoice !== undefined && isLlmTaskRunnerAutoV1(runnerChoice) && outcome.stage === 'run'
         && isUsageLimitedRuntimeIssue(outcome.runError?.runtimeIssueV1 ?? { code: outcome.code }) ? outcome.runner : runnerChoice;
-      return { kind: 'failed', code: outcome.code, reason: failedReason(outcome, phase.runner),
+      return { kind: 'failed', code: outcome.code, reason: deploySuggestionFailedReason(outcome, phase.runner),
         runner: phase.runner && params.serverId ? { serverId: params.serverId, machineId: phase.runner.machineId,
           choice: phase.retryChoice ?? previousRunner, onChange: changeRetryChoice } : null };
     }
@@ -314,27 +318,27 @@ export function useNewAppAutoSuggestions(
     chosenCardId,
     chooseCard: setChosenCardId,
     chosen,
-    suggestedBy:
-      runner && view.kind === 'recommendations'
-        ? t('newApp.auto.suggestedBy', {
-            agent: runnerAgentTitle(runner),
-            machine: runner.label,
-          })
-        : null,
+    suggestedBy: view.kind !== 'recommendations' ? null
+      : runner ? t('newApp.auto.suggestedBy', { agent: runnerAgentTitle(runner), machine: runner.label })
+      : phase.kind === 'settled' && phase.origin === 'session' ? t('newApp.auto.suggestedInSession') : null,
   };
 }
 
 
 /** The runner as its owner reports it (Auto's resolved title); an explicit choice is named by the Agent catalog. */
 function runnerAgentTitle(runner: Runner): string {
-  if (runner.agentTitle) return runner.agentTitle;
+  return runner.agentTitle || agentTargetTitle(runner.agentTargetKey);
+}
+
+/** An Agent target key in the Agent catalog's words. */
+function agentTargetTitle(agentTargetKey: string): string {
   try {
-    const target = parseBackendTargetKeyV2(runner.agentTargetKey);
+    const target = parseBackendTargetKeyV2(agentTargetKey);
     if (target.kind === 'agent') return resolveAgentCatalogTitle(target.identity.localId);
   } catch {
     // A key the parser refuses still names the runner; say it as reported.
   }
-  return runner.agentTargetKey;
+  return agentTargetKey;
 }
 const cardId = deploySuggestionCardId;
 
@@ -347,11 +351,15 @@ function connectionsKey(rows: readonly Readonly<{ ref: Parameters<typeof buildQu
   return (rows ?? []).map(row => `${buildQualifiedConnectedAccountLocalSubjectId(row.ref)}\t${row.status}`).sort().join('\n');
 }
 
+/**
+ * Where the run runs, as one facts line. Each `·` fact wraps as a unit, so a Machine or model id never breaks inside
+ * itself (DESIGN-ACCEPT-4 F2): its spaces and hyphens are the non-breaking ones, as the banner does for a command.
+ */
 function runsOnLine(runner: Runner): string {
   return t('newApp.auto.runsOn', {
     machine: runner.label,
     agent: runnerAgentTitle(runner),
-  });
+  }).split(' · ').map((fact) => fact.replace(/ /g, '\u00a0').replace(/-/g, '\u2011')).join(' · ');
 }
 
 function workingSteps(phase: Extract<Phase, { kind: 'working' }>): SetupStep[] {
@@ -406,13 +414,26 @@ function presentMachine(
     case 'offline':
       return { ...base, attention: true, status: t('status.offline'), action: null };
     case 'home_directory_unavailable':
-      return { ...base, attention: false, status: t('llmTaskRunner.unavailable'), action: null };
+      return { ...base, attention: false, status: t('newApp.auto.machineUnchecked'), action: null };
     case 'no_ready_agent':
     case 'no_matching_model':
       return { ...base, attention: false,
-        status: t(machine.reason === 'no_ready_agent' ? 'llmTaskRunner.noReadyAgent' : 'llmTaskRunner.noMatchingModel'),
+        status: machine.reason === 'no_matching_model' ? t('newApp.auto.machineNoMatchingModel') : noReadyAgentStatus(machine),
         action: { label: t('machineAgents.setUp'), onPress: () => openSetup(machine.machineId) } };
   }
+}
+
+/**
+ * No ready agent, named when the runner owner reported one agent that needs signing in or installing ("Claude needs
+ * sign-in", the readiness owner's words); several or other reasons stay one plain line (DESIGN-ACCEPT-4 N1).
+ */
+function noReadyAgentStatus(machine: DeploySuggestionUnavailableMachine): string {
+  const named = machine.unavailableAgents.filter((agent) => agent.reason === 'sign_in_required' || agent.reason === 'not_installed');
+  const only = named.length === 1 ? named[0]! : null;
+  return only
+    ? describeAgentReadinessCause({ title: agentTargetTitle(only.agentTargetKey),
+        state: only.reason === 'sign_in_required' ? 'needsSignIn' : 'notInstalled' })
+    : t('newApp.auto.machineNoReadyAgent');
 }
 
 /**
@@ -420,8 +441,9 @@ function presentMachine(
  * the limit, with its reset when the usage owner has one), then the Machine and Agent it ran on; anything earlier as
  * Happier not reaching an agent.
  */
-function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>, runner: Runner | null): string {
+export function deploySuggestionFailedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>, runner: Runner | null): string {
     if (outcome.stage === 'setup') return t('newApp.auto.failedSetupBody');
     const run = presentExecutionRunFailureSummary(outcome.runError ?? { code: outcome.code });
-    return [run.summary, run.reset, runner ? runsOnLine(runner) : null].filter(Boolean).join(' · ');
+    // The cause in words, then where it ran on its own facts line (DESIGN-ACCEPT-4 F1/F2).
+    return [[run.summary, run.reset].filter(Boolean).join(' · '), runner ? runsOnLine(runner) : null].filter(Boolean).join('\n');
 }

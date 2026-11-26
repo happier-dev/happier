@@ -7145,6 +7145,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               connected_services_default_settings_invalid: "預設連結帳戶設定無效。請檢查連結帳戶，然後重試。",
               permission_denied: "不允許存取此操作。請檢查你的權限。",
               admission_unavailable: "無法授權此請求。請在重試前檢查存取權限。",
+              execution_run_target_unavailable: "為此執行選擇的機器無法使用。請確認它在線上，然後重試。",
+              execution_run_protocol_unsupported: "為此執行選擇的機器需要較新版本的 Happier。請更新機器上的 Happier，然後重試。",
               controller_unavailable: "控制機器無法使用。請在重試前檢查其連線。",
               controller_retired: "控制機器對此操作已不再有效。請檢查機器設定。",
               credential_unavailable: "所選憑證無法使用。請在重試前檢查憑證。",

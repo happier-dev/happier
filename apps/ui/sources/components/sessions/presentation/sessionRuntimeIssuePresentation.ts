@@ -143,6 +143,10 @@ function resolveSessionStartupFailureCause(
     if (code === 'update_required') return resourceStateLabel('update_required');
     if (code === 'ACP_CATALOG_UNAVAILABLE') return t('settings.acpCatalogUnavailable');
     if (code === 'machine_target_not_current') return t('session.startFailure.cause.admission_unavailable');
+    // The Run's target Machine refused it before any agent work: name that in words; the code stays for Details.
+    if (code === 'execution_run_target_unavailable' || code === 'execution_run_protocol_unsupported') {
+        return t(`session.startFailure.cause.${code}`);
+    }
     const startupRecovery = presentSessionStartupFailureRecovery([code]);
     if (startupRecovery) return startupRecovery.cause;
     if (code === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) return t('errors.workspaceFolderMissing');

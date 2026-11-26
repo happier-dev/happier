@@ -30,6 +30,18 @@ it.each([
     expect(presentExecutionRunFailureSummary({ code }).summary).toMatch(explanation);
 });
 
+it.each(['execution_run_target_unavailable', 'execution_run_protocol_unsupported'] as const)(
+    'says a Run refused by its target Machine (%s) in words, keeping the code out of the line', async (code) => {
+    for (const language of SUPPORTED_LANGUAGE_CODES) {
+        await useLanguage(language);
+        const { summary } = presentExecutionRunFailureSummary({ code });
+        expect(summary).not.toContain(code);
+        expect(summary).not.toBe(t('runs.runDetails.failedWithoutCause'));
+    }
+    await useLanguage('en');
+    expect(presentExecutionRunFailureSummary({ code }).summary).toMatch(/Machine/);
+});
+
 const ENGLISH_PREVIEW = SESSION_PREPARATION_FAILURE_PREVIEWS[KNOWN_CODE];
 const CLOSED_CODES = [
     'SOURCE_RUNTIME_RELOAD_REQUIRED',

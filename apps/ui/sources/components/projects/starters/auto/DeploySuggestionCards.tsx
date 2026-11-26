@@ -68,6 +68,8 @@ export function presentDeploySuggestionCard(
    * check call, which it may have paraphrased (review D1).
    */
   declaredPlans: (targetId: string) => DeclaredTargetPlans | null,
+  /** The Machine's identity mark, drawn when an own-server card can name its one Machine (DESIGN-ACCEPT-4 K3). */
+  machineMark?: React.ReactNode,
 ): NewAppAutoCard {
   const source = recommendation.source;
   const sourceTitle =
@@ -79,7 +81,13 @@ export function presentDeploySuggestionCard(
   const targetRow = catalog.targets.find(
     (item) => item.id === recommendation.targetId,
   );
-  const target = targetRow?.title;
+  // Own server runs on one of the person's Machines; when the snapshot has exactly one that can take it, that Machine is
+  // where it runs, so the card names it. With several, Where it runs is still the person's choice.
+  const machines = targetRow?.targetClass === 'ownServer'
+    ? catalog.machines.filter((machine) => machine.online && machine.readiness === 'ready' && machine.label)
+    : [];
+  const ownMachine = machines.length === 1 ? machines[0]!.label! : null;
+  const target = ownMachine ?? targetRow?.title;
   const data = recommendation.data;
   const store = data.kind === 'store' ? catalog.stores.find((item) => item.id === data.storeId) : undefined;
   const dataTitle =
@@ -98,7 +106,7 @@ export function presentDeploySuggestionCard(
           },
         ]
       : []),
-    ...(target ? [{ key: 'runsOn' as const, value: target }] : []),
+    ...(target ? [{ key: 'runsOn' as const, value: target, ...(ownMachine && machineMark ? { mark: machineMark } : {}) }] : []),
     ...(dataTitle ? [{ key: 'data' as const, value: dataTitle }] : []),
   ];
   return {
@@ -148,6 +156,7 @@ export function useDeploySuggestionCards(
         index,
         <Icon name="sparkle" size={ICON_SIZE.sm} color={glyph} />,
         declaredPlans,
+        <Icon name="desktop" size={ICON_SIZE.sm} color={glyph} />,
       ),
     );
   }, [catalog, declaredPlans, glyph, recommendations]);

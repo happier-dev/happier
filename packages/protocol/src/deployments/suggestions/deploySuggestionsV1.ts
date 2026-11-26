@@ -57,7 +57,7 @@ export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.stri
     targetId: id(), repositoryProviderKind: z.optional(id()),
     // The card says the setup in the person's terms: a short name, then one line on why it fits (lab autoRecs).
     title: words().check(z.describe('A short name for this setup, a few words, e.g. "Static invoice page". The card\u2019s title.')),
-    why: words().check(z.describe('One sentence on why this setup fits what the person described. The card\u2019s second line.')),
+    why: words().check(z.describe('One sentence on why this setup fits what the person described, in their terms: what it gives them or spares them. The card already lists the starter, where it runs and its data, so never restate them or a catalog title. The card\u2019s second line.')),
     whatToBuild: z.string().check(z.describe('What the build Session should make, for its plan; never a price.')), stack: DeployShapeV1Schema,
     data: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('none') }),
         z.strictObject({ kind: z.literal('store'), storeId: id(), engine: z.string() }),

@@ -10052,6 +10052,8 @@ const enSession = {
       connected_services_default_settings_invalid: "Default Connected Account settings are invalid. Review Connected Accounts, then retry starting the session.",
       permission_denied: "Access to this operation is not allowed. Check your permissions.",
       admission_unavailable: "The request could not be authorized. Check access before retrying.",
+      execution_run_target_unavailable: "The Machine picked for this run wasn’t available. Check that it’s online, then try again.",
+      execution_run_protocol_unsupported: "The Machine picked for this run needs a newer Happier. Update Happier on the Machine, then try again.",
       controller_unavailable: "The control machine is unavailable. Check its connection before retrying.",
       controller_retired: "The control machine is no longer active for this operation. Review the machine setup.",
       credential_unavailable: "The selected credential is unavailable. Review the credential before retrying.",

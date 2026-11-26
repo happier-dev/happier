@@ -8323,6 +8323,8 @@ export const zhHans: TranslationStructure = {
         connected_services_default_settings_invalid: "默认关联账户设置无效。请检查关联账户，然后重试。",
         permission_denied: "不允许访问此操作。请检查你的权限。",
         admission_unavailable: "无法授权此请求。请在重试前检查访问权限。",
+        execution_run_target_unavailable: "为此运行选择的机器不可用。请确认它在线，然后重试。",
+        execution_run_protocol_unsupported: "为此运行选择的机器需要更新版本的 Happier。请更新机器上的 Happier，然后重试。",
         controller_unavailable: "控制机器不可用。请在重试前检查其连接。",
         controller_retired: "控制机器对此操作已不再有效。请检查机器设置。",
         credential_unavailable: "所选凭据不可用。请在重试前检查凭据。",
