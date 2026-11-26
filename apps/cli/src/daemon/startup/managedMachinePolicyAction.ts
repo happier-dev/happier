@@ -6,6 +6,8 @@ import type { ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machine
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
+import { hasEndedBoundSessionDeletion } from '@/machines/managed/managedRetentionPolicy';
+
 /** Run managed policy through its recorded consent or the shared approval flow. */
 export async function executeManagedMachinePolicyAction<Machine extends ManagedMachineReadSnapshotV1>(input: Readonly<{
     machine: Machine;
@@ -25,10 +27,13 @@ export async function executeManagedMachinePolicyAction<Machine extends ManagedM
         throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
     }
     // Cancel commits cleanup intent. An unused Stop/Suspend consumes its configured rule.
+    // Fresh Session Delete consumes the user's retained choice when Archive ends that scope.
     // Home admits the exact policy and revision before the controller submits native work.
     if (input.purpose.kind === 'creation-cleanup'
-        || (input.purpose.kind === 'retention' && machine.retention.kind === 'unused'
-            && machine.retention.effect === 'stop' && (machine.desired === 'stop' || machine.desired === 'suspend'))) {
+        || (input.purpose.kind === 'retention'
+            && (machine.desired === 'delete' && hasEndedBoundSessionDeletion(machine)
+                || machine.retention.kind === 'unused' && machine.retention.effect === 'stop'
+                    && (machine.desired === 'stop' || machine.desired === 'suspend')))) {
         return await input.runApproved(context);
     }
     const actionId = machine.desired === 'delete' ? MANAGED_DELETE_ACTION_ID_V1 : MANAGED_POWER_SET_ACTION_ID_V1;

@@ -23,6 +23,9 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/conne
 import { createManagedMachineAcquisitionDriver } from './acquire';
 import { readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { executeManagedMachinePolicyAction } from '@/daemon/startup/managedMachinePolicyAction';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { settleCommittedSessionLaunchFailure } from '@/session/services/settleCommittedSessionLaunchFailure';
 import { registerSessionTurnMutationRoute } from '../../../../server/sources/app/api/routes/session/registerSessionTurnMutationRoute';
@@ -67,7 +70,7 @@ it.each([{ reopened: false, bound: false }, { reopened: true, bound: false },
         admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: creator.id,
             ...(bound ? { acquisitionMode: 'resource-bound' } : {}),
             creationScopeRetention: { effect: 'delete', source: { kind: 'session', sessionId: sourceId } } },
-        allocation: 'bound', creationState: 'active', desired: 'stop', retention: { kind: 'until-delete' },
+        allocation: 'bound', creationState: 'active', desired: bound ? 'start' : 'stop', retention: { kind: 'until-delete' },
         launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
         resource: { contributionRef: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, value: {} },
         wakeOnAcceptedMessage: false } });
@@ -166,7 +169,7 @@ it.each([{ reopened: false, bound: false }, { reopened: true, bound: false },
         const archived = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         expect(archived.admittedInput).toMatchObject({ creationScopeRetention: { endedAt: expect.any(Number) } });
         const machine = projectManagedMachine(archived);
-        expect(machine).toMatchObject({ desired: 'stop', retention: { kind: 'unused', afterMs: 0, effect: 'delete' } });
+        expect(machine).toMatchObject({ desired: bound ? 'start' : 'stop', retention: { kind: 'unused', afterMs: 0, effect: 'delete' } });
         if (reopened) {
             await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId: sourceId, wasArchived: true, archivedAt: null }));
             const current = projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }));
@@ -177,9 +180,27 @@ it.each([{ reopened: false, bound: false }, { reopened: true, bound: false },
             expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('bound');
             return;
         }
-        await expect(driver.executePolicy(machine, { kind: 'retention' }, { requestId: randomUUID(),
-            context: { operationAcceptance: { operationId: randomUUID(), accept() {} }, operationOwnerUpdate: { update() {} } } }))
-            .resolves.toMatchObject({ kind: 'accepted', managedId: row.id });
+        if (!bound) {
+            await expect(driver.executePolicy(machine, { kind: 'retention' }, { requestId: randomUUID(),
+                context: { operationAcceptance: { operationId: randomUUID(), accept() {} }, operationOwnerUpdate: { update() {} } } }))
+                .resolves.toMatchObject({ kind: 'accepted', managedId: row.id });
+            // The enrolled guest may receive its existing Leave-before-Delete effect first.
+            expect(effects.filter(role => role === 'destroy')).toEqual(['destroy']);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('confirmed-absent');
+            expect(await db.automation.count({ where: { accountId: creator.id } })).toBe(0);
+            return;
+        }
+        const signal = new AbortController().signal;
+        const requestId = randomUUID();
+        const context = { operationAcceptance: { operationId: randomUUID(), accept() {} }, operationOwnerUpdate: { update() {} },
+            signal, actionRequestId: requestId, surface: 'cli' as const, runtimeAccountId: custodian.id,
+            serverIdentityId: homeId, defaultSessionMachineId: controller.id };
+        await expect(driver.executePolicy(machine, { kind: 'retention' }, { requestId, context, signal,
+            runPolicyAction: (preview, runApproved) => executeManagedMachinePolicyAction({
+                machine: preview, purpose: { kind: 'retention' }, context, serverId: homeId, runApproved,
+                createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }),
+            }),
+        })).resolves.toMatchObject({ kind: 'accepted', managedId: row.id });
         expect(effects).toEqual(['destroy']);
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('confirmed-absent');
         expect(await db.automation.count({ where: { accountId: creator.id } })).toBe(0);
