@@ -31,6 +31,24 @@ describe('happier agy auth login', () => {
     });
   });
 
+  it('signs in to the machine login even from a connected-account session shell', async () => {
+    await withTempDir('agy-auth-login-', async dir => {
+      const capturePath = join(dir, 'capture.json');
+      const agy = join(dir, 'agy.cjs');
+      await writeFile(agy, `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ args: process.argv.slice(2), fileTokenStorage: process.env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE ?? null }));\n`);
+      await chmod(agy, 0o755);
+      vi.stubEnv('HAPPIER_AGY_PATH', agy);
+      // What a connected session's environment carries: its selection and materialized profile.
+      vi.stubEnv('HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON', JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'work' }]));
+      vi.stubEnv('HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON', JSON.stringify(['GEMINI_HOME']));
+      vi.stubEnv('GEMINI_HOME', join(dir, 'connected-home'));
+
+      await handleAgyCliCommand({ args: ['agy', 'auth', 'login'], rawArgv: [], terminalRuntime: null });
+
+      expect(JSON.parse(await readFile(capturePath, 'utf8'))).toEqual({ args: ['acp', '--login'], fileTokenStorage: null });
+    });
+  });
+
   it('no longer offers the retired pinned-server login', async () => {
     await expect(handleAgyCliCommand({ args: ['agy', 'auth', 'login', '--pinned'], rawArgv: [], terminalRuntime: null }))
       .rejects.toThrow(/Unknown AGY auth command/);

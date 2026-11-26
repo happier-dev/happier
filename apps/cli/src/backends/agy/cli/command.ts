@@ -1,5 +1,6 @@
 import type { CommandContext } from '@/cli/commandRegistry';
 import { passthroughProviderCliArgs } from '@/cli/providerCliPassthrough';
+import { stripInheritedConnectedServiceEnvironment } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { resolveAgyAcpLaunch } from '../acp/agyAcpLaunch';
 
 export async function handleAgyCliCommand(context: CommandContext): Promise<void> {
@@ -16,9 +17,10 @@ export async function handleAgyCliCommand(context: CommandContext): Promise<void
   }
   if (action !== 'login' || context.args.length > 3) throw new Error('Unknown AGY auth command. Run "happier agy auth --help".');
 
-  // The machine login is the one Happier sessions use without a connected account: same profile, OS keyring storage.
-  const launch = resolveAgyAcpLaunch(process.env);
-  const processEnv = { ...process.env };
+  // Login is always the machine login, even from a connected-account session's shell: drop that
+  // session's selection and materialized profile, then use the machine launch (OS keyring storage).
+  const processEnv: NodeJS.ProcessEnv = stripInheritedConnectedServiceEnvironment(process.env);
+  const launch = resolveAgyAcpLaunch(processEnv);
   for (const key of launch.unsetEnv) delete processEnv[key];
   console.log('Signing in with the Antigravity CLI. Open the login link it prints and paste the authorization code when asked.');
   passthroughProviderCliArgs({ agentId: 'agy', providerArgs: ['acp', ...launch.args, '--login'], processEnv: { ...processEnv, ...launch.env } });
