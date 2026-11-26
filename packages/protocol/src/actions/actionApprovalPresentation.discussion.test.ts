@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DiscussionPostInputV1Schema } from '../discussions/actions.js';
-import { describeApprovalActionFields } from './actionApprovalPresentation.js';
+import { describeApprovalActionFields, projectApprovalReviewInput } from './actionApprovalPresentation.js';
 import { getActionSpec } from './actionSpecs.js';
 
 describe('Discussion message approval', () => {
@@ -12,7 +12,7 @@ describe('Discussion message approval', () => {
     });
     const context = { discussionReplyDestination: { discussionId: 'discussion-id', messageId: 'message-id',
       connectionName: 'Team mailbox', conversationName: 'Release planning' } };
-    const presentation = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs, context });
+    const presentation = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs, context, status: 'open' });
     expect(presentation.unrepresentable).toBeNull();
     const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
     expect(visible).toEqual(expect.arrayContaining([
@@ -29,6 +29,32 @@ describe('Discussion message approval', () => {
     const reentered = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs: projected, context });
     expect(reentered.unrepresentable?.reason).toBe('missing_required_context');
     expect(JSON.stringify(reentered.rows)).not.toContain('Team mailbox');
+  });
+
+  it.each(['executed', 'rejected'] as const)('shows the exact Channel destination after a reply is %s without storing its names', status => {
+    const actionId = 'discussion.reply';
+    const spec = getActionSpec(actionId);
+    const actionArgs = spec.inputSchema.parse({
+      discussionId: 'discussion-id', replyTarget: { kind: 'message', messageId: 'message-id' },
+      localId: 'retry-id', content: { v: 1, parts: [{ t: 'text', text: 'Ready for review.' }] },
+    });
+    const storedReview = projectApprovalReviewInput(spec, actionArgs);
+    const destination = { discussionId: 'discussion-id', messageId: 'message-id',
+      connectionName: 'Team mailbox', conversationName: 'Release planning' };
+    const request = { actionId, actionArgs: storedReview, status };
+    const presentation = describeApprovalActionFields({ ...request, context: { discussionReplyDestination: destination } });
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows.filter(row => row.kind !== 'value' || !row.technical)).toEqual([
+      expect.objectContaining({ title: 'Connection', value: 'Team mailbox' }),
+      expect.objectContaining({ title: 'Conversation', value: 'Release planning' }),
+      expect.objectContaining({ title: 'Reply', value: 'Ready for review.' }),
+    ]);
+    expect(storedReview).toEqual(actionArgs);
+    for (const otherDestination of [undefined, { ...destination, messageId: 'different-message' }]) {
+      const other = describeApprovalActionFields({ ...request, context: { discussionReplyDestination: otherDestination } });
+      expect(other.rows.map(row => row.path)).not.toContain('deliveryConnection');
+      expect(other.rows.map(row => row.path)).not.toContain('deliveryConversation');
+    }
   });
   it.each(['discussion.post', 'discussion.reply'] as const)('keeps %s routing and retry identities out of the readable draft', actionId => {
     const actionArgs = getActionSpec(actionId).inputSchema.parse({

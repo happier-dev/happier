@@ -6,6 +6,7 @@ import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } fro
 import { readOfflineAutomationEventName } from '../automations/automationTriggerDefinition.js';
 import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
 import { ApprovalRequestGetResultV1Schema } from '../approvals/approvalRequestPublicRead.js';
+import { isDiscussionReplyActionIdV1 } from '../discussions/actionIds.js';
 import { readContributedActionReviewV1 } from './contributedActionReviewV1.js';
 import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceV1Schema, NativePermissionChoicesV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -1297,15 +1298,19 @@ export function describeApprovalActionFields(input: Readonly<{
   const storedReview = review?.inputSchema && (settled || spec.approvalInputCustody === 'live_only')
     ? review.inputSchema.safeParse(spec.approvalInputCustody === 'live_only'
       ? readApprovalPresentationPreview(input)?.actionArgs : input.actionArgs) : null;
-  if (review?.projectInput && !spec.inputSchema.safeParse(input.actionArgs).success && !storedReview?.success) {
+  if (review?.projectInput && !storedReview?.success && !spec.inputSchema.safeParse(input.actionArgs).success) {
     const reason = 'missing_required_context' as const;
     return { rows: [{ kind: 'unrepresentable', path: '', title: spec.title, reason }],
       unrepresentable: { path: '', reason } };
   }
   // Observation previews can intentionally omit private domain content. Only the domain's
   // explicit review projection may disclose that content; never fall back to raw secret input.
-  const projectedInput = storedReview?.success ? storedReview.data : review?.projectInput
-    ? review.projectInput(input.actionArgs, input.context)
+  // A settled Discussion reply retains its operands. The mounted reader can
+  // resolve names for that exact destination at display time.
+  const presentSettledReplyDestination = settled && storedReview?.success && input.context?.discussionReplyDestination
+    && isDiscussionReplyActionIdV1(input.actionId) && spec.inputSchema.safeParse(storedReview.data).success;
+  const projectedInput = storedReview?.success && !presentSettledReplyDestination ? storedReview.data : review?.projectInput
+    ? review.projectInput(storedReview?.success ? storedReview.data : input.actionArgs, input.context)
     : resolveApprovalPresentationInput(input);
   const parsedReview = review?.inputSchema?.safeParse(projectedInput);
   if (parsedReview && !parsedReview.success) {
