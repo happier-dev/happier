@@ -10,6 +10,7 @@ WORKDIR /repo
 # and will fall back to node-gyp. Install the minimal toolchain + Python for reliable builds.
 RUN apk add --no-cache libc6-compat python3 build-base
 ENV REDISMS_DISABLE_POSTINSTALL=1
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
@@ -48,6 +49,7 @@ FROM --platform=$BUILDPLATFORM node:${NODE_VERSION}-alpine AS deps-alpine-build
 WORKDIR /repo
 RUN apk add --no-cache libc6-compat python3 build-base
 ENV REDISMS_DISABLE_POSTINSTALL=1
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./
@@ -84,6 +86,7 @@ FROM node:${NODE_VERSION} AS deps-debian
 RUN apt-get update && apt-get install -y python3 ffmpeg make g++ build-essential && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
 ENV REDISMS_DISABLE_POSTINSTALL=1
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
  COPY package.json yarn.lock ./

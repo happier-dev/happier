@@ -73,3 +73,9 @@ export async function downloadReleaseAssetWithRetry({ name, policy = resolveRele
     }
   }
 }
+
+/** A retried upload whose earlier timed-out attempt already reached GitHub. */
+/** @param {unknown} error */
+export function isAlreadyUploadedReleaseAssetError(error) {
+  return /already exists/i.test(formatExecError(error));
+}
