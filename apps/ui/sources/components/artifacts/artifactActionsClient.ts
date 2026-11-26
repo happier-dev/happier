@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { v5 as uuidv5 } from 'uuid';
 import type { z } from 'zod/mini';
-import { ActionApprovalRequestCreatedResultSchema, ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactActionOutputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, type ArtifactActionInputV1, type StorageInventoryInputV1, type StorageInventoryItemV1, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DocCollaborationActionInputSchemasV1, DocCollaborationActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ArtifactAccessActionOutputSchemasV1, type ArtifactAccessGrantSetInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -28,10 +29,9 @@ export type ArtifactQuota = Readonly<{ budget: 'document' | 'account'; limitByte
 
 export type ArtifactActionFailure = Readonly<{
     code: string;
-    failureCause?: ActionFailureCauseV1;
     /** Present when a write was refused for an operator budget (`quota_exceeded`). */
     quota?: ArtifactQuota;
-}>;
+}> & Partial<ActionExecuteFailure>;
 
 export type ArtifactActionOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; failure: ArtifactActionFailure }>;
 
@@ -51,9 +51,9 @@ function readRecord(value: unknown): Record<string, unknown> {
 export function readArtifactActionFailure(result: unknown): ArtifactActionFailure {
     const record = readRecord(result);
     const code = typeof record.errorCode === 'string' ? record.errorCode
-        : typeof record.error === 'string' ? record.error : 'artifact_action_failed';
-    const cause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
-    const failure = { code, ...(cause.success ? { failureCause: cause.data } : {}) };
+        : typeof record.code === 'string' ? record.code : 'artifact_action_failed';
+    // Artifact surfaces use the owner's typed code and the shared recovery copy.
+    const failure = { ...readActionFailureEnvelope({ ...record, ok: false, errorCode: code }), code, error: code };
     if (code !== 'quota_exceeded') return failure;
     const details = readRecord(record.details);
     const budget = details.budget === 'document' || details.budget === 'account' ? details.budget : null;

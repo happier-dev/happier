@@ -9,7 +9,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifact } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { ArtifactBodyReadFailure } from '@/components/artifacts/ArtifactBodyReadFailure';
 
 export function EditArtifactScreen(): React.ReactElement {
     const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,18 +31,8 @@ export function EditArtifactContent(props: Readonly<{ id: string; artifact: Decr
 function EditDocument(props: Readonly<{ id: string; artifact: DecryptedArtifact | null }>): React.ReactElement {
     const body = useArtifactBody(props.id, props.artifact, { readPolicy: 'addressed' });
     const artifact = body.result?.artifact ?? props.artifact;
-    if (body.state === 'failed') {
-        return (
-            <SurfaceStateCard
-                testID="artifact-editor:failed"
-                kind="error"
-                title={t('artifacts.error')}
-                reason={resolveActionExecutionErrorMessage(body.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
-                action={{ label: t('common.retry'), onPress: body.retry }}
-                accessibilitySemantics="alert"
-            />
-        );
-    }
+    if (body.state === 'failed') return <ArtifactBodyReadFailure
+        failure={body.failure} onRetry={body.retry} testID="artifact-editor:failed" />;
     if (artifact === null && body.state === 'loading') return <SurfaceStateCard testID="artifact-editor:loading" kind="loading" title={t('common.loading')} />;
     if (artifact === null || artifact.isDecrypted === false || body.state === 'missing') {
         return <SurfaceStateCard testID="artifact-editor:unavailable" kind="empty" title={t('artifacts.notFound')} />;

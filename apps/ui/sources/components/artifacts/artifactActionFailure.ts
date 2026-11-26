@@ -5,11 +5,10 @@ import { t } from '@/text';
 import type { ArtifactActionFailure } from './artifactActionsClient';
 
 /** Artifact writes retain the Action owner's copy and sanitized cause in the shared disclosure. */
-export function presentArtifactActionFailure(failure: ArtifactActionFailure, fallbackMessage: string): Readonly<{
+export function presentArtifactActionFailure(failure: ArtifactActionFailure, fallbackMessage: string, options?: Readonly<{ safeToRetry?: boolean }>): Readonly<{
     title: string; reason: string; code: string; context: ActionFailureContext;
 }> {
-    const presentation = presentActionExecutionFailure({ ok: false, errorCode: failure.code,
-        ...(failure.failureCause ? { failureCause: failure.failureCause } : {}) }, fallbackMessage);
+    const presentation = presentActionExecutionFailure({ ...failure, ok: false, errorCode: failure.code }, fallbackMessage, options);
     return {
         title: resolveActionExecutionFailureTitle(failure, t('common.error')),
         reason: presentation.reason,

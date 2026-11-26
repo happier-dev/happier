@@ -495,7 +495,10 @@ describe('ArtifactEditor', () => {
         expect(homes.requestsFor('/v1/artifacts').some(request => request.method === 'POST')).toBe(true);
         const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
         await act(async () => { details?.onPress?.(); });
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('database_transaction_timeout'));
+        const disclosed = vi.mocked(Modal.alert).mock.calls.at(-1)?.[1];
+        expect(disclosed).toContain('home.database.transaction');
+        expect(disclosed).toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/);
         expect(screen.findByTestId('artifact-editor:body:source')?.props.value).toBe('Kept draft');
         expect(navigation.replace).not.toHaveBeenCalled();
         await screen.unmount();

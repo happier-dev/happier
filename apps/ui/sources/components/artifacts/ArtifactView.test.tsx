@@ -164,6 +164,22 @@ async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: P
 }
 
 describe('Artifact composed view reads', () => {
+    it.each([false, true])('keeps a cold Artifact refusal in Technical details (edit=%s)', async edit => {
+        await setup('document', undefined, false, request => request.path === '/v1/artifacts/document'
+            ? Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 }) : undefined, true);
+        const screen = await renderScreen(<OpenView id="document" edit={edit} />);
+        try {
+            const failedId = edit ? 'artifact-editor:failed' : 'artifact:bodyFailed';
+            await vi.waitFor(() => expect(screen.findByTestId(failedId)).not.toBeNull(), { timeout: 10_000 });
+            await screen.pressByTestIdAsync(`${failedId}-details-toggle`);
+            const content = screen.getTextContent();
+            expect(content).toContain('home.database.transaction');
+            expect(content).toContain('false');
+            expect(content).toContain('database_transaction_timeout');
+            expect(content).toMatch(/[0-9a-f]{8}-[0-9a-f-]{27}/);
+        } finally { await screen.unmount(); }
+    });
+
     it('retains the typed network editor open refusal and allows another open', async () => {
         let refused = true;
         const { row, head, served } = await setup('html', undefined, false, request =>
@@ -1034,19 +1050,42 @@ describe('Artifact composed view reads', () => {
         expect(screen.findByTestId('artifact:history') !== null).toBe(true);
         await screen.unmount();
     });
-    it('keeps a failed Review body retryable through its page state', async () => {
-        await setup('document');
-        const { ReviewDetailHost } = await import('@/components/reviews/detail/ReviewDetailHost');
-        const artifact: DecryptedArtifact = { id: 'failed-review-body', title: 'Review', isDecrypted: true,
-            header: { kind: 'review.v1', v: 1, reviewId: 'failed-review-body', title: 'Review' },
-            ownerAccountId: 'owner', access: 'owner', storageMode: 'plain',
-            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
-        const retry = vi.fn();
-        const screen = await renderScreen(<ReviewDetailHost artifact={artifact} bodyState="failed" onRetry={retry} />);
+    it('retains a known Review body read refusal and retries through its Artifact owner', async () => {
+        let refused = true;
+        const { row, head, served } = await setup('document', undefined, false, request => {
+            if (request.path === '/v1/artifacts/document' && refused)
+                return Response.json({ error: 'database_transaction_conflict_exhausted', statusCode: 503 }, { status: 503 });
+            if (request.path === '/v1/reviews/get') return Response.json({
+                review: { reviewId: 'document', projectSourceId: null, workflowId: null, subjectKind: 'repository',
+                    sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2,
+                    createdAt: 1, updatedAt: 2, counts: { total: 0, needsDecision: 0 } },
+                human: { reviewId: 'document', roundOrdinal: 1, requests: [], verdicts: [], needsYou: {
+                    reviewId: 'document', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+                    requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+            });
+        });
+        const header = { kind: 'review.v1', v: 1, reviewId: row.id, title: 'Known Review' };
+        const artifact = { ...row, title: 'Known Review', header };
+        head.header = encodePlainArtifactStoredContent(header);
+        head.body = encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) });
+        const screen = await renderScreen(<ArtifactView artifactId={row.id} artifact={artifact} presentation="page" />);
         try {
-            expect(screen.findByTestId('review-detail:failed')).not.toBeNull();
+            await vi.waitFor(() => expect(screen.findByTestId('review-detail:failed'), screen.getTextContent()).not.toBeNull(), { timeout: 10_000 });
+            expect(screen.getTextContent()).toContain('approvals.transientFailureTitle');
+            await screen.pressByTestIdAsync('review-detail:failed-details-toggle');
+            expect(screen.getTextContent()).toContain('database_transaction_conflict_exhausted');
+            expect(screen.getTextContent()).toContain('home.database.transaction');
+            expect(served.requests.some(request => request.path === '/v1/reviews/get')).toBe(false);
+            refused = false;
             await screen.pressByTestIdAsync('review-detail:failed-action');
-            expect(retry).toHaveBeenCalledOnce();
+            await vi.waitFor(() => expect(screen.findByTestId('review-detail')).not.toBeNull());
+            expect(screen.findByTestId('review-detail:failed')).toBeNull();
+            const scope = captureActiveServerAccountScopeLifetime()?.scope;
+            if (!scope) throw new Error('The test Home must remain applied');
+            const { getReviewDetailSnapshot, reviewDetailKey } = await import('@/sync/store/domains/reviews/detail');
+            await vi.waitFor(() => expect(getReviewDetailSnapshot(reviewDetailKey(scope, row.id)).status).toBe('ready'), { timeout: 10_000 });
+            expect(screen.findByTestId('review-detail:metadata-failure')).toBeNull();
+            expect(served.requests.some(request => request.path === '/v1/artifacts/document')).toBe(true);
         } finally { await screen.unmount(); }
     });
     it('opens a Review as its Review page, never its stored rounds as a document', async () => {

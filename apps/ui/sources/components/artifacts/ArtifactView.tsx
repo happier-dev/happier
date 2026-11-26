@@ -17,7 +17,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { t } from '@/text';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { ArtifactBodyReadFailure } from './ArtifactBodyReadFailure';
 
 import {
     artifactViewRoute,
@@ -39,6 +39,7 @@ import { ArtifactBody } from './ArtifactBody';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useDocCollaboration, type DocCollaboration } from './useDocCollaboration';
 import { isReviewArtifact, ReviewDetailHost } from '@/components/reviews/detail/ReviewDetailHost';
+import { ReviewDetailState } from '@/components/reviews/detail/ReviewDetailView';
 import type { PluginReviewPageSelection } from '@/components/plugins/pages/pluginPageRoute';
 import { ArtifactPassageThreadCardPlaceholder } from './ArtifactPassageThreadCard';
 import { clearDocReturn, peekDocReturn, trackDocScroll } from './docThreadReturn';
@@ -78,6 +79,17 @@ function ArtifactKindView(props: React.ComponentProps<typeof ArtifactView>): Rea
     const body = useArtifactBody(props.artifactId, props.artifact, { readPolicy: 'addressed' });
     const artifact = body.result?.artifact ?? props.artifact;
     if (artifact && artifact.isDecrypted !== false && isReviewArtifact(artifact)) {
+        // The Artifact read owns opening failures; a kind reader starts only after that read settles.
+        if (body.state !== 'ready') {
+            return <>
+                <NavigationChromeTitle title={artifact.title || t('detailsSurface.review.title')} />
+                {body.state === 'loading' ? <ReviewDetailState kind="loading" />
+                    : body.state === 'missing' ? <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />
+                    : <ArtifactBodyReadFailure
+                    failure={body.failure} onRetry={body.retry} testID="review-detail:failed"
+                    title={t('reviewWalkthrough.detail.failedTitle')} replacesContent />}
+            </>;
+        }
         return <ReviewDetailHost artifact={artifact} bodyState={body.state} onRetry={body.retry}
             focusThreadId={props.focusThreadId} pluginPageSelection={props.pluginPageSelection} onDeleted={props.onDeleted} />;
     }
@@ -144,16 +156,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView> &
     // comments column stands beside it from the first frame, so nothing moves when threads arrive (lab K1-A/R).
     const docColumn = collaboration !== null;
 
-    const failure = body.state === 'failed' ? (
-        <SurfaceStateCard
-            testID="artifact:bodyFailed"
-            kind="error"
-            title={t('artifacts.error')}
-            reason={resolveActionExecutionErrorMessage(body.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
-            action={{ label: t('common.retry'), onPress: body.retry }}
-            accessibilitySemantics="alert"
-        />
-    ) : null;
+    const failure = body.state === 'failed' ? <ArtifactBodyReadFailure failure={body.failure} onRetry={body.retry} /> : null;
     // A state standing in for the page names the phone header itself (its route title is only the parent's "Artifacts"):
     // nothing while the Artifact is unknown, the state's own title once it settles (G3b). A pane leaves its host's title.
     const titled = (title: string | null, node: React.ReactElement) => props.presentation === 'page'
