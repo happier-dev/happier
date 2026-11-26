@@ -1181,7 +1181,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(disclosed).toBe(false);
     await app.close();
   });
-  it.each([1, 51])('signs the exact query effect and body while preserving a Home admission refusal (%s slices)', async count => {
+  it.each([1, 51])('signs the exact query effect and body and preserves an unmarked Home scope denial (%s slices)', async count => {
     const app = fastify();
     const signer = tweetnacl.sign.keyPair();
     const target = { kind: 'machine' as const, machineId: 'machine' };
@@ -1220,7 +1220,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     for (const slice of result.results) {
       expect(slice).toMatchObject({
         requestedQuery: { machines: ['selected'] },
-        sources: expect.arrayContaining([{ source: 'accounting', status: 'error', errorCode: 'action_forbidden' }]),
+        sources: expect.arrayContaining([{ source: 'accounting', status: 'error', errorCode: 'credential_scope_denied' }]),
       });
       expect(slice.accounting).toBeUndefined();
     }
