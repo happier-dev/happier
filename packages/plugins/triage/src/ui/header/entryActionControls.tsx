@@ -14,6 +14,7 @@ import {
   usePluginTranslation,
   usePluginHostApi,
 } from '@happier-dev/plugin-ui';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import type {
   TriageEntryRefV1,
   TriageSourceInstanceIdV1,
@@ -158,6 +159,11 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   }>;
   /** Opens the one actions editor on this action (the chevron's "Edit action…"); absent where no editor is mounted. */
   onEditAction?: (actionId: string) => void;
+  /**
+   * A press is resolving or starting its Session. The control that was pressed says so itself, busy at its own width,
+   * so no line is inserted under the row (N31).
+   */
+  starting?: boolean;
 }>;
 
 /**
@@ -274,6 +280,8 @@ function TriageEntryActionButton(props: Readonly<{
   singleLine?: boolean;
   /** Drawn as this glyph alone, named by its words for assistive technology (Ask in the pinned phone band). */
   glyph?: 'conversations';
+  /** This press is starting: the button's own busy state, which keeps its idle width. */
+  busy?: boolean;
   onPress: (request: TriageEntryActionRequestV1) => void;
 }>): React.ReactElement {
   const seededKey = readTriageActionTitleKeyV1(props.action);
@@ -292,6 +300,7 @@ function TriageEntryActionButton(props: Readonly<{
       {...(props.joinedEdge === undefined ? {} : { joinedEdge: props.joinedEdge })}
       {...(props.singleLine === true ? { singleLine: true } : {})}
       disabled={props.blocked}
+      {...(props.busy === true ? { busy: true } : {})}
       onPress={() => {
         props.onPress({
           action: props.action,
@@ -324,10 +333,14 @@ export function TriageEntryActionControls(
     return fixAvailable ? planned : planned.filter((action) => readTriageActionIntentV1(action) !== 'fix');
   }, [actions, workflowSubject, fixAvailable]);
   const [refusal, setRefusal] = React.useState<TriageEntryActionRefusalV1 | null>(null);
+  // Which action the last press started, so its own control can say it is starting.
+  const [pressedActionId, setPressedActionId] = React.useState<string | null>(null);
+  const startingActionId = props.starting === true ? pressedActionId : null;
   // Merge's alternatives join this row's one ⋯ rather than a second ⋯ beside Merge.
   const mergeChoices = useTriageMergeChoicesV1(props.sourceWrite, props.sourceLabel);
   const press = React.useCallback((request: TriageEntryActionRequestV1) => {
     setRefusal(null);
+    setPressedActionId(request.action.actionId);
     void (async () => {
       const outcome = await onAction(request);
       if (outcome !== undefined && outcome !== null) setRefusal(outcome);
@@ -354,6 +367,7 @@ export function TriageEntryActionControls(
     options: Parameters<PluginUiActionControlController['prepare']>[0]) => {
     if (sendControl === undefined) return null;
     setRefusal(null);
+    setPressedActionId(request.action.actionId);
     const outcome = await sendControl.prepare(request, options);
     if (outcome !== null && 'kind' in outcome) {
       if (!options.signal.aborted) setRefusal(outcome);
@@ -486,6 +500,7 @@ export function TriageEntryActionControls(
       withoutRepository={props.withoutRepository === true}
       singleLine={compact && action === primary}
       {...(glyph === undefined ? {} : { glyph })}
+      {...(startingActionId === action.actionId ? { busy: true } : {})}
       {...(split === undefined ? {} : { joinedEdge: 'end' as const, ...(split.label === undefined ? {} : { label: split.label }) })}
       onPress={onPress}
     />
@@ -514,7 +529,11 @@ export function TriageEntryActionControls(
     primary === null || sendControl === undefined ? undefined : {
       action: TRIAGE_SESSION_HANDOFF_ACTION_REF_V1,
       prepare: (_id, options) => prepareSend({ action: primary, entryRef, sourceInstanceId }, options),
-      onSettled: sendControl.onSettled,
+      // A declined "Send to this Session?" is the person's choice, not a failure: it settles with no notice (N27).
+      onSettled: (execution) => {
+        const settled = sendControl.onSettled(execution);
+        return isPluginActionConfirmationDeclined(projectPluginActionControlExecutionV1(execution, text)) ? true : settled;
+      },
     };
   const startGroups = sendControl === undefined ? [] : [{
     id: 'triage-start:send',
@@ -583,6 +602,8 @@ export function TriageEntryActionControls(
   ];
   const selectMenuItem = (id: string) => {
     setMoreOpen(false);
+    // A row of ⋯ is its own press: no button in the row says it is starting.
+    setPressedActionId(null);
     if (id.startsWith(STATUS_ITEM_PREFIX)) { statusMenu?.onSelect(id.slice(STATUS_ITEM_PREFIX.length)); return; }
     if (id === MAKE_TASK_ITEM_ID) { void makeTask.run(); return; }
     if (id === `${SOURCE_WRITE_ITEM_PREFIX}retry`) { void write?.retry?.(); return; }
@@ -615,7 +636,7 @@ export function TriageEntryActionControls(
           {...(decisionFirst ? { emphasis: 'secondary' as const } : {})}
           {...(startUnavailable === undefined ? {} : { startUnavailableReason: startUnavailable })}
           compact={compact}
-          pending={startPending}
+          pending={startPending || startingActionId === primary.actionId}
           groups={startGroups}
           onLaunch={launchPrimary}
           {...(props.onEditAction === undefined ? {} : { onEdit: () => { props.onEditAction?.(primary.actionId); } })}

@@ -515,6 +515,62 @@ describe('the mounted configured entry action controls', () => {
     await expect(fixture.queryByRole('button', { name: 'More actions' })).resolves.toBeUndefined();
   });
 
+  it('settles a declined "Send to this Session?" silently: no notice, nothing under the row (N27)', async () => {
+    const settled: unknown[] = [];
+    const surface = defineUiSurface(() => (
+      <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 't3', kindId: 'task' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        workflowSubject="issue"
+        viewerIsAuthor
+        reviewPreparation="unsupported"
+        withoutRepository
+        onAction={() => undefined}
+        sendControl={{ prepare: async () => ({ input: { v: 1 } }), onSettled: (execution) => { settled.push(execution); } }}
+      />
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-send-decline', mountNonce: 'fixture-mount-send-decline' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture(),
+      // The host's Send press: the person cancels "Send to this Session?", so the host settles the current-intent refusal.
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, actionBindings: createPluginUiActionControlTestHost(async () => ({
+        ok: false, errorCode: 'plugin_action_current_intent_rejected', error: 'plugin_action_current_intent_rejected' })) }),
+    });
+    mounted.push(fixture);
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Start options' })); });
+    await act(async () => { await fixture.press(await fixture.getByRole('menuitem', { name: 'Send to a Session…' })); });
+    await vi.waitFor(() => expect(settled).toHaveLength(1));
+    expect(document.body.textContent).not.toContain('not applied');
+    expect(document.body.textContent).not.toContain('Refresh this page');
+  });
+
+  it('says a start is in flight on the control that was pressed, inserting nothing under the row (N31)', async () => {
+    function Starting() {
+      const [starting, setStarting] = React.useState(false);
+      return <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: '18', kindId: 'pull-request' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={[formalAction('formal-review-one', 'Security review')]}
+        workflowSubject="pullRequest" viewerIsAuthor={false} reviewPreparation="ready" starting={starting}
+        onAction={() => { setStarting(true); }} />;
+    }
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-starting', mountNonce: 'fixture-mount-starting' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <Starting />),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    });
+    mounted.push(fixture);
+    const text = document.body.textContent;
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Security review' })); });
+    await expect(fixture.getByRole('button', { name: 'Security review', state: { busy: true } })).resolves.toBeDefined();
+    expect(document.body.textContent).toBe(text);
+  });
+
   it('says why a press started nothing instead of doing nothing', async () => {
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { PropertyList, Stack, Text, usePluginTranslation, type PropertyChoice } from '@happier-dev/plugin-ui';
+import { HAPPIER_PAGE_METRICS, PropertyList, Stack, Text, usePluginTranslation, type PropertyChoice } from '@happier-dev/plugin-ui';
 import type { GithubOverviewValueV1 } from './overviewReader.js';
 import { GithubReadFailure } from './readFailure.js';
 
@@ -29,7 +29,8 @@ export function GithubEntryPropertyPicker(props: Readonly<{
   const label = property === 'assignees'
     ? text('plugins.github.ui.parity.assignees', 'Assignees')
     : text('plugins.github.ui.parity.labels', 'Labels');
-  return <Stack gap="small">
+  // It sits among the Details sheet's rows, so it stands on their inset rather than the sheet's edge (N30).
+  return <Stack gap="small" style={SHEET_ROW_INSET_STYLE_V1}>
     <PropertyList testID={`github-pr-${property}`} items={[{
       id: property,
       label,
@@ -57,3 +58,8 @@ export function GithubEntryPropertyPicker(props: Readonly<{
     {props.feedback}
   </Stack>;
 }
+
+const SHEET_ROW_INSET_STYLE_V1 = Object.freeze({
+  paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+  paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,
+});

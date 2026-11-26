@@ -567,7 +567,9 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   const sessionName = noticeSessionState === null
     ? text('plugins.triage.surface.session.selectedSessionName', 'the selected Session')
     : noticeSessionState.title?.trim() || text('session.untitled', 'Untitled session');
-  const notice = describeTriageEntrySessionPhaseV1(controller.phase, { sessionName });
+  // A start in flight is said by the control that was pressed (busy at its own width), never a line under the row (N31).
+  const starting = controller.phase.kind === 'resolving' || controller.phase.kind === 'starting';
+  const notice = starting ? null : describeTriageEntrySessionPhaseV1(controller.phase, { sessionName });
   const sessionFailure = notice?.failure ?? (controller.phase.kind === 'unavailable'
     ? controller.phase.failure : controller.configuredResult?.failure);
   const retainedNotice = controller.phase.kind === 'unavailable' && controller.phase.reason === 'handoffOutcomeUnknown'
@@ -588,6 +590,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
             ...(props.taskSessionId === undefined ? {} : { linkSession: props.taskSessionId }) },
         })}
         onAction={onAction}
+        starting={starting}
         sendControl={{ prepare: prepareSend, onSettled: controller.settleAction }}
         {...(props.onEditAction === undefined ? {} : { onEditAction: props.onEditAction })}
         trailing={props.attention}
@@ -1462,7 +1465,17 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // (publishing or changing at the source is one task, not a form stacked over the PR's tabs). A task's own story
   // holds its editor in the Notes chapter instead.
   const openTask = task.form !== null && !(isTask && composition.kind === 'whole') ? task.form
-    : actionRegionShown && sourceChangesOpen && sourceActions !== undefined ? sourceActions : null;
+    : actionRegionShown && sourceChangesOpen && sourceActions !== undefined ? (
+      // The section's own way out stands at its top, whatever the source draws inside (CONFIRM-274-A): each change
+      // there confirms on its own, so leaving is "Done", the action editor's word for the same close.
+      <Stack gap="small">
+        <Row justify="flex-end">
+          <Button titleKey="plugins.triage.surface.actions.close" title="Done" variant="plain" size="small"
+            onPress={actionsNavigation.close} />
+        </Row>
+        {sourceActions}
+      </Stack>
+    ) : null;
   // Pushed with tabs, the title and facts ride at the top of the story that scrolls; elsewhere they keep their band.
   const headerInStory = props.pushed === true && composition.kind === 'tabs' && entryMount !== null && openTask === null;
   const headerContents = (
@@ -1541,7 +1554,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       taskFieldChoices={props.exactRead?.taskFieldChoices}
       row={row} {...(detail?.kind === 'ready' ? { instance: detail.input.instance } : {})}
       linkedSessionIds={linkedSessionIds} relationRows={props.rows}
-      disabled={detail?.kind !== 'ready'} onApplied={completePostMutation}>{(task) => {
+      disabled={detail?.kind !== 'ready'} reading={detail?.kind === 'reading'} onApplied={completePostMutation}>{(task) => {
       const detailBody = renderDetailBody(task);
       if (display === null || actionPresentation === null || selected === null) return renderDetail(null, task, detailBody);
       const actionKey = deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId);

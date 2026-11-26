@@ -734,6 +734,11 @@ export const TriageTaskControlsPlacementContext = React.createContext<'header' |
  */
 export function TriageEditTaskScope(props: Readonly<{
   row: TriageListRowV1; instance?: TriageConfiguredSourceInstanceV1; disabled: boolean; onApplied(): Promise<void>;
+  /**
+   * The detail's read is still out. A tabbed story's first step will carry the properties, so until it can claim them
+   * they wait unseen rather than standing above the tabs and leaving when the story lands (N17, the deep-link frame).
+   */
+  reading?: boolean;
   /** Complete edit values supplied by the mounted exact-entry read owner. */
   taskFields?: TriageTaskFieldsV1;
   /** What assignees and labels can be set to, from the same read, when the source declares a directory. */
@@ -937,7 +942,7 @@ export function TriageEditTaskScope(props: Readonly<{
   if (!storyPlacement) return place({ status, controls, relations, edit, form }, null, null);
   const statusInMore = transitions.length === 0 ? null : { label: transitionLabel, items: statusMenu.items,
     radioGroups: statusMenu.radioGroups, disabled: statusDisabled, onSelect: selectStatus };
-  return place({ status: null, controls: factsClaimed ? null : controls, relations, edit, form },
+  return place({ status: null, controls: factsClaimed || props.reading === true ? null : controls, relations, edit, form },
     { facts: controls, claim: claimFacts }, statusInMore);
 }
 

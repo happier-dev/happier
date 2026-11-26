@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -21,7 +21,7 @@ import { readTriageSelectedObservationV1 } from '../window/selectedObservation.j
 import { useTriageListWindow } from '../window/useTriageListWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import type { TriageTaskFieldChoicesV1 } from '@happier-dev/triage-protocol/v1';
-import { TriageCreateTaskFields, TriageEditTaskScope, TriageTaskControlsPlacementContext, TriageTaskRowStatusControl, useTriageTaskCommit } from './taskFields.js';
+import { TRIAGE_TASK_PROPERTIES_TEST_ID_V1, TriageCreateTaskFields, TriageEditTaskScope, TriageTaskControlsPlacementContext, TriageTaskRowStatusControl, useTriageTaskCommit } from './taskFields.js';
 import { TriageDetailStory } from '@happier-dev/triage-sources/ui';
 import { TriageEntryActionControls } from '../header/entryActionControls.js';
 import { TriageTaskStory } from './taskStory.js';
@@ -699,6 +699,8 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   snapshotCapabilities?: TriageTaskCapabilitiesV1;
   /** Mount the detail as the PRs & Issues page does: a tabbed source's report story and the action row's ⋯. */
   storyPlacement?: true;
+  /** The detail's read is still out: its story has not mounted (the tabs stand over reading lines). */
+  reading?: true;
   labelColors?: readonly Readonly<{ name: string; colorToken: string }>[] }> = {}) {
   const sourceFixture = createTriageSourceV1Fixture();
   const source = { ...sourceFixture, configuredInstance: { ...sourceFixture.configuredInstance,
@@ -734,6 +736,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
       surface: defineUiSurface(() => {
         const detail = useTriagePostMutationRow(row, lanes);
         const scoped = <TriageEditTaskScope row={detail.row ?? row} instance={source.configuredInstance} disabled={false}
+          {...(options.reading ? { reading: true } : {})}
           taskFields={detail.exactRead?.taskFields} taskFieldChoices={detail.exactRead?.taskFieldChoices} onApplied={async () => {
             rereads++;
             if (options.rereadFails) throw new Error('Refresh unavailable');
@@ -745,7 +748,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
             <TriageEntryActionControls target={{ kind: 'entry', sectionId: 'open', entryRef,
               sourceInstanceId: observation.sourceInstanceId }} actions={[]} workflowSubject="issue" viewerIsAuthor={false}
               reviewPreparation="unsupported" leading={task.status} onAction={() => undefined} />
-            <TriageDetailStory kind="report"><Text value="The checkout stays disabled." /></TriageDetailStory>
+            {options.reading ? null : <TriageDetailStory kind="report"><Text value="The checkout stays disabled." /></TriageDetailStory>}
           </> : <>{task.status}{task.controls}<TriageTaskStory task={task} notes={null} renderAgentStep={() => null} /></>}
         </TriageEditTaskScope>;
         return options.storyPlacement
@@ -795,6 +798,17 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   return { fixture, saved, transitioned, colored, opened, notifications, sourceUrl: observation.outcome.locator.webUrl,
     rereads: () => rereads, reads: () => reads, entryRef };
 }
+
+it('keeps a tabbed story\'s properties out of the header while the detail still reads, so the tabs never move (N17)', async () => {
+  const properties = () => document.querySelectorAll(`[data-testid="${TRIAGE_TASK_PROPERTIES_TEST_ID_V1}"]`).length;
+  // Once the read settled with nothing claiming them, the properties stand above the story's place.
+  await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] }, storyPlacement: true });
+  await vi.waitFor(() => expect(properties()).toBe(1));
+  const reading = await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] }, storyPlacement: true, reading: true });
+  await vi.waitFor(() => expect(reading.reads()).toBeGreaterThan(0));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(properties()).toBe(1);
+});
 
 it('picks assignees from the source directory once the source declares one, committing the chosen set', async () => {
   const { fixture, saved } = await mountEditor({ fields: ['assigneeIds'], values: { assigneeIds: ['ada'] },
