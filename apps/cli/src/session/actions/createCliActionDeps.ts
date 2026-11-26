@@ -844,7 +844,6 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (!params.credentials) return executionRunActionFailure('client_required');
       const machineId = request.context.externalActionExecutionAuthorization?.binding.machineId
         ?? params.machineActionDirectTargetTransport?.machineId ?? await readActiveMachineId();
-      if (!machineId) return executionRunActionFailure('machine_not_found');
       return createPrepareDeploymentBindingsForHost({ credentials: params.credentials,
         serverId: request.input.serverId, serverHttpBaseUrl: todoHomeBaseUrl, machineId, resolveRequestHeaders: resolveAccountStorageHeaders,
         ...(params.savedSecretOperationContext ? { savedSecretOperationContext: params.savedSecretOperationContext } : {}),

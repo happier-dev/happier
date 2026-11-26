@@ -79,7 +79,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
     accountArtifacts?: ReturnType<typeof createCredentialedAccountArtifactStore>;
     serverId: string;
     serverHttpBaseUrl: string;
-    machineId: string;
+    machineId: string | null;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     prepareDataRoleBindings?: PrepareDataRoleBindingsForHost;
     preparePlatformBindings?: PreparePlatformBindingsForHost;
@@ -266,10 +266,12 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             }
             if (targetLinkId && !runtimeLink)
                 throw deploymentUnavailableError('deployment.bindings.prepare.target_link', 'not_found');
+            const { machineId } = host;
+            if (!machineId) return refuse('machine_not_found');
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity) return refuse('secret_missing');
             admission = await readEnvironmentSecretBindingPreparationForHost({ credentials,
-                serverId: storageServerId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
+                serverId: storageServerId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId,
                 installationId: identity.installationId, environmentId: input.environmentId,
                 ...(targetLinkId ? { targetLinkId } : {}),
                 createRequestHeaders: body => headers({ method: 'POST',

@@ -16,6 +16,9 @@ import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateS
 import { EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import * as identityStore from '@/daemon/identity/store';
+import * as machineRegistrationStore from '@/daemon/machineIdentity/machineRegistrationStore';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -59,6 +62,8 @@ it.each([
         name: 'keeps an uncoded bindings read failure private and diagnosable through daemon preparation' },
     { placementChange: false, mode: 'e2ee' as const, external: false, removeOwnDataRole: true,
         name: 'removes the own-server write role without acquiring the retained read role' },
+    { placementChange: false, mode: 'plain' as const, external: false, removeOwnDataRole: true, unregisteredCli: true,
+        name: 'removes an enrolled native database writer from an Account CLI without a local Machine registration' },
     { placementChange: false, mode: 'plain' as const, external: false, ownDataRole: true, name: 'refuses read-role setup without an active deployment before acquiring its password' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, name: 'authors plain backup credential references before any target exists' },
     { placementChange: false, mode: 'e2ee' as const, external: false, preTarget: true, name: 'authors E2EE backup credential references before any target exists' },
@@ -94,7 +99,7 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, replaceManagedDataRole, readAccessChild, ownDataRole, removeOwnDataRole, uncodedReadFailure, providerRuntime }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, replaceManagedDataRole, readAccessChild, ownDataRole, removeOwnDataRole, unregisteredCli, uncodedReadFailure, providerRuntime }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
@@ -410,10 +415,16 @@ it.each([
             return;
         }
         if (removeOwnDataRole) {
-            const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
+            if (unregisteredCli) vi.spyOn(machineRegistrationStore, 'readActiveMachineId').mockResolvedValue(null);
+            const action = unregisteredCli
+                ? createCliActionDeps({ token, credentials, sessionId: 'cli-global', mode, ctx: null,
+                    serverId: 'home', serverHttpBaseUrl, savedSecretOperationContext: operation }).deploymentAction!
+                : daemon.deploymentAction!;
+            const result = await action(DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, { serverId: 'home',
                 environmentId: environment.id, expectedRevision: environment.revision, set: [],
-                remove: [{ purpose: 'dataRole', service: 'database', role: 'write' }] }, {});
-            expect(result).toMatchObject({ ok: true });
+                remove: [{ purpose: 'dataRole', service: 'database', role: 'write' }] },
+            { surface: 'cli', authority: 'present_user', runtimeAccountId: 'owner' });
+            expect(result, 'errorCode' in result ? result.errorCode : undefined).toMatchObject({ ok: true });
             expect(bindingAdmissionReads).toBe(0);
             expect(materialReads).toBe(0);
             expect(writes).toHaveLength(1);
