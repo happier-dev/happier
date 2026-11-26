@@ -1292,8 +1292,12 @@ describe('WorkflowsColumn', () => {
             if (new URL(String(url)).pathname === '/v1/artifacts/read') exactReads.push(JSON.parse(String(init?.body)));
             return http.request(url, init);
         });
+        const queued = createWorkflowRunSummaryFixture({ id: 'run-source-queued', state: 'queued',
+            workflowCustodyState: 'pending', sourceArtifactId: definitionId });
+        const finished = createWorkflowRunSummaryFixture({ id: 'run-source-finished', state: 'succeeded',
+            sourceArtifactId: definitionId });
         const runRows = [
-            ...[waiting, running].map(run => ({ ...run, sourceArtifactId: definitionId })),
+            queued, finished, ...[waiting, running].map(run => ({ ...run, sourceArtifactId: definitionId })),
             { ...waiting, id: 'run-unavailable-a', sourceArtifactId: '10000000-0000-4000-8000-00000000000a' },
             { ...waiting, id: 'run-unavailable-b', sourceArtifactId: '10000000-0000-4000-8000-00000000000b' },
         ];
@@ -1313,6 +1317,9 @@ describe('WorkflowsColumn', () => {
             } };
             if (actionId === 'workflow.run.list') return { ok: true, result: { runs: runRows, nextCursor: 'more-runs', metadataByRunId: {
                 [waiting.id]: { kind: 'available', value: { title: 'Prepare the release' } },
+                [finished.id]: { kind: 'available', value: { title: 'Released the workflow' } },
+                // Omit the synthetic accepted envelope: the offline Run is still awaiting custody.
+                [queued.id]: { kind: 'unavailable', reason: 'content_unavailable' },
                 [running.id]: { kind: 'unavailable', reason: 'content_unavailable' },
             } } };
             return { ok: false, error: 'unexpected', errorCode: 'unexpected' };
@@ -1326,7 +1333,13 @@ describe('WorkflowsColumn', () => {
             <WorkflowsRunsRoute />
         </AppShellColumnContext.Provider>, { wrapper: TestAuth });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Release workflow'));
-        expect(screen.getTextContent()).toContain('Prepare the release');
+        // The same title facts as the opened Run header: a queued Run takes its source title,
+        // and admitted Runs keep the title they accepted even when the source has a different name.
+        const rowLabel = (id: string) => screen.findAll(node => node.props.testID === `workflow-runs:row:${id}`
+            && typeof node.props.accessibilityLabel === 'string').map(node => node.props.accessibilityLabel).join(' ');
+        expect(rowLabel(waiting.id)).toContain('Prepare the release');
+        expect(rowLabel(finished.id)).toContain('Released the workflow');
+        expect(rowLabel(queued.id)).toContain('Release workflow');
         expect(screen.getTextContent()).toContain('workflows.destination.display.workflow · 0000000a');
         expect(screen.getTextContent()).toContain('workflows.destination.display.workflow · 0000000b');
         const sourceIds = [...new Set(runRows.map(run => run.sourceArtifactId))];

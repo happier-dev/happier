@@ -114,7 +114,10 @@ export function useWorkflowRunCollection(focused: boolean) {
         const todayStart = new Date().setHours(0, 0, 0, 0);
         return runs.rows.map((run): WorkflowRunCollectionRow => {
             const { summary } = run;
-            const title = formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(run.metadata), summary?.state);
+            const savedSourceTitle = summary?.sourceArtifactId ? savedWorkflowTitle(summary.sourceArtifactId) : null;
+            const title = formatWorkflowRunDisplayName(
+                resolveWorkflowRunDisplayName(run.metadata, undefined, savedSourceTitle), summary?.state,
+            );
             const workflowId = summary?.sourceArtifactId
                 ?? (summary?.origin.kind === 'automation' ? summary.origin.automationId : run.automation?.automationId);
             const project = summary?.where && runs.serverId ? census?.sessionProjectKeyResolver?.({
@@ -147,7 +150,7 @@ export function useWorkflowRunCollection(focused: boolean) {
             }
             const result = summary?.state ?? run.automation?.workflowRunState;
             const workflowTitle = summary?.sourceArtifactId
-                ? savedWorkflowTitle(summary.sourceArtifactId)
+                ? savedSourceTitle
                 : workflowId ? inlineWorkflowTitles.get(workflowId) : undefined;
             return {
                 key: run.id, title, route: createWorkflowRunListRowRoute(run, runs.serverId), run, date,
