@@ -7,6 +7,7 @@ import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/cr
 import { SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { configuration } from '@/configuration';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -22,9 +23,13 @@ import { createRoleSourceReader } from '../roles/roleSources';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resetActiveAccountSettingsSnapshotForTests } from '../../settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ExecutionRunAppliedParentSelection } from '../../agent/runtime/bridges/executionRun/runtime/openInputs';
-import { MachineRpcTargetNotCurrentError } from '@/session/transport/rpc/machineRpc';
+import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
-afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+const network = vi.hoisted(() => ({ io: vi.fn() }));
+vi.mock('socket.io-client', () => ({ io: network.io }));
+
+afterEach(() => { vi.restoreAllMocks(); network.io.mockReset(); resetActiveAccountSettingsSnapshotForTests(); });
 
 it.each([false, true])('admits cont6 inherited MCP spawn from real CLI caller facts (observed=%s)', async observed => {
   const sessionId = 'cmvd7yezo007vmcol3pu0sjus';
@@ -106,12 +111,12 @@ it.each([false, true])('admits cont6 inherited MCP spawn from real CLI caller fa
   }
   expect(sessionSpawnNew).not.toHaveBeenCalled();
   roleSourceAvailable = false;
-  expect(await invoke(inheritedCodexInput)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+  await expect(invoke(inheritedCodexInput)).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable',
     details: { code: 'target_unavailable', reason: 'role_source_incomplete' } });
   expect(sessionSpawnNew).not.toHaveBeenCalled();
   roleSourceAvailable = true;
   selectionAvailable = false;
-  expect(await invoke(inheritedCodexInput)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+  await expect(invoke(inheritedCodexInput)).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable',
     details: { code: 'target_unavailable', reason: 'caller_agent_unavailable' } });
   expect(sessionSpawnNew).not.toHaveBeenCalled();
 });
@@ -258,6 +263,7 @@ it.each(['missing-capability', 'malformed-preparation', 'target-refused'] as con
   Object.assign(configuration, { activeServerId: serverId });
   onTestFinished(() => Object.assign(configuration, { activeServerId: previousServerId }));
   const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'df99-account' })).toString('base64url')}.signature`, encryption: null };
+  const parentMetadata = buildCommittedLaunchMetadata({ options: { machineId }, directory: '/home/happier' });
   const settings = accountSettingsParse({ memoryUpkeepInNewBots: false, actionsSettingsV1: setActionApprovalOverride({
     settings: { v: 1, actions: {} }, actionId: 'session.spawn_new', surface: 'agent', approvalRequired: false,
   }) });
@@ -265,7 +271,7 @@ it.each(['missing-capability', 'malformed-preparation', 'target-refused'] as con
     backendTarget: input.agentTarget, metadata: {}, starterDepth: 0, turnDepth: 0, callerPermissionMode: 'read-only', settings, roles: {} });
   if (!startContext || 'ok' in startContext || startContext.caller.kind !== 'session') throw new Error('Missing real Session Agent-start context');
   const requests: string[] = [];
-  // Home HTTP and remote Machine IPC are system boundaries. The success vector
+  // Home HTTP and the remote Machine socket are system boundaries. The success vector
   // is DF96's real Linux target preparation, validated by its strict consumer;
   // it must not inspect the test controller's filesystem for a remote path.
   vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -273,22 +279,29 @@ it.each(['missing-capability', 'malformed-preparation', 'target-refused'] as con
     requests.push(path);
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (path === `/v1/machines/${machineId}`) return { status: 200, data: { machine: {
-      id: machineId, revokedAt: null, replacedByMachineId: null,
+      id: machineId, managedMachineRef: null, active: true, activeAt: Date.now(),
+      revokedAt: null, replacedByMachineId: null,
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       operationProtocolCapabilities: {}, operationProtocolCapabilitiesRevision: 1,
     } } };
     throw new Error(`Unexpected HTTP boundary ${path}`);
   });
+  const prepare = async (event: string, packet: unknown) => {
+    expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+    expect(packet).toMatchObject({ method: `${machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}` });
+    if (scenario === 'target-refused') return { ok: false, error: 'root_target_mismatch', errorCode: 'machine_target_not_current' };
+    return { ok: true, result: scenario === 'malformed-preparation' ? undefined
+      : SessionCreationTargetPreparationResultV1Schema.parse({ ok: true, directory: '/home/happier',
+        directoryKind: 'path', directoryCreationRequired: false, checkout: null }) };
+  };
+  network.io.mockImplementation(() => createApiSessionSocketStub({ emitWithAck: prepare,
+    emit: (event, [packet, callback]) => {
+      if (typeof callback === 'function') void prepare(event, packet).then(value => callback(value));
+    } }));
   const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: parentId,
     mode: 'plain', ctx: null, rawSession: {}, serverId, serverHttpBaseUrl: serverUrl,
+    getCurrentSessionMetadata: () => parentMetadata,
     actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
-    machineActionDirectTargetTransport: { machineId, invoke: async method => {
-      if (method !== RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) throw new Error(`Unexpected Machine IPC ${method}`);
-      if (scenario === 'target-refused') throw new MachineRpcTargetNotCurrentError(machineId, 'root_target_mismatch');
-      if (scenario === 'malformed-preparation') return undefined;
-      return SessionCreationTargetPreparationResultV1Schema.parse({ ok: true, directory: '/home/happier',
-        directoryKind: 'path', directoryCreationRequired: false, checkout: null });
-    } },
   });
   const executor = createActionExecutor(deps);
   const hostContext = { serverId, runtimeAccountId: 'df99-account', agentStartContext: startContext,
@@ -308,13 +321,14 @@ it.each(['missing-capability', 'malformed-preparation', 'target-refused'] as con
     details: { kind: 'update_required', operation: 'session.spawn_new', component: 'daemon', reason: 'session_roles_snapshot_update_required' },
   } : scenario === 'target-refused' ? {
     type: 'error', code: 'spawn_failed', retryable: true,
-    launchError: { kind: 'launch_error', code: 'machine_target_not_current', message: 'root_target_mismatch' },
+    launchError: { kind: 'launch_error', code: 'machine_target_not_current' },
+    failureCause: { phase: 'session.target_preparation', errorCode: 'machine_target_not_current' },
   } : {
     type: 'error', code: 'incompatible_target', retryable: false,
     incompatibleTarget: { reason: 'target_preparation_invalid_result' },
   };
-  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: expected });
-  if (!result.ok) throw new Error('Missing strict spawn result');
-  expect(SessionSpawnNewResultV1Schema.parse(result.result)).toEqual(result.result);
+  expect(result, JSON.stringify({ result, requests })).toMatchObject({ ok: false, errorCode: expected.code, details: expected });
+  if (result.ok) throw new Error('Missing strict spawn failure');
+  expect(SessionSpawnNewResultV1Schema.parse(result.details)).toEqual(result.details);
   if (scenario === 'missing-capability') expect(requests).toContain(`/v1/machines/${machineId}`);
 });

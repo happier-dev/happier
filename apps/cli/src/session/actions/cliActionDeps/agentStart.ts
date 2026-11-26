@@ -1,6 +1,7 @@
 import type { CliActionDepsParams } from './types';
 import type { readCurrentRunnerAgentStartPolicyV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { type RoleSourceReader } from '@/session/roles/roleSources';
@@ -130,7 +131,12 @@ export function createCliAgentStartContext(
       return { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline, directParentCustody };
     };
     const { resolveCliAgentStartContextV1 } = await import("../resolveCliAgentStartContextV1");
-    const prepared = await prepareStartReads();
+    let prepared: Awaited<ReturnType<typeof prepareStartReads>>;
+    try { prepared = await prepareStartReads(); }
+    catch (error) {
+      if (readActionErrorCodeV1(error) === 'role_source_incomplete') return refuse('role_source_incomplete');
+      throw error;
+    }
     context.signal?.throwIfAborted();
     if (prepared.effectiveSnapshotUnavailable) return refuse('caller_agent_unavailable');
     const { roles, roleSources, settings, appliedChildSelection, availableAgents, hasLaunchBaseline, directParentCustody } = prepared;
