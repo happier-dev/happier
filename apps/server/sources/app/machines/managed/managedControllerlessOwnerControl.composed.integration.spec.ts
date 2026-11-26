@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import {
+  API_TOKEN_FULL_GRANT_V1,
   MACHINE_PLAIN_DATA_KEY_MARKER,
   MachineOperationProtocolCapabilitiesV1Schema,
   encodePlainMachineStoredContent,
@@ -40,6 +41,7 @@ import {
   type LightSqliteHarness,
 } from '@/testkit/lightSqliteHarness';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
+import { preparePlainAccountApiTokenLabel } from '@/testkit/privateLabelFixture';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
@@ -484,6 +486,53 @@ describe('controllerless managed row owner control through real signed issuance'
       }
     },
   );
+
+  it('admits controllerless Delete only for the owner API token granted Delete on the executor', async () => {
+    const owner = await account();
+    const foreign = await account();
+    const executor = await daemon(owner.id);
+    await share(owner.id, executor.machine.id, foreign.id, 'admin');
+    const row = await managedRow(owner.id);
+    const action = 'machines.managed.delete';
+    const input = deleteInput(row.id);
+    const createApiToken = async (accountId: string, actionId: typeof action | 'machines.managed.power.set') =>
+      (await auth.createApiToken({
+        accountId,
+        tokenId: randomUUID(),
+        label: await preparePlainAccountApiTokenLabel(accountId, 'Controllerless control'),
+        grant: {
+          ...API_TOKEN_FULL_GRANT_V1,
+          actions: { families: [], ids: [actionId] },
+          targets: { sessions: [], machines: [executor.machine.id], environments: [] },
+        },
+      })).token;
+    const app = await server();
+    try {
+      const ungranted = await createApiToken(owner.id, 'machines.managed.power.set');
+      const refused = await issue(app, ungranted, action, executor, input);
+      expect(refused.statusCode, refused.body).toBe(403);
+      expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
+
+      const foreignToken = await createApiToken(foreign.id, action);
+      const foreignRoot = await issue(app, foreignToken, action, executor, input);
+      expect(foreignRoot.statusCode, foreignRoot.body).toBe(409);
+      expect(foreignRoot.json()).toMatchObject({ code: 'target_unavailable' });
+      expect(await readRow(row.id)).toEqual(row);
+
+      const granted = await createApiToken(owner.id, action);
+      const root = await mint(app, granted, action, executor, input);
+      const deleted = await admitControl(app, root, executor, { action, input, requestId: root.binding.requestId });
+      expect(deleted.statusCode, deleted.body).toBe(200);
+      expect(deleted.json().machine).toMatchObject({
+        id: row.id,
+        desired: 'delete',
+        intentRevision: 1,
+        cleanup: { disposition: 'pending' },
+      });
+    } finally {
+      await app.close();
+    }
+  });
 
   it('refuses every non-owner and every mismatched or controller-bound owner request without changing the row', async () => {
     const owner = await account();

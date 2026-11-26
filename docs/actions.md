@@ -7923,7 +7923,10 @@ asks the owner to re-attach a controller. Managed Exec also returns
 The owner's original Account proof can carry the exact Stop or Delete through
 cleanup on the Account's own daemon, even a shared one. That proof may come from
 the app, the CLI or an approved Agent: the Action's approval default decides
-consent, not a present-user floor. Other signed native follow-ups bind the signer to
+consent, not a present-user floor. The row owner's API token can also admit
+Delete if its grant allows `machines.managed.delete` on that daemon's Machine.
+Home refuses tokens without that grant and tokens issued to another Account.
+Other signed native follow-ups bind the signer to
 the row's enrolled guest or an unshared custodian daemon. The same route owner
 protects cancellation and setup decisions on paired rows.
 
