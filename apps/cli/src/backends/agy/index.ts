@@ -10,6 +10,7 @@ import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/con
 import { createAgyConnectedServiceRuntimeAuthAdapter } from './connectedServices/createAgyConnectedServiceRuntimeAuthAdapter';
 import { agyQuotaFetcherDescriptor } from './connectedServices/quotaFetcher';
 import { agyUsageLimitRecoveryControlAdapter } from './connectedServices/agyUsageLimitRecoveryControlAdapter';
+import { classifyAgyAssistantTurnFailure, reportAgyTurnFailure } from './connectedServices/classifyAgyRuntimeFailure';
 
 const agyCredentialLifecycle = {
   providerId: 'agy', serviceIds: ['antigravity'],
@@ -35,6 +36,7 @@ export const agent = {
   getConnectedServiceStateSharingDescriptor: async () => agyConnectedServiceStateSharingDescriptor,
   getConnectedServiceCredentialLifecycleDescriptor: async () => agyCredentialLifecycle,
   getConnectedServiceRuntimeAuthAdapter: async () => createAgyConnectedServiceRuntimeAuthAdapter(),
+  getAcpRuntimeTurnHooks: async () => ({ classifyAssistantTurnFailure: classifyAgyAssistantTurnFailure, onTurnFailure: reportAgyTurnFailure }),
   connectedServiceQuotaFetcherDescriptor: agyQuotaFetcherDescriptor,
   getSessionUsageLimitRecoveryControlAdapter: async () => agyUsageLimitRecoveryControlAdapter,
   resolveConnectedServiceSwitchContinuity: resolveAgyConnectedServiceSwitchContinuity,
