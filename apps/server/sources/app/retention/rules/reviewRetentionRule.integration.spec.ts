@@ -8,6 +8,7 @@ import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactHeaderV1Schema,
 import { materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 
+import { readHomeConfigEnv, setHomeSettings } from '@/app/home/settings/homeSettings';
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
 import { runRetentionDryRun } from '@/app/retention/runtime/runRetentionDryRun';
 import { runRetentionSweep } from '@/app/retention/runtime/runRetentionSweep';
@@ -57,6 +58,7 @@ describe('Review retention through the shared sweep and Artifact deletion', () =
         await harness.resetDbTables([
             () => db.artifact.deleteMany(),
             () => db.automationRun.deleteMany(),
+            () => db.homeSettings.deleteMany(),
             () => db.account.deleteMany(),
         ]);
     });
@@ -113,8 +115,10 @@ describe('Review retention through the shared sweep and Artifact deletion', () =
             .map(row => row.accountId).sort()).toEqual([owner.id, viewer.id].sort());
     });
 
-    it('keeps Review history when its linked workflow run expires', async () => {
-        const owner = await db.account.create({ data: { encryptionMode: 'plain', automationRunRetention: 'thirtyDays' } });
+    it('keeps Review history after Run expiry until the Home owner chooses its retention boundary', async () => {
+        const owner = await db.account.create({ data: {
+            encryptionMode: 'plain', automationRunRetention: 'thirtyDays', homeRole: 'owner', status: 'active',
+        } });
         const runId = randomUUID();
         const machineId = randomUUID();
         const materialized = await materializeWorkflowAcceptedSnapshotV1({
@@ -138,10 +142,30 @@ describe('Review retention through the shared sweep and Artifact deletion', () =
             scheduledAt: old, dueAt: old, finishedAt: old,
         } });
         const review = await seedReview(owner.id, old, run.id);
-        await runRetentionSweep({ policy: readRetentionPolicyFromEnv({}), now });
+        await runRetentionSweep({ policy: readRetentionPolicyFromEnv(await readHomeConfigEnv({})), now });
         expect(await db.automationRun.findUnique({ where: { id: run.id } })).toBeNull();
         expect(await db.artifact.findUnique({ where: { id: review.id } })).toEqual(review);
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: review.id } })).not.toBeNull();
+
+        const selected = await setHomeSettings({
+            actorAccountId: owner.id,
+            write: { expectedRevision: 0, values: {
+                HAPPIER_SERVER_RETENTION__ENABLED: true,
+                HAPPIER_SERVER_RETENTION__REVIEWS__MODE: 'delete_older_than',
+                HAPPIER_SERVER_RETENTION__REVIEWS__DAYS: 7,
+            } },
+        });
+        expect(selected).toMatchObject({ status: 'applied', projection: { revision: 1 } });
+        const dryRun = await runRetentionDryRun({ env: await readHomeConfigEnv({}), now });
+        expect(dryRun).toMatchObject({ status: 'ok', result: { byDomain: { reviews: { wouldDelete: 1 } } } });
+        expect(await db.artifact.findUnique({ where: { id: review.id } })).toEqual(review);
+
+        const swept = await runRetentionSweep({
+            policy: readRetentionPolicyFromEnv(await readHomeConfigEnv({})), now,
+        });
+        expect(swept.byRule.reviews).toBe(1);
+        expect(await db.artifact.findUnique({ where: { id: review.id } })).toBeNull();
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId: review.id } })).toBeNull();
     });
 
     it('preserves a Review whose new round starts after candidate selection and before retirement', async () => {
