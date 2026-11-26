@@ -406,7 +406,13 @@ describe('createActionExecutor (prompt library actions)', () => {
       skillActionExecute: ({ actionId, input, context }) => skills(actionId, input, { surface: context.surface ?? null }),
     });
     const ui = createExecutor({ ...approvalPorts,
-      approvalRequestApprovedReplay: ({ artifactId }) => origin.replayApprovedApprovalRequest({ artifactId }),
+      approvalRequestApprovedReplay: ({ artifactId, request: target, decision, context, signal }) => (
+        decision === 'approve' && target.status === 'open'
+          ? origin.execute('approval.request.decide', { artifactId, decision }, {
+            ...context, ...(signal ? { signal } : {}),
+          })
+          : origin.replayApprovedApprovalRequest({ artifactId, ...(signal ? { signal } : {}) })
+      ),
     });
     const actionArgs = getActionSpec('skills.create').inputSchema.parse({ name: 'release-check', files });
     const proposed = await origin.execute('skills.create', actionArgs, { surface: 'cli', authority: 'account_automation',
@@ -579,7 +585,13 @@ describe('createActionExecutor (prompt library actions)', () => {
         && origin.machineId === 'machine-1' && origin.sessionId === 'lead',
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'proposal' }; },
       approvalsGet: async () => request,
-      approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
+      approvalsUpdate: async ({ request: value }) => {
+        // Writable Artifact metadata cannot select a different person for this same-Account replay.
+        request = actionId === 'memory.decision.save' && value.status === 'approved' && value.decision
+          ? { ...value, decision: { ...value.decision, decidingAccountId: 'forged-person' } }
+          : value;
+        return { ok: true };
+      },
     };
     const originExecutor = createExecutor({ ...approvalPorts,
       memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => 'approved-fact',
@@ -592,18 +604,20 @@ describe('createActionExecutor (prompt library actions)', () => {
           publicShares: { publicShares: [] } }),
       },
     });
-    const uiExecutor = createExecutor({ ...approvalPorts, approvalRequestApprovedReplay: async ({ artifactId, request: approved, context }) => {
-      // This port is the daemon RPC boundary. Replay, strict Artifact admission
-      // and execution remain real in the separate originating executor.
-      expect(approved).toMatchObject({ v: 2, status: 'approved', executionOriginV1: {
+    const uiExecutor = createExecutor({ ...approvalPorts, approvalRequestApprovedReplay: async ({ artifactId, request: approved, decision, context, signal }) => {
+      // This port is the daemon RPC boundary. Deferred approvals dispatch while
+      // open so the originating executor claims, records and settles execution.
+      expect(approved).toMatchObject({ v: 2, status: decision === 'approve' ? 'open' : 'approved', executionOriginV1: {
         serverId: 'home', machineId: 'machine-1', sessionId: 'lead', surface: 'agent',
       } });
       expect(context).toMatchObject({ surface: 'ui', authority: 'present_user' });
-      if (actionId === 'memory.decision.save' && approved.decision) {
-        // Writable Artifact metadata cannot select a different person for this same-Account replay.
-        request = { ...approved, decision: { ...approved.decision, decidingAccountId: 'forged-person' } };
+      if (decision === 'approve' && approved.status === 'open') {
+        expect(approved.decision).toBeUndefined();
+        return originExecutor.execute('approval.request.decide', { artifactId, decision }, {
+          ...context, ...(signal ? { signal } : {}),
+        });
       }
-      return originExecutor.replayApprovedApprovalRequest({ artifactId, callerAuthority: context.authority });
+      return originExecutor.replayApprovedApprovalRequest({ artifactId, callerAuthority: context.authority, ...(signal ? { signal } : {}) });
     } });
     const original = stored;
     const prepareWorker = () => resolvePromptStackSystemAppendBlocksV1({ surface: 'coding', memoryEnabled: true,

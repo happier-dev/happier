@@ -104,11 +104,16 @@ export function projectActionSpecSchemaSections(definition: ActionDiscoveryDefin
     const { definitions: _definitions, ...rootSchema } = schema;
     return rootSchema;
   };
-  if (schemaPath !== undefined) return {
-    actionSpec: { ...definition, inputSchema: reference('/inputSchema'),
-      ...(definition.outputSchema ? { outputSchema: reference('/outputSchema') } : {}) },
-    schemaSection: { path: schemaPath, schema: project(readSchemaSection(definition, schemaPath), schemaPath.slice(1)) }, schemaSections,
-  };
+  if (schemaPath !== undefined) {
+    // Section fetches return one named grammar fragment; repeating completion
+    // terminal schemas on every section inflates wire packets and re-validation.
+    const { completion: _completion, ...sectionActionSpec } = definition;
+    return {
+      actionSpec: { ...sectionActionSpec, inputSchema: reference('/inputSchema'),
+        ...(definition.outputSchema ? { outputSchema: reference('/outputSchema') } : {}) },
+      schemaSection: { path: schemaPath, schema: project(readSchemaSection(definition, schemaPath), schemaPath.slice(1)) }, schemaSections,
+    };
+  }
   const actionSpec = { ...definition, inputSchema: project(definition.inputSchema, 'inputSchema'),
     ...(definition.outputSchema ? { outputSchema: project(definition.outputSchema, 'outputSchema') } : {}) };
   return { actionSpec, schemaSections };

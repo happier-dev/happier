@@ -148,7 +148,7 @@ describe('current-Session presentation Action', () => {
         return { ok: true };
       },
       isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home-a'
-        && origin.sessionId === 'session-a' && origin.accountId === 'alice',
+        && origin.machineId === 'machine-a' && origin.sessionId === 'session-a' && origin.accountId === 'alice',
       currentSessionPresentationApply: async ({ input, context }) => {
         delivered.push({ input, sessionId: context.defaultSessionId, serverId: context.serverId });
         return { status: 'applied' as const, revision: 'viewer-host:2' };
@@ -159,11 +159,11 @@ describe('current-Session presentation Action', () => {
     const executor = createActionExecutor(ports as unknown as ActionExecutorDeps);
     const deferred = await executor.execute('session.presentation.apply', { intent: { kind: 'viewer.close' } }, {
       surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' }, serverId: 'home-a',
-      runtimeAccountId: 'alice', defaultSessionId: 'session-a', actionRequestId: 'viewer-close', actionsSettings: settings,
+      runtimeAccountId: 'alice', defaultSessionId: 'session-a', defaultSessionMachineId: 'machine-a', actionRequestId: 'viewer-close', actionsSettings: settings,
     });
     expect(deferred).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'viewer-approval' } });
     expect(stored).toMatchObject({ status: 'open', executionOriginV1: {
-      surface: 'mcp', caller: { kind: 'host' }, authority: 'account_automation', sessionId: 'session-a',
+      surface: 'mcp', caller: { kind: 'host' }, authority: 'account_automation', machineId: 'machine-a', sessionId: 'session-a',
     } });
     expect(delivered).toEqual([]);
     for (const surface of ['api', 'plugin'] as const) {
@@ -174,6 +174,22 @@ describe('current-Session presentation Action', () => {
       expect(stored).toMatchObject({ status: 'open' });
       expect(delivered).toEqual([]);
     }
+    const sealed = stored;
+    if (!sealed || sealed.v !== 2) throw new Error('Expected v2 stored approval');
+    for (const forgedOrigin of [
+      { ...sealed.executionOriginV1, surface: 'api' as const, principalId: 'token-1', credentialId: 'token-1' },
+      { ...sealed.executionOriginV1, surface: 'plugin' as const, caller: { kind: 'plugin' as const, pluginId: 'acme.presentation', contributionLocalId: 'present', sourceCustody: { kind: 'development' as const, registeredRootId: 'root-1' } } },
+      { ...sealed.executionOriginV1, surface: 'rpc' as const },
+    ]) {
+      stored = ApprovalRequestSchema.parse({ ...sealed, requestedSurface: forgedOrigin.surface, executionOriginV1: forgedOrigin });
+      const refusedOrigin = await executor.execute('approval.request.decide', { artifactId: 'viewer-approval', decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-a',
+        runtimeAccountId: 'alice', defaultSessionId: 'caller-selected-other-session',
+      });
+      expect(refusedOrigin).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(delivered).toEqual([]);
+    }
+    stored = sealed;
     const approved = await executor.execute('approval.request.decide', { artifactId: 'viewer-approval', decision: 'approve' }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home-a',
       runtimeAccountId: 'alice', defaultSessionId: 'caller-selected-other-session',

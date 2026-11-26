@@ -62,7 +62,7 @@ describe('filesystem Action parity', () => {
           });
           if (!result.ok) return result;
         }
-        return { ok: true, result: null };
+        return { ok: true, result: { value: null } };
       },
       filesystemActionExecute: async ({ input, context }) => {
         const path = (input as { path: string }).path;

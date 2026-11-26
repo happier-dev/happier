@@ -180,6 +180,14 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       callerPermissionMode: 'yolo' }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(renamedSessions).toEqual(['origin-session']);
+    // Persisted terminal delivery receipts deduplicate subsequent replays.
+    expect(await executor.replayApprovedApprovalRequest({ artifactId: 'origin-session-proposal', callerAuthority: 'present_user',
+      currentAccount: { accountId: 'account', serverId: 'approver-profile', serverIdentityId: 'same-home' } }))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(deliveries).toHaveLength(1);
+    // When the receipt was not persisted yet, replay retries delivery with the
+    // same originating Session attribution and none of the reviewer's context.
+    stored = stored && stored.v === 2 ? { ...stored, delivery: undefined } : stored;
     expect(await executor.replayApprovedApprovalRequest({ artifactId: 'origin-session-proposal', callerAuthority: 'present_user',
       currentAccount: { accountId: 'account', serverId: 'approver-profile', serverIdentityId: 'same-home' } }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });

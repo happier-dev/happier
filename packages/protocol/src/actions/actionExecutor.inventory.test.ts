@@ -1256,7 +1256,17 @@ describe('createActionExecutor (inventory/discovery)', () => {
         message: 'Continue and summarize what changed.',
         delivery: 'steer_if_supported',
       },
-      { authority: 'present_user', surface: 'ui' },
+      {
+        authority: 'present_user',
+        surface: 'ui',
+        runtimeAccountContext: {
+          authority: 'present_user',
+          surface: 'ui',
+          hostReviewedChild: undefined,
+          sessionApprovalConsents: null,
+          executeHostReviewedChildAction: expect.any(Function),
+        },
+      },
     );
   });
 
@@ -1583,7 +1593,17 @@ describe('createActionExecutor (inventory/discovery)', () => {
         status: 'running',
         limit: 5,
       }),
-      { authority: 'present_user', surface: 'ui' },
+      {
+        authority: 'present_user',
+        surface: 'ui',
+        runtimeAccountContext: {
+          authority: 'present_user',
+          surface: 'ui',
+          hostReviewedChild: undefined,
+          sessionApprovalConsents: null,
+          executeHostReviewedChildAction: expect.any(Function),
+        },
+      },
     );
     expect((deps.executionRunList as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).not.toHaveProperty('sessionId');
   });

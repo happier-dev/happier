@@ -3375,7 +3375,17 @@ describe('createActionExecutor (session control)', () => {
         cursor: 0,
         maxEvents: 128,
       },
-      { serverId: 'server-a', surface: 'rpc' },
+      {
+        serverId: 'server-a',
+        surface: 'rpc',
+        runtimeAccountContext: {
+          defaultSessionId: null,
+          surface: 'rpc',
+          hostReviewedChild: undefined,
+          sessionApprovalConsents: null,
+          executeHostReviewedChildAction: expect.any(Function),
+        },
+      },
     );
   });
 

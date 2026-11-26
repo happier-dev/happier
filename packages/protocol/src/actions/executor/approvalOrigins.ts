@@ -402,13 +402,23 @@ export function isApprovalRequestActionReplayAdmitted(request: ApprovalRequest, 
   if (!isInternalActionId(request.actionId)) return true;
   if (request.actionId !== 'session.presentation.apply' || request.v !== 2) return false;
   const origin = request.executionOriginV1;
-  // This reversible current-Session UI operation can be configured Ask-first.
-  // Its own host UI must settle the sealed request; this does not make any
-  // internal Action callable by an external principal or a daemon replay.
+  // This reversible current-Session presentation Action can be configured
+  // Ask-first on its declared non-external surfaces. Its own host UI must
+  // settle the sealed request; this does not admit API, plugin, or RPC
+  // origins or make any internal Action callable by an external principal.
+  const admittedOriginSurface = origin.surface === 'ui'
+    || origin.surface === 'voice'
+    || origin.surface === 'agent'
+    || origin.surface === 'mcp'
+    || origin.surface === 'cli';
+  const admittedOriginAuthority = origin.authority === 'present_user'
+    || origin.authority === 'account_automation';
+  const admittedOriginCaller = origin.caller.kind === 'host'
+    || (origin.caller.kind === 'session' && origin.caller.sessionId === origin.sessionId);
   return origin.actionId === request.actionId
-    && origin.surface === 'ui'
-    && origin.authority === 'present_user'
-    && origin.caller.kind === 'host'
+    && admittedOriginSurface
+    && admittedOriginAuthority
+    && admittedOriginCaller
     && Boolean(origin.sessionId)
     && origin.principalId === undefined
     && origin.credentialId === undefined

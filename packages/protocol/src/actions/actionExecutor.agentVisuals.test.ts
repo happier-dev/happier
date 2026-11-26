@@ -32,7 +32,7 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
   const writes: SessionSurfaceItemV1[] = [];
   const boardReads: unknown[] = [];
   const deliveries = new Map<string, Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]>();
-  let executor: ReturnType<typeof createActionExecutor>;
+  let daemonExecutor: ReturnType<typeof createActionExecutor>;
   const deps: Partial<ActionExecutorDeps> = {
     // Exact Account settings and sealed Session record transports are boundaries;
     // parsing, consequences, preparation and approval replay stay real.
@@ -72,18 +72,27 @@ function harness(initialSetting: unknown = 'allowed', extraDeps: Partial<ActionE
     },
     isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
       && origin.machineId === 'machine' && origin.sessionId === 'session',
-    // The app's replay transport reaches the exact originating daemon, whose
-    // real executor consumes only the already-approved Artifact.
-    approvalRequestApprovedReplay: async ({ artifactId, request, context, signal }) => {
-      expect(request.status).toBe('approved');
+    // The app's replay transport reaches the exact originating daemon: deferred
+    // decisions are dispatched while open so the daemon claims and settles the
+    // Artifact; blocking approvals replay the already-approved Artifact.
+    approvalRequestApprovedReplay: async ({ artifactId, request, decision, context, signal }) => {
       expect(approval).toEqual(request);
-      return executor.replayApprovedApprovalRequest({ artifactId, ...(signal ? { signal } : {}),
+      if (decision === 'approve' && request.status === 'open') {
+        expect(request.decision).toBeUndefined();
+        return daemonExecutor.execute('approval.request.decide', { artifactId, decision }, {
+          ...context, ...(signal ? { signal } : {}),
+        });
+      }
+      expect(request.status).toBe('approved');
+      return daemonExecutor.replayApprovedApprovalRequest({ artifactId, ...(signal ? { signal } : {}),
         callerAuthority: context.authority ?? 'account_automation',
         currentAccount: { accountId: 'account', serverId: 'home', serverIdentityId: 'home' } });
     },
     ...extraDeps,
   };
-  executor = createActionExecutor(deps);
+  const { approvalRequestApprovedReplay: _replay, ...daemonDeps } = deps;
+  daemonExecutor = createActionExecutor(daemonDeps);
+  const executor = createActionExecutor(deps);
   return { executor, approvals, writes, boardReads, deliveries, get stored() { return stored; }, get approval() { return approval; },
     get policyReads() { return policyReads; },
     setSetting(value: unknown) { setting = value; },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutorWithEmptyAutomationPort } from './executor/actionAutomationAdmission.testkit.js';
 import type { ActionId } from './actionIds.js';
 import { ActionsSettingsV1Schema, normalizeActionsSettingsV1 } from './actionSettings.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
@@ -291,7 +292,7 @@ describe('contextual widget approval at the Action executor', () => {
     } },
   ])('never lends host UI confirmation to a non-host invocation (%j)', async context => {
     let confirmations = 0;
-    const executor = createActionExecutor({ presentUserActionConfirmation: async () => { confirmations += 1; return false; } });
+    const executor = createActionExecutorWithEmptyAutomationPort({ presentUserActionConfirmation: async () => { confirmations += 1; return false; } });
     const result = await executor.execute('projects.trust.revoke', {
       project: { serverId: 'home', projectId: 'project' }, expectedRevision: 1, expectedEffectDigest: 'reviewed-effect',
     }, { surface: 'ui', ...context });

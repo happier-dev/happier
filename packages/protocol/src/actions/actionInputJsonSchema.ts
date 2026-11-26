@@ -75,6 +75,7 @@ function projectPortableSchemaKeywords(value: unknown): void {
 // Zod 4.6 emits these check names as formats as well as their complete pattern
 // constraints. They are not JSON Schema formats; keep the patterns portable.
 const patternOnlyStringChecks = new Set(['starts_with', 'ends_with', 'includes', 'lowercase', 'uppercase', 'cidrv4', 'cidrv6']);
+const projectedJsonSchemaCache = new WeakMap<z.core.$ZodType, Map<string, JsonSchemaObject>>();
 
 /**
  * Uses Zod's canonical JSON Schema projection, shared with public manifest
@@ -85,14 +86,22 @@ export function zodSchemaToJsonSchemaObject(
   schema: z.core.$ZodType,
   options?: Readonly<{ target?: 'draft-2020-12' | 'draft-7'; reused?: 'inline' | 'ref'; unrepresentable?: 'throw' | 'any'; override?: z.core.ToJSONSchemaParams['override'] }>,
 ): JsonSchemaObject {
+  const target = options?.target ?? 'draft-2020-12';
+  const reused = options?.reused ?? 'inline';
+  const unrepresentable = options?.unrepresentable ?? 'throw';
+  const cacheKey = options?.override ? null : `${target}|${reused}|${unrepresentable}`;
+  if (cacheKey !== null) {
+    const cached = projectedJsonSchemaCache.get(schema)?.get(cacheKey);
+    if (cached) return cached;
+  }
   try {
     // The top-level projector supplies native processors for genuine Mini/Core
     // children; an instance method only carries its Classic processors.
     const projectedSchema = z.toJSONSchema(schema, {
       io: 'input',
-      target: options?.target ?? 'draft-2020-12',
-      reused: options?.reused ?? 'inline',
-      unrepresentable: options?.unrepresentable ?? 'throw',
+      target,
+      reused,
+      unrepresentable,
       override: context => {
         options?.override?.(context);
         const { jsonSchema } = context;
@@ -112,7 +121,16 @@ export function zodSchemaToJsonSchemaObject(
     // are useful on Zod values but are not JSON and cross realm boundaries
     // (notably voice-tool catalogs) as function-bearing metadata. Keep the
     // portable JSON Schema fields after the projection override.
-    return Object.fromEntries(Object.entries(projectedSchema));
+    const result = Object.fromEntries(Object.entries(projectedSchema));
+    if (cacheKey !== null) {
+      let byOptions = projectedJsonSchemaCache.get(schema);
+      if (!byOptions) {
+        byOptions = new Map();
+        projectedJsonSchemaCache.set(schema, byOptions);
+      }
+      byOptions.set(cacheKey, result);
+    }
+    return result;
   } catch (error) {
     if (error instanceof ActionJsonSchemaProjectionError) throw error;
     const reason = error instanceof Error ? error.message : 'Zod projection failed';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { resolveActionApprovalRouting, EGRESS_SENSITIVE_AGENT_FLOOR, SURFACE_AUTHORITY_AGENT_FLOOR } from './actionApprovalPolicy.js';
+import { isApprovalRuleChangeActionId } from './actionPolicyActionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionPolicyInputSchemas, ActionPolicyOutputSchemas } from './actionPolicyActionFamily.js';
 import { applyActionPolicyMutation } from './actionAudiencePolicy.js';
@@ -268,7 +269,12 @@ describe('Account approval profiles at Action admission', () => {
       const viaProfile = resolveActionApprovalRouting({ actionId, spec, context: { surface: 'agent', approvalProfileId: 'p',
         approvalProfile: { profile: ApprovalProfileV1Schema.parse({ id: 'p', name: 'P', approvalWaivedSurfaces: { [actionId]: ['agent'] } }),
           resolution: { status: 'available', requestedId: 'p' } } }, settings: normalizeActionsSettingsV1({ v: 1 }) });
-      expect(viaProfile.required, actionId).toBe(viaAccount.required);
+      if (isApprovalRuleChangeActionId(actionId)) {
+        expect(viaAccount.required, actionId).toBe(false);
+        expect(viaProfile.required, actionId).toBe(true);
+      } else {
+        expect(viaProfile.required, actionId).toBe(viaAccount.required);
+      }
     }
   });
 

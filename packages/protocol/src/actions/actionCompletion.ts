@@ -203,13 +203,19 @@ export type ActionCompletionResult =
   | Readonly<{ kind: 'cancelled'; errorCode: 'cancelled'; value?: JsonValue }>
   | Readonly<{ kind: 'outcome_uncertain'; errorCode: 'outcome_uncertain' }>;
 
+const frozenActionCompletionCache = new WeakMap<ActionCompletionDeclaration, ActionCompletionContractV1>();
+
 export function freezeActionCompletionContractV1(declaration: ActionCompletionDeclaration): ActionCompletionContractV1 {
-  return {
+  const cached = frozenActionCompletionCache.get(declaration);
+  if (cached) return cached;
+  const frozen: ActionCompletionContractV1 = {
     awaits: declaration.awaits,
     terminalOutputSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(
       declaration.terminalOutputSchema, { target: 'draft-7' },
     )),
   };
+  frozenActionCompletionCache.set(declaration, frozen);
+  return frozen;
 }
 
 export function prepareActionCompletionV1(

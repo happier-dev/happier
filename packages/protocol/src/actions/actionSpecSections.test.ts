@@ -80,6 +80,10 @@ describe('Action schema sections', () => {
   it('carries native completion contracts through full sectioned discovery', async () => {
     const spec = getActionSpec('subagents.plan.start');
     const full = projectActionDefinitionForExternalDiscovery(actionSpecToActionDefinitionV1(spec));
+    const rootSections = projectActionSpecSchemaSections(full);
+    expect(rootSections.schemaSections.length).toBeGreaterThan(0);
+    expect(projectActionSpecSchemaSections(full, rootSections.schemaSections[0].path).actionSpec)
+      .not.toHaveProperty('completion');
     const discovered = await readCompleteActionSpecV1({ actionId: spec.id,
       read: async input => projectActionSpecSchemaSections(full, input.schemaPath) });
     expect(discovered).toHaveProperty('completion', freezeActionCompletionContractV1(spec.completion!));
