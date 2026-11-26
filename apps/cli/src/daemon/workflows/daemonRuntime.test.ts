@@ -4,6 +4,7 @@ import axios, { AxiosHeaders } from 'axios';
 import fastify from 'fastify';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -144,9 +145,10 @@ import {
 // production-composition cases in this file; shutdown is terminal.
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
-it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
+it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
   const isGuest = scenario === 'guest';
   const isClient = scenario === 'client-placed';
+  const isMachine = scenario === 'machine-placed';
   const ownerId = 'workflow-account-plugin-owner';
   const accountId = isGuest ? 'workflow-account-plugin-guest' : ownerId;
   const machineId = 'shared-machine';
@@ -158,6 +160,22 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
   const workspaceRuntime = await pluginReloadController.acquireRuntimeRegistry({ resolveRuntimeRegistry: () =>
     resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }) });
   await workspaceRuntime.release();
+  const machinePluginId = 'acme.workflow-machine-placement';
+  const machineActionLocalId = 'echo';
+  if (isMachine) {
+    const machinePlugin = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
+        serverUrl: home, resolveCurrentMachineId: () => machineId }) },
+      plugins: [{
+        manifest: createPluginManifestV2Fixture({ id: machinePluginId, contributes: { actions: [{
+          id: machineActionLocalId, title: 'Echo', dangerLevel: 'safe', scopes: ['global'], surfaces: ['agent', 'cli'],
+          execution: { target: 'daemon' }, inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] },
+          resultSchema: { type: 'object', properties: { key: { type: 'string' }, surface: { type: 'string' } }, required: ['key', 'surface'] },
+        }] } }),
+        files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("echo", async input => ({ ...input, surface: "agent" })); }' },
+      }] });
+    onTestFinished(() => machinePlugin.dispose());
+  }
   const app = fastify();
   const fixture = await import('../../../../../packages/plugin-sdk/fixtures/account-actions/src/index');
   const echoAction = { pluginId: fixture.manifest.id, localId: 'echo' };
@@ -184,7 +202,8 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
     manifestExport: null,
   } } : {});
   const localId = triage ? (await import('../../../../../packages/plugins/triage/src/actions/resolveResourceProtocol')).TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 : isClient ? 'compose' : 'echo';
-  const reference = { pluginId: authored.pluginId, localId };
+  const reference = isMachine ? { pluginId: machinePluginId, localId: machineActionLocalId }
+    : { pluginId: authored.pluginId, localId };
   const actionId = formatQualifiedPluginActionId(reference);
   const input = triage ? { v: 1, resource: { kind: 'pullRequest', url: 'https://github.com/example/private/pull/17' } }
     : { key: scenario === 'missing-app' ? 'compose' : 'from-the-starter' };
@@ -194,7 +213,7 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
   }] };
   const scheduledFor = 1_800_000_000_000;
   const triggerId = 'account-step-schedule';
-  const origin = scenario === 'scheduled' || isClient ? { kind: 'automation', automationId: 'account-step-automation',
+  const origin = scenario === 'scheduled' || isClient || isMachine ? { kind: 'automation', automationId: 'account-step-automation',
     cause: AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId, triggerKind: 'schedule', triggerRevision: 1,
       occurredAt: scheduledFor, occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor } }),
       evidence: { scheduledFor } }),
@@ -218,7 +237,9 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
   const headers = { Authorization: `Bearer ${credentials.token}` };
   const ownerBearer = `Bearer e30.${Buffer.from(JSON.stringify({ sub: ownerId })).toString('base64url')}.signature`;
   const foreignAccountReads: string[] = [];
+  let accountSelectionReads = 0;
   app.addHook('onRequest', async (request, reply) => {
+    if (request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) accountSelectionReads++;
     if (request.headers.authorization === headers.Authorization) return;
     foreignAccountReads.push(request.url);
     if (isGuest && request.headers.authorization === ownerBearer) return;
@@ -326,8 +347,9 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
         expect(await direct.execute('action.invoke', { action: echoAction, input }, { surface: 'agent' }))
           .toMatchObject({ ok: false, errorCode: 'plugin_action_unavailable', effectAttempted: false });
       }
+      if (isMachine) expect(accountSelectionReads, 'Home selection reads per Machine-placed plugin step').toBe(0);
       const leaf = storage.rows().find(row => row.index.parentRecordId !== null);
-      if (!leaf) throw new Error('Missing durable Account step invocation');
+      if (!leaf) throw new Error('Missing durable plugin step invocation');
       expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: leaf.index.id,
           sequence: leaf.index.sequence, parentRecordId: leaf.index.parentRecordId, memberOrdinal: leaf.index.memberOrdinal, attempt: leaf.index.attempt },

@@ -482,7 +482,12 @@ export function createCliActionHost(params: CliActionExecutorParams):
   };
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
     async (actionId, input, context) => {
-      if (context?.surface === 'plugin' && context.actionCaller?.kind === 'plugin') {
+      const readsExactLocalContract = actionId === 'action.spec.get'
+        && params.pluginActionExecutionOwner === 'current_process'
+        && context?.authority === 'account_automation'
+        && context.externalActionTarget?.kind === 'machine'
+        && context.externalActionTarget.machineId === context.executionRunTargetMachineId;
+      if (readsExactLocalContract || (context?.surface === 'plugin' && context.actionCaller?.kind === 'plugin')) {
         const reference = readPluginActionExecutionReference(actionId, input);
         if (reference && hasBoundMachineAction(reference)) {
           return { matched: true, result: await base.execute(actionId as ActionId, input, context) };
