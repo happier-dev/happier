@@ -199,8 +199,10 @@ export function ReviewFindingsLoading() {
 const styles = StyleSheet.create((theme) => ({
   // The severity sections bring their own page section gap; the list adds none on top of it.
   list: {},
-  // The filters stand on the sheets' edge, like the page lines above them; Select sits at the line's end.
-  filters: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(), flexDirection: 'row', alignItems: 'center',
+  // The filters stand on the sheets' edge, like the page lines above them; Select sits at the line's end. The line
+  // opens the findings section, so it starts one section gap below what precedes it, as an untitled section does.
+  filters: { marginTop: HAPPIER_PAGE_METRICS.sectionGapPx, paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
+    flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', gap: theme.space.s12 },
   filterTabs: { flexShrink: 1, minWidth: 0 },
   rows: { paddingHorizontal: theme.space.s16 },

@@ -1073,13 +1073,38 @@ function IssueWrites({
   const reopen = React.useMemo(() => buildGithubIssueReopenInputV1(input), [input]);
   return (
     <Stack gap="medium">
-      <Text
-        variant="micro"
-        tone="neutral"
-        valueKey="plugins.github.ui.mutations.issueDescription"
-        fallback="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
-      />
-      {/* Subscribing is this panel's quickest change, so it leads rather than sitting under the longer cards. */}
+      {/* The issue's own writes lead, as the pull request's do; subscribing then leads the longer cards. */}
+      <ItemGroup
+        title="Change this on GitHub"
+        titleKey="plugins.github.ui.mutations"
+        description="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
+        descriptionKey="plugins.github.ui.mutations.issueDescription"
+        surface="none"
+      >
+        <Stack gap="medium">
+          <SingleProposalPublicationWrite
+            WriteControl={ExactWrite}
+            input={input}
+            publicationProposals={publicationProposals}
+            kind="issue-comment"
+            onObserved={onObserved}
+            capabilities={capabilities}
+          />
+          {offered.includes('reopen') && reopen !== null
+            ? (
+              <StateWrite
+                localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen}
+                payload={reopen}
+                title="Reopen issue"
+                titleKey="plugins.github.ui.mutations.reopenIssue"
+                onObserved={onObserved}
+                capabilities={capabilities}
+                operation="issueReopen"
+              />
+            )
+            : null}
+        </Stack>
+      </ItemGroup>
       <GithubIssueNotifications input={input} renderControls={(facts, update) => <Stack gap="small">
         <GithubNotificationToggle input={input} checked={facts.viewerSubscription === 'SUBSCRIBED'}
           operation={facts.viewerSubscription === 'SUBSCRIBED' ? 'entryUnsubscribe' : 'entrySubscribe'}
@@ -1091,27 +1116,6 @@ function IssueWrites({
       </Stack>} />
       <GithubEntryProperties input={input} kindId="issue" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
       <GithubEntryRelationships input={input} kindId="issue" onObserved={onObserved} capabilities={capabilities} />
-      <SingleProposalPublicationWrite
-        WriteControl={ExactWrite}
-        input={input}
-        publicationProposals={publicationProposals}
-        kind="issue-comment"
-        onObserved={onObserved}
-        capabilities={capabilities}
-      />
-      {offered.includes('reopen') && reopen !== null
-        ? (
-          <StateWrite
-            localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen}
-            payload={reopen}
-            title="Reopen issue"
-            titleKey="plugins.github.ui.mutations.reopenIssue"
-            onObserved={onObserved}
-            capabilities={capabilities}
-            operation="issueReopen"
-          />
-        )
-        : null}
       <Divider />
       <GithubIssueTransferWrite input={input} onObserved={onObserved} capabilities={capabilities} />
       <GithubIssueDeleteWrite input={input} onObserved={onObserved} capabilities={capabilities} />
@@ -1835,15 +1839,9 @@ function WritesSection({
       {kindId === 'pull-request' && !publishing ? <GithubMergeSignature state={mergeSignature} /> : null}
       <>{offered.length === 0 && kindId !== 'pull-request' ? null : (
         <>
-      {publishing ? null : (
-        <Text
-          variant="label"
-          valueKey="plugins.github.ui.mutations"
-          fallback="Change this on GitHub"
-        />
-      )}
       {target === null
         ? (
+          <ItemGroup title="Change this on GitHub" titleKey="plugins.github.ui.mutations" surface="none">
           <Banner
             tone="warning"
             title="This entry cannot be changed from here"
@@ -1851,6 +1849,7 @@ function WritesSection({
             description="This observation carries no route to GitHub, so nothing here can be written."
             descriptionKey="plugins.github.ui.mutations.noRoute.description"
           />
+          </ItemGroup>
         )
         : kindId === 'issue'
           ? (
@@ -1866,14 +1865,19 @@ function WritesSection({
           )
           : (
           <Stack gap="medium">
+            {/* While the publish step is open the section keeps its place, untitled, so the step is not remounted. */}
+            <ItemGroup
+              surface="none"
+              {...(publishing ? {} : {
+                title: 'Change this on GitHub',
+                titleKey: 'plugins.github.ui.mutations',
+                description: 'These change the pull request on GitHub itself. Each one asks you to confirm before anything is written.',
+                descriptionKey: 'plugins.github.ui.mutations.description',
+              })}
+            >
+            <Stack gap="medium">
             {publishing ? null : (
               <>
-            <Text
-              variant="micro"
-              tone="neutral"
-              valueKey="plugins.github.ui.mutations.description"
-              fallback="These change the pull request on GitHub itself. Each one asks you to confirm before anything is written."
-            />
             {offered.includes('merge') && primaryWrite !== null && primaryWrite.id !== 'markReady'
               ? (
                 <MergeWrite
@@ -1929,6 +1933,8 @@ function WritesSection({
                 </>
               )
               : null}
+            </Stack>
+            </ItemGroup>
             {publishing ? null : (
               <>
             {/* Subscribing is this panel's quickest change; it leads the longer property and relationship cards. */}
