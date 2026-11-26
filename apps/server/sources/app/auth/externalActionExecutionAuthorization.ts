@@ -398,7 +398,7 @@ export function readExternalActionSessionSpawnAdmission(
     if (envelope.v !== 1) return envelope.sessionSpawnAdmission;
     const internal = SessionSpawnNewActionInputV2Schema.safeParse(envelope.input);
     // Only public API input binding needs the server identity.
-    const canonical = internal.success ? internal.data : (() => {
+    const canonical = internal.success && internal.data.executionTarget ? internal.data : (() => {
         if (context.serverId === null) throw new Error('Server identity is unavailable for Session spawn input binding');
         return SessionSpawnNewActionInputV2Schema.parse(bindApiSessionSpawnNewInput(envelope.input, {
             actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, surface: 'api', caller: { kind: 'host' },

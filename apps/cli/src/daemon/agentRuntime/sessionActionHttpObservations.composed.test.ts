@@ -27,7 +27,7 @@ import { ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgements
   CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { verifyExternalActionMachineRpcExecution } from '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
+import { readExternalActionSessionSpawnAdmission, verifyExternalActionMachineRpcExecution } from '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
 import { parseSessionListQueryActionResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -73,6 +73,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { prepareInstalledRequesterAccountActionContext, prepareRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import * as installationStore from '@/daemon/identity/store';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -102,9 +104,14 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId, updateSettings } from '@/persistence';
 import { createDaemonSessionAccountActionAuthorizationPreparer } from '@/daemon/startup/createDaemonSessionAccountActionAuthorizationPreparer';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { createCredentialedAccountArtifactStore, createAcknowledgedAccountArtifactTransport } from '@/api/artifacts/accountArtifactStore';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1 } from '@happier-dev/protocol/reviews/comments/content';
 import * as daemonControlHttp from '@/daemon/controlHttp';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { executeAppliedDaemonPluginActionWithController } from '@/plugins/daemon/controlRoutes';
@@ -125,6 +132,8 @@ import { StrictJsonValueSchema, projectNativeJsonValueForTransport } from '@happ
 import { createCliActionDeps, type SessionActionRpcTransport } from '@/session/actions/createCliActionDeps';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { BasePermissionHandler } from '@/agent/permissions/BasePermissionHandler';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -229,10 +238,15 @@ it.each(['projects.execution.output.read', 'projects.execution.output.copy'] as 
   const f = await fixture();
   try {
     const operationId = 'bd63318b-646f-4476-9e44-6cba58570229';
-    const op = f.operation(actionId, { machineId: storage.state.machineId, operationId });
-    const prepared = await f.prepare(op, { v: 1, caller: op.witness.agentStartCaller,
+    storage.state.operationProtocolCapabilities = MachineOperationProtocolCapabilitiesV1Schema.parse({
+      requesterExecutionIsolation: { protocolVersions: [1] },
+    });
+    storage.state.operationProtocolCapabilitiesRevision = 1;
+    const op = f.operation(actionId, { serverId, machineId: storage.state.machineId, operationId, byteOffset: 7 });
+    const issued = await f.prepareResult(op, { v: 1, caller: op.witness.agentStartCaller,
       sourceTurnId: 'turn', callerPermissionMode: null, requestId: op.requestId });
-    if (!prepared) throw new Error('Missing Home-minted Project output authorization');
+    if ('ok' in issued) throw new Error(`Missing Home-minted Project output authorization: ${JSON.stringify(issued)}`);
+    const prepared = { authorization: issued.authorization, target: { kind: 'machine' as const, machineId: storage.state.machineId } };
     const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
     const operation = { version: 1, operationId, revision: 1, actionId: 'projects.script.run', state: 'succeeded',
       scope: { accountId: storage.account.id, machineId: storage.state.machineId }, title: 'Build', createdAt: 1,
@@ -367,9 +381,12 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   storage.state.publisherBound = true;
   storage.state.revokedAt = null;
   storage.state.publicKey = installation.publicKey;
+  storage.state.operationProtocolCapabilities = {};
+  storage.state.operationProtocolCapabilitiesRevision = 0;
   storage.state.sessionIds = new Set([childId]);
   storage.state.sessionAccessKeyIds = new Set();
   storage.state.directReportSessionIds = new Set([childId]);
+  await seedTestServerProfile({ id: serverId, homeId: storage.state.homeId, serverUrl: serverHttpBaseUrl });
   const token = await auth.createToken(storage.account.id, undefined, { kind: 'account', authority: 'present_user' });
   const credentials = { token, encryption: null };
   const scopeKey = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(credentials));
@@ -383,6 +400,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   publishSettings();
   const actionsSettingsProvider = createActionSettingsProvider({ scopeKey });
   const app: Fastify = createAuthenticatedTestApp({ authentication: 'real' });
+  installEmptyActionAutomationIndex(app);
   app.addHook('onRequest', async (request, reply) => {
     if (accountRelease && (request.url.startsWith('/v1/artifacts') || request.url.includes('account.plugins.availability'))) {
       expect(request.headers.authorization).toBe(`Bearer ${token}`);
@@ -414,8 +432,15 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   });
   const members = storage.state.directReportSessionIds;
   let currentnessRefused = false;
-  let subtreeRefused: false | true | 'active' | 'archived' = false;
-  const nextSubtreeStatuses = new Map<'active' | 'archived', number>();
+  let accountEncryptionCurrentness = createAccountEncryptionCurrentnessFixture();
+  let subtreeRefused: number | undefined;
+  let nextSubtreeStatus: number | undefined;
+  const observeScopeRead = async () => {
+    await observeSubtreeQuery?.();
+    const status = nextSubtreeStatus ?? subtreeRefused;
+    nextSubtreeStatus = undefined;
+    return status;
+  };
   let callerWorkspaceMissing = false;
   let inactive = false;
   const activeSessions = new Set<string>();
@@ -444,15 +469,15 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
         : id === nestedReportId ? { manager: { sessionId: childId } } : {}) };
   };
   app.get('/v1/account/encryption/currentness', { preHandler: app.authenticate }, async (_request, reply) =>
-    currentnessRefused ? reply.code(401).send({ error: 'private-error-body' }) : createAccountEncryptionCurrentnessFixture());
+    currentnessRefused ? reply.code(401).send({ error: 'private-error-body' }) : accountEncryptionCurrentness);
   app.get('/v2/account/settings', { preHandler: app.authenticate }, async () => ({ version: settingsVersion, content: { t: 'plain', v: rawSettings } }));
   app.get('/v1/account/profile', { preHandler: app.authenticate }, async () => ({ id: storage.account.id }));
   if (accountRelease) app.get(ACCOUNT_SECURITY_PATH_V1, { preHandler: app.authenticate }, async () => AccountSecurityGetResponseV1Schema.parse({
     v: 1, encryptionMode: 'plain', nativeEmail: null,
     password: { status: 'not_enrolled', revision: null },
   }));
-  app.get('/v1/machines/:machineId', { preHandler: app.authenticate }, async request => ({
-    machine: { id: (request.params as { machineId: string }).machineId },
+  app.get('/v1/machines/:id', { preHandler: app.authenticate }, async request => ({
+    machine: { id: (request.params as { id: string }).id },
   }));
   const authoredAccount = accountRelease ? await registerAuthoredAccountActionRelease(app, storage.account.id) : null;
   if (registerArtifacts) registerArtifacts(app);
@@ -469,24 +494,22 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     const query = SessionListQueryV1Schema.parse(request.body);
     expect(query.underSessionId === undefined || query.underSessionId === sessionId
       || (members.has(childId) && query.underSessionId === childId)).toBe(true);
-    await observeSubtreeQuery?.();
-    const nextStatus = nextSubtreeStatuses.get(query.storage);
-    if (nextStatus !== undefined) {
-      nextSubtreeStatuses.delete(query.storage);
-      return reply.code(nextStatus).send({ error: 'private-error-body' });
-    }
-    if (subtreeRefused === true) return reply.code(401).send({ error: 'private-error-body' });
-    if (subtreeRefused === query.storage) return reply.code(503).send({ error: 'private-error-body' });
+    const status = await observeScopeRead();
+    if (status !== undefined) return reply.code(status).send({ error: 'private-error-body' });
     const candidates = query.underSessionId === childId ? (nestedReportId ? [nestedReportId] : [])
       : [...members, ...(nestedReportId && members.has(childId) ? [nestedReportId] : [])];
     return createCompactSessionListQueryResponseFixture({ sessions: candidates.filter(id =>
       query.storage === (archivedSessions.has(id) ? 'archived' : 'active')).map(row),
       nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
   });
-  app.post('/v2/sessions/read-batch', { preHandler: app.authenticate }, async request =>
-    createSessionReadBatchResponseFixture({ request: request.body, sessions: [sessionId, ...members, ...(nestedReportId ? [nestedReportId] : [])].map(row) }));
+  app.post('/v2/sessions/read-batch', { preHandler: app.authenticate }, async (request, reply) => {
+    const status = await observeScopeRead();
+    if (status !== undefined) return reply.code(status).send({ error: 'private-error-body' });
+    return createSessionReadBatchResponseFixture({ request: request.body,
+      sessions: [sessionId, ...members, ...(nestedReportId ? [nestedReportId] : [])].map(row) });
+  });
   app.get('/v2/sessions/:sessionId', { preHandler: app.authenticate,
-    config: { apiTokenSessionAction: 'session.status.get', restrictedCredentialBinding: { scope: 'session', session: 'params.sessionId' } },
+    config: { apiTokenSessionAction: 'session.transcript.get', restrictedCredentialBinding: { scope: 'session', session: 'params.sessionId' } },
   }, async request => ({ session: row((request.params as { sessionId: string }).sessionId) }));
   // Persist the native Stop owner's tuple at the HTTP/DB boundary; signing,
   // metadata projection and Stop-intent admission remain production logic.
@@ -584,7 +607,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     actionId, input, requestId: 'signed-observation', surface: 'agent',
     witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0, callerPermissionMode: 'default',
       agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } } });
-  return { credentials, app, observations, members, prepare, execute, operation, actionsSettingsProvider, lifecycleEffects, authoredAccount,
+  return { credentials, app, observations, members, prepare, prepareResult, execute, operation, actionsSettingsProvider, lifecycleEffects, authoredAccount,
     setServerFeatureReader: (read: NonNullable<typeof resolveServerFeaturesSnapshot>) => { resolveServerFeaturesSnapshot = read; },
     setSessionActionRpcTransport: (transport: SessionActionRpcTransport) => { sessionActionRpcTransport = transport; },
     failAuthorization: (status?: 401 | 403 | 409 | 503, onMint?: () => void, body?: unknown) => {
@@ -600,24 +623,30 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     markSessionActive: (id: string) => { activeSessions.add(id); },
     markSessionInactive: (id: string) => { activeSessions.delete(id); },
     refuseCurrentness: () => { currentnessRefused = true; },
-    refuseSubtree: (storage?: 'active' | 'archived') => { subtreeRefused = storage ?? true; },
-    allowSubtree: () => { subtreeRefused = false; },
-    failNextSubtree: (storage: 'active' | 'archived', status: number) => { nextSubtreeStatuses.set(storage, status); },
+    setAccountEncryptionCurrentness: (value: ReturnType<typeof createAccountEncryptionCurrentnessFixture>) => { accountEncryptionCurrentness = value; },
+    refuseSubtree: (status = 401) => { subtreeRefused = status; },
+    allowSubtree: () => { subtreeRefused = undefined; },
+    failNextSubtree: (status: number) => { nextSubtreeStatus = status; },
     omitCallerWorkspace: () => { callerWorkspaceMissing = true; },
     close: async () => { restore(); await app.close(); } };
 }
 
-it('admits an owner cross-Session Review apply through the canonical Session issuer and real Home', async () => {
+it('admits an owner cross-Session Review apply and replays its admitted Session input after approval', async () => {
   await withTempDir('owner-session-review-apply-', async homeDir => {
     const previousEnv = process.env;
     process.env = { ...previousEnv, HAPPIER_HOME_DIR: homeDir };
     reloadConfiguration();
     const f = await fixture(1, undefined, false, false, true, undefined, undefined, undefined,
       app => { registerPlainArtifactRoutes(app, storage.account.id); });
+    storage.state.sessionAccessKeyIds.add(childId);
     const installed = { version: 1 as const, installationId: storage.state.installationId, createdAt: 1,
       publicKey: Buffer.from(installation.publicKey).toString('base64url'),
       privateKey: Buffer.from(installation.secretKey).toString('base64url') };
-    vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installed);
+    writeJsonAtomicSync(configuration.installationIdentityFile, installed);
+    await updateMachineRegistration(current => ({ ...current,
+      machineId: storage.state.machineId, accountId: storage.account.id,
+      machineIdByAccountId: { ...current.machineIdByAccountId, [storage.account.id]: storage.state.machineId },
+    }));
     const features = FeaturesResponseSchema.parse({ features: {},
       capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } });
     vi.stubGlobal('fetch', async () => Response.json(features));
@@ -637,22 +666,96 @@ it('admits an owner cross-Session Review apply through the canonical Session iss
     f.app.addHook('onSend', async (request, _reply, payload) => request.url === `/v1/machines/${storage.state.machineId}`
       ? JSON.stringify({ machine: MachinePublishedRowV1Schema.parse({ id: storage.state.machineId,
         installationId: storage.state.installationId, managedMachineRef: null, metadata: null, metadataVersion: 0,
+        kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
         daemonState: null, daemonStateVersion: 0, access: { custodian: { accountId: storage.account.id, displayName: 'Owner' },
           role: 'manage', resourceMode: 'plain', accessState: 'ready' } }) }) : payload);
     f.app.get('/v1/artifacts/missing-review', { preHandler: f.app.authenticate }, async (_request, reply) =>
       reply.code(404).send({ error: 'not_found' }));
     f.app.get('/v1/account/encryption', { preHandler: f.app.authenticate }, async () => ({ mode: 'plain', updatedAt: 1 }));
+    const reviewId = '00000000-0000-4000-8000-000000000018';
+    const comment = ReviewCommentV1Schema.parse({ v: 1, id: 'accepted-finding', reviewId, accountId: storage.account.id,
+      sessionId: childId, runId: 'review-run', findingId: 'finding', findingIdentity: 'a'.repeat(64), roundOrdinal: 1,
+      finding: { id: 'finding', title: 'Accepted finding', severity: 'low', category: 'style', filePath: 'example.ts', summary: 'Verify this finding.' },
+      anchor: { kind: 'file', filePath: 'example.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Verify this finding.',
+      bodyVersion: 1, edits: [], author: { kind: 'user', userId: storage.account.id }, state: 'open', reviewTriageStatus: 'accept',
+      flags: {}, dispositions: {}, threadId: 'accepted-finding', transitions: [], createdAt: 1, updatedAt: 1, serverRevision: 1 });
+    const { structural, sensitive } = splitReviewCommentV1(comment);
+    const storedComment = { v: 1, structural, sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ structural, sensitive, mode: 'plain' }) };
+    // Home storage/HTTP are boundaries; the Review codec, selection, child Action,
+    // signed Ask and approval replay remain the production implementations.
+    f.app.get('/v1/reviews/comments', { preHandler: f.app.authenticate }, async () => ({ items: [storedComment], cursor: null }));
     const prepare = createDaemonSessionAccountActionAuthorizationPreparer({ credentials,
       requesterRuntime: null, serverHttpBaseUrl, serverId, machineId: storage.state.machineId,
       externalActionAccountId: storage.account.id,
       resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: storage.state.homeId, machineId: storage.state.machineId }),
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }),
       isSessionCallerCurrent: async () => true, isRuntimeCurrent: () => true, readTrackedSessionAttribution: () => undefined });
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const currentOrigin = async () => ({ serverIdentityId: storage.state.homeId, machineId: storage.state.machineId });
+    const prepareReplay = createDaemonApprovalExecutionAuthorizationPreparer({ machineId: storage.state.machineId,
+      serverId, serverBaseUrl: serverHttpBaseUrl, daemonWorkSignal: new AbortController().signal,
+      resolveCurrentMachineExecutionOriginContext: currentOrigin,
+      prepareRequesterAccountContext: request => prepareInstalledRequesterAccountActionContext({ ...request,
+        purpose: { kind: 'external_action' }, machineId: storage.state.machineId, serverId, serverHttpBaseUrl,
+        resolveCurrentMachineExecutionOriginContext: currentOrigin,
+        // Tracked Session-process custody is the host boundary. The installed
+        // projector still verifies its exact Account/Home/Session/installation.
+        resolveRequesterSessionBootstrap: async (id, attribution) => id === sessionId ? {
+          credentials, attribution, serverHttpBaseUrl, getBoundSessionId: () => sessionId,
+          isCurrent: async () => storage.state.bound, release: async () => {},
+        } : null,
+        createExecutor: admitted => createCliActionExecutorFromCredentials({ credentials: admitted.credentials,
+          serverId, serverApiUrl: serverHttpBaseUrl, serverIdentityId: storage.state.homeId, machineId: storage.state.machineId,
+          savedSecretOperationContext: admitted.savedSecretOperationContext }),
+      }),
+    });
+    const isApprovalCurrent = createDaemonApprovalExecutionOriginCurrentness({ accountId: storage.account.id,
+      machineId: storage.state.machineId, serverId, resolveCurrentMachineExecutionOriginContext: currentOrigin,
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
+      isAccountCurrent: async () => storage.account.status === 'active', listAccountApiTokens: async () => ({ tokens: [] }),
+      isSessionCallerCurrent: async () => storage.state.bound, resolveCurrentPermissionMode: async () => 'default',
+      resolveCurrentSessionAgentSpawnPolicyV1: async () => getActiveAccountSettingsSnapshot()?.settings.sessionAgentSpawnPolicyV1 ?? null,
+      externalActionMachinePublicKey: installation.publicKey,
+      verifyExternalExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
+        serverHttpBaseUrl, installationId: storage.state.installationId, privateKey: installation.secretKey }),
+    });
+    const deliveredInputs: unknown[] = [];
     const executor = createCliActionExecutor({ token: credentials.token, credentials,
       sessionId: '', mode: 'plain', ctx: null, serverId, serverIdentityId: storage.state.homeId,
       serverHttpBaseUrl, actionsSettingsProvider: f.actionsSettingsProvider,
       externalActionMachineRequestPrivateKey: installation.secretKey,
-      externalActionMachineInstallationId: storage.state.installationId });
+      externalActionMachineInstallationId: storage.state.installationId,
+      isApprovalExecutionOriginCurrent: isApprovalCurrent, prepareApprovalExecutionAuthorization: prepareReplay,
+      // The remote input transport is the boundary; issuance, durable Ask,
+      // decision replay and Session input admission execute their real owners.
+      machineAdmissionTransport: async (request, options) => {
+        expect(request.sessionId).toBe(childId);
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(options?.callerInputAuthorization);
+        const event = 'session-pending-enqueue-by-machine-v1' as const;
+        const target = { kind: 'session' as const, sessionId: request.sessionId };
+        const execution = { v: 1 as const, authorization, effectActionId: 'session.message.send', target,
+          installationId: storage.state.installationId,
+          machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+            effectActionId: 'session.message.send', target, installationId: storage.state.installationId,
+            event, method: event, requestId: authorization.binding.requestId, params: request,
+            privateKey: installation.secretKey }) };
+        expect(await verifyExternalActionMachineRpcExecution(execution, { event, method: event,
+          requestId: authorization.binding.requestId, params: request,
+          resolveCurrentSessionMachine: async () => storage.state.machineId })).not.toBeNull();
+        expect(await verifyExternalActionMachineRpcExecution(execution, { event, method: event,
+          requestId: authorization.binding.requestId, params: { ...request, sessionId: 'foreign-session' },
+          resolveCurrentSessionMachine: async () => storage.state.machineId })).toBeNull();
+        expect(await verifyExternalActionMachineRpcExecution({ ...execution,
+          target: { kind: 'session', sessionId } }, { event, method: event,
+          requestId: authorization.binding.requestId, params: request,
+          resolveCurrentSessionMachine: async () => storage.state.machineId })).toBeNull();
+        expect(await verifyExternalActionMachineRpcExecution(execution, { event, method: event,
+          requestId: authorization.binding.requestId,
+          params: { ...request, content: { t: 'plain', v: 'changed message' } },
+          resolveCurrentSessionMachine: async () => storage.state.machineId })).toBeNull();
+        deliveredInputs.push(request.content);
+        return { status: 'accepted', localId: request.localId };
+      } });
     let admittedContext: Parameters<typeof executor.execute>[2];
     const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl,
       token: credentials.token, credentials, machineId: storage.state.machineId,
@@ -681,6 +784,14 @@ it('admits an owner cross-Session Review apply through the canonical Session iss
       }
       const admitted = admittedContext;
       const rawAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(admitted.externalActionExecutionAuthorization);
+      const foreignMachinePath = '/v1/machines/foreign-machine';
+      const foreignMachineRead = await f.app.inject({ method: 'GET', url: foreignMachinePath,
+        headers: createExternalActionAuthorizedRequestHeaders({ authorization: rawAuthorization,
+          effectActionId: 'review.apply', target: { kind: 'machine', machineId: storage.state.machineId },
+          installationId: storage.state.installationId, privateKey: installation.secretKey,
+          method: 'GET', path: foreignMachinePath }) });
+      expect(foreignMachineRead.statusCode).toBe(401);
+      expect(foreignMachineRead.json()).toMatchObject({ error: 'invalid_token' });
       const restrictedCredential = { accountId: storage.account.id, principalId: storage.account.id,
         credentialId: '00000000-0000-4000-8000-000000000001',
         grant: ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: ['reviews.comments.list'] },
@@ -707,7 +818,37 @@ it('admits an owner cross-Session Review apply through the canonical Session iss
         .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
       await expect(foreignExecutor.resolveReviewServices!(admitted)).resolves.toEqual({});
       expect(f.observations.filter(row => row.path === '/v1/artifacts/missing-review')).toHaveLength(readsBeforeDenials);
-    } finally { await f.close(); process.env = previousEnv; reloadConfiguration(); }
+
+      await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+        const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(credentials)));
+        await records.start({ reviewId, title: 'Accepted finding', subjectKind: 'repository', sourceKind: 'direct',
+          sourceSessionId: childId, reviewerIds: ['reviewer'], startedAt: 1 });
+      });
+      const reviewOperation = f.operation('review.apply', { sessionId: childId, reviewId, commentIds: [comment.id] });
+      const requested = await execute({ ...reviewOperation, requestId: 'approved-review-apply', witness: { ...reviewOperation.witness,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      }, reviewCommentPrincipal: { actor: { kind: 'agent', agentId: 'happier.agent.claude/claude', sessionId } } },
+      { sessionId, isCurrent: async () => true });
+      expect(requested, JSON.stringify(requested)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      if (!requested.ok || !requested.result || typeof requested.result !== 'object'
+        || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') {
+        throw new Error('Expected the persisted Review apply Ask');
+      }
+      expect(deliveredInputs).toEqual([]);
+      const decision = await executor.execute('approval.request.decide', {
+        artifactId: requested.result.artifactId, decision: 'approve',
+      }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: storage.account.id, serverId, serverIdentityId: storage.state.homeId });
+      expect(decision, JSON.stringify({ decision, observations: f.observations })).toMatchObject({
+        ok: true, result: { status: 'executed', execution: { ok: true, result: {
+          status: 'accepted',
+        } } },
+      });
+      expect(deliveredInputs).toMatchObject([{ t: 'plain', v: { meta: { happierInputRequestV1: {
+        caller: { kind: 'host' }, sourceSession: { sourceSessionId: sessionId,
+          sourceTurnId: 'turn', sourceInputId: 'input' },
+      } } } }]);
+    } finally { await channel.close(); await f.close(); process.env = previousEnv; reloadConfiguration(); }
   });
 });
 
@@ -725,7 +866,6 @@ it('lists internal Tasks through the Session agent Account provider', async () =
 
 it('stores a privately approved agent secret through the original Home authority without disclosing its value', async () => {
   const f = await fixture();
-  installEmptyActionAutomationIndex(f.app);
   const input = { name: 'Replay3 disposable secret' };
   const material = 'SECRET-AUTH-synthetic-private-value';
   const history: unknown[] = [];
@@ -868,7 +1008,6 @@ it('preserves the incumbent refusal of an unsupported asynchronous Session brows
     },
   }));
   const f = await fixture(1, undefined, false, false, true, undefined, undefined, dispatch);
-  installEmptyActionAutomationIndex(f.app);
   try {
     const parentActionId = 'ui.current_context.command.invoke';
     const readActionId = FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory;
@@ -950,7 +1089,6 @@ it('prepares a public-profile preview through the signed Session Account binding
 
 it.each([false, true])('retains signed Account authority for atomic public-profile widening without borrowing refresh consent (refreshApproved=%s)', async refreshApproved => {
   const f = await fixture();
-  installEmptyActionAutomationIndex(f.app);
   const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, population: 'public_eligible_personal' });
   const policy = { indexable: false, fields: Object.fromEntries(Object.keys(DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields)
     .map(field => [field, field === 'tokens'])) };
@@ -999,7 +1137,6 @@ it.each([false, true])('retains signed Account authority for atomic public-profi
 
 it.each(['present', 'absent'] as const)('writes an allowed subscription price through authenticated native Agent Account custody (%s)', async initial => {
   const f = await fixture();
-  installEmptyActionAutomationIndex(f.app);
   const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'personal' };
   const sibling = { ...account, accountId: 'work' };
   f.setRawSettings({ actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
@@ -1142,6 +1279,7 @@ it.each(['usage.query', 'usage.recap.private.compose', 'usage.recap.private.expo
 
 it.each(['none', 'wait', 'return'] as const)('admits a native message (%s) with the resolved receiver Session under its original Home root', async reply => {
   const f = await fixture();
+  const channel = await createRequesterCurrentnessSocketHarness();
   try {
     storage.state.sessionAccessKeyIds.add(childId);
     f.app.get('/v2/sessions/:sessionId/delivery-mutes', { preHandler: f.app.authenticate,
@@ -1193,19 +1331,24 @@ it.each(['none', 'wait', 'return'] as const)('admits a native message (%s) with 
         externalActionExecutionAuthorization: prepared.authorization, externalActionTarget: prepared.target },
     }));
     const outcome = await send(reply === 'wait' ? observer.signal : undefined);
-    expect(outcome).toMatchObject({ status: 'accepted' });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject(reply === 'wait'
+      ? { ok: false, errorCode: 'cancelled', details: { admission: { status: 'accepted' } } }
+      : { status: 'accepted' });
     expect(admitted).toEqual([childId]);
     expect(f.observations.filter(row => row.signed && row.status >= 400)).toEqual([]);
     storage.state.sessionAccessKeyIds.delete(childId);
-    await expect(send()).rejects.toMatchObject({ code: 'not_authenticated' });
+    // Home's typed refusal of the withdrawn Session access reaches the caller unchanged.
+    await expect(send()).rejects.toMatchObject({ code: 'action_forbidden', authorizationRefusal: 'original_target',
+      failure: { failureCause: { phase: 'home.authorization.original_target', httpStatus: 401 } } });
     expect(admitted).toEqual([childId]);
     if (reply === 'none') {
       storage.state.sessionAccessKeyIds.add(childId);
       storage.state.revokedAt = new Date(1);
-      await expect(send()).rejects.toMatchObject({ code: 'not_authenticated' });
+      await expect(send()).rejects.toMatchObject({ code: 'action_forbidden',
+        failure: { failureCause: { phase: 'home.authorization.original_target', httpStatus: 401 } } });
       expect(admitted).toEqual([childId]);
     }
-  } finally { await f.close(); }
+  } finally { await channel.close(); await f.close(); }
 });
 
 it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-handler'] as const)(
@@ -1214,6 +1357,7 @@ it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-ha
   let managerAvailable = binding !== 'stopped-at-raise';
   const worker = createMutableApiSessionClientFixture({ sessionId: childId,
     serverBinding: { serverId, serverUrl: serverHttpBaseUrl },
+    metadataPermissionMode: 'default',
     agentState: { requests: {}, completedRequests: {} },
     overrides: { readQuestionSessionSnapshot: async id => ({ sessionId: id, accountId: storage.account.id,
       managerSessionId: id === childId ? sessionId : null,
@@ -1242,13 +1386,13 @@ it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-ha
   await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31004, capability: 'C'.repeat(43) });
   vi.stubEnv('HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE', path);
   const witness = { turnId: 'manager-turn', inputId: 'manager-input', userMessageSeq: 1, userMessageSeqs: [1],
-    callerPermissionMode: 'read-only' as const,
-    causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const },
+    callerPermissionMode: 'default' as const,
+    causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
     agentStartCaller: { kind: 'session' as const,
       sessionId: binding === 'foreign-witness' ? childId : sessionId, starterDepth: 0, turnDepth: 0 } };
   // IPC and the Session socket are genuine process/network boundaries. Keep
   // daemon custody, authenticated Home reads, strict RPC and question owners real.
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+  stubUndiciFetch(async (_url: unknown, init?: RequestInit) => {
     const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
     expect(request.context).toEqual({ token: 'C'.repeat(43), sessionId });
     if (request.operation.kind !== 'action.execute') throw new Error('Expected Action envelope');
@@ -1258,7 +1402,7 @@ it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-ha
   });
   const transport = vi.fn<SessionActionRpcTransport>(async request => {
     expect(request.origin).toMatchObject({ caller: { sessionId }, sourceTurnId: 'manager-turn',
-      sourceInputId: 'manager-input', callerPermissionMode: 'read-only' });
+      sourceInputId: 'manager-input', callerPermissionMode: 'default' });
     // Substitute the authenticated Machine→Home→Session network only. The
     // actual source origin is produced by daemon custody and the strict reader.
     return await worker.rpcHandlerManager.handleRequest({ method: `${request.sessionId}:${request.method}`,
@@ -1271,7 +1415,7 @@ it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-ha
   const runtime = createHappierMcpServer({ sessionId,
     getServerBinding: () => ({ serverId, serverUrl: serverHttpBaseUrl }),
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
-    updateMetadata() {}, getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0, getPermissionMode: () => 'read-only',
+    updateMetadata() {}, getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0, getPermissionMode: () => 'default',
     getActiveTurnAdmissionWitness: () => witness, getActiveTurnPermissionWitness: () => witness,
   }, { credentials: f.credentials, isCredentialCurrent: async () => true, mcpToolCallIdMetaKey: 'callId',
     ...(binding === 'restricted' ? { authorityScope: 'session' as const, sessionCredentials: f.credentials } : {}),
@@ -1585,21 +1729,26 @@ it('preserves an existing client Action at the credentialed native Agent entry',
     reloadConfiguration();
     const clientAction = await admittedClientActionFixture();
     const f = await fixture(1, undefined, false, true, true, clientAction);
-    await writeStoredCredentialsForServerId(serverId, f.credentials);
+    const terminalCredentials = { token: await auth.createToken(storage.account.id, undefined,
+      { kind: 'terminal', authority: 'account_automation' }), encryption: null };
+    await writeStoredCredentialsForServerId(serverId, terminalCredentials);
     const credentials = await readStoredCredentialsForServerId(serverId);
     if (!credentials) throw new Error('Missing captured Account credentials');
     installClientMachineControlHttp(clientAction);
     const features = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true } },
       capabilities: { serverIdentity: { serverIdentityId: storage.state.homeId } } });
     vi.stubGlobal('fetch', async () => Response.json(features));
-    const witness = { turnId: 'native-client-turn', callerPermissionMode: 'default',
+    const witness = { ...f.operation('action.invoke', {}).witness, turnId: 'native-client-turn',
       causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' } };
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId,
+      execute: operation => f.execute(operation, { sessionId, isCurrent: async () => true }),
+    });
     const runtime = createHappierMcpServer({ sessionId,
       getServerBinding: () => ({ serverId, serverUrl: serverHttpBaseUrl }),
       getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features }),
       rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }), updateMetadata() {},
       getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0, getPermissionMode: () => 'default',
-      getActiveTurnPermissionWitness: () => witness,
+      getActiveTurnAdmissionWitness: () => witness, getActiveTurnPermissionWitness: () => witness,
     }, { credentials, actionsSettingsProvider: f.actionsSettingsProvider, pluginToolCatalog: [] });
     try {
       const outcome = await runtime.executeTool({ toolName: 'action_execute', args: {
@@ -1608,7 +1757,7 @@ it('preserves an existing client Action at the credentialed native Agent entry',
       expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { v: 1, kind: 'createTask', draftId: 'client-draft' } });
       expect(clientAction.effects()).toBe(1);
     } finally {
-      await runtime.mcp.close(); await clientAction.runtime.dispose(); await f.close();
+      await runtime.mcp.close(); await daemon.close(); await clientAction.runtime.dispose(); await f.close();
       process.env = previousEnv; reloadConfiguration();
     }
   });
@@ -1710,13 +1859,15 @@ export function activate(api) {
     // A real Account selection can disappear after classification while an
     // independently admitted Machine handler still owns the same public id.
     f.authoredAccount!.setBundledFallback();
+    // An independently committed Machine declaration remains usable when the
+    // Account selection disappears; unavailable or Account-only placement cannot borrow it.
     expect(await createExecutor({ accountPluginActions: true }).execute('action.invoke', operation.input,
       { surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId }))
-      .toMatchObject({ ok: false, errorCode: 'plugin_action_execution_placement_unavailable' });
+      .toMatchObject({ ok: true, result: { key: 'machine', surface: 'agent', effects: 1 } });
     expect(await receiver(false)(operation, { sessionId, isCurrent: async () => true }))
       .toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { reason: 'external_authorization_missing' } });
     const outcome = await receiver(true)(operation, { sessionId, isCurrent: async () => true });
-    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { key: 'machine', surface: 'agent', effects: 1 } });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { key: 'machine', surface: 'agent', effects: 2 } });
     installClientMachineControlHttp({ runtime: machine });
     const choices = await createExecutor(undefined, 'daemon_control').execute('action.options.resolve', {
       actionId: `${pluginId}/actions/echo`, fieldPath: 'key',
@@ -1810,8 +1961,6 @@ it('executes an authored Account Action through restricted Agent capability cust
 
 it.each([503, 401, 403] as const)('keeps Home mint availability distinct from authorization denial (%s), then recovers', async status => {
   const f = await fixture();
-  f.app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { preHandler: f.app.authenticate },
-    async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
   f.markInactive();
   try {
     f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, actions: { 'session.archive': { disabledSurfaces: [] } } }));
@@ -1885,6 +2034,17 @@ it('keeps cancellation distinct when Home authorization becomes unavailable', as
 
 it('admits cont6 inherited spawn through MCP, daemon custody and signed Home minting', async () => {
   const f = await fixture();
+  const selectedTarget = { kind: 'machine' as const, machineId: storage.state.machineId };
+  const envelope = { v: 1 as const, requestId: 'inherited-spawn-binding', target: selectedTarget,
+    input: inheritedCodexInput };
+  expect(readExternalActionSessionSpawnAdmission(envelope, { serverId: storage.state.homeId, target: selectedTarget }))
+    .toMatchObject({ executionTarget: { serverId: storage.state.homeId, machineId: storage.state.machineId } });
+  // Binding an omitted destination must never replace an explicit destination:
+  // its existing Machine admission still owns whether that target is accessible.
+  const explicitTarget = { serverId: storage.state.homeId, machineId: 'other-machine' };
+  expect(readExternalActionSessionSpawnAdmission({ ...envelope,
+    input: { ...inheritedCodexInput, executionTarget: explicitTarget } },
+  { serverId: storage.state.homeId, target: selectedTarget })).toMatchObject({ executionTarget: explicitTarget });
   const command = 'node /runtime/.runner-snapshots/inherited-spawn/dist/index.mjs';
   const runner = { pid: process.pid, processStartTimeMs: 23348,
     processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:inherited-spawn' };
@@ -1918,9 +2078,20 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
   }));
   const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl,
     token: f.credentials.token, machineId: storage.state.machineId,
-    prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }) => f.prepare(operation, sessionActionOrigin),
+    prepareExternalActionAuthorization: async ({ operation, sessionActionOrigin }) => {
+      const minted = await f.prepareResult(operation, sessionActionOrigin);
+      return 'ok' in minted ? projectSessionActionIssuerRefusal(minted, storage.state.machineId)
+        : { authorization: minted.authorization, target: { kind: 'machine', machineId: storage.state.machineId } };
+    },
     createExecutor: () => {
-      const executor = createActionExecutor({ sessionSpawnNew: spawn, observeActionExecution: async () => {} } as unknown as ActionExecutorDeps);
+      const executor = createActionExecutor({ sessionSpawnNew: spawn, observeActionExecution: async () => {},
+        actionAutomations: createActionAutomationHttpPortV1({ accountId: storage.account.id, async request(path, init) {
+          const response = await f.app.inject({ method: init.method, url: path,
+            headers: { authorization: `Bearer ${f.credentials.token}` } });
+          expect(response.statusCode).toBe(200);
+          return response.json();
+        } }),
+      } as unknown as ActionExecutorDeps);
       const withCaller = (context: Parameters<typeof executor.execute>[2]) => ({
         ...context, runtimeAccountId: storage.account.id, agentStartContext: startContext,
       });
@@ -1928,7 +2099,7 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
         prepare: (actionId, input, context, options) => executor.prepare(actionId, input, withCaller(context), options) };
     },
   });
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+  stubUndiciFetch(async (_url: unknown, init?: RequestInit) => {
     const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
     expect(request.context).toEqual({ token: 'B'.repeat(43), sessionId });
     if (request.operation.kind === 'agent_start.policy.read') {
@@ -1963,6 +2134,7 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
     expect(response.isError, content.text).not.toBe(true);
     expect(JSON.parse(content.text)).toMatchObject({ type: 'pending', outcome: 'accepted' });
     const child = spawn.mock.calls[0]?.[0];
+    expect(spawn).toHaveBeenCalledTimes(1);
     expect(SessionSpawnNewInputV2Schema.safeParse({ ...inheritedCodexInput, executionTarget: child?.executionTarget,
       agentTarget: child?.agentTarget, manager: child?.manager }).success).toBe(true);
     expect(child).toMatchObject({ executionTarget: { serverId, machineId: storage.state.machineId },
@@ -1970,9 +2142,10 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
     expect(f.observations).toContainEqual(expect.objectContaining({
       path: '/v1/actions/session.spawn_new/execution-authorization', status: 200,
     }));
-    expect(f.observations).toContainEqual(expect.objectContaining({
-      path: '/v1/actions/session.spawn_new/execution-authorization/verify', signed: true, bearer: false, status: 200,
-    }));
+    // createDaemonSessionAccountActionAuthorizationPreparer retains local
+    // ingress currentness after Home mint. The native process boundary
+    // consumes that finite root without another authority decision.
+    expect(f.observations.filter(row => row.path === '/v1/actions/session.spawn_new/execution-authorization/verify')).toEqual([]);
   } finally {
     await client.close(); await runtime.mcp.close();
     await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('B'.repeat(43)) });
@@ -1982,7 +2155,7 @@ it('admits cont6 inherited spawn through MCP, daemon custody and signed Home min
   }
 });
 
-it('reuses admitted Stop custody for signed observations and freshly verifies the native effect', async () => {
+it('reuses admitted Stop custody while Home authorizes each signed observation', async () => {
   const f = await fixture();
   const channel = await createRequesterCurrentnessSocketHarness();
   const installed = { version: 1 as const, installationId: storage.state.installationId, createdAt: 1,
@@ -2003,7 +2176,7 @@ it('reuses admitted Stop custody for signed observations and freshly verifies th
     const sealed = sealExternalActionRequesterAccountContextV1({ authorization: original.authorization, purpose,
       credentials: encodeStoredCredentials(f.credentials), installationPublicKey: installation.publicKey, randomBytes: nacl.randomBytes });
     const admissionStart = f.observations.length;
-    prepared = await prepareInstalledRequesterAccountActionContext({ authorization: sealed, purpose,
+    const prepare = () => prepareInstalledRequesterAccountActionContext({ authorization: sealed, purpose,
       machineId: storage.state.machineId, serverId, serverHttpBaseUrl,
       resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
         serverUrl: serverHttpBaseUrl, resolveCurrentMachineId: () => storage.state.machineId,
@@ -2012,6 +2185,7 @@ it('reuses admitted Stop custody for signed observations and freshly verifies th
         serverId, serverApiUrl: serverHttpBaseUrl, serverIdentityId: storage.state.homeId, machineId: storage.state.machineId,
         pluginActionExecutionOwner: 'current_process', savedSecretOperationContext: admitted.savedSecretOperationContext }),
     });
+    prepared = await prepare();
     const custody = readRequesterAccountActionContext(prepared?.authorization);
     const http = prepared?.authorization.requesterHttpProjection;
     if (!prepared || !custody || !http) throw new Error('Missing installed Stop custody');
@@ -2024,17 +2198,27 @@ it('reuses admitted Stop custody for signed observations and freshly verifies th
     expect((await f.app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: query })).statusCode).toBe(200);
     expect(verifyReads()).toBe(1);
     expect(await custody.isCurrent()).toBe(true);
-    expect(verifyReads()).toBe(2);
-    // Home revocation still denies both a freshly checked native effect and
-    // an already-signed observation; admitted local custody cannot grant either.
+    expect(verifyReads()).toBe(1);
+    // Finite work keeps its admitted local custody. Home still authorizes the
+    // next signed request and refuses it after the binding is withdrawn.
     storage.state.bound = false;
-    expect(await custody.isCurrent()).toBe(false);
+    expect(await custody.isCurrent()).toBe(true);
+    expect(verifyReads()).toBe(1);
     expect((await f.app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: query })).statusCode).toBe(401);
+    storage.state.bound = true;
     localInstallation.mockReturnValue({ ...installed, installationId: 'replaced' });
-    expect(await http.createRequestHeaders({ effectActionId: 'session.stop', method: 'POST', path: '/v2/sessions/query', body: query })).toBeNull();
+    expect(await custody.isCurrent()).toBe(true);
+    expect(await http.createRequestHeaders({ effectActionId: 'session.stop', method: 'POST', path: '/v2/sessions/query', body: query })).not.toBeNull();
+    expect(await prepare()).toBeNull();
     localInstallation.mockReturnValue(installed);
-    await channel.push(storage.account.id, { ...createAccountEncryptionCurrentnessFixture(), mode: 'e2ee' });
+    const changedCurrentness = createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' });
+    f.setAccountEncryptionCurrentness(changedCurrentness);
+    await channel.push(storage.account.id, changedCurrentness);
+    // A changed encryption mode retires incompatible Account material even
+    // for already-admitted work; it cannot be reinterpreted as plaintext.
+    expect(await custody.isCurrent()).toBe(false);
     expect(await http.createRequestHeaders({ effectActionId: 'session.stop', method: 'POST', path: '/v2/sessions/query', body: query })).toBeNull();
+    expect(await prepare()).toBeNull();
     await prepared.dispose();
     expect(await custody.isCurrent()).toBe(false);
   } finally { await prepared?.dispose(); await channel.close(); await f.close(); }
@@ -2152,7 +2336,6 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
   'admits only fresh led lifecycle targets through MCP and signed Home admission: %s', async actionId => {
   const f = await fixture();
   f.markInactive();
-  const lifecycleDiagnostics = vi.spyOn(logger, 'warnLocalFile');
   if (actionId === 'session.unarchive') f.markChildArchived();
   // Defaults stay disabled. Only this isolated in-memory Account fixture opts in.
   expect(await f.execute(f.operation(actionId, { sessionId: childId }), { sessionId, isCurrent: async () => true }))
@@ -2174,7 +2357,7 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
   const previousAuthorityPath = process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE;
   process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE = path;
   const stop = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ status: 'not_found' });
-  vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+  stubUndiciFetch(async (_url: unknown, init?: RequestInit) => {
     const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
     expect(request.context).toEqual({ token: 'B'.repeat(43), sessionId });
     if (request.operation.kind !== 'action.execute') throw new Error('Expected Action envelope');
@@ -2261,27 +2444,19 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
     }
     for (const target of actionId === 'session.stop' ? [childId] : [sessionId, childId]) {
       const result = await invoke(target);
-      expect(result.failed, JSON.stringify({ result, diagnostics: lifecycleDiagnostics.mock.calls,
-        observations: f.observations.slice(-8) })).toBe(false);
+      expect(result.failed, JSON.stringify({ result, observations: f.observations.slice(-8) })).toBe(false);
       expect(result.value).toMatchObject(actionId === 'session.stop'
         ? { ok: true, sessionId: target, stopOutcome: { status: 'already_stopped' } }
         : actionId === 'session.archive' ? { success: true, sessionId: target, archivedAt: 123 }
         : { ok: true, sessionId: target, archivedAt: null });
     }
-    expect(lifecycleDiagnostics.mock.calls).toEqual(expect.arrayContaining([
-      ['[external-action-stage]', expect.objectContaining({ actionId,
-        stage: 'action_execution.phase', phase: 'caller_session', elapsedMs: expect.any(Number) })],
-      ['[external-action-stage]', expect.objectContaining({ actionId, stage: 'session_action.execute.end' })],
-      ['[external-action-stage]', expect.objectContaining({ actionId,
-        stage: actionId === 'session.stop' ? 'stop.owner_rpc.end' : 'session_archive.http.end' })],
-    ]));
     // Lifecycle scope needs fresh caller/subtree facts, not Role authoring or
     // Agent launch catalogs. Each catalog read fans out through requester custody.
     expect(f.observations.slice(admissionStart).filter(row =>
       row.path === '/v1/artifacts' || row.path === '/v1/account/entity-rows/acp'
       || row.path === '/v1/account/entity-rows/prompt-library')).toEqual([]);
     const signed = f.observations.filter(row => row.signed);
-    expect(signed.some(row => row.path === '/v2/sessions/query')).toBe(true);
+    expect(signed.some(row => row.path === '/v2/sessions/read-batch')).toBe(true);
     expect(signed.every(row => !row.bearer && (row.status === 200
       || actionId === 'session.archive' && row.path.endsWith('/archive') && row.status === 409)), JSON.stringify(signed)).toBe(true);
     const targetReads = f.observations.filter(row => row.path === `/v2/sessions/${childId}`
@@ -2323,12 +2498,13 @@ it.each(['active', 'archived'] as const)(
   'retains the native status Action through a transient %s subtree read inside its admitted lifetime', async storage => {
   const f = await fixture();
   const controller = new AbortController();
-  f.failNextSubtree(storage, 503);
+  if (storage === 'archived') f.markChildArchived();
+  f.failNextSubtree(503);
   try {
     const run = () => f.execute(f.operation('session.status.get', { sessionId: childId }),
       { sessionId, isCurrent: async () => true, signal: controller.signal });
     expect(await run()).toMatchObject({ ok: true, result: { session: { id: childId } } });
-    const queries = f.observations.filter(row => row.path === '/v2/sessions/query');
+    const queries = f.observations.filter(row => row.path === '/v2/sessions/read-batch');
     expect(queries.some(row => row.status === 503)).toBe(true);
     expect(queries.some(row => row.status === 200)).toBe(true);
     expect(queries.every(row => row.signed && !row.bearer)).toBe(true);
@@ -2346,14 +2522,14 @@ it('keeps definitive subtree denial terminal and honours cancellation during obs
   const run = () => f.execute(f.operation('session.status.get', { sessionId: childId }),
     { sessionId, isCurrent: async () => true, signal: controller.signal });
   try {
-    f.failNextSubtree('active', 403);
+    f.failNextSubtree(403);
     expect(await run()).toMatchObject({ ok: false, errorCode: 'unsupported_action',
       details: { cause: 'subtree_observation_unavailable' } });
-    const denied = f.observations.filter(row => row.path === '/v2/sessions/query');
-    expect(denied).toHaveLength(2);
+    const denied = f.observations.filter(row => row.path === '/v2/sessions/read-batch');
+    expect(denied).toHaveLength(1);
     expect(denied.some(row => row.status === 403)).toBe(true);
     cancelRead = true;
-    f.failNextSubtree('active', 503);
+    f.failNextSubtree(503);
     expect(await run()).toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect(f.lifecycleEffects).toEqual([]);
   } finally { controller.abort(); await f.close(); }
@@ -2364,7 +2540,7 @@ it.each([false, true])('resolves one lifecycle caller snapshot per Action while 
   f.markInactive();
   f.setActionsSettings(normalizeActionsSettingsV1({ v: 1,
     actions: { 'session.archive': { disabledSurfaces: [] } } }));
-  const diagnostics = vi.spyOn(logger, 'warnLocalFile');
+  const diagnostics = vi.spyOn(logger, 'debugLocalFile');
   const callerPhases = () => diagnostics.mock.calls.flatMap(([label, data]) => label === '[external-action-stage]'
     && data && typeof data === 'object' && 'phase' in data && data.phase === 'caller_session' && 'elapsedMs' in data
     ? [data.elapsedMs] : []);
@@ -2374,7 +2550,7 @@ it.each([false, true])('resolves one lifecycle caller snapshot per Action while 
     expect(await run()).toMatchObject({ ok: true });
     console.info('DF116 caller snapshot elapsedMs', { direct, phases: callerPhases() });
     expect(callerPhases()).toHaveLength(1);
-    expect(f.observations.filter(row => row.path === '/v2/sessions/query').length).toBeGreaterThan(2);
+    expect(f.observations.filter(row => row.path === '/v2/sessions/read-batch')).toHaveLength(1);
     f.members.clear();
     expect(await run()).toMatchObject({ ok: false, errorCode: 'unsupported_action',
       details: { cause: 'target_outside_led_subtree' } });
@@ -2392,7 +2568,7 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
   const stop = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ status: 'not_found' });
   f.markInactive();
   f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { disabledSurfaces: [] } } }));
-  f.refuseSubtree('archived');
+  f.refuseSubtree(503);
   try {
     const failure = ActionExecuteFailureSchema.parse(await f.execute(f.operation(actionId, { sessionId: childId }),
       { sessionId, isCurrent: async () => true }));
@@ -2409,7 +2585,7 @@ it.each(['session.stop', 'session.archive', 'session.unarchive'] as const)(
   } finally { await f.close(); }
 });
 
-it('overlaps independent active and archived Home scope reads without skipping either corpus', async () => {
+it('overlaps active and archived Home scope reads for a workers selector before unarchive', async () => {
   let inFlight = 0;
   let maximumInFlight = 0;
   const f = await fixture(1, async () => {
@@ -2422,10 +2598,14 @@ it('overlaps independent active and archived Home scope reads without skipping e
   f.setActionsSettings(normalizeActionsSettingsV1({ v: 1,
     actions: { 'session.unarchive': { disabledSurfaces: [] } } }));
   try {
-    expect(await f.execute(f.operation('session.unarchive', { sessionId: childId }), { sessionId, isCurrent: async () => true }))
-      .toMatchObject({ ok: true });
+    const result = await f.execute(f.operation('session.unarchive', { sessionId: { selector: 'workers' } }),
+      { sessionId, isCurrent: async () => true });
+    expect(result, JSON.stringify({ result, observations: f.observations })).toMatchObject({ ok: true });
     expect(maximumInFlight).toBe(2);
     expect(inFlight).toBe(0);
+    const queries = f.observations.filter(row => row.path === '/v2/sessions/query');
+    expect(queries).toHaveLength(2);
+    expect(queries.every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
     expect(f.lifecycleEffects).toEqual([`/v2/sessions/${childId}/unarchive`]);
   } finally { await f.close(); }
 });
@@ -2444,7 +2624,7 @@ it.each([
     expect(result, JSON.stringify({ result, observations: f.observations })).toMatchObject(actionId === 'session.status.get'
       ? { ok: true, result: { session: { id: childId } } }
       : { ok: true, result: { sessionId: childId, items: [{ text: 'Child ready' }] } });
-    const queries = f.observations.filter(row => row.path === '/v2/sessions/query');
+    const queries = f.observations.filter(row => row.path === '/v2/sessions/read-batch');
     expect(queries.length).toBeGreaterThan(0);
     expect(queries.every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
     const diagnostics = vi.spyOn(logger, 'warnLocalFile');
@@ -2518,7 +2698,7 @@ it('admits child reads from the native factory witness through real caller resol
     permissionMode = 'read-only';
     expect(await invoke('session.messages.recent.get')).toMatchObject({ ok: true,
       result: { sessionId: childId, items: [{ text: 'Child ready' }] } });
-    const queries = f.observations.filter(row => row.path === '/v2/sessions/query');
+    const queries = f.observations.filter(row => row.path === '/v2/sessions/read-batch');
     expect(queries.length).toBeGreaterThan(0);
     expect(queries.every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
     f.members.clear();
@@ -2611,11 +2791,9 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.stop', 's
       return f.app.inject({ method: 'POST', url: '/v2/sessions/query', payload: body, headers: authorization.headers });
     };
     const { underSessionId: _root, ...unscopedQuery } = query;
-    // Every root that declares a sessionTarget operand (93a9ea0340) prepares its
-    // selector under the same signed root through isSessionTargetPreparationHttpPurpose,
-    // so an unscoped query is admitted; native resource access and the exact effect
-    // target (checked below and by the lifecycle purpose) remain independently enforced.
-    expect((await signedQuery(unscopedQuery)).statusCode).toBe(200);
+    // Installed lifecycle roots observe their caller's proved subtree. Other
+    // declared Session operands retain their own selector preparation purpose.
+    expect((await signedQuery(unscopedQuery)).statusCode).toBe(isLedSubtreeSessionLifecycleActionId(actionId) ? 401 : 200);
     if (actionId === 'session.status.get') {
       expect((await signedQuery({ ...query, underSessionId: childId })).statusCode).toBe(200);
     }

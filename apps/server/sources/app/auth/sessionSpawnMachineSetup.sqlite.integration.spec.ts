@@ -180,6 +180,36 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
         } finally { await f.app.close(); }
     });
 
+    // 802b527fbc4 made executionTarget optional in the Action schema, which routed
+    // public input with an omitted destination past the API binding owner. The
+    // destination is the signed root's own Machine target; Machine admission still decides.
+    it('binds an omitted spawn destination to the signed Machine target and refuses other Accounts and unbound roots', async () => {
+        const f = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, { allowedActionIds: ['session.spawn_new'] });
+        try {
+            const input = { creationKey: randomUUID(), directory: { kind: 'managed' }, memoryEnabled: false,
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                connectedServices: { v: 2, bindingsByServiceId: {} } };
+            const target = { kind: 'machine' as const, machineId: f.machine.id };
+            const mint = (envelope: unknown, token = f.pat.token) => f.app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new'),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: f.machine.id, envelope } });
+            const envelope = { v: 1 as const, requestId: randomUUID(), target, input };
+            const admitted = await mint(envelope);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json()).binding).toMatchObject({
+                accountId: f.account.id, actionId: 'session.spawn_new', machineId: f.machine.id, target });
+            const foreign = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+            const foreignToken = await auth.createToken(foreign.id, undefined, { kind: 'account', authority: 'present_user' });
+            const foreignMint = await mint({ ...envelope, requestId: randomUUID() }, foreignToken);
+            expect(foreignMint.statusCode, foreignMint.body).not.toBe(200);
+            expect(foreignMint.json()).not.toHaveProperty('token');
+            const { target: _target, ...unbound } = envelope;
+            const unboundMint = await mint({ ...unbound, requestId: randomUUID() });
+            expect(unboundMint.statusCode, unboundMint.body).not.toBe(200);
+            expect(unboundMint.json()).not.toHaveProperty('token');
+        } finally { await f.app.close(); }
+    });
+
     it.each<{ credential: string; presentUser: boolean; allowedSetupActions?: readonly ActionId[] }>([
         { credential: 'Account', presentUser: true },
         { credential: 'unrestricted PAT', presentUser: false },
