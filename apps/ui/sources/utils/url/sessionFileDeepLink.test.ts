@@ -1,17 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCapturedWorkspaceFileLink, buildSessionFileDeepLink, buildWorkspaceFileLink, readWorkspaceFileLinkView, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
+import { readCapturedFileReviewContext, buildCapturedWorkspaceFileLink, buildSessionFileDeepLink, buildWorkspaceFileLink, readWorkspaceFileLinkView, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 describe('sessionFileDeepLink', () => {
     it('reloads a captured file without inventing a Session or Project and preserves its exact selector', () => {
         const comparison = { kind: 'workingTree' as const, comparisonId: 'captured-original', savedResult: { cwd: '/unprojected', resultId: 'result-original' } };
-        const href = buildCapturedWorkspaceFileLink({ scope: { serverId: 'home', machineId: 'machine', rootPath: '/unprojected' }, path: 'src/a.ts', comparison });
+        const href = buildCapturedWorkspaceFileLink({ scope: { serverId: 'home', machineId: 'machine', rootPath: '/unprojected' }, path: 'src/a.ts', comparison, review: { reviewId: 'opened-review', roundOrdinal: 3 } });
         const url = new URL(href, 'https://happier.test');
         expect(url.pathname).toBe('/files/captured');
-        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: 'home', machineId: 'machine', rootPath: '/unprojected', path: 'src/a.ts' });
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: 'home', machineId: 'machine', rootPath: '/unprojected', path: 'src/a.ts', reviewId: 'opened-review', reviewRound: '3' });
         expect(parseSessionPaneUrlState({ ...Object.fromEntries(url.searchParams), details: 'file' })?.details)
             .toMatchObject({ kind: 'file', path: 'src/a.ts', changes: comparison, view: 'changes' });
+        expect(readCapturedFileReviewContext(Object.fromEntries(url.searchParams))).toEqual({ reviewId: 'opened-review', roundOrdinal: 3 });
+        expect(readCapturedFileReviewContext({})).toBeUndefined();
+        expect(readCapturedFileReviewContext({ reviewId: 'opened-review', reviewRound: '0' })).toBeUndefined();
         expect(href).not.toMatch(/sessionId|workspaceRefId/);
     });
     it('retains a captured file base when a copied link is pasted into Search', () => {

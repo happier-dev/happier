@@ -1,3 +1,4 @@
+import { ReviewCommentCreateRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { isLineContentHash } from '@/utils/text/lineContentHash';
 import { resolveProjectCockpitRouteFromPathname, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
@@ -31,18 +32,29 @@ function firstString(value: unknown): string | null {
 
 export type WorkspaceFileLinkView = Readonly<Pick<WorkspaceFileOpenInput, 'view' | 'blame' | 'rootPath'> & { openAs?: 'preview' | 'pinned' }>;
 
+export type CapturedFileReviewContext = Readonly<{ reviewId: string; roundOrdinal: number }>;
+
+export function readCapturedFileReviewContext(params: Readonly<Record<string, unknown>>): CapturedFileReviewContext | undefined {
+    const reviewId = ReviewCommentCreateRequestV1Schema.shape.reviewId.safeParse(firstString(params.reviewId));
+    const roundOrdinal = ReviewCommentCreateRequestV1Schema.shape.roundOrdinal.safeParse(Number(firstString(params.reviewRound)));
+    return reviewId.success && typeof reviewId.data === 'string' && roundOrdinal.success && typeof roundOrdinal.data === 'number'
+        ? { reviewId: reviewId.data, roundOrdinal: roundOrdinal.data } : undefined;
+}
+
 export type CapturedWorkspaceFileTarget = Readonly<{
     scope: WorkspaceScopeBase;
     path: string;
     comparison: SessionScmReviewComparison;
     comparisonSessionId?: string;
+    review?: CapturedFileReviewContext;
 }>;
 
 /** Machine-owned evidence has a File page even when no Session or Project owns the checkout. */
 export function buildCapturedWorkspaceFileLink(input: CapturedWorkspaceFileTarget): string {
     const query = new URLSearchParams({ serverId: input.scope.serverId, machineId: input.scope.machineId,
         rootPath: input.scope.rootPath, path: input.path, fileView: 'changes',
-        ...serializeScmReviewTarget({ comparison: input.comparison, evidenceSessionId: input.comparisonSessionId }) });
+        ...serializeScmReviewTarget({ comparison: input.comparison, evidenceSessionId: input.comparisonSessionId }),
+        ...(input.review ? { reviewId: input.review.reviewId, reviewRound: String(input.review.roundOrdinal) } : {}) });
     return `/files/captured?${query}`;
 }
 

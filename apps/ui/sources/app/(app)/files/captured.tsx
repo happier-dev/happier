@@ -6,6 +6,7 @@ import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessio
 import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { readCapturedFileReviewContext } from '@/utils/url/sessionFileDeepLink';
 
 /** The ordinary File viewer, opened on immutable Machine-owned evidence rather than a live checkout. */
 export function WorkspaceRouteBody() {
@@ -18,7 +19,7 @@ export function WorkspaceRouteBody() {
     }
     return <WorkspaceFileDetailsView scopeId={`captured-file:${tryBuildWorkspaceCacheKey(scope)}:${target.changes.comparisonId}`}
         scope={scope} filePath={target.path} initialChanges={target.changes}
-        initialView={{ view: 'changes' }} evidenceOnly presentation="screen"
+        initialView={{ view: 'changes' }} evidenceOnly presentation="screen" review={readCapturedFileReviewContext(params)}
         sessionIdForAugmentation={typeof params.evidenceSessionId === 'string' ? params.evidenceSessionId : undefined} />;
 }
 

@@ -2,11 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
-import type { ReviewCommentCreateResponseV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { resolveReviewSourceSessionIdV1, type ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
-import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
 import { WorkspaceScmReviewBody, type ScmReviewComparisonChrome, type ScmReviewViewContext } from '@/components/projects/scm/WorkspaceScmReviewBody';
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
@@ -27,10 +25,6 @@ import { requestActiveReviewFileForComparison } from '@/components/workspaces/sc
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { Modal } from '@/modal';
 import { useScmReviewLimits } from '@/scm/review/useScmReviewLimits';
-import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
-import { createReviewCommentsActions } from '@/sync/domains/reviews/comments/actions';
-import { submitDurableReviewCommentDraft } from '@/sync/domains/reviews/comments/promoteDraft';
-import { recordReviewCommentWrites } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { scmReviewComparisonOfSource } from '@/sync/domains/scm/diffSummary/selection';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -39,6 +33,7 @@ import { t } from '@/text';
 
 import { reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { ReviewFindingCode } from './finding/ReviewFindingBody';
+import { useReviewCommentDraftWriter } from './useReviewCommentDraftWriter';
 
 import { ReviewCommentSnapshotView } from './ReviewCommentSnapshotView';
 import { resolveReviewCommentBodyText, resolveReviewCommentSnapshot, splitReviewCommentBody } from './content';
@@ -187,13 +182,7 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     const marks = useScmReviewedMarks({ host, serverId, comparisonSessionId: sessionId, comparison: props.view === 'files' ? index.comparison : null,
         observation: 'keyed' });
     const limits = useScmReviewLimits();
-    const { executeValue } = useMountedActionExecution(scope);
-    const actions = React.useMemo(() => createReviewCommentsActions({ execute: executeValue }), [executeValue]);
-    const saveGutterComment = React.useCallback(async (draft: ReviewCommentDraft) => {
-        const result = await submitDurableReviewCommentDraft({ reviewId: props.reviewId, roundOrdinal: props.roundOrdinal, draft, clientMutationId: draft.id,
-            actions: { create: async (input) => await actions.create(input) as ReviewCommentCreateResponseV1 } });
-        recordReviewCommentWrites([result.comment], scope);
-    }, [actions, props.reviewId, props.roundOrdinal, scope]);
+    const saveGutterComment = useReviewCommentDraftWriter(scope, props.reviewId, props.roundOrdinal);
     const openFile = React.useCallback((path: string) => {
         if (props.onOpenFile) props.onOpenFile(path);
         else requestActiveReviewFileForComparison(identity, path, comparison);
@@ -202,8 +191,9 @@ function BoundReviewChanges(props: ReviewChangesHostProps & Readonly<{
     const openPhoneFile = React.useCallback((path: string) => {
         if (props.onOpenFile) props.onOpenFile(path);
         else void fileOpener.openCaptured({ scope: workspaceScope, path, comparison,
+            review: { reviewId: props.reviewId, roundOrdinal: props.roundOrdinal },
             ...(sessionId ? { comparisonSessionId: sessionId } : {}) });
-    }, [comparison, fileOpener, props.onOpenFile, sessionId, workspaceScope]);
+    }, [comparison, fileOpener, props.onOpenFile, props.reviewId, props.roundOrdinal, sessionId, workspaceScope]);
     const selectView = React.useCallback((view: SessionScmReviewView) => {
         if (view !== 'commits') props.onSelectView(view);
     }, [props.onSelectView]);

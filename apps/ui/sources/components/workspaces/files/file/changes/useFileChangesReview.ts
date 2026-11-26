@@ -10,6 +10,7 @@ import {
 import { useCapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
 import type { ReviewKeyboardController } from '@/components/workspaces/scm/review/hunkReview/useReviewKeyboard';
 import { useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import type { CapturedFileReviewContext } from '@/utils/url/sessionFileDeepLink';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { useSessionSelector } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -49,6 +50,7 @@ export type FileChangesReviewParams = Readonly<{
   view?: FileChangesScopeView;
   onChangesScopeChange: (scope: FileChangesScope) => void;
   initialChanges?: SessionScmReviewComparison;
+  review?: CapturedFileReviewContext;
   /** Immutable evidence pages retain their opened comparison and offer no checkout mutations. */
   readOnly?: boolean;
   active: boolean;
@@ -213,6 +215,7 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
       if (params.onOpenFile) { params.onOpenFile(cursor.path, rootPath); return; }
       if (params.readOnly && params.initialChanges) {
         void opener.openCaptured({ scope: reviewScope, path: cursor.path, comparison: params.initialChanges,
+          ...(params.review ? { review: params.review } : {}),
           ...(sessionId ? { comparisonSessionId: sessionId } : {}) });
         return;
       }

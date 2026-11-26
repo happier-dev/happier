@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { ReviewFileComments, type FileReviewCommentsBinding } from './ReviewFileComments';
+import type { CapturedFileReviewContext } from '@/utils/url/sessionFileDeepLink';
 import { recordWorkspaceFileOpen } from '@/sync/store/files/recentWorkspaceFiles';
 import { recentWorkspaceFilesKey } from '@/sync/domains/workspaces/files/recentWorkspaceFiles';
 import { Platform, ScrollView, View } from 'react-native';
@@ -76,7 +78,7 @@ import { allowsLiveStaging, isAtomicCommitStrategy } from '@/scm/settings/commit
 import { useFileDetailsDiffMode } from '@/scm/diff/useFileDetailsDiffMode';
 import { buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
 import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
-import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ReviewCommentAnchor, ReviewCommentSource, ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -198,6 +200,7 @@ export type WorkspaceFileDetailsViewProps = Readonly<{
     initialChanges?: SessionScmReviewComparison;
     /** A captured comparison page reads retained evidence without opening the working copy. */
     evidenceOnly?: boolean;
+    review?: CapturedFileReviewContext;
     deepLinkAnchor?: WorkspaceFileDeepLinkAnchor | null;
     findSeed?: FileFindSeed | null;
     onFindSeedConsumed?: () => void;
@@ -625,10 +628,15 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
             reason={t('errors.daemonUnavailableBody')}
         />;
     }
-    return <WorkspaceFileDetailsPage {...props} scope={props.scope} />;
+    const scope = props.scope;
+    return props.review ? <ReviewFileComments serverId={scope.serverId} review={props.review}>
+        {binding => <WorkspaceFileDetailsPage {...props} scope={scope} reviewCommentsBinding={binding} />}
+    </ReviewFileComments> : <WorkspaceFileDetailsPage {...props} scope={scope} />;
 }
 
-function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonly<{ scope: WorkspaceScopeBase }>) {
+const NO_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = Object.freeze([]);
+
+function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonly<{ scope: WorkspaceScopeBase; reviewCommentsBinding?: FileReviewCommentsBinding }>) {
     const { theme } = useUnistyles();
     const mountedRef = useMountedRef();
     const presentation = props.presentation ?? 'screen';
@@ -957,8 +965,8 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
     const fileName = filePath.split('/').pop() || filePath;
     const filePathDir = filePath.split('/').slice(0, -1).join('/');
     const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
-    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(scope);
-    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(scope);
+    const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(props.reviewCommentsBinding ? null : scope);
+    const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(props.reviewCommentsBinding ? null : scope);
 
     // The writing agent's name for the editor's conflict and Undo copy; "the version on disk" when unknown.
     const editorAttribution = useFilePageAttribution({ address: sessionAddress, filePath, workspaceRoot: scope?.rootPath ?? null, active: isActive,
@@ -1366,6 +1374,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
         liveDiff: diffContent, refreshLiveDiff: onRefresh, view: fileView, onChangesScopeChange,
         liveDiffLoading: isDiffLoading || isLoading, liveDiffError: error,
         initialChanges,
+        review: props.review,
         readOnly: evidenceOnly,
         liveEntry: fileEntry,
         contentHash: fileContent?.contentHash ?? null,
@@ -1704,9 +1713,11 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
                         showPrefix={showLineNumbers}
                         reviewCommentsEnabled={reviewCommentsEnabled}
                         reviewCommentModeActive={reviewCommentModeActive}
-                        reviewCommentDrafts={reviewCommentDrafts}
-                        onUpsertReviewCommentDraft={reviewDraftHandlers.onUpsertReviewCommentDraft}
-                        onDeleteReviewCommentDraft={reviewDraftHandlers.onDeleteReviewCommentDraft}
+                        reviewComments={props.reviewCommentsBinding?.comments}
+                        previousFilePath={changesReview.capturedFile?.previousPath}
+                        reviewCommentDrafts={props.reviewCommentsBinding ? NO_REVIEW_COMMENT_DRAFTS : reviewCommentDrafts}
+                        onUpsertReviewCommentDraft={props.reviewCommentsBinding?.save ?? reviewDraftHandlers.onUpsertReviewCommentDraft}
+                        onDeleteReviewCommentDraft={props.reviewCommentsBinding ? undefined : reviewDraftHandlers.onDeleteReviewCommentDraft}
                         onReviewCommentError={reviewDraftHandlers.onReviewCommentError}
                         jumpToAnchor={trackJumpToAnchor ?? jumpToAnchor}
                         highlightJumpToAnchor={trackJumpToAnchor ? true : highlightJumpToAnchor}
@@ -1827,6 +1838,7 @@ function WorkspaceFileDetailsPage(props: WorkspaceFileDetailsViewProps & Readonl
                         onRevealInFilesTree={props.onRevealInFilesTree}
                     />
                 ) : null}
+                {props.reviewCommentsBinding?.notice}
             </View>
 
             <View
