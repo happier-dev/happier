@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
+import { Platform, ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { welcomePlanetPose, type WelcomePlanetState } from '@happier-dev/brand/planet-placement';
@@ -7,6 +7,8 @@ import { welcomePlanetPose, type WelcomePlanetState } from '@happier-dev/brand/p
 import { useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
+import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { FIRST_RUN_WORKFLOW_LAYER, StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { useModalCardDimensions } from '@/modal/components/card/useModalCardDimensions';
@@ -59,6 +61,7 @@ const DESKTOP_WORDMARK_HEIGHT_PX = 26;
 const CORNER_PILL_HEIGHT_PX = 40;
 const DESKTOP_PANE_BOTTOM_PADDING_PX = 28;
 const FOOTER_CONTROL_SIZE_PX = 28;
+const STEP_SCROLL_FADE_EDGES = { bottom: true } as const;
 const STEP_TRANSITION_FILL_STYLE: ViewStyle = {
     flex: 1,
     minHeight: 0,
@@ -219,6 +222,9 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             - welcomePlanetPose(props.planetState ?? 'deep', paneSize, { phone: isMobile }).limb
             + theme.space.s24))
         : 0;
+    // A step longer than that sky fades out at its edge while more of it (its actions) lies below.
+    const stepFades = useScrollEdgeFades({ enabledEdges: STEP_SCROLL_FADE_EDGES });
+    const stepEdgeMask = !props.isWelcomeStep && Platform.OS === 'web' ? resolveVerticalScrollEdgeMaskStyle(stepFades.visibility) : null;
     const { onColumnLayout } = props;
     const onOpeningLayout = useFirstOpenContentLayout();
     const onStepLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -298,9 +304,13 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             <WideStepColumnContext.Provider value={isMobile ? null : claimWideColumn}>
             <ScrollView
                 testID="unauth-shell-workflow-scroll"
-                style={styles.scrollFill}
+                style={[styles.scrollFill, stepEdgeMask]}
                 contentContainerStyle={[styles.scrollContent, contentPaddingStyle, welcomeScrollMinimum]}
-                onLayout={props.isWelcomeStep ? onWelcomeScrollLayout : undefined}
+                onLayout={props.isWelcomeStep ? onWelcomeScrollLayout : stepFades.onViewportLayout}
+                onContentSizeChange={props.isWelcomeStep ? undefined : stepFades.onContentSizeChange}
+                onScroll={props.isWelcomeStep ? undefined : stepFades.onScroll}
+                onMomentumScrollEnd={props.isWelcomeStep ? undefined : stepFades.onMomentumScrollEnd}
+                scrollEventThrottle={64}
                 showsVerticalScrollIndicator={false}
                 bounces={false}
                 keyboardShouldPersistTaps="handled"
