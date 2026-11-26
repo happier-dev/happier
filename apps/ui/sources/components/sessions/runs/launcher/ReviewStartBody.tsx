@@ -7,7 +7,8 @@ import { ContextualStartComposerBody, useContextualStartComposer, useContextualS
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import { ReviewChangeTypeSchema, reviewReviewerIdForSelectionV1, type ReviewChangeType } from '@happier-dev/protocol/reviews/reviewStart';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
+import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
+import { ReviewPersonRequirementControl } from '@/components/reviews/ReviewPersonRequirementControl';
 import { useExecutableParticipantLabels } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { t } from '@/text';
@@ -195,6 +196,15 @@ function ParticipantStepWho(props: Props & Readonly<{
         title: t('session.collaboration.discussion.participants.peopleGroup'),
         chosen: reviewers.flatMap(reviewer => reviewer.kind === 'person'
             ? [presentSharePrincipal({ ref: reviewer.principal, viewerAccountId: props.accountLifetime.scope.accountId })] : []),
+        rightAccessoryKey: JSON.stringify(reviewers.flatMap(reviewer => reviewer.kind === 'person'
+            ? [[sharePrincipalKey(reviewer.principal), reviewer.required]] : [])),
+        rightAccessory: (principal: ReturnType<typeof presentSharePrincipal>) => {
+            const key = principal.key;
+            const reviewer = reviewers.find(value => value.kind === 'person' && sharePrincipalKey(value.principal) === key);
+            return reviewer?.kind === 'person' ? <ReviewPersonRequirementControl testID={`review-start-required:${key}`}
+                name={principal.displayName} required={reviewer.required} disabled={props.disabled}
+                onChange={required => replace(reviewers.map(value => value === reviewer ? { ...reviewer, required } : value))} /> : null;
+        },
         onChoose: (principal: Readonly<{ kind: 'account'; accountId: string }>) => {
             const has = (reviewer: typeof reviewers[number]) => reviewer.kind === 'person'
                 && reviewer.principal.kind === 'account' && reviewer.principal.accountId === principal.accountId;

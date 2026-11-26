@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { buildDirectorySelectionSection, SharePrincipalVisual, type SharePrincipalPresentation } from '@happier-dev/plugin-ui/components';
 import type { ReviewRequestedReviewerInputV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
@@ -12,7 +12,7 @@ import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
+import { ReviewPersonRequirementControl } from '../ReviewPersonRequirementControl';
 import { SelectionList, createDefaultDynamicSectionCache, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -48,15 +48,9 @@ export function ReviewPeopleEditor(props: Readonly<{
             return { id: `selected:${key}`, label: principal.displayName, testID: `review-people:selected:${key}`,
                 icon: () => <SharePrincipalVisual host={SHARE_SHEET_HOST} principal={principal} testID={`review-people:visual:${key}`} />,
                 rightAccessoryOutsidePressable: true, rightAccessory: () => <View style={styles.actions}>
-                    <Pressable testID={`review-people:required:${key}`} accessibilityRole="checkbox"
-                        accessibilityLabel={`${t('reviewWalkthrough.detail.required')}: ${principal.displayName}`}
-                        accessibilityState={{ checked: row.required, disabled: busy }} disabled={busy}
-                        aria-checked={row.required} aria-disabled={busy || undefined}
-                        onPress={() => setDraft(current => current.map(item => sharePrincipalKey(item.principal) === key ? { ...item, required: !item.required } : item))}
-                        style={styles.actions}>
-                        <SelectionCheckGlyph state={row.required ? 'checked' : 'unchecked'} size="compact" />
-                        <Text variant="meta">{t(row.required ? 'reviewWalkthrough.detail.required' : 'reviewWalkthrough.detail.optional')}</Text>
-                    </Pressable>
+                    <ReviewPersonRequirementControl testID={`review-people:required:${key}`} name={principal.displayName}
+                        required={row.required} disabled={busy}
+                        onChange={required => setDraft(current => current.map(item => sharePrincipalKey(item.principal) === key ? { ...item, required } : item))} />
                     <TextLinkButton testID={`review-people:remove:${key}`} label={t('common.remove')} disabled={busy}
                         onPress={() => setDraft(current => current.filter(item => sharePrincipalKey(item.principal) !== key))} />
                 </View> };

@@ -1,12 +1,56 @@
 import * as React from 'react';
 import { vi, it, expect } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ReviewStartBody } from './ReviewStartBody';
 import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { SelectionList } from '@/components/ui/selectionList';
 import { t } from '@/text';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
+    .createSocketIoClientBoundary(importOriginal));
+
+it('authors a required person without changing the other reviewers or step Focus', async () => {
+    const boundary = await createSessionListQuerySourceHarness();
+    try {
+        const home = boundary.serverIds[1]!;
+        const scope = await renderHook(() => useServerCredentialAccountScopeBindings([home]));
+        await vi.waitFor(() => expect(scope.getCurrent().get(home)?.isCurrent()).toBe(true));
+        const accountLifetime = scope.getCurrent().get(home)!;
+        boundary.setRows(home, []);
+        boundary.http.answer(home, '/v1/user/profiles', { body: { users: [] } });
+        let current: Record<string, unknown> = {};
+        function Draft() {
+            const [input, onChange] = React.useState<Record<string, unknown>>({
+                reviewers: [{ kind: 'engine', engineId: 'claude' },
+                    { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: false }],
+                steps: [{ kind: 'review', instructions: 'Check the changed code', reviewers: [
+                    { kind: 'engine', engineId: 'claude' },
+                    { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: false },
+                ] }],
+            });
+            current = input;
+            return <ReviewStartBody input={input} onChange={onChange}
+                source={{ enabled: true, sections: [], selectedIds: new Set(),
+                    where: { accountLifetime, target: null, machineName: null } }}
+                choices={[]} transcriptAvailable={false} walkthrough={false} disabled={false} />;
+        }
+        const screen = await renderScreen(<Draft />);
+        await vi.waitFor(() => expect(screen.findByTestId('review-start-required:account:alice')).not.toBeNull());
+        await screen.pressByTestIdAsync('review-start-required:account:alice');
+        await vi.waitFor(() => expect(screen.findHostByTestId('review-start-required:account:alice')?.props['aria-checked']).toBe(true));
+        expect(current.steps).toMatchObject([{ instructions: 'Check the changed code', reviewers: [
+            { kind: 'engine', engineId: 'claude' }, { kind: 'person', required: true },
+        ] }]);
+        await screen.pressByTestIdAsync('review-start-required:account:alice');
+        await vi.waitFor(() => expect(screen.findHostByTestId('review-start-required:account:alice')?.props['aria-checked']).toBe(false));
+        expect(current.reviewers).toMatchObject([{ kind: 'engine', engineId: 'claude' }, { kind: 'person', required: false }]);
+        await screen.unmount();
+        await scope.unmount();
+    } finally { await standardCleanup(); await boundary.dispose(); }
+});
 
 const codexTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const claudeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };

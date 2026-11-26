@@ -114,6 +114,10 @@ export function useExecutableParticipantSections(
       title: string;
       /** Who is already chosen: listed while nothing is typed, so each can be unchosen. */
       chosen: readonly SharePrincipalPresentation[];
+      /** A consumer's choice attached to a person, outside the row's selection target. */
+      rightAccessory?: (principal: SharePrincipalPresentation) => React.ReactNode;
+      /** Serialized row facts that change the accessory, independent of the person's directory identity. */
+      rightAccessoryKey?: string;
       /** An opinion can invite people and start new reviewers in the same Discussion. */
       includeModels?: boolean;
     }>;
@@ -339,11 +343,13 @@ export function useExecutableParticipantSections(
     const toOption = (principal: SharePrincipalPresentation): ExecutableParticipantSectionOption[] => {
       const ref = principal.ref;
       if (ref.kind !== 'account' || ref.accountId === viewerAccountId) return [];
+      const accessory = people.rightAccessory?.(principal);
       return [{ id: `account:${ref.accountId}`,
         testID: `discussion-invite-person-${ref.accountId}`,
         label: principal.displayName,
         ...(principal.secondaryLabel ? { subtitle: principal.secondaryLabel } : {}),
         accessibilityLabel: principal.accessibilityLabel,
+        ...(accessory ? { rightAccessory: accessory, rightAccessoryOutsidePressable: true } : {}),
         icon: () => <SharePrincipalVisual host={SHARE_SHEET_HOST} principal={principal} testID={`discussion-invite-person-visual-${ref.accountId}`} />,
         disabled: busy,
         onSelect: () => {
@@ -354,7 +360,7 @@ export function useExecutableParticipantSections(
     const principals = (rows: typeof browsePeople) => rows.flatMap(candidate => candidate.kind === 'account' ? [candidate.principal] : []);
     return {
       kind: 'dynamic', id: 'people', title: people.title,
-      resolverKey: JSON.stringify(['people', candidates.people.resolverKey ?? 'account', busy, chosenPeople]),
+      resolverKey: JSON.stringify(['people', candidates.people.resolverKey ?? 'account', busy, chosenPeople, people.rightAccessoryKey]),
       resultFiltering: 'provider', resultTransition: 'none', loadingSkeletonRows: 1,
       resolve: async (query, signal) => ({
         options: query.trim()
