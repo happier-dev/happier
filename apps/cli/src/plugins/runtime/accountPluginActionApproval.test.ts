@@ -2,7 +2,7 @@ import fastify from 'fastify';
 import { join } from 'node:path';
 import { Server, type Socket } from 'socket.io';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ArtifactJsonCreateHttpInputV1Schema, decodePlainArtifactStoredContent, FeaturesResponseSchema,
+import { accountSettingsParse, ArtifactJsonCreateHttpInputV1Schema, decodePlainArtifactStoredContent, FeaturesResponseSchema,
     sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -12,10 +12,14 @@ import { StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol
 import { PluginAccountStorageMutationRequestV1Schema, PluginAccountStorageMutationResponseV1Schema,
     PluginAccountStorageReadResponseV1Schema } from '@happier-dev/protocol/plugins/data/accountKvV1';
 import * as accountChanges from '@/api/observeAccountChanges';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import type { PermissionMode } from '@/api/types';
+import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
 import { readStoredCredentialsForServerId, removeStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAuthoredAccountActionRelease } from './accountPluginActions.testkit';
 import { readCurrentAccountPluginExecutionSelection } from './accountPluginActivationSource';
@@ -76,6 +80,7 @@ it.each([
         });
         const rotatesCredentials = scenario === 'credential_rotate' || scenario === 'credential_rotate_read';
         const azure = scenario === 'azure_approve';
+        const scopedAgent = azure && surface === 'agent';
         const nested = scenario === 'caller_retire' || scenario === 'callee_retire_during_caller_read';
         const serverId = rotatesCredentials ? 'account-approval-rotation' : 'account-approval';
         const serverIdentityId = `srv_${serverId}`;
@@ -93,7 +98,7 @@ it.each([
         const effectPluginId = nested ? providerPluginId : pluginId;
         if (!effectPluginId) throw new Error('Missing separately authored Account provider');
         const localId = azure ? AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.abandon : nested ? 'record-source' : 'write';
-        const rootSettings = setActionApprovalOverride({
+        const rootSettings = scopedAgent ? normalizeActionsSettingsV1(undefined) : setActionApprovalOverride({
             settings: normalizeActionsSettingsV1(undefined),
             actionId: formatQualifiedPluginActionId({ pluginId, localId }),
             surface, approvalRequired: true,
@@ -254,24 +259,52 @@ it.each([
             serverApiUrl: endpoint,
             ...(scenario === 'machine_provenance' ? { machineId: 'contextual-machine' } : {}),
             ...(rotatesCredentials ? { readCredentials: () => readStoredCredentialsForServerId(serverId) } : {}) });
-        let settled = false;
-        const invoking = original.execute('action.invoke', { action: { pluginId, localId },
-            input: azure ? { v: 1, instance: { v: 1,
+        const input = azure ? {
+            v: 1, instance: { v: 1,
                 instance: { source: { pluginId, localId: 'azure-devops-forge' }, sourceInstanceId: '2f1c9c4e-8c1f-4a53-9c2a-4c9a7b1d3e05' },
                 binding: { purpose: AZURE_DEVOPS_TRIAGE_PURPOSE, account: azureAccount }, localInstanceKey: azureBase,
                 configuration: encodeAzureSourceConfiguration(azureOrigin.origin) },
-                localRef: { kindId: 'pull-request', collisionScope: buildAzureCollisionScope({ origin: azureOrigin.origin, repositoryId }), entryId: '17' },
-                routingToken: 'acme/Payments/payments',
-            } : nested ? { key: 'approved' } : { key: 'approved', value: 'written once' } }, { surface, signal: controller.signal,
-            runtimeAccountId: accountId, serverId, serverIdentityId,
-            ...(scenario === 'machine_provenance' ? { defaultSessionMachineId: 'contextual-machine' } : {}),
-        }).then(result => { settled = true; return result; });
+            localRef: { kindId: 'pull-request', collisionScope: buildAzureCollisionScope({ origin: azureOrigin.origin, repositoryId }), entryId: '17' },
+            routingToken: 'acme/Payments/payments',
+        } : nested ? { key: 'approved' } : { key: 'approved', value: 'written once' };
+        const sessionId = 'scoped-action-session';
+        const sessionMetadata = createTestMetadata();
+        let permissionMode: PermissionMode = 'read-only';
+        const agent = scopedAgent ? createHappierMcpServer({ sessionId,
+            getServerBinding: () => ({ serverId, serverUrl: endpoint }),
+            rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
+            updateMetadata() {}, getPermissionMode: () => permissionMode,
+            getMetadataSnapshot: () => sessionMetadata,
+            getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features }),
+            getActiveTurnAdmissionWitness: () => ({ turnId: `turn-${permissionMode}`, inputId: `input-${permissionMode}`,
+                userMessageSeq: 1, userMessageSeqs: [1], signal: controller.signal,
+                callerPermissionMode: permissionMode,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: permissionMode },
+                agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+            }),
+        }, { credentials, accountSettings: accountSettingsParse({ actionsSettingsV1: rootSettings }),
+            toolExecutionSignal: controller.signal }) : undefined;
+        const executeScopedAgentAction = (runtime: NonNullable<typeof agent>) => runtime.executeTool({
+            toolName: 'action_execute', args: { actionId: formatQualifiedPluginActionId({ pluginId, localId }), input },
+        });
+        const firstApproval = agent ? nextApprovalArtifact() : undefined;
+        let settled = false;
+        const invoking = (agent && firstApproval ? (async () => {
+                const refused = await Promise.race([executeScopedAgentAction(agent), firstApproval]);
+                expect(refused).toMatchObject({ ok: false, errorCode: 'permission_exceeds_ceiling' });
+                expect(provider.request).not.toHaveBeenCalled();
+                permissionMode = 'default';
+                return executeScopedAgentAction(agent);
+        })() : original.execute('action.invoke', { action: { pluginId, localId }, input }, { surface, signal: controller.signal,
+                runtimeAccountId: accountId, serverId, serverIdentityId,
+                ...(scenario === 'machine_provenance' ? { defaultSessionMachineId: 'contextual-machine' } : {}),
+        })).then(result => { settled = true; return result; });
         const deciding = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: endpoint,
             serverIdentityId });
         const decisionContext = { surface: 'cli' as const, authority: 'present_user' as const,
             runtimeAccountId: accountId, serverId, serverIdentityId };
         const waitForApproval = async () => {
-            const artifactId = await Promise.race([nextApprovalArtifact(), invoking.then(result => {
+            const artifactId = await Promise.race([firstApproval ?? nextApprovalArtifact(), invoking.then(result => {
                 throw new Error(`Account write settled before approval: ${JSON.stringify(result)}`);
             })]);
             approvalArtifactId = artifactId;
@@ -287,6 +320,7 @@ it.each([
                 expect(provider.request).not.toHaveBeenCalled();
                 expect(JSON.stringify(readApproval())).not.toContain('azure-private-pat');
             }
+            if (scopedAgent) expect(readApproval().executionOriginV1).toMatchObject({ sessionId, surface: 'agent' });
             // Provenance survives Machine-free Account custody and must not
             // turn a standalone decision into an attempted Machine replay.
             expect(readApproval().executionOriginV1).toMatchObject({ actionId: 'action.invoke', serverIdentityId });
@@ -379,6 +413,7 @@ it.each([
         } finally {
             controller.abort();
             await invoking.catch(() => undefined);
+            await agent?.mcp.close();
             if (rotatesCredentials) await removeStoredCredentialsForServerId(serverId);
             restore();
             await new Promise<void>(resolve => sockets.close(() => resolve()));
