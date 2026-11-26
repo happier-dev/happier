@@ -525,12 +525,13 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
             remedy: 'Restore this Machine’s daemon RPC route through Home before changing public SSH access.',
           });
           const transitioned = await executeRetainedSshTransition({ machineId: deps.target.machineId,
-            installationId: deps.target.installationId, operationId, native, port: deps.port, field: reachabilityPostureField,
-            expectedMetadataVersion: currentState.metadataVersion, current: currentState.posture, desired: machineChange.posture,
+            installationId: deps.target.installationId, operationId, native,
+            postureChange: { port: deps.port, field: reachabilityPostureField, metadataVersion: currentState.metadataVersion,
+              current: currentState.posture, desired: machineChange.posture },
             basis: { kind: 'setup', machineId: deps.target.machineId, desiredRevision: transition.setupRevision },
             firewallIntent: transition.intent, elevation: deps.elevation, readDaemonProof: deps.readDaemonProof,
             signal: deps.context.signal });
-          currentState = { ...currentState, metadataVersion: transitioned.metadataVersion, posture: transitioned.posture };
+          currentState = { ...currentState, ...transitioned.postureSettlement };
           anyNativeEffectPossible = transitioned.effectAttempted;
           firewallRecovery = transitioned.recovery;
           if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged') {
@@ -820,26 +821,19 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
  * Domain setup never authorizes a management-access transition.
  */
 export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshTransitionInput,
-  'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
+  'machineId' | 'installationId' | 'operationId' | 'basis' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
   & Readonly<{ caddy: Pick<import('@happier-dev/cli-common/machineSetup').NativeCaddySetupInput, 'privateBinding' | 'publicBindings'>;
     privateWorkloadBindings?: RetainedSshTransitionInput['firewallIntent']['privateWorkloadBindings'];
     caddyObservation?: RetainedSshTransitionInput['firewallIntent']['caddyObservation'] }>) {
-  const state = await readMachineReachabilityMetadata(input.port);
-  if (!state.posture) return refuse('machine_reachability_posture_unavailable', {
-    requiredFact: 'reachabilityPosture',
-    machineId: input.machineId,
-    remedy: 'This Machine’s network setup hasn’t been reviewed yet. Review and apply it, then add the domain again.',
-  });
   const transitioned = await executeRetainedSshTransition({ ...input,
-    expectedMetadataVersion: state.metadataVersion, current: state.posture, desired: state.posture,
-    field: reachabilityPostureField,
     firewallIntent: { v: 1, kind: 'preserveSsh', caddy: {
       ...(input.caddy.privateBinding ? { privateBinding: { ...input.caddy.privateBinding,
         sourceRanges: [...input.caddy.privateBinding.sourceRanges] } } : {}),
       publicBindings: [...(input.caddy.publicBindings ?? [])],
     }, ...(input.caddyObservation ? { caddyObservation: input.caddyObservation } : {}),
     ...(input.privateWorkloadBindings ? { privateWorkloadBindings: input.privateWorkloadBindings } : {}),
-    publicSsh: state.posture.management.publicSsh } });
+    // The V1 operand is required; preserveSsh derives access from live native scopes.
+    publicSsh: { kind: 'closed' } } });
   if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged')
     return refuse(transitioned.errorCode ?? transitioned.status, {
       ...(transitioned.failure?.requiredFact ? { requiredFact: transitioned.failure.requiredFact } : {}),
@@ -861,7 +855,7 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
 /** Explicit workload deploys use the same retained-SSH writer as Domains.
  * Network and Domain callers omit the operand, retaining applied workloads. */
 export async function settleMachinePrivateWorkloadFirewallForHost(input: Pick<RetainedSshTransitionInput,
-  'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
+  'machineId' | 'installationId' | 'operationId' | 'basis' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
   & Readonly<{
     privateWorkloadBindings: NonNullable<RetainedSshTransitionInput['firewallIntent']['privateWorkloadBindings']>;
     privateNetworks: readonly import('@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1').MachinePrivateNetworkObservationV1[];

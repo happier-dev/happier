@@ -12,11 +12,15 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 
 export type RetainedSshTransitionInput = Readonly<{
   machineId: string; installationId: string; operationId: string;
-  expectedMetadataVersion: number; current: MachineReachabilityPostureV1 | null; desired: MachineReachabilityPostureV1;
   basis: Extract<MachineSetupEffectPlanV1['basis'], { kind: 'setup' }>;
   firewallIntent: MachineFirewallTransitionIntentV1;
-  port: MachineMetadataFieldPortV1;
-  field: MachineMetadataFieldDefinitionV1<MachineReachabilityPostureV1 | null>;
+  postureChange?: Readonly<{
+    metadataVersion: number;
+    current: MachineReachabilityPostureV1 | null;
+    desired: MachineReachabilityPostureV1;
+    port: MachineMetadataFieldPortV1;
+    field: MachineMetadataFieldDefinitionV1<MachineReachabilityPostureV1 | null>;
+  }>;
   native: MachineNativeEffectContext;
   elevation: Omit<MachineElevationDependencies, 'verifyCurrent'>;
   readDaemonProof(): Promise<OwnDaemonReachabilityProof>;
@@ -26,7 +30,7 @@ export type RetainedSshTransitionInput = Readonly<{
 type TransitionResult = Readonly<{
   status: 'applied' | 'unchanged' | 'rolledBack' | 'outcome_unknown' | 'recoveryRequired' | 'refused';
   /** Last confirmed field read/write, not a current-state assertion on unknown. */
-  metadataVersion: number; posture: MachineReachabilityPostureV1 | null;
+  postureSettlement?: Readonly<{ metadataVersion: number; posture: MachineReachabilityPostureV1 | null }>;
   effectAttempted: boolean; errorCode?: string;
   failure?: Extract<MachineElevatedResultV1, { outcome: 'outcome_unknown' }>['failure'] | Readonly<{
     kind: 'daemon_reachability_unavailable'; reason: 'required_fact_unavailable'; requiredFact: 'homeRoutedDaemonAck';
@@ -40,14 +44,16 @@ type TransitionResult = Readonly<{
 /** Prepared for the posture branch of the one reachability host. Native staging,
  * validation and exact undo stay inside P10/P20; this owner settles posture. */
 export async function executeRetainedSshTransition(input: RetainedSshTransitionInput): Promise<TransitionResult> {
-  let posture = input.current, metadataVersion = input.expectedMetadataVersion, effectAttempted = false;
-  let acknowledgedWrite = false, metadataUncertain = false, nativeRestored = false;
+  const postureChange = input.postureChange && { ...input.postureChange, posture: input.postureChange.current };
+  let effectAttempted = false;
+  let acceptedFinalStage = false, metadataUncertain = false, nativeRestored = false;
   let recovery: MachineFirewallRecoveryV1 | undefined, restoration: MachineFirewallRestorationV1 | undefined;
   let failure: TransitionResult['failure'];
-  const alreadyDesired = input.field.equal(input.current, input.desired);
+  const alreadyDesired = postureChange?.field.equal(postureChange.current, postureChange.desired);
   let failureCode: string | undefined;
   const result = (status: TransitionResult['status'], errorCode?: string): TransitionResult => ({
-    status, posture, metadataVersion, effectAttempted, ...(errorCode ? { errorCode } : {}),
+    status, effectAttempted, ...(errorCode ? { errorCode } : {}),
+    ...(postureChange ? { postureSettlement: { posture: postureChange.posture, metadataVersion: postureChange.metadataVersion } } : {}),
     ...(recovery ? { recovery } : {}), ...(restoration ? { restoration } : {}),
     ...(failure ? { failure } : {}),
   });
@@ -80,14 +86,18 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
           if (!await stage.verifyNative()) { failureCode = 'enforcement_unknown'; return 'undo'; }
           if (cancelled()) { failureCode = 'cancelled'; return 'undo'; }
           if (stage.planIndex === 0) return 'continue';
-          const written = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: metadataVersion,
-            expectedPolicy: posture, policy: input.desired, comparison: 'field' }, input.port, input.field, { signal: input.signal });
-          if (written.status !== 'applied' && written.status !== 'satisfied' && written.status !== 'unchanged') {
-            metadataUncertain = written.status === 'outcomeUnknown';
-            failureCode = written.status === 'outcomeUnknown' ? 'outcome_unknown' : 'plan_changed'; return 'undo';
+          if (postureChange) {
+            const written = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: postureChange.metadataVersion,
+              expectedPolicy: postureChange.posture, policy: postureChange.desired, comparison: 'field' },
+            postureChange.port, postureChange.field, { signal: input.signal });
+            if (written.status !== 'applied' && written.status !== 'satisfied' && written.status !== 'unchanged') {
+              metadataUncertain = written.status === 'outcomeUnknown';
+              failureCode = written.status === 'outcomeUnknown' ? 'outcome_unknown' : 'plan_changed'; return 'undo';
+            }
+            postureChange.posture = written.policy;
+            postureChange.metadataVersion = written.metadataVersion;
           }
-          posture = written.policy; metadataVersion = written.metadataVersion;
-          acknowledgedWrite = true;
+          acceptedFinalStage = true;
           return 'commit';
         },
       }, { ...input.elevation, verifyCurrent: async () => !cancelled(),
@@ -100,16 +110,18 @@ export async function executeRetainedSshTransition(input: RetainedSshTransitionI
     restoration = 'restoration' in elevated ? elevated.restoration : undefined;
     failure = ('failure' in elevated ? elevated.failure : undefined) ?? failure;
     nativeRestored = restoration?.status === 'verified';
-    if (elevated.outcome === 'applied' && acknowledgedWrite) return result(alreadyDesired ? 'unchanged' : 'applied');
-    if (acknowledgedWrite && nativeRestored) {
+    if (elevated.outcome === 'applied' && acceptedFinalStage) return result(alreadyDesired ? 'unchanged' : 'applied');
+    if (postureChange && acceptedFinalStage && nativeRestored) {
       // Required compensation is not optional work: cancellation must not skip
       // it. The field owner refuses a concurrently changed posture and rebases
       // unrelated fields; it never blindly restores a whole old snapshot.
-      const restored = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: metadataVersion,
-        expectedPolicy: posture, policy: input.current, comparison: 'field' }, input.port, input.field);
+      const restored = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: postureChange.metadataVersion,
+        expectedPolicy: postureChange.posture, policy: postureChange.current, comparison: 'field' },
+      postureChange.port, postureChange.field);
       if (restored.status !== 'applied' && restored.status !== 'satisfied' && restored.status !== 'unchanged')
         return result('recoveryRequired', 'posture_restore_unavailable');
-      posture = restored.policy; metadataVersion = restored.metadataVersion;
+      postureChange.posture = restored.policy;
+      postureChange.metadataVersion = restored.metadataVersion;
     }
     if (metadataUncertain) return result('outcome_unknown', 'outcome_unknown');
     // Only the native owner's positive restoration can guide compensation;

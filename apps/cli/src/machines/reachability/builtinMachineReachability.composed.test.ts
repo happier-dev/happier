@@ -52,11 +52,22 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       serverId: 'generic-home', machineId, change: { kind: 'posture', posture },
     }, f.dependencies(f.context())));
 
+    const configureInput = f.configureInput(review);
+    if (!lostReply) {
+      const before = f.metadata.read();
+      const unreviewed = await executeMachineReachabilityTransition({
+        ...configureInput, reviewedPlanDigest: '0'.repeat(64),
+      }, f.dependencies(f.context()));
+      expect(unreviewed).toMatchObject({ ok: false, errorCode: 'plan_changed', effectAttempted: false });
+      expect(f.metadata.read()).toEqual(before);
+      expect(f.hostNative.firewallStages).toEqual([]);
+    }
+
     if (lostReply) {
       f.metadata.setOnWrite(() => { throw new Error('Machine metadata write reply lost'); });
     }
     const configured = MachineReachabilityConfigureResultV1Schema.parse(await executeMachineReachabilityTransition(
-      f.configureInput(review),
+      configureInput,
       f.dependencies({ ...f.context(), operationAcceptance: {
         operationId: 'first-ssh-posture', actionId: 'machines.reachability.configure', accept() {},
       } }),

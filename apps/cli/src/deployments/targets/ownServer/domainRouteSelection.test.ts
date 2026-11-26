@@ -58,7 +58,6 @@ import { settleMachineCaddyFirewallForHost } from '@/machines/reachability/machi
 import { MachineEffectInternalRequestSchema, MachineEffectInternalRecordSchema } from '@/machines/setup/effectInternalProtocol';
 import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
-import { MachineReachabilityPostureV1Schema } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
 import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -605,7 +604,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator access unavailable', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review after reinstall', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator access unavailable', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review after reinstall', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -1005,18 +1004,9 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                     acknowledge({ ok: true, result: { ok: false, errorCode: 'admin_access_unavailable', error: 'admin_access_unavailable' } });
                     return;
                 }
-                if (scenario === 'network review required' || scenario === 'firewall prerequisite failed' || scenario === 'firewall policy unavailable' || scenario === 'firewall partial failure'
+                if (scenario === 'firewall prerequisite failed' || scenario === 'firewall policy unavailable' || scenario === 'firewall partial failure'
                     || scenario === 'daemon ACK unavailable' || scenario === 'daemon ACK unknown' || scenario === 'native cancelled') {
                     if (prepared?.status !== 'ready') throw new Error('Expected declared public Caddy bindings');
-                    // Machine metadata and elevation are system boundaries. Keep
-                    // the real posture admission and failure settlement beneath this RPC.
-                    const metadata = scenario === 'network review required' ? {} : { reachabilityPosture: MachineReachabilityPostureV1Schema.parse({
-                        revision: 0, management: { providers: [], publicSsh: { kind: 'closed' } },
-                        // A saved default is independent of Domain firewall settlement
-                        // (MACH-COMPOSE-1107 T2-INGRESS); retain the native cause.
-                        defaultServiceIngress: { kind: 'provider', selection: { provider: { kind: 'builtin', id: 'cloudflareNamed' },
-                            config: { hostname: 'app.example.test' }, credentialRefs: [] } },
-                    }) };
                     // The root process is the OS boundary. Keep the real
                     // CHECK/APPLY parser, elevation, transition and public RPC.
                     const spawn: MachineElevationSpawn = () => {
@@ -1068,8 +1058,6 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                             keys: [{ kind: 'machineSetup' }] }, native => settleMachineCaddyFirewallForHost({
                             machineId: job.machineId, installationId: job.installationId, operationId: 'domain-no-posture',
                             basis: { kind: 'setup', machineId: job.machineId, desiredRevision: 0 }, native, caddy: prepared.input,
-                            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 34 }),
-                                compareAndSwap: async () => { throw new Error('Domain add cannot invent a network posture'); } },
                             elevation: { installationId: job.installationId, installedCli: '/managed/happier',
                                 readPolicy: async () => ({ version: 1, mode: 'preauthorized' }),
                                 observe: async () => ({ version: 1, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier',
@@ -1081,14 +1069,13 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                                     errorCode: scenario === 'daemon ACK unavailable' ? 'target_unavailable' : 'RPC_METHOD_NOT_AVAILABLE' }; },
                             } }),
                         }));
-                        throw new Error('Missing posture must refuse Domain setup');
+                        throw new Error('Native failure fixture must refuse Domain setup');
                     } catch (error) {
                         if (!(error instanceof Error) || !('code' in error)) throw error;
                         acknowledge({ ok: true, result: { ...('cause' in error ? projectDeploymentFailure(String(error.code), error)
                             : { ok: false, errorCode: error.code, error: error.code }),
                             ...('details' in error ? { details: error.details } : {}) } });
                     }
-                    if (scenario === 'network review required') expect(metadata).toEqual({});
                     return;
                 }
                 if (scenario === 'administrator access off' || scenario === 'administrator access not applied'
@@ -1263,7 +1250,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             originalActionEnvelope: envelope, externalActionTarget: target, actionRequestId: envelope.requestId,
             operationAcceptance: { operationId: 'domain-operation', accept() {} } });
         if (noActiveDomainMembers || scenario === 'Domain Environment HTTP unavailable'
-            || scenario === 'network review required' || homeRefusalPhase
+            || homeRefusalPhase
             || scenario === 'administrator native check unavailable' || nativeOutcomeUnknown || removingNativeOutput) {
             const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'controller',
                 resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-operation' });
@@ -1272,8 +1259,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             const details = { environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution',
                 ...(removingNativeOutput ? { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) }
                     : noActiveDomainMembers ? { requiredFact: 'activeDomainMembers' }
-                    : scenario === 'network review required' ? { requiredFact: 'reachabilityPosture', remedy: expect.any(String) }
-                        : nativeOutcomeUnknown ? { ...(nativeUnknownWithFact ? { failure: nativeUnknownFailure, requiredFact: nativeUnknownFailure.requiredFact }
+                    : nativeOutcomeUnknown ? { ...(nativeUnknownWithFact ? { failure: nativeUnknownFailure, requiredFact: nativeUnknownFailure.requiredFact }
                             : { requiredFact: 'nativeExecutionResult' }),
                             remedy: nativeUnknownWithFact ? nativeUnknownFailure.remedy : expect.any(String) }
                         : scenario === 'administrator native check unavailable' ? { failure: nativeCheckFailure, remedy: nativeCheckFailure.remedy }
@@ -1284,8 +1270,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             const errorCode = removingNativeOutput ? scenario === 'Remove native parsed output invalid'
                 ? 'invalid_provider_output' : 'invalid_action_transport_output'
                 : noActiveDomainMembers ? 'required_fact_unavailable'
-                : scenario === 'network review required' ? 'machine_network_review_required'
-                    : nativeOutcomeUnknown ? 'outcome_unknown'
+                : nativeOutcomeUnknown ? 'outcome_unknown'
                     : scenario === 'administrator native check unavailable' ? 'native_check_unavailable'
                     : homeRefusalPhase ? 'action_forbidden' : 'home_unreachable';
             expect.soft(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode, details });
@@ -1308,17 +1293,12 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             else if (scenario === 'Domain Environment HTTP unavailable') expect.soft(operation).toMatchObject({ operation: { error: {
                 failureCause: { phase: 'deployment.home.request', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null } } } });
             else if (scenario !== 'administrator native check unavailable' && !nativeOutcomeUnknown) expect.soft(operation).not.toHaveProperty('operation.error.failureCause');
-            const { contentArtifactId: _artifactId, contentHeaderVersion: _headerVersion,
-                contentBodyVersion: _bodyVersion, ...authoredScope } = input;
-            const canonicalHome = 'srv_domain_home';
-            const actionArgs = scenario === 'network review required'
-                ? { ...authoredScope, serverId: canonicalHome, content: domainContent } : actionInput;
             const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
-                createdBy: { surface: 'cli' }, requestedSurface: 'ui', actionId, actionArgs,
+                createdBy: { surface: 'cli' }, requestedSurface: 'ui', actionId, actionArgs: actionInput,
                 summary: removingNativeOutput ? 'Remove Domain' : 'Add Domain', decision: { kind: 'approve', decidedAtMs: 2 },
                 executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
                     serverId: 'home', accountId: 'owner', machineId: 'controller',
-                    ...(staleLink || scenario === 'network review required' ? { serverIdentityId: staleLink ? 'home' : canonicalHome,
+                    ...(staleLink ? { serverIdentityId: 'home',
                         target: { kind: 'machine', machineId: 'controller' } } : {}),
                     actionId, requestId: envelope.requestId } });
             const settled = projectSettledApprovalExecution({ request, actionId, exec: result,

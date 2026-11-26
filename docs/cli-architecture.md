@@ -369,8 +369,9 @@ and verifies that service's protected `sshd` executable. It does not infer SSH
 from port 22 or a unit name. Unreadable activation facts remain unavailable.
 
 Domain Caddy reconciliation uses `preserveSsh`: both firewall stages preserve
-the observed SSH addresses, ports, interfaces and accepted source ranges,
-including when stored posture says SSH is closed. Only an explicitly reviewed
+the observed SSH addresses, ports, interfaces and accepted source ranges.
+A first Domain can reconcile its firewall before any reachability posture has
+been saved. Reconciliation leaves the stored posture alone. Only an explicitly reviewed
 `retainSsh` posture-transition intent may remove those allows or ensure a declared new endpoint.
 The broad host/Docker closure from Plan 21 remains in effect for undeclared
 ingress; foreign tables are preserved. Domain setup does not authorize closing

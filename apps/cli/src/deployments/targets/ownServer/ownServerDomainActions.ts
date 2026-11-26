@@ -49,8 +49,7 @@ type DomainNativeFailureScope = Readonly<{
     environmentId: string; domainId: string; step: 'native_execution'; tunnelId?: string; machineId?: string;
 }>;
 const failure = (reason: string, details?: unknown, failureCause?: unknown, effectAttempted?: unknown, nativeScope?: DomainNativeFailureScope) => {
-    const errorCode = reason === 'mode_none' || reason === 'not_preauthorized' ? 'machine_admin_access_required'
-        : reason === 'machine_reachability_posture_unavailable' ? 'machine_network_review_required' : reason;
+    const errorCode = reason === 'mode_none' || reason === 'not_preauthorized' ? 'machine_admin_access_required' : reason;
     const parsedCause = failureCause === undefined ? undefined : readActionFailureCauseV1(failureCause);
     const adminAccessRefused = isDeploymentDomainAdminAccessRefusalV1(errorCode);
     const { machineId, tunnelId, ...scope } = nativeScope ?? {};

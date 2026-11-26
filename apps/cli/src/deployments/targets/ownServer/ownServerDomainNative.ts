@@ -60,9 +60,9 @@ export type DomainNativeSetupForHost = Readonly<{
     readDesired(): ReturnType<typeof getMachineSetupDesiredV1>;
     elevation: Pick<MachineElevationDependencies, 'readPolicy' | 'observe' | 'spawn' | 'prompt' | 'emit'>;
     settleCaddyFirewall?(input: Omit<Parameters<typeof import('@/machines/reachability/machineReachabilityHost').settleMachineCaddyFirewallForHost>[0],
-        'port' | 'readDaemonProof'>): Promise<void>;
+        'readDaemonProof'>): Promise<void>;
     settlePrivateWorkloadFirewall?(input: Omit<Parameters<typeof import('@/machines/reachability/machineReachabilityHost').settleMachinePrivateWorkloadFirewallForHost>[0],
-        'port' | 'readDaemonProof'>): Promise<void>;
+        'readDaemonProof'>): Promise<void>;
 }>;
 
 type DomainJob = DeploymentDomainChildRpcV1 | DeploymentDomainDiscoverChildRpcV1 | DeploymentDomainDnsChildRpcV1 | DeploymentDomainReviewChildRpcV1;

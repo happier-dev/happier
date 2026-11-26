@@ -3492,12 +3492,11 @@ export class ApiMachineClient {
             captureNativeSetup: () => {
                 const desired = this.captureMachineSetupDesired();
                 const elevation = this.captureMachineAdminAccess();
-                const port = this.captureMachineMetadataFieldPort();
                 const custodianAccountId = readAccountIdFromToken(this.token) ?? undefined;
                 return { readDesired: desired.read, elevation,
-                    settleCaddyFirewall: input => settleMachineCaddyFirewallForHost({ ...input, port,
+                    settleCaddyFirewall: input => settleMachineCaddyFirewallForHost({ ...input,
                         readDaemonProof: () => observeOwnDaemonReachability({ client: this, custodianAccountId, signal: input.signal }) }),
-                    settlePrivateWorkloadFirewall: input => settleMachinePrivateWorkloadFirewallForHost({ ...input, port,
+                    settlePrivateWorkloadFirewall: input => settleMachinePrivateWorkloadFirewallForHost({ ...input,
                         readDaemonProof: () => observeOwnDaemonReachability({ client: this, custodianAccountId, signal: input.signal }) }),
                 };
             },

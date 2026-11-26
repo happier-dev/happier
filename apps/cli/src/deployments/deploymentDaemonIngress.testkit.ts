@@ -383,8 +383,8 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
                     if (current.status !== 'ready') throw new Error(`Machine administrator access is ${current.status}`);
                     return current.policy;
                 } },
-            settleCaddyFirewall: options => settleMachineCaddyFirewallForHost({ ...options, port, readDaemonProof: () => readDaemonProof(options.signal) }),
-            settlePrivateWorkloadFirewall: options => settleMachinePrivateWorkloadFirewallForHost({ ...options, port, readDaemonProof: () => readDaemonProof(options.signal) }),
+            settleCaddyFirewall: options => settleMachineCaddyFirewallForHost({ ...options, readDaemonProof: () => readDaemonProof(options.signal) }),
+            settlePrivateWorkloadFirewall: options => settleMachinePrivateWorkloadFirewallForHost({ ...options, readDaemonProof: () => readDaemonProof(options.signal) }),
         };
     }
     if (isolationNative && isolationMachine) {

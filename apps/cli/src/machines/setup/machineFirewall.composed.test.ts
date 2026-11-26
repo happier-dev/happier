@@ -244,6 +244,39 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(f.prompt).not.toHaveBeenCalled();
     });
 
+    it('adds the first Domain without writing a posture and preserves live SSH in both firewall stages', async () => {
+        const f = await fixture('preauthorized');
+        await f.setFirewallFacts({ interfaces: {
+            ens18: [{ address: '10.10.0.4', netmask: '255.255.255.0', family: 'IPv4',
+                mac: '00:00:00:00:00:01', internal: false, cidr: '10.10.0.4/24' }],
+        }, ssh4: 'LISTEN 0 128 10.10.0.4:2222 0.0.0.0:* users:(("sshd",pid=412,fd=4))\n' });
+        const read = vi.fn(async () => ({ status: 'ready' as const, metadata: { displayName: 'New Machine' }, metadataVersion: 1 }));
+        const compareAndSwap = vi.fn(async () => { throw new Error('Domain setup cannot write Machine metadata'); });
+        const staged: (string | undefined)[] = [];
+        await machineNativeEffectAdmission.run({
+            operation: { operationId: 'first-domain', kind: 'deployments.domains.add' },
+            keys: [{ kind: 'machineSetup' }],
+        }, native => settleMachineCaddyFirewallForHost({
+            machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
+            ...{ port: { read, compareAndSwap } },
+            elevation: f.deps,
+            readDaemonProof: async () => {
+                staged.push(f.readTable());
+                return { status: 'ready' };
+            },
+            caddy: { publicBindings: [{ requirementId: 'https', exposure: 'public', hostAddress: '0.0.0.0',
+                hostPort: 443, containerPort: 443, protocol: 'tcp' }] },
+        }));
+        expect(f.boundaryFailures).toEqual([]);
+        expect(read).not.toHaveBeenCalled();
+        expect(compareAndSwap).not.toHaveBeenCalled();
+        const sshRule = 'ip daddr 10.10.0.4 ip saddr 0.0.0.0/0 tcp dport 2222 accept';
+        expect(staged).toEqual([expect.stringContaining(sshRule), expect.stringContaining(sshRule)]);
+        expect(f.readTable()).toContain(sshRule);
+        expect(f.readTable()).toContain('tcp dport 443 accept');
+    });
+
     it('retains a workload through the Domain host and its real root CHECK/APPLY reconciliation', async () => {
         const f = await fixture('preauthorized');
         await f.setFirewallFacts({ interfaces: {
@@ -252,8 +285,6 @@ describe('firewall through the same P10 installed root invocation', () => {
             tun42: [{ address: '100.96.0.4', netmask: '255.255.0.0', family: 'IPv4',
                 mac: '00:00:00:00:00:02', internal: false, cidr: '100.96.0.4/16' }],
         } });
-        const metadata = { reachabilityPosture: { revision: 0,
-            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
         const bindings = { environmentId: 'database-environment', bindings: [{
             exposure: { requirementId: 'postgres', exposure: 'privateNetwork', providerId: 'selected-provider',
                 networkIdentity: 'selected-network', hostAddress: '100.96.0.4', hostPort: 25432, containerPort: 5432, protocol: 'tcp' },
@@ -265,8 +296,6 @@ describe('firewall through the same P10 installed root invocation', () => {
         }, native => settleMachineCaddyFirewallForHost({
             machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
             basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
-            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
-                compareAndSwap: async () => { throw new Error('Unchanged Domain posture cannot write Machine metadata'); } },
             elevation: f.deps,
             readDaemonProof: () => observeOwnDaemonReachability({ custodianAccountId: 'owner', client: {
                 isMachineControlRegistrationReady: () => true,
@@ -284,7 +313,6 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(f.readTable()).toContain('iifname "tun42" ip saddr 100.96.0.0/16 meta l4proto tcp ct original ip daddr 100.96.0.4 ct original proto-dst 25432 accept');
         expect(f.readTable()).toContain('tcp dport 443 accept');
         expect(f.readTable()).toContain('ct state new ct direction original ct status dnat drop');
-        expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
     });
 
     it.each(['ask', 'preauthorized'] as const)('retains Caddy and another workload when withdrawing a publication through the %s protected CHECK', async mode => {
@@ -310,8 +338,6 @@ describe('firewall through the same P10 installed root invocation', () => {
                 return { code: 0, stdout: JSON.stringify([container]), stderr: '' };
             throw new Error('Protected firewall inventory must not mutate Docker');
         });
-        const metadata = { reachabilityPosture: { revision: 0,
-            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
         const publication = (environmentId: string, hostPort: number) => MachineFirewallTransitionIntentV1Schema.parse({
             v: 1, kind: 'preserveSsh', caddy: {}, publicSsh: { kind: 'closed' }, privateWorkloadBindings: { environmentId, bindings: [{
                 exposure: { requirementId: 'database', exposure: 'privateNetwork', providerId: 'selected-provider',
@@ -324,8 +350,6 @@ describe('firewall through the same P10 installed root invocation', () => {
             keys: [{ kind: 'machineSetup' }] }, native => settleMachinePrivateWorkloadFirewallForHost({
             machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
             basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
-            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
-                compareAndSwap: async () => { throw new Error('Unchanged workload posture cannot write metadata'); } },
             elevation: f.deps, privateNetworks: [], privateWorkloadBindings,
             readDaemonProof: () => observeOwnDaemonReachability({ custodianAccountId: 'owner', client: {
                 isMachineControlRegistrationReady: () => true, callConnectedClientRpc: async () => ({ ok: true, result: {} }),
@@ -345,20 +369,15 @@ describe('firewall through the same P10 installed root invocation', () => {
         expect(f.readTable()).toContain('tcp dport 25432 accept');
         expect(f.readTable()).toContain('ct original proto-dst 25432 accept');
         expect(f.readTable()).not.toContain('25433');
-        expect(metadata.reachabilityPosture.management.publicSsh).toEqual({ kind: 'closed' });
     });
 
     it('keeps an unavailable private-workload Caddy fact as a typed protected CHECK refusal without APPLY', async () => {
         const f = await fixture('ask');
         f.setDocker(async () => ({ code: null, errorCode: 'ENOENT', stdout: '', stderr: '' }));
-        const metadata = { reachabilityPosture: { revision: 0,
-            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } };
         const pending = machineNativeEffectAdmission.run({ operation: { operationId: 'unavailable-private-workload', kind: 'deployments.deploy' },
             keys: [{ kind: 'machineSetup' }] }, native => settleMachinePrivateWorkloadFirewallForHost({
             machineId: 'machine', installationId: 'installation', operationId: native.operation.operationId, native,
             basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 },
-            port: { read: async () => ({ status: 'ready', metadata, metadataVersion: 1 }),
-                compareAndSwap: async () => { throw new Error('Unavailable inventory cannot write metadata'); } },
             elevation: f.deps, privateNetworks: [], privateWorkloadBindings: { environmentId: 'environment', bindings: [] },
             readDaemonProof: async () => { throw new Error('No APPLY or daemon ACK before native inventory'); },
         }));

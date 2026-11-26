@@ -12279,9 +12279,9 @@ A plain `machines.reachability.inspect` on a Machine with no saved posture retur
 posture format can represent the observed SSH access, the review includes a
 `configureInput` to save those settings unchanged. Submit that exact input to
 `machines.reachability.configure` through normal approval. If no input is supplied,
-use the native facts and the explicit change review. The Domain refusal
-`machine_network_review_required` identifies the serving Machine in
-`details.machineId` and the missing review in `details.requiredFact`.
+use the native facts and the explicit change review. Domain setup preserves the
+live SSH scope without reading or saving the Machine's reachability posture.
+Changes to SSH access still go through the reviewed Configure action.
 
 Reviewing an explicit first posture uses the same native observation as its plan
 basis while `posture` stays null. Configure observes those facts again and rejects
