@@ -64,6 +64,7 @@ import {
 import {
   PI_SHARED_CONTROL_BUSY_ERROR,
   PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
+  PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
 } from '../sharedControl/piSharedControlProtocol';
 import {
   buildPiContextTelemetryKeySuffix,
@@ -1295,7 +1296,8 @@ export class PiRpcBackend implements AgentBackend {
         turn = pendingTurn.promise;
         providerSendAttempted = true;
         try {
-          await this.sendCommand({ type: 'prompt', message }, 30_000, { processAlreadyEnsured: true });
+          const responseTimeoutMs = this.channelHost.kind === 'attached' ? PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS : 30_000;
+          await this.sendCommand({ type: 'prompt', message }, responseTimeoutMs, { processAlreadyEnsured: true });
           break;
         } catch (error) {
           const promptError = asError(error);
@@ -1433,7 +1435,7 @@ export class PiRpcBackend implements AgentBackend {
     this.wakeProviderIdleWaiters();
     await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi turn cancelled');
     const pendingTurn = this.pendingTurn;
-    await this.sendCommand({ type: 'abort' });
+    await this.sendCommand({ type: 'abort' }, this.channelHost.kind === 'attached' ? PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS : undefined);
     // Pi's successful abort response is an idle barrier: its RPC handler awaits the provider's
     // waitForIdle() before acknowledging. Settle the same local turn from that authoritative
     // boundary even if its preceding uncorrelated agent_end event was lost or misattributed.

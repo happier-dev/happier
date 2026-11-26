@@ -2,6 +2,7 @@ import {
   PI_SHARED_CONTROL_BUSY_ERROR,
   PI_SHARED_CONTROL_INDETERMINATE_OUTCOME,
   PI_SHARED_CONTROL_PROTOCOL_VERSION,
+  PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS,
   PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT,
   PI_SHARED_CONTROL_SUPPORTED_COMMANDS,
   PI_SHARED_CONTROL_UNSUPPORTED_COMMAND_ERROR,
@@ -13,7 +14,7 @@ function jsValue(value: unknown): string {
 }
 
 /** Module imports the shared-control fragment needs; the bridge composes them at its top. */
-export const PI_SHARED_CONTROL_BRIDGE_IMPORTS = 'import { connect } from "node:net";';
+export const PI_SHARED_CONTROL_BRIDGE_IMPORTS = 'import { connect } from "node:net";\nimport { AsyncLocalStorage } from "node:async_hooks";';
 
 /**
  * Shared-control half of the generated Pi bridge (`piSharedControlProtocol.ts` owns the wire
@@ -35,6 +36,7 @@ export const PI_SHARED_CONTROL_BRIDGE_IMPORTS = 'import { connect } from "node:n
 export function buildPiSharedControlBridgeSource(): string {
   return `
 const SHARED_CONTROL_PROTOCOL_VERSION = ${jsValue(PI_SHARED_CONTROL_PROTOCOL_VERSION)};
+const SHARED_CONTROL_RESPONSE_TIMEOUT_MS = ${jsValue(PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS)};
 const SHARED_CONTROL_SIDE_CHANNEL_EVENT = ${jsValue(PI_SHARED_CONTROL_SIDE_CHANNEL_EVENT)};
 const SHARED_CONTROL_SUPPORTED_COMMANDS = ${jsValue(PI_SHARED_CONTROL_SUPPORTED_COMMANDS)};
 const SHARED_CONTROL_BUSY_ERROR = ${jsValue(PI_SHARED_CONTROL_BUSY_ERROR)};
@@ -102,8 +104,12 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
   let live = true;
   let socket = null;
   let markerCount = 0;
-  // The web prompt sent to Pi and not yet attributed: { id, inputSeen, contested }.
+  // Carry the web dispatch through Pi's async input/auth hooks without matching prompt text.
+  const webDispatch = new AsyncLocalStorage();
   let pendingPrompt = null;
+  let withdrawalTimer = null;
+  let activeRun = false;
+  let startedWebDispatch = null;
   // The accepted web user message, by identity: its message_end is not mirrored back.
   let webMessage = null;
   // An idle-start input seen while no web prompt was pending whose run has not started yet.
@@ -113,6 +119,7 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
 
   const goInert = () => {
     live = false;
+    clearTimeout(withdrawalTimer);
     try { socket?.destroy(); } catch {}
   };
   const writeFrame = (frame) => {
@@ -122,12 +129,20 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
   const sendOut = (record) => writeFrame({ ch: "out", line: JSON.stringify(record) });
   const sendErr = (line) => writeFrame({ ch: "err", line });
   const respond = (id, command, success, extra) => sendOut({ id, type: "response", command, success, ...extra });
-  const settlePendingPrompt = (accepted) => {
+  const finishAbortsIfIdle = () => {
+    if (!live || !abortWaiters.length || activeRun || compacting || pendingPrompt?.withdrawn || !ctx.isIdle()) return;
+    for (const id of abortWaiters.splice(0)) respond(id, "abort", true);
+  };
+  const settlePendingPrompt = (accepted, withdrawnBeforeEffect = false) => {
     const prompt = pendingPrompt;
     if (!prompt) return;
     pendingPrompt = null;
+    clearTimeout(withdrawalTimer);
+    withdrawalTimer = null;
     if (accepted) {
       respond(prompt.id, "prompt", true, { data: { disposition: "started" } });
+    } else if (withdrawnBeforeEffect) {
+      respond(prompt.id, "prompt", false, { error: "Pi prompt stopped before starting" });
     } else {
       respond(prompt.id, "prompt", false, {
         error: "Pi could not attribute the start of this prompt; its delivery outcome is unknown",
@@ -172,21 +187,31 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
         respond(command.id, "prompt", true, { data: { disposition: "handled" } });
         return;
       }
-      // Pi emits this prompt's input event synchronously inside sendUserMessage: arm first.
-      pendingPrompt = { id: command.id, inputSeen: false, contested: false };
+      pendingPrompt = { id: command.id, inputSeen: false, contested: false, withdrawn: false, sentAt: Date.now() };
       try {
-        pi.sendUserMessage(message, { expandPromptTemplates: true });
+        webDispatch.run(pendingPrompt, () => pi.sendUserMessage(message, { expandPromptTemplates: true }));
       } catch (error) {
         pendingPrompt = null;
         throw error;
       }
     },
     abort: (command) => {
-      // A web prompt that has not started cannot be attributed after an abort.
-      settlePendingPrompt(false);
       ctx.abort();
-      if (ctx.isIdle()) respond(command.id, "abort", true);
-      else abortWaiters.push(command.id);
+      abortWaiters.push(command.id);
+      if (pendingPrompt && !pendingPrompt.withdrawn) {
+        pendingPrompt.withdrawn = true;
+        // Match the runner's prompt response deadline. Pi's void send API can silently fail
+        // preflight, so release the slot with an uncertain outcome if it never signals a start.
+        withdrawalTimer = setTimeout(() => {
+          if (!live) return;
+          settlePendingPrompt(false);
+          for (const id of abortWaiters.splice(0)) {
+            respond(id, "abort", false, { error: "Pi did not confirm the withdrawn prompt stopped" });
+          }
+        }, Math.max(0, SHARED_CONTROL_RESPONSE_TIMEOUT_MS - (Date.now() - pendingPrompt.sentAt)));
+        withdrawalTimer.unref();
+      }
+      finishAbortsIfIdle();
     },
     set_model: async (command) => {
       const model = ctx.modelRegistry.find(command.provider, command.modelId);
@@ -255,9 +280,20 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
   });
   sideChannel.attach(sendErr);
 
-  pi.on("input", (event) => {
-    // Input queued while Pi streams (steer/follow-up) never starts a run.
+  const on = (type, handler) => pi.on(type, (event) => {
+    if (!live) return;
+    try { return handler(event); } catch { goInert(); }
+  });
+  on("input", (event) => {
     if (event.streamingBehavior) return;
+    const dispatch = webDispatch.getStore();
+    if (dispatch?.withdrawn && event.source === "extension" && !dispatch.inputSeen) {
+      if (dispatch === pendingPrompt) {
+        settlePendingPrompt(false, true);
+        finishAbortsIfIdle();
+      }
+      return { action: "handled" };
+    }
     const prompt = pendingPrompt;
     if (prompt && !prompt.inputSeen && event.source === "extension") {
       prompt.inputSeen = true;
@@ -268,26 +304,37 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
     else unstartedIdleInput = true;
   });
 
-  pi.on("agent_start", () => {
+  on("before_agent_start", (event) => {
+    startedWebDispatch = event.messageType === "user" ? webDispatch.getStore() : null;
+    if (!startedWebDispatch?.withdrawn) return;
+    // Pi preserves an abort issued during before_agent_start until the agent starts.
+    ctx.abort();
+  });
+
+  on("agent_start", () => {
+    activeRun = true;
     unstartedIdleInput = false;
     sendOut({ type: "agent_start" });
   });
 
-  pi.on("message_start", (event) => {
+  on("message_start", (event) => {
     const message = event.message;
-    if (pendingPrompt?.inputSeen && message?.role === "user") {
-      const accepted = !pendingPrompt.contested;
-      settlePendingPrompt(accepted);
-      if (accepted) webMessage = message;
+    if (pendingPrompt && message?.role === "user") {
+      const ownStart = startedWebDispatch === pendingPrompt;
+      if (pendingPrompt.withdrawn ? ownStart : pendingPrompt.inputSeen) {
+        const accepted = pendingPrompt.withdrawn ? ownStart : !pendingPrompt.contested && !startedWebDispatch?.withdrawn;
+        settlePendingPrompt(accepted);
+        if (accepted) webMessage = message;
+      }
     }
     sendOut(event);
   });
 
-  pi.on("message_update", (event) => {
+  on("message_update", (event) => {
     sendOut(projectSharedControlMessageUpdate(event));
   });
 
-  pi.on("message_end", (event) => {
+  on("message_end", (event) => {
     const message = event.message;
     if (message?.role === "user") {
       if (message === webMessage) {
@@ -309,29 +356,44 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
   });
 
   for (const type of SHARED_CONTROL_FORWARDED_TOOL_EVENTS) {
-    pi.on(type, (event) => {
+    on(type, (event) => {
       sendOut(event);
     });
   }
 
   // Pi's extension agent_end has no willRetry and fires before retries and queued follow-ups;
   // agent_settled is the final idle signal, so the run ends there.
-  pi.on("agent_settled", () => {
-    settlePendingPrompt(false);
+  on("agent_settled", () => {
+    activeRun = false;
+    if (!pendingPrompt?.withdrawn || startedWebDispatch === pendingPrompt) settlePendingPrompt(false);
+    startedWebDispatch = null;
     webMessage = null;
     sendOut({ type: "agent_end", willRetry: false });
-    for (const id of abortWaiters.splice(0)) respond(id, "abort", true);
+    finishAbortsIfIdle();
   });
 
-  pi.on("session_before_compact", (event) => {
+  on("session_before_compact", (event) => {
     compacting = true;
     sendOut({ type: "compaction_start", reason: event.reason });
   });
-  pi.on("session_compact", (event) => {
+  on("session_compact", (event) => {
     compacting = false;
     sendOut({ type: "compaction_end", reason: event.reason, aborted: false, willRetry: event.willRetry === true });
+    if (event.reason === "manual") {
+      // On success Pi clears its compaction controller after all extension hooks return.
+      // Stop may arrive while a later hook is still holding that controller.
+      const deadline = Date.now() + SHARED_CONTROL_RESPONSE_TIMEOUT_MS;
+      const afterCompaction = () => {
+        if (!live || activeRun || compacting || Date.now() >= deadline) return;
+        try {
+          if (ctx.isIdle()) finishAbortsIfIdle();
+          else setTimeout(afterCompaction, 25).unref();
+        } catch { goInert(); }
+      };
+      setImmediate(afterCompaction).unref();
+    }
   });
-  pi.on("session_compact_failed", (event) => {
+  on("session_compact_failed", (event) => {
     compacting = false;
     sendOut({
       type: "compaction_end",
@@ -340,11 +402,13 @@ function startSharedControl(pi, ctx, endpoint, sideChannel) {
       willRetry: event.willRetry === true,
       ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {}),
     });
+    if (event.reason === "manual") finishAbortsIfIdle();
   });
 
-  pi.on("session_shutdown", (event) => {
+  on("session_shutdown", (event) => {
     writeFrame({ type: "bye", reason: event.reason });
     live = false;
+    clearTimeout(withdrawalTimer);
     socket.end();
   });
 

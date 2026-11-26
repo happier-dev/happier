@@ -56,6 +56,8 @@ let sessionId = "pi-session-1";
 let idle = true;
 let firstTurn = true;
 let holdNextRun = false;
+let preflightGate = null;
+let openPreflightGate = null;
 let abortSettleGate = null;
 let openAbortSettleGate = null;
 let currentRun = null;
@@ -110,7 +112,7 @@ async function runAgent(text, hold, immediate = false) {
   currentRun = run;
   if (!immediate) await tick();
   idle = false;
-  await emit("before_agent_start", { prompt: text, systemPrompt: "Pi system prompt" });
+  await emit("before_agent_start", { messageType: "user", prompt: text, systemPrompt: "Pi system prompt" });
   await emit("agent_start");
   if (firstTurn) {
     firstTurn = false;
@@ -161,6 +163,11 @@ async function runAgent(text, hold, immediate = false) {
 function submit(source, text, hold) {
   // Pi emits input synchronously; the run (and isIdle() === false) starts after it returns.
   emitNow("input", { source, text });
+  if (source === "extension" && preflightGate) {
+    report({ kind: "preflight_waiting", text });
+    void preflightGate.then(() => runAgent(text, hold));
+    return;
+  }
   void runAgent(text, hold);
 }
 
@@ -216,6 +223,14 @@ process.on("message", async (command) => {
     case "release":
       currentRun?.release();
       break;
+    case "gate-preflight":
+      preflightGate = new Promise((resolve) => { openPreflightGate = resolve; });
+      report({ kind: "armed", command: command.kind });
+      break;
+    case "finish-preflight":
+      openPreflightGate?.();
+      preflightGate = null;
+      break;
     case "gate-abort-settle":
       abortSettleGate = new Promise((resolve) => { openAbortSettleGate = resolve; });
       report({ kind: "armed", command: command.kind });
@@ -249,10 +264,10 @@ await loadExtensions("startup");
 
 type FakePiReport = Readonly<{ kind: string; [field: string]: unknown }>;
 /** Shapes how Pi handles what arrives next; acknowledged because IPC is not ordered with the socket. */
-type FakePiArming = Readonly<{ kind: 'hold-next-run' | 'gate-abort-settle' }>;
+type FakePiArming = Readonly<{ kind: 'hold-next-run' | 'gate-preflight' | 'gate-abort-settle' }>;
 type FakePiCommand =
   | Readonly<{ kind: 'type'; text: string; hold?: boolean }>
-  | Readonly<{ kind: 'release' | 'settle' | 'reload' }>
+  | Readonly<{ kind: 'release' | 'finish-preflight' | 'settle' | 'reload' }>
   | Readonly<{ kind: 'new'; sessionId: string; text?: string }>
   | Readonly<{ kind: 'quit'; code: number }>;
 
@@ -260,13 +275,13 @@ const WAIT = { timeout: 10_000, interval: 10 } as const;
 const BOUND_SESSION_ID = 'pi-session-1';
 
 const cleanups: Array<() => Promise<void> | void> = [];
-const untouchedTerminalChecks: Array<() => void> = [];
+const untouchedTerminalChecks: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   try {
-    for (const check of untouchedTerminalChecks.splice(0)) check();
-  } finally {
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  } finally {
+    for (const check of untouchedTerminalChecks.splice(0)) await check();
   }
 });
 
@@ -314,6 +329,13 @@ async function startSharedTerminal() {
     const whenExited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       launched.once('exit', (code, signal) => resolve({ code, signal }));
     });
+    const whenClosed = new Promise<void>((resolve) => { launched.once('close', () => resolve()); });
+    untouchedTerminalChecks.push(async () => {
+      await whenClosed;
+      // Capture all output, including bytes delivered after exit or written during shutdown.
+      expect(terminalOutput).toBe('');
+      expect(reports.filter((report) => report.kind === 'notify' || report.kind === 'extension_error')).toEqual([]);
+    });
     return {
       whenExited,
       terminate: async () => {
@@ -353,12 +375,6 @@ async function startSharedTerminal() {
   const port = createSessionPort();
   const { sessionId } = await backend.startSession();
   host.publishLocalControl(port.session);
-
-  untouchedTerminalChecks.push(() => {
-    // Pi owns the terminal: nothing in the bridge path may print to it or use the TUI notifier.
-    expect(terminalOutput).toBe('');
-    expect(reports.filter((report) => report.kind === 'notify' || report.kind === 'extension_error')).toEqual([]);
-  });
 
   const since = (mark: number) => messages.slice(mark);
   const reported = (kind: string) => reports.filter((report) => report.kind === kind);
@@ -403,6 +419,7 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
 
     await pi.backend.sendPrompt(pi.sessionId, 'hello from the web');
 
+    await pi.waitForReport('sendUserMessage', (report) => report.content === 'hello from the web');
     expect(pi.webPrompts()).toEqual([{ content: 'hello from the web', sessionId: BOUND_SESSION_ID }]);
     expect(pi.reported('sendUserMessage')[0]).toMatchObject({ options: { expandPromptTemplates: true } });
     expect(pi.deltas(mark)).toEqual(['echo: ', 'hello from the web']);
@@ -444,10 +461,32 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     expect((await held.admission).status).toBe('accepted');
     await held.completion;
 
+    await pi.waitForReport('sendUserMessage', (report) => report.content === 'web prompt while the terminal works');
     expect(pi.webPrompts()).toEqual([{ content: 'web prompt while the terminal works', sessionId: BOUND_SESSION_ID }]);
     expect(pi.userRows(mark)).toEqual(['long terminal task']);
     expect(pi.deltas(mark)).toEqual(['echo: ', 'long terminal task', 'echo: ', 'web prompt while the terminal works']);
     expect(pi.statuses(mark)).toEqual(['running', 'idle', 'running', 'idle']);
+  });
+
+  it('keeps Stop pending through web input preflight and aborts the run as it starts', async () => {
+    const pi = await startSharedTerminal();
+    const mark = pi.mark();
+    await pi.arm({ kind: 'gate-preflight' });
+    const prompt = pi.backend.sendPromptWithAdmission(pi.sessionId, 'web prompt in preflight');
+    await pi.waitForReport('preflight_waiting');
+
+    let stopped = false;
+    const stop = pi.backend.cancel(pi.sessionId).then(() => { stopped = true; });
+    await pi.waitForReport('abort');
+    await pi.roundTrip();
+    expect(stopped).toBe(false);
+
+    pi.tell({ kind: 'finish-preflight' });
+    await expect(prompt.admission).resolves.toMatchObject({ status: 'accepted' });
+    await stop;
+    expect(await pi.waitForReport('settled')).toMatchObject({ text: 'web prompt in preflight', aborted: true });
+    expect(pi.reported('abort')).toHaveLength(2);
+    expect(pi.userRows(mark)).toEqual([]);
   });
 
   it('stops a web run on abort and resolves the abort only once Pi has settled', async () => {
@@ -477,6 +516,7 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     expect(pi.deltas(mark)).toEqual(['echo: ']);
 
     await pi.backend.sendPrompt(pi.sessionId, 'after the abort');
+    await pi.waitForReport('sendUserMessage', (report) => report.content === 'after the abort');
     expect(pi.webPrompts().map((web) => web.content)).toEqual(['long web task', 'after the abort']);
   });
 
@@ -489,6 +529,7 @@ describe('Pi shared local control (bridge in a Pi TUI child, shared-terminal hos
     await pi.waitForReport('state_read', (report) => report.load === 2);
 
     await pi.backend.sendPrompt(pi.sessionId, 'web prompt after reload');
+    await pi.waitForReport('sendUserMessage', (report) => report.content === 'web prompt after reload');
     expect(pi.webPrompts()).toEqual([{ content: 'web prompt after reload', sessionId: BOUND_SESSION_ID }]);
 
     const mark = pi.mark();

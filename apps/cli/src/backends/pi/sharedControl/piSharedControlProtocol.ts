@@ -24,6 +24,9 @@ import type { PiRpcCommandWithoutId } from '../rpc/types';
  */
 export const PI_SHARED_CONTROL_PROTOCOL_VERSION = 1;
 
+/** Response budget shared by prompt admission and the bridge's Stop barrier. */
+export const PI_SHARED_CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
+
 /**
  * Pre-auth bound: the most bytes the runner reads before the first newline on an unauthenticated
  * connection. Protects the runner from unauthenticated local peers. Derivation: the hello carries a
