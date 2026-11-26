@@ -929,7 +929,11 @@ export function resolveSocketRpcSameAccountSessionAuthorizationV1(
     && rule.method === SESSION_RPC_METHODS.EXECUTION_RUN_START)) return null;
   if (rule.serverMintedContext === 'session.read') return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_READ, sessionId };
   if (rule.serverMintedContext !== undefined) return null;
-  return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId };
+  // This caller holds the Session's own Account: owner-classified rows and an
+  // admitted Run start carry the same owner proof Home forwards.
+  const owner = rule.authority === 'sessionOwner' || rule.method === SESSION_RPC_METHODS.EXECUTION_RUN_START;
+  return { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId,
+    ...(owner ? { authority: 'sessionOwner' as const } : {}) };
 }
 
 /** The relay's caller acknowledgement for one target response (envelope v1 or a bare result). */

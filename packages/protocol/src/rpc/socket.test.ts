@@ -7,7 +7,7 @@ it('retains Home admission for fresh starts while a trusted admitted start recei
   const method = SESSION_RPC_METHODS.EXECUTION_RUN_START;
   expect(socketProtocol.resolveSocketRpcSameAccountSessionAuthorizationV1(method, 'session-a')).toBeNull();
   expect(socketProtocol.resolveSocketRpcSameAccountSessionAuthorizationV1(method, 'session-a', { admittedAgentStart: true }))
-    .toEqual({ kind: 'session.write', sessionId: 'session-a' });
+    .toEqual({ kind: 'session.write', sessionId: 'session-a', authority: 'sessionOwner' });
   // Admission of a start supplies neither a permission actor nor another Session's access.
   expect(socketProtocol.resolveSocketRpcSameAccountSessionAuthorizationV1(RPC_METHODS.SESSION_PERMISSION_RESPOND,
     'session-a', { admittedAgentStart: true })).toBeNull();

@@ -769,6 +769,7 @@ async function startAdmittedExecutionRunInWorkspace(
       ...(executionAuthorization ? { executionAuthorization } : {}),
       ...(readScmComparisonOperations() ? { scmComparisonOperations: readScmComparisonOperations() } : {}),
       ...(args.params.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: args.params.requesterWorkAttributionV1 } : {}),
+      ...(args.params.installedReviewCustody ? { installedReviewCustody: args.params.installedReviewCustody } : {}),
       callId,
       sidechainId,
       sessionId: args.params.sessionId,

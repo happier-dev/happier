@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type {
@@ -4089,5 +4090,102 @@ describe('executionRuns session RPC handlers', () => {
     expect(started.runId, JSON.stringify(started)).toMatch(/^run_/);
     expect(calls.loadSession).toEqual(['vendor_1']);
     expect(calls.startSession).toBe(0);
+  });
+});
+
+describe('installed Account Review custody for another Account Run on this Machine', () => {
+  const aliceToken = `e30.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
+  const findings = JSON.stringify({ findings: [{ id: 'f1', title: 'Injected', severity: 'high', category: 'correctness',
+    summary: 'Bob wrote this into Alice Review.' }], summary: 'Summary.' });
+  const binding = { accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
+    accountEncryptionMode: 'plain', serverIdentityId: 'srv_execution_run_test', machineId: 'execution-run-machine',
+    installationId: 'execution-run-installation', actionId: 'execution.run.start', requestId: 'review-custody-start',
+    requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'execution-run-machine' } } as const;
+  it.each([
+    { name: 'guest Machine admission', allowed: false, rpcContext: { verifyMachineAdmissionCurrent: async () => true,
+      machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'execution-run-machine',
+        installationId: 'execution-run-installation', role: 'manage', encryptionMode: 'plain' } } },
+    { name: 'external-action start', allowed: false, rpcContext: { callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1, token: 'fixture-private-root', binding }) } },
+    { name: 'installed owner', allowed: true, rpcContext: {} },
+  ] as const)('spends installed Review ports only for an admitted start ($name)', async ({ rpcContext, allowed }) => {
+    const realDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => ({ token: aliceToken, encryption: null }) as Credentials });
+    const commentCalls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    let manager: ExecutionRunHostBridge | null = null;
+    const client = createEncryptedRpcTestClientBase({
+      scopePrefix: 'machine',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: null, cwd: process.cwd(), parentProvider: 'daemon.executionRuns',
+          runtimeAccountId: 'alice', machineId: 'execution-run-machine',
+          createBackend: () => createStaticBackend(findings),
+          sendAcp: async () => {},
+          // The real installed comment port; HTTP below it is the boundary.
+          actionApprovalDeps: { ...realDeps, reviewCommentAction: async request => {
+            commentCalls.push(request.actionId);
+            return await realDeps.reviewCommentAction!(request);
+          } },
+          onManagerCreated: created => { manager = created; },
+        });
+      },
+    });
+    await client.manager.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      sessionId: null, intent: 'review', modelSelection: null,
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      intentInput: { reviewRound: { reviewId: 'alice-review', roundOrdinal: 1 }, reviewReviewerId: 'r1' },
+    }, { rpcContext } as never);
+    const bridge = manager as ExecutionRunHostBridge | null;
+    for (const run of bridge?.listPublic() ?? []) await bridge?.waitForTerminal(run.runId);
+    await vi.waitFor(() => expect(bridge?.listPublic().every(run => run.status !== 'running')).toBe(true));
+    const reviewHttp = [...vi.mocked(axios.post).mock.calls, ...vi.mocked(axios.get).mock.calls]
+      .map(call => String(call[0])).filter(url => url.includes('review'));
+    if (allowed) {
+      await vi.waitFor(() => expect(commentCalls).toContain('reviews.comments.create'));
+    } else {
+      expect(commentCalls).toEqual([]);
+      expect(reviewHttp).toEqual([]);
+    }
+  });
+
+  it('admits the Session owner attached Review Run started through Home Session RPC', async () => {
+    const realDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => ({ token: aliceToken, encryption: null }) as Credentials });
+    const commentCalls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    let manager: ExecutionRunHostBridge | null = null;
+    let startHandler: ((request: unknown, context: unknown) => Promise<unknown>) | undefined;
+    createEncryptedRpcTestClientBase({
+      scopePrefix: 'sess_alice',
+      registerHandlers: (rpc) => {
+        // invokeLocal drops transport authorization; call the registered handler as Home delivers it.
+        const register = rpc.registerHandler.bind(rpc);
+        rpc.registerHandler = ((method: string, handler: never, ...rest: never[]) => {
+          if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) startHandler = handler;
+          return register(method, handler, ...rest);
+        }) as typeof rpc.registerHandler;
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_alice', cwd: process.cwd(), parentProvider: 'claude',
+          runtimeAccountId: 'alice', machineId: 'execution-run-machine',
+          createBackend: () => createStaticBackend(findings),
+          sendAcp: async () => {},
+          actionApprovalDeps: { ...realDeps, reviewCommentAction: async request => {
+            commentCalls.push(request.actionId);
+            return await realDeps.reviewCommentAction!(request);
+          } },
+          onManagerCreated: created => { manager = created; },
+        });
+      },
+    });
+    if (!startHandler) throw new Error('The attached Run start handler must be registered');
+    await startHandler({
+      sessionId: 'sess_alice', intent: 'review', modelSelection: null,
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      intentInput: { reviewRound: { reviewId: 'alice-review', roundOrdinal: 1 }, reviewReviewerId: 'r1' },
+    }, { authorization: { kind: 'session.write', sessionId: 'sess_alice', authority: 'sessionOwner' } });
+    const bridge = manager as ExecutionRunHostBridge | null;
+    for (const run of bridge?.listPublic() ?? []) await bridge?.waitForTerminal(run.runId);
+    await vi.waitFor(() => expect(commentCalls).toContain('reviews.comments.create'));
   });
 });

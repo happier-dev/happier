@@ -107,10 +107,16 @@ describe('Session work admission after Machine grant withdrawal', () => {
             registerSocketRpcHandlers({ userId: editor.id, socket: editorSocket as unknown as Socket, io,
                 sessionPublisherPresence: presence });
             expect(await call(SESSION_RPC_METHODS.SESSION_GOAL_SET, editorSocket)).toMatchObject({ ok: true, result: { delivered: true } });
+            // A share editor's ordinary input carries no owner proof.
+            expect(emitWithAck.mock.calls[0]?.[1]).not.toHaveProperty('authorization.authority');
             expect(await call(SESSION_RPC_METHODS.EXECUTION_RUN_START, editorSocket)).toMatchObject({
                 ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
             });
             expect(emitWithAck).not.toHaveBeenCalled();
+            // Home admits a fresh Run start only for the Session's own Account and forwards that proof.
+            expect(await call(SESSION_RPC_METHODS.EXECUTION_RUN_START)).toMatchObject({ ok: true, result: { delivered: true } });
+            expect(emitWithAck.mock.calls[0]?.[1]).toMatchObject({
+                authorization: { kind: 'session.write', sessionId: session.id, authority: 'sessionOwner' } });
 
             for (const method of workMethods) {
                 expect(await call(method), method).toMatchObject({ ok: true, result: { delivered: true } });

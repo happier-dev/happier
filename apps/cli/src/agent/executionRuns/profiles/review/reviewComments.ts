@@ -74,8 +74,15 @@ export function createReviewRunCommentService(deps: Readonly<{
   /** Host-bound live Session Agent; absence never falls back to Account user authority. */
   resolveTriageActor?: () => Extract<ReviewCommentPrincipalHeaderV1['actor'], { kind: 'agent' }> | null;
 }>) {
+  // These ports spend the installed Account; a Run consumes its start admission.
+  const requireInstalledCustody = (run: Pick<ExecutionRunState, 'installedReviewCustody'>) => {
+    if (run.installedReviewCustody === 'refused') {
+      throw Object.assign(new Error('Review custody was not admitted for this Run'), { code: 'review_comment_permission_denied' });
+    }
+  };
   return {
     async prepareNewRound(run: ExecutionRunState) {
+      requireInstalledCustody(run);
       if (!deps.reviewRecords) throw Object.assign(new Error('Review records are unavailable'), { code: 'review_record_unavailable' });
       const reviewRecords = deps.reviewRecords;
       const reviewInput = ReviewStartInputSchema.parse(run.intentInput);
@@ -107,6 +114,7 @@ export function createReviewRunCommentService(deps: Readonly<{
     async settleRound(run: ExecutionRunState): Promise<void> {
       const input = record(run.intentInput);
       if (run.intent !== 'review' || input?.reviewRoundSettlement !== 'execution') return;
+      requireInstalledCustody(run);
       const binding = ReviewRoundBindingV1Schema.safeParse(input.reviewRound);
       if (!binding.success) return;
       if (!deps.reviewRecords || !deps.scope.workspace) {
@@ -137,6 +145,8 @@ export function createReviewRunCommentService(deps: Readonly<{
       agentId: string; reviewerId: string; cwd?: string; intentInput?: unknown;
     }> }>)): Promise<ReviewRunMaterialization> {
       const engineId = params.run ? params.run.backendId : params.session.agentId;
+      if (params.run?.installedReviewCustody === 'refused') return { engineId, status: 'failed', commentIds: [], comments: [],
+        failures: params.findings.map(finding => ({ findingId: finding.id, errorCode: 'review_comment_permission_denied' })) };
       const producingRunId = params.run ? params.run.runId : params.session.workflowRunId;
       const producingCallId = params.run ? params.run.callId : params.session.localInputId;
       const producingSessionId = params.run ? params.run.sessionId : params.session.sessionId;

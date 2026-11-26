@@ -1928,9 +1928,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         ...(requesterDecisionAuthentication ? { authentication: requesterDecisionAuthentication } : {}),
                     }
                     : { kind: "session.write", sessionId,
-                        // Owner-classified operations were admitted only for the
-                        // Session owner above; the receiver consumes that proof.
+                        // Owner-classified operations, and a fresh Run start (admitted
+                        // above only for the Session's own Account), carry that proof.
                         ...(sessionAuthorization.authority === "sessionOwner"
+                            || sessionAuthorization.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+                                && sessionWriteTargetUserId === actorAccountId
                             ? { authority: "sessionOwner" as const } : {}),
                     };
             }

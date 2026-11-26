@@ -388,7 +388,8 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       await expect(call(SESSION_RPC_METHODS.SESSION_MANAGED_SERVICES_CUSTODY_V1, { v: 1, kind: 'readAdoptedPublicOutcome' }))
         .resolves.toMatchObject({ runs: [] });
       expect(relay.calls).toBe(0);
-      expect(live.seen.at(-1)!.authorization).toEqual({ kind: 'session.write', sessionId: SESSION });
+      // The same-Account channel carries the owner proof Home forwards for owner-classified rows.
+      expect(live.seen.at(-1)!.authorization).toEqual({ kind: 'session.write', sessionId: SESSION, authority: 'sessionOwner' });
     } finally { await live.retire(); }
   });
 

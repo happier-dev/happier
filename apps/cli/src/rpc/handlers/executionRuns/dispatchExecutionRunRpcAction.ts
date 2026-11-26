@@ -7,7 +7,7 @@ import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureRequestSchema
 import { ExecutionRunCancelTurnRequestSchema } from '@happier-dev/protocol/execution/runs/cancelTurn';
 import { ExecutionRunGetRequestSchema, ExecutionRunListRequestSchema, readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails, ExecutionRunTransportErrorCodeSchema, type ExecutionRunStartFailureDetailsV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
-import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { canUseLocalRuntimeReviewAccount, projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { ExecutionRunTurnStreamCancelRequestSchema, ExecutionRunTurnStreamStartRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
@@ -161,6 +161,8 @@ type ExecutionRunRpcActionDepsParams = Readonly<{
 }>;
 
 type ExecutionRunRpcActionContext = Readonly<{
+  /** Installed host Account whose Review ports this registration holds. */
+  runtimeAccountId?: string;
   projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   /** The handler's fixed authoritative scope; null is the daemon detached scope. */
@@ -552,8 +554,16 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           })
           : undefined;
       }
+      // Decide once whether this Review Run may spend the installed Account's
+      // Review ports; materialization and settlement consume the stamp.
+      const reviewBound = parsed.data.intent === 'review'
+        || isRecord(parsed.data.intentInput) && parsed.data.intentInput.reviewRound !== undefined;
+      const installedReviewCustodyRefused = reviewBound && !await canUseLocalRuntimeReviewAccount(
+        actionOptions?.runtimeAccountContext ?? { ...actionOptions, serverId: actionOptions?.serverId ?? params.context.serverId },
+        params.context.runtimeAccountId ?? null, params.context.serverId);
       const started = await params.manager.start({
         ...runStartRequest,
+        ...(installedReviewCustodyRefused ? { installedReviewCustody: 'refused' as const } : {}),
         ...(sessionId === null && nativeSandbox !== undefined ? { nativeSandbox } : {}),
         ...(parsed.data.intent === 'voice_agent' ? {
           actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, actionId),

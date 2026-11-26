@@ -55,6 +55,8 @@ export type ExecutionRunManagerStartParams = Readonly<{
   projectSetupOperation?: import('@/workspaces/projectSetup/projectSetupExecution').ProjectSetupOperationContext;
   /** Nonsecret host-admitted custody identity; never accepted from authored Run input. */
   requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
+  /** Start admission refused this Review Run the installed Account's Review ports. */
+  installedReviewCustody?: 'refused';
   /** Session association is explicit; `null` is a daemon-owned detached run. */
   sessionId: string | null;
   /** Absolute depth stamped by host admission; parent refs are correlation only. */
@@ -208,6 +210,8 @@ export type ExecutionRunState = Readonly<{
   scmComparisonOperations?: import('@/scm/comparisons/comparisonOperations').ScmComparisonOperations;
   /** Retained with this accepted occurrence, independently of public Run state. */
   requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
+  /** Start admission refused this Review Run the installed Account's Review ports. */
+  installedReviewCustody?: 'refused';
   /** Resolved host runtime engine, rather than a requested launch preference. */
   effectiveEngine?: Readonly<{ agentId: string; modelId?: string }>;
   runId: string;

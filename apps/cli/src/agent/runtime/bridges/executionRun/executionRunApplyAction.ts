@@ -153,6 +153,8 @@ async function dispatchExecutionRunAction(args: ApplyExecutionRunActionArgs): Pr
     const continueRetained = continuity.continuity === 'continues';
     const retainedStartContext = {
       ...(run.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: run.requesterWorkAttributionV1 } : {}),
+      // A later round consumes its parent's start admission.
+      ...(run.installedReviewCustody ? { installedReviewCustody: run.installedReviewCustody } : {}),
       ...(run.roleId ? { roleId: run.roleId } : {}),
     };
 
