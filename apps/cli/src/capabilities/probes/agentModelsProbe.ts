@@ -14,6 +14,7 @@ import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContr
 import { readSessionModelStateFromConfigOptions } from '@/agent/acp/sessionSettings/sessionSettingsState';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import {
   getAgentModelConfig,
   getAgentStaticModels,
@@ -112,10 +113,6 @@ function resolveAgentModelConfigForLookupId(agentId: CatalogAgentLookupId) {
       : null);
 }
 
-function hasStaticAgentModelsFallback(agentId: CatalogAgentLookupId): boolean {
-  return resolveAgentModelConfigForLookupId(agentId) !== null;
-}
-
 function buildDefaultModelPlaceholder(): ProbedAgentModel {
   // This selects the native default without claiming a concrete model identity.
   // The native projection applies its Agent's declared JSON contract; configured
@@ -184,27 +181,6 @@ function resolveDynamicProbeFailureFallback(agentId: CatalogAgentLookupId): Prob
     return buildUnavailable(agentId);
   }
   return buildStatic(agentId, cfg);
-}
-
-function tryResolveAgentCliLaunchSpec(agentId: CatalogAgentLookupId, processEnv?: NodeJS.ProcessEnv) {
-  try {
-    return resolveAgentCliLaunchSpec(agentId, { processEnv });
-  } catch {
-    // An installed Agent without a current CLI runtime contribution must not borrow
-    // a bundled Agent's metadata or turn an unavailable probe into a fallback.
-    return null;
-  }
-}
-
-function shouldFailClosedForMissingCli(params: {
-  agentId: CatalogAgentLookupId;
-  env: NodeJS.ProcessEnv;
-  backendTarget?: BackendTargetRefV1;
-  runtimeDescriptorV1?: RuntimeDescriptorV1;
-}): boolean {
-  if (params.backendTarget?.kind === 'configuredAcpBackend') return false;
-  if (!hasStaticAgentModelsFallback(params.agentId)) return false;
-  return tryResolveAgentCliLaunchSpec(params.agentId, params.env) === null;
 }
 
 function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
@@ -536,9 +512,18 @@ async function probeAgentModels(params: {
       agentModelsProbeCache.setSuccess(cacheKey, result, { nowMs: Date.now(), ttlMs });
       return result;
     };
-    if (shouldFailClosedForMissingCli({ ...params, env })) {
-      const unavailable = buildUnavailable(params.agentId);
-      return failedResult(unavailable);
+    if (!configuredAcp && modelConfig) {
+      try {
+        if (!resolveAgentCliLaunchSpec(params.agentId, { processEnv: env })) {
+          return failedResult({
+            ...buildUnavailable(params.agentId),
+            failureCause: { phase: 'client_start', failureReason: 'unknown', code: SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING },
+          });
+        }
+      } catch (error) {
+        observeFailure(error);
+        return failedResult(buildUnavailable(params.agentId));
+      }
     }
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
 

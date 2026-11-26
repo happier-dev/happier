@@ -207,7 +207,11 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
         phase: 'codex.models.list', errorClass: 'TypeError', errorCode: null, httpStatus: status,
       } });
       expect(JSON.stringify(result)).not.toMatch(/private provider|private_customer_token/);
-    } else expect(result).toEqual(outcome === 'empty' ? [] : null);
+    } else if (outcome === 'malformed') {
+      expect(result).toMatchObject({ availableModels: [], source: 'unavailable', refreshError: true, failureCause: {
+        phase: 'codex.models.list', errorClass: 'TypeError', errorCode: null, httpStatus: null,
+      } });
+    } else expect(result).toEqual([]);
   });
 
   it('declares exact app-server probes with host-owned diagnostics and cache policy', () => {

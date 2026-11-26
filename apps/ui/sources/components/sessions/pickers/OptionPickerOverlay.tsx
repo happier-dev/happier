@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { SurfaceAddress } from '@happier-dev/plugin-ui';
+import type { CapabilityInvokeFailure } from '@happier-dev/protocol/capabilities';
 import type { ThemeSelectionSurfaceBinding } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -155,6 +156,7 @@ export type OptionPickerProbeState = Readonly<{
     phase: 'idle' | 'loading' | 'refreshing';
     failed?: boolean;
     refreshErrorMessage?: string;
+    failureCause?: CapabilityInvokeFailure['failureCause'];
     onRefresh?: () => void;
     refreshAccessibilityLabel?: string;
     loadingAccessibilityLabel?: string;
@@ -380,6 +382,9 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     const probeFailureMessage = props.probe?.failed
         ? props.probe.refreshErrorMessage ?? t('agentInput.model.unavailable')
         : null;
+    const probeFailureCause = probeFailureMessage !== null ? props.probe?.failureCause : undefined;
+    const probeActionCause = probeFailureCause?.actionCause;
+    const probeFailureStatus = probeActionCause?.httpStatus ?? probeFailureCause?.httpStatus;
     // The state line is the failure's one voice, in a pane and a popover alike: it has the Retry a note cannot carry.
     const notes = props.notes ?? [];
     const headerNotes = multiColumn ? [] : notes;
@@ -734,6 +739,13 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                         size="line"
                         kind="error"
                         title={probeFailureMessage}
+                        diagnosticCode={probeFailureCause?.code ?? probeFailureCause?.providerErrorCode
+                            ?? probeActionCause?.errorCode ?? probeFailureCause?.failureReason}
+                        diagnosticDetail={probeFailureCause ? [
+                            probeActionCause?.phase ?? probeFailureCause.phase,
+                            probeActionCause?.errorClass,
+                            probeFailureStatus == null ? undefined : t('runs.runDetails.httpStatus', { status: probeFailureStatus }),
+                        ].filter(Boolean).join('\n') : undefined}
                         action={probe?.onRefresh ? { label: t('common.retry'), onPress: probe.onRefresh } : undefined}
                     />
                 ) : null}

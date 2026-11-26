@@ -1217,6 +1217,9 @@ deferred model picker, including inactive sessions. Opening the detail demands d
 uses the existing machine capability RPC and does not resume the conversation. The native results
 remain integrated with the session picker's existing Provider groups and exact model-selection
 action. Display and native selection admission consume the same resolved catalog context.
+When the Machine returns a typed model-probe cause, the picker exposes it in Technical details.
+An unavailable Codex executable and an invalid app-server model-list response carry distinct
+diagnostics. A valid empty model list is still a successful observation.
 
 In the current development source, a custom native Session publishes its live model and mode
 facts through `context.session.services.models.bind(source)` and

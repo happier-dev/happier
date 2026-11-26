@@ -1043,7 +1043,8 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
                 }),
             } : { canEnterCustomValue: false as const })}
             favoriteOptions={favoriteOptions && { ...favoriteOptions, shortcutSlotByKey: favoriteSlotByKey }}
-            probe={hasDiscoveryErrorLine && props.probe?.failed ? { ...props.probe, failed: false } : props.probe}
+            probe={hasDiscoveryErrorLine && props.probe?.failed && !props.probe.failureCause
+                ? { ...props.probe, failed: false } : props.probe}
             // Keep the handler stable even when a source declares no controls:
             // it owns the popup's ARIA pattern, independently of the selected row.
             selectedOptionControls={selectedOptionControls}

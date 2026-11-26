@@ -30,10 +30,13 @@ export function mergeOptionPickerProbes(
     )) ?? null;
     const failureMessage = candidates.find((candidate) => candidate.failed && candidate.refreshErrorMessage)?.refreshErrorMessage;
 
+    const failureCause = candidates.find((candidate) => candidate.failed && candidate.failureCause)?.failureCause;
+
     const merged: OptionPickerProbeState = {
         phase,
         failed: candidates.some((candidate) => candidate.failed === true),
         ...(failureMessage === undefined ? {} : { refreshErrorMessage: failureMessage }),
+        ...(failureCause === undefined ? {} : { failureCause }),
         ...(refreshFns.length > 0
             ? {
                 onRefresh: () => {

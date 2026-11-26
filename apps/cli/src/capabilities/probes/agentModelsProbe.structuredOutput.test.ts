@@ -38,6 +38,20 @@ describe('model probe structured output evidence', () => {
     expect(observation).not.toHaveProperty('spawnFailure');
   });
 
+  it('reports why a Machine without an available Codex executable cannot list models', async () => {
+    const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
+    if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');
+    vi.stubEnv('HAPPIER_CODEX_PATH', '/missing-codex-executable-for-model-probe');
+    vi.stubEnv('PATH', '');
+    const result = await probeAgentModelsBestEffort({
+      agentId: 'codex', catalogEntry: entry, cwd: '/missing-codex-model-catalog', bypassCache: true,
+    });
+    expect(result).toMatchObject({
+      source: 'unavailable', availableModels: [], refreshError: true, cacheable: false,
+      failureCause: { phase: 'client_start', code: 'agent_cli_missing' },
+    });
+  });
+
   it('keeps schema hints optional for an external Agent without a model catalog', async () => {
     const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
     if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');

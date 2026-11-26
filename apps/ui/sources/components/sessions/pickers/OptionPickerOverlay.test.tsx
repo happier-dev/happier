@@ -34,7 +34,7 @@ vi.mock('react-native', async () => {
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
   return createTextModuleMock({
-    translate: (key: string) => key,
+    translate: (key, params) => key === 'runs.runDetails.httpStatus' ? `HTTP ${params?.status}` : key,
   });
 });
 
@@ -1165,6 +1165,7 @@ describe('OptionPickerOverlay', () => {
 
   it('gives a failed probe one voice with its Retry in the popover too, never a bare note', async () => {
     const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+    const { mergeOptionPickerProbes } = await import('./mergeOptionPickerProbes');
     const onRefresh = vi.fn();
     const screen = await renderScreen(
       <OptionPickerOverlay
@@ -1173,7 +1174,13 @@ describe('OptionPickerOverlay', () => {
         selectedValue="default"
         emptyText="empty"
         canEnterCustomValue={false}
-        probe={{ phase: 'idle', failed: true, refreshErrorMessage: 'Codex could not list models', onRefresh }}
+        probe={mergeOptionPickerProbes([{
+          phase: 'idle', failed: true, refreshErrorMessage: 'Codex could not list models', onRefresh,
+          failureCause: {
+            phase: 'client_start', failureReason: 'unknown',
+            actionCause: { phase: 'codex.models.list', errorClass: 'TypeError', errorCode: null, httpStatus: 429 },
+          },
+        }])}
         onSelect={() => {}}
       />,
     );
@@ -1183,6 +1190,10 @@ describe('OptionPickerOverlay', () => {
     await act(async () => { await retry!.props.onPress(); });
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(screen.getTextContent().split('Codex could not list models')).toHaveLength(2);
+    expect(screen.getTextContent()).not.toContain('codex.models.list');
+    await act(async () => { screen.pressByTestId('model-picker-overlay-probe-failure-details-toggle'); });
+    expect(screen.getTextContent()).toContain('codex.models.list');
+    expect(screen.getTextContent()).toContain('429');
   });
 
   it('renders a loading hint when the probe is loading and only the default option is available', async () => {

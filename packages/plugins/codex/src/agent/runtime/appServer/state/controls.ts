@@ -432,8 +432,12 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
         currentModeId,
         availableModels,
         modelsObserved,
-        ...(modelsSettled.status === 'rejected' ? {
-            modelFailureCause: projectActionFailureCauseV1(modelsSettled.reason, 'codex.models.list', { allowUnknownErrorCode: false }),
+        ...(!modelsObserved ? {
+            modelFailureCause: projectActionFailureCauseV1(
+                modelsSettled.status === 'rejected' ? modelsSettled.reason : new TypeError('Invalid Codex model/list response'),
+                'codex.models.list',
+                { allowUnknownErrorCode: false },
+            ),
         } : {}),
         currentModelId,
         configOptions: [],
