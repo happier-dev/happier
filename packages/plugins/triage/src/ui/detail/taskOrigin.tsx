@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Button, Stack, Status, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Button, Stack, Status, Text, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1, TriageTaskOriginResourceResultV1Schema,
   type TriageTaskOriginErrorV1Schema } from '../../actions/taskOriginProtocol.js';
@@ -8,6 +8,7 @@ import { openTriageLinkedEntry } from '../navigation/openLinkedEntry.js';
 import { isHostCancellation } from '../../hostCancellation.js';
 import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
+import { useTriagePluralCount } from '../pluralCount.js';
 
 type OriginError = ReturnType<typeof TriageTaskOriginErrorV1Schema.parse>;
 
@@ -24,6 +25,23 @@ export function TriageTaskOriginLink({ origin }: Readonly<{ origin: OriginError 
         if (result.kind === 'refused' && result.reason === 'unavailable') await presentTriageMountedUiActionFailure(host, result.error, text);
       }} />
     {!failed ? null : <Status tone="warning" label={text('plugins.triage.tasks.origin.openFailed', 'The origin error could not be opened. Try the link again.')} />}
+  </Stack>;
+}
+
+/** Review context stays reference-only in both the draft and the saved Task. */
+export function TriageTaskReviewOriginLink({ origin }: Readonly<{ origin: TriageTaskOriginReviewV1 }>) {
+  const host = usePluginHostApi();
+  const text = usePluginTranslation();
+  const pluralCount = useTriagePluralCount();
+  return <Stack gap="small" align="flex-start">
+    <Button variant="plain" size="small" title={text('plugins.triage.tasks.review.origin', 'From Review')}
+      onPress={async () => {
+        try { await host.openResource({ kind: 'artifact', artifactId: origin.reviewId }); }
+        catch (error: unknown) { await presentTriageMountedUiActionFailure(host, error, text); }
+      }} />
+    <Text variant="meta" tone="secondary" value={pluralCount('tasks.review.findings', origin.findingIds.length, {
+      one: '{count} finding · decisions stay on the Review', other: '{count} findings · decisions stay on the Review',
+    })} />
   </Stack>;
 }
 
@@ -59,10 +77,6 @@ export function TriageTaskOrigin(props: Readonly<{ entryRef: TriageEntryRefV1; r
   if (origin === null && originReview === null) return null;
   return <Stack gap="small" align="flex-start">
     {origin === null ? null : <TriageTaskOriginLink origin={origin} />}
-    {originReview === null ? null : <Button variant="plain" size="small" title={text('plugins.triage.surface.session.review', 'Review')}
-      onPress={async () => {
-        try { await host.openResource({ kind: 'artifact', artifactId: originReview.reviewId }); }
-        catch (error: unknown) { await presentTriageMountedUiActionFailure(host, error, text); }
-      }} />}
+    {originReview === null ? null : <TriageTaskReviewOriginLink origin={originReview} />}
   </Stack>;
 }

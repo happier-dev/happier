@@ -26,7 +26,7 @@ import { triageTaskCreationPlacesKeyV1, useTriageTaskCreationPlaces, type Triage
 import { projectTriageTaskBlockersV1, projectTriageTaskPropertiesV1, TRIAGE_TASK_PROPERTY_FIELDS_V1, triageTaskFieldTitleV1, triageTaskRelationCandidatesV1 } from './taskProperties.js';
 import { projectTriageTaskDraftStatusV1 } from './taskDraftStatus.js';
 import { TriageSourceMark } from '../list/sourceMark.js';
-import { TriageTaskOriginLink } from './taskOrigin.js';
+import { TriageTaskOriginLink, TriageTaskReviewOriginLink } from './taskOrigin.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 import { taskWriteMessage, taskSourceLinkLabel } from '../taskWriteMessage.js';
 import { TaskWriteFailureDetails, TaskWriteNotice } from './TaskWriteNotice.js';
@@ -286,6 +286,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   const sessionTarget = props.draft?.linkSession ?? origin?.sessionId;
   const originContext = <Stack gap="small">
     {props.draft?.originError === undefined ? null : <TriageTaskOriginLink origin={props.draft.originError} />}
+    {props.draft?.originReview === undefined ? null : <TriageTaskReviewOriginLink origin={props.draft.originReview} />}
     {origin === undefined ? null : <Stack gap="small">
     {/* The message this task comes from, as one quiet line: its Session and its words, cut to the line. Pressing it
         opens that Session; the whole quote still travels with the draft. */}

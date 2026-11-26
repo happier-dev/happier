@@ -195,6 +195,12 @@ it.each([
       await mountPage();
       expect(document.body.textContent).toContain('Where does it belong?');
       await expect(page!.getByText(DRAFT_PURPOSE)).resolves.toEqual({ content: DRAFT_PURPOSE });
+      if ('originReview' in input) {
+        await page!.getByRole('button', { name: 'From Review' });
+        await page!.getByText('2 findings · decisions stay on the Review');
+        expect(received.fields).not.toHaveProperty('title');
+        expect(received.fields).not.toHaveProperty('body');
+      }
       // Context snapshots may reconstruct equal JSON after the form has taken custody.
       await act(async () => { await pageMount!.update({ ...page!.context, launchInput: { ...launch } }); });
       await expect(page!.getByText(DRAFT_PURPOSE)).resolves.toEqual({ content: DRAFT_PURPOSE });

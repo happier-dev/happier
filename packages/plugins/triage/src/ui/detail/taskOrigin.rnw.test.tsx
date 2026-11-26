@@ -72,12 +72,13 @@ it('reads requester Account origin backlinks without available Machine Actions o
     },
   });
   mounted.push(fixture);
-  await fixture.findByRole('button', { name: 'Review' });
+  await fixture.findByRole('button', { name: 'From Review' });
+  await fixture.getByText('2 findings · decisions stay on the Review');
   await fixture.getByRole('button', { name: 'From error: Original error' });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Unrelated 0' })); });
   expect(reads).toEqual([{ v: 1, entryRef }]);
   expect(executeAction).not.toHaveBeenCalled();
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Review' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'From Review' })); });
   expect(opens).toEqual([{ kind: 'artifact', artifactId: 'review-1' }]);
 });
 
