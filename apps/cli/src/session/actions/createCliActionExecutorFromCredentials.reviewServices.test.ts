@@ -171,6 +171,9 @@ it.each([
         machineId: 'machine', installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const },
         verifyMachineAdmissionCurrent: async () => true }, allowed: false },
     { name: 'owner', context: { runtimeAccountId: 'owner' }, allowed: true },
+    // Home admits the Run action RPC only for the Session owner and stamps that proof.
+    { name: 'Session owner over Session RPC', context: { rpcSessionAuthorization: { kind: 'session.write' as const,
+        sessionId: 'owner-session', authority: 'sessionOwner' as const } }, allowed: true },
 ])('admits a $name before a generic Run call spends installed Account Review ports', async ({ context, allowed }) => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const executor = createCliActionExecutor({ token, credentials: { token, encryption: null },

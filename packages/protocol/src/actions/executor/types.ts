@@ -991,7 +991,9 @@ export type ActionExecutorContext = Readonly<{
     isCurrent: () => Promise<boolean>;
   }>;
   /** Separately verified Session authority from the canonical RPC ingress; never Action input. */
-  rpcSessionAuthorization?: Readonly<{ kind: 'session.write'; sessionId: string }>;
+  rpcSessionAuthorization?: Readonly<{ kind: 'session.write'; sessionId: string;
+    /** Server-proven: Home admitted this owner-classified operation only for the Session owner. */
+    authority?: 'sessionOwner' }>;
   /** Exact current runtime occurrence, when the admitted Action is Run-bound. */
   runtimeRunId?: string;
   runtimeRunOccurrenceId?: string;

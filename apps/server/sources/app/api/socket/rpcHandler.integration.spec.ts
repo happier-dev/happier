@@ -495,6 +495,21 @@ describe("rpcHandler", () => {
         expect(target.emitWithAck).not.toHaveBeenCalled();
     });
 
+    it("forwards the admitted owner proof for an owner-classified Session operation", async () => {
+        const method = `${sessionId}:${SESSION_RPC_METHODS.SESSION_MESSAGE_REPLY}`;
+        const target = createTarget("owner-reply-socket", { ok: true });
+        const { io } = createIo({ [`rpc:${accountId}:${method}`]: [[target.socket]] });
+        const callerSocket = createAuthenticatedFakeSocket({ id: "session-owner", emit: vi.fn() });
+        rpcHandler(accountId, callerSocket as unknown as Socket, { io });
+        const handler = getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL);
+        const callback = vi.fn();
+        await handler({ method, params: "opaque-owner-reply" }, callback);
+        expect(callback).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
+        const forwarded = target.emitWithAck.mock.calls[0]?.[1];
+        expect(parseSocketRpcAuthorizationContext(forwarded.authorization))
+            .toEqual({ kind: "session.write", sessionId, authority: "sessionOwner" });
+    });
+
     it.each([SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, RPC_METHODS.SESSION_USER_ACTION_ANSWER])(
         "keeps shared-editor ordinary input and question RPC available without owner proof: %s", async rpcMethod => {
         await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId } });

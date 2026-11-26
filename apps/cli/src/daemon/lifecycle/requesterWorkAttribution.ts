@@ -96,6 +96,12 @@ export async function canUseLocalRuntimeReviewAccount(
   localAccountId: string | null,
   serverId?: string,
 ): Promise<boolean> {
+  // Home admitted an owner-classified Session operation only for the Session
+  // owner, whose own runner holds this Account: the owner acting for itself.
+  if (context?.rpcSessionAuthorization?.authority === 'sessionOwner' && !context.sessionActionOrigin) {
+    const { rpcSessionAuthorization: _owner, ...ownerContext } = context;
+    return await canUseLocalRuntimeAccount(ownerContext, localAccountId, serverId);
+  }
   if (!context?.sessionActionOrigin) return await canUseLocalRuntimeAccount(context, localAccountId, serverId);
   const { externalActionExecutionAuthorization, callerInputAuthorization, sessionActionOrigin, ...independentAuthority } = context;
   if (!localAccountId || carriesNonLocalRequesterAuthority(independentAuthority)) return false;
