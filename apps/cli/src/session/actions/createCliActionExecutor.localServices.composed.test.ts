@@ -1,4 +1,6 @@
 import axios from 'axios';
+import fastify from 'fastify';
+import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionExecuteFailureSchema, FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -28,6 +30,10 @@ import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
 import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
+import { decodeBase64, encodeBase64 } from '@/api/encryption';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
+import { registerAccountHomeHttp, registerMachineActionHomeHttp } from './widgetApproval.testkit';
 
 const { io, uiPreviewRpc, openOsBrowser } = vi.hoisted(() => ({ io: vi.fn(), uiPreviewRpc: vi.fn(), openOsBrowser: vi.fn() }));
 // Opening the platform browser is an OS boundary; the headless/TTY owner stays real.
@@ -64,10 +70,15 @@ function receivingMachineBoundary(response: unknown, actionId: ActionId = 'local
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
         }), storageMode: 'plain' } } };
     });
-    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
+        provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`, encryption: null };
+    const signing = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const installation = { version: 1 as const, installationId: '11111111-1111-4111-8111-111111111113', createdAt: 1,
+        publicKey: encodeBase64(signing.publicKey, 'base64url'), privateKey: encodeBase64(signing.secretKey, 'base64url') };
     const approvalActions: string[] = [];
     const { executor } = createCliActionExecutorHarness({ credentials, token: credentials.token, mode: 'plain', ctx: null,
         sessionId: 'session-a', serverId: 'home-a', serverIdentityId: 'srv_selected_home', serverHttpBaseUrl: 'https://selected-home.example',
+        externalActionMachineRequestPrivateKey: signing.secretKey, externalActionMachineInstallationId: installation.installationId,
         getCurrentSessionMetadata: () => ({ machineId: 'machine-a', path: '/accepted' }),
         actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(askFirst ? null : {
             v: 1, approvalWaivedSurfaces: { [actionId]: [surface] },
@@ -93,7 +104,7 @@ function receivingMachineBoundary(response: unknown, actionId: ActionId = 'local
         runtimeAccountId: 'owner', actionCaller: { kind: 'host' }, actionRequestId: 'cli-service-invocation', defaultSessionId: 'session-a',
         defaultSessionMachineId: 'machine-a',
         externalActionTarget: { kind: 'machine', machineId: 'machine-a' } };
-    return { executor, requests, get, context, approvalActions };
+    return { executor, requests, get, context, approvalActions, credentials, installation };
 }
 
 describe('credentialed CLI Local Services runtime dispatch', () => {
@@ -338,18 +349,41 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
     it('sends Stop for the exact owned occurrence through its canonical Action RPC and preserves its typed refusal', async () => {
         const response = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'stop-current', action: 'stop_managed',
             status: 'denied', reasonCode: 'managed_service_stop_unavailable', auditEvents: [] });
-        const { executor, requests, get, context } = receivingMachineBoundary(response, 'localServices.actions.stopManaged');
+        const { executor, requests, context, credentials, installation } = receivingMachineBoundary(response, 'localServices.actions.stopManaged');
+        // Stop requires the original Account's Home admission, then reaches the
+        // same native RPC boundary through the registered receiving daemon.
+        vi.mocked(axios.request).mockRestore();
+        vi.mocked(axios.get).mockRestore();
+        const app = fastify();
+        const features = registerAccountHomeHttp(app, { accountId: 'owner', serverId: 'srv_selected_home' });
+        app.get('/v1/features', async () => features);
+        app.get('/v1/features/authenticated', async () => features);
+        app.get('/v1/machines/machine-a', async () => ({ machine: {
+            id: 'machine-a', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+            installationId: installation.installationId, installationPublicKey: encodeBase64(decodeBase64(installation.publicKey, 'base64url')),
+            storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            metadata: JSON.stringify({ host: 'fixture', platform: 'linux', happyCliVersion: '0.3',
+                homeDir: '/home/fixture', happyHomeDir: '/home/fixture/.happier', installationPublicKey: installation.publicKey }),
+            metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+        } }));
+        await registerMachineActionHomeHttp(app, { accountId: 'owner', machineId: 'machine-a',
+            serverId: 'home-a', serverIdentityId: 'srv_selected_home', serverHttpBaseUrl: 'https://selected-home.example',
+            credentials, installation, executor, actionId: 'localServices.actions.stopManaged' });
+        const restore = installAxiosFastifyAdapter({ app, origin: 'https://selected-home.example' });
+        stubUndiciFetch(async () => Response.json({ id: 'owner' }));
         const reviewed = LocalServiceActionRequestV1Schema.parse({ requestId: 'stop-current', action: 'stop_managed',
             confirmationNonce: 'placeholder', target: { kind: 'managed_service', managedServiceId: 'actual-instance',
                 machineId: 'machine-a', workspaceId: 'accepted', cwd: '/accepted/web',
                 declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
                     source: { kind: 'native', tool: 'package_script', file: 'web/package.json', target: 'dev' } } } } });
         const input = { ...reviewed, confirmationNonce: createLocalServiceActionConfirmationNonceV1(reviewed) };
-        expect(await executor.execute('localServices.actions.stopManaged', input, context))
-            .toEqual({ ok: true, result: response });
-        expect(get).toHaveBeenCalled();
-        expect(requests).toEqual([expect.objectContaining({ method: `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_STOP_MANAGED}`,
-            params: { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId: 'machine-a' }, defaultSessionId: 'session-a' } })]);
+        try {
+            expect(await executor.execute('localServices.actions.stopManaged', input, context))
+                .toEqual({ ok: true, result: response });
+            expect(requests).toEqual([expect.objectContaining({ method: `machine-a:${RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_STOP_MANAGED}`,
+                params: { v: 1, kind: 'targeted_action_rpc', input, target: { kind: 'machine', machineId: 'machine-a' }, defaultSessionId: 'session-a' } })]);
+        } finally { restore(); await app.close(); }
     });
     it('returns the default CLI approval Artifact without issuing a Machine effect', async () => {
         const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/accepted' };

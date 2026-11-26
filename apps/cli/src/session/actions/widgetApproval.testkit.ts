@@ -2,7 +2,7 @@ import { onTestFinished, expect } from 'vitest';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ExternalActionServerPrincipalV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
+import { ExternalActionServerPrincipalV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionExecutionAuthorizationRequestV1Schema,
     ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
     ExternalActionExecutionAuthorizationVerifyResponseV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
@@ -85,7 +85,7 @@ export function createCounterWidgetFixture(): CounterWidgetFixture {
 }
 
 /** Model the Home's HTTP proof framing at the substituted transport boundary. */
-function registerActionHttpBodyBoundary(app: FastifyInstance) {
+export function registerActionHttpBodyBoundary(app: FastifyInstance) {
     app.addConstraintStrategy({
         name: 'externalActionRead', mustMatchWhenDerived: true,
         storage() {
@@ -209,12 +209,14 @@ export function createMachineApprovalReplayPreparer(input: MachineReceiverFixtur
 }
 
 /** Home HTTP/socket substitutions from remoteDecider; registered receiver and private custody stay real. */
-export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstance, input: Readonly<{
+export async function registerMachineActionHomeHttp(app: FastifyInstance, input: Readonly<{
     accountId: string; machineId: string; serverId: string; serverIdentityId: string; serverHttpBaseUrl: string;
     credentials: StoredCredentials;
     installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>;
     executor: ReturnType<typeof createCliActionExecutorHarness>['executor'];
     retainedAction?: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
+    actionId?: string;
+    accountEncryptionMode?: 'plain' | 'e2ee';
 }>) {
     const provenance = readAuthTokenProvenance(decodeJwtPayload(input.credentials.token), { allowLegacyHome: false });
     if (provenance?.provenance.kind !== 'account') throw new Error('Expected the fixture Account credential');
@@ -239,26 +241,31 @@ export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstan
         executor: input.executor,
         prepareRequesterAccountContext: createFixtureRequesterAccountContextPreparer(input, () => input.executor, lifetime.signal),
     });
-    const actionId = 'approval.request.decide';
+    const actionId = input.actionId ?? 'approval.request.decide';
     const issued = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
     const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+    const issue = (envelope: ReturnType<typeof ExternalActionRequestEnvelopeSchema.parse>) => {
+        expect(envelope.target).toEqual({ kind: 'machine', machineId: input.machineId });
+        const approvalDecisionAdmission = projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId, envelope });
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
+            token: `fixture-decision-admission-${computeExternalActionRequestEnvelopeDigestV1(envelope)}`, binding: {
+                serverIdentityId: input.serverIdentityId, accountId: principal.accountId, custodianAccountId: input.accountId,
+                authentication: principal.authentication, accountEncryptionMode: input.accountEncryptionMode ?? 'plain',
+                machineId: input.machineId, installationId: input.installation.installationId,
+                actionId, requestId: envelope.requestId, target: envelope.target,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(envelope.v === 2 && envelope.machineRuntimeDemand ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+                ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),
+            } });
+        issued.set(authorization.token, authorization);
+        return authorization;
+    };
     // This network fixture accepts only its existing bearer; caller input cannot select another principal.
     app.post(mintPath, async request => {
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
         const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
         expect(body.machineId).toBe(input.machineId);
-        expect(body.envelope.target).toEqual({ kind: 'machine', machineId: input.machineId });
-        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1,
-            token: `fixture-decision-admission-${computeExternalActionRequestEnvelopeDigestV1(body.envelope)}`, binding: {
-                serverIdentityId: input.serverIdentityId, accountId: principal.accountId, custodianAccountId: input.accountId,
-                authentication: principal.authentication, accountEncryptionMode: 'plain',
-                machineId: input.machineId, installationId: input.installation.installationId,
-                actionId, requestId: body.envelope.requestId, target: body.envelope.target,
-                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
-                approvalDecisionAdmission: projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId, envelope: body.envelope }),
-            } });
-        issued.set(authorization.token, authorization);
-        return authorization;
+        return issue(body.envelope);
     });
     const registerVerify = (verifiedActionId: string) => {
         const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(verifiedActionId);
@@ -283,10 +290,12 @@ export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstan
     }
     app.post(`/v1/actions/${actionId}`, async request => {
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
-        const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+        const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);
+        const body = carrier.success ? carrier.data : { machineId: input.machineId,
+            envelope: ExternalActionRequestEnvelopeSchema.parse(request.body), executionAuthorization: undefined };
         expect(body.machineId).toBe(input.machineId);
-        const authorization = body.executionAuthorization;
-        if (!authorization) throw new Error('Missing decision admission');
+        expect(body.envelope.target).toEqual({ kind: 'machine', machineId: input.machineId });
+        const authorization = body.executionAuthorization ?? issue(body.envelope);
         expect(issued.get(authorization.token)?.binding).toEqual(authorization.binding);
         const relayed = parseExternalActionDaemonDispatchResult(await rpc.handleRequest({
             method: `${input.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
@@ -299,6 +308,8 @@ export async function registerMachineApprovalDecisionHomeHttp(app: FastifyInstan
     });
     return rpc;
 }
+
+export { registerMachineActionHomeHttp as registerMachineApprovalDecisionHomeHttp };
 
 type ArtifactRow<Mode extends 'plain' | 'e2ee'> = {
     id: string; ownerAccountId: string; access: ArtifactCallerAccessV1; encryptionMode: Mode; publicAudience: 'none';

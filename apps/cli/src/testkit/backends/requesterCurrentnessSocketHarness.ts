@@ -35,6 +35,7 @@ export async function createRequesterCurrentnessSocketHarness(): Promise<Request
     const clients: Socket[] = [];
     const failedUpgrades = new WeakSet<Socket>();
     const redirect = vi.spyOn(sockets, 'createUserScopedSocketConnection').mockImplementation(options => {
+        if (options.clientPurpose === 'scoped-rpc') return createUserScopedSocketConnection(options);
         const connection = createUserScopedSocketConnection({ ...options, serverUrl });
         // This is the genuine network socket, with default event typing at the test boundary.
         const client = connection.socket as Socket;
