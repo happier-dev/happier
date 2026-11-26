@@ -1,4 +1,4 @@
-import { readProjectExecutionOutputMachineAdmissionMethodV1, readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { readProjectExecutionOutputMachineAdmissionMethodV1, readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { CliActionDepsParams } from './types';
@@ -244,12 +244,21 @@ export function createCliMachineActionTransport(
     }
     const externalRequest = input.context?.externalActionCredential !== undefined
       || input.context?.externalActionExecutionAuthorization !== undefined;
+    // The original receiving Action can retain requester identity without a
+    // raw RPC receipt. This is private ingress evidence, not a child RPC grant;
+    // the receiving authorizer still qualifies physical custody below.
+    const retainedRequester = readRetainedVerifiedExternalActionRequester(input.context?.externalActionExecutionAuthorization);
+    const retainedLocalRequester = Boolean(retainedRequester
+      && retainedRequester.authorization.binding.machineId === input.machineId
+      // These routes always invoke the receiving identity authorizer. Other
+      // methods keep their incumbent transport and admission requirements.
+      && resolveMachineRpcRoutePolicy(input.method).requesterExecutionIsolationRequired === true);
     // A remote operation can attach output on the local Machine. Retain
     // requester Account admission for the attachment's read as well.
     const requesterOutputRead = !externalRequest && input.context?.actionCaller?.kind === 'session'
       && input.effectActionId && readProjectExecutionOutputMachineAdmissionMethodV1(input.effectActionId);
     const direct = requesterOutputRead ? undefined : params.machineActionDirectTargetTransport;
-    if (externalRequest && (!params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId
+    if (externalRequest && !retainedLocalRequester && (!params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId
       || !input.effectActionId || !input.context?.externalActionExecutionAuthorization || !input.context.externalActionTarget)) {
       throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
     }
@@ -352,7 +361,7 @@ export function createCliMachineActionTransport(
     // the installed receiver still owns target/currentness and execution identity.
     const admittedLocalCommand = input.method === RPC_METHODS.BASH && input.effectActionId === 'machines.command.run'
       && input.context?.machineAdmission?.machineId === input.machineId;
-    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
+    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || retainedLocalRequester || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
       && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalCommand || admittedLocalAction)) {
       const localActionContext: RpcLocalActionContext = {
         ...(input.context?.presentUserApproval ? { presentUserApproval: input.context.presentUserApproval } : {}),
@@ -370,7 +379,7 @@ export function createCliMachineActionTransport(
           && typeof input.request === 'object' && 'type' in input.request && input.request.type === 'resume-session'
           ? { resumeActionContext: input.context } : {}),
         ...(input.context?.surface ? { surface: input.context.surface } : {}),
-        ...((admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction) && input.context?.externalActionExecutionAuthorization
+        ...((retainedLocalRequester || admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction) && input.context?.externalActionExecutionAuthorization
           ? { externalActionExecutionAuthorization: input.context.externalActionExecutionAuthorization } : {}),
         ...((input.authority ?? input.context?.authority) ? { authority: input.authority ?? input.context?.authority } : {}),
         ...(input.context?.actionCaller ? { actionCaller: input.context.actionCaller } : {}),
@@ -396,11 +405,12 @@ export function createCliMachineActionTransport(
       // A host child keeps the receiving hop's admission. Local Action authority
       // alone cannot stand in for that fact (interactive terminals require both).
       const host = input.context;
-      const rpcContext = host?.machineAdmission ? {
+      const rpcContext = host && (host.machineAdmission || retainedLocalRequester) ? {
         machineAdmission: host.machineAdmission,
         verifyMachineAdmissionCurrent: host.verifyMachineAdmissionCurrent,
         callerAuthority: input.authority ?? host.authority,
-        callerInputAuthorization: host.callerInputAuthorization
+        callerInputAuthorization: host?.callerInputAuthorization
+          ?? (retainedLocalRequester ? retainedRequester?.authorization : undefined)
           ?? (admittedLocalDiscovery || admittedMoveStatusRead || admittedRequesterOperation && input.effectActionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1
             ? host.externalActionExecutionAuthorization : undefined),
         callerInputConstraints: host.callerInputConstraints,

@@ -22,6 +22,7 @@ import {
   isRequesterOwnWorkPlacedOnDaemonForHost,
   selectHostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import axios from '@/api/client/credentialAxios';
@@ -1732,6 +1733,36 @@ export async function authorizeMachineRpcRequest(
   )
     return forbidden();
   let authorized: Extract<RpcAuthorizationResult, { ok: true }> = { ok: true };
+  // Original Action ingress can retain its verified requester without a raw
+  // Machine RPC stamp. Consume that private evidence through the same identity
+  // owner, bound to this physical receiver; never fabricate a Machine role.
+  const retainedRequester = readRetainedVerifiedExternalActionRequester(
+    request.localActionContext?.externalActionExecutionAuthorization);
+  if (!request.machineAdmission && retainedRequester) {
+    if (!machine) return forbidden('machine_target');
+    const method = request.method.startsWith(`${machine.machineId}:`)
+      ? request.method.slice(machine.machineId.length + 1) : undefined;
+    if (!method) return forbidden('machine_target');
+    if (resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
+      try {
+        const installationId = machine.resolveInstallationId();
+        const identity = selectHostRequesterExecutionIdentity({ actionContext: {
+          ...request.localActionContext,
+          authority: request.callerAuthority,
+          callerInputAuthorization: request.callerInputAuthorization,
+          externalActionExecutionAuthorization: retainedRequester.authorization,
+          verifyMachineAdmissionCurrent: retainedRequester.isCurrent,
+          sessionActionOrigin: request.sessionActionOrigin,
+          requesterSessionBootstrap: request.requesterSessionBootstrap,
+          signal: request.signal,
+        }, hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(request.signal),
+          hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
+          hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
+        if (!isHostRequesterUnrestrictedOwner(identity)) return forbidden('requester_execution_identity');
+        if (request.signal?.aborted || !await retainedRequester.isCurrent()) return forbidden('request_cancelled');
+      } catch { return forbidden('authorization_unavailable'); }
+    }
+  }
   if (request.machineAdmission !== undefined) {
     const admission = SocketRpcMachineAdmissionContextV1Schema.safeParse(
       request.machineAdmission,

@@ -262,6 +262,8 @@ export type CreateAgentInvocationServices = (
         actionRequestAttributionV1?: ActionExecutorContext['actionRequestAttributionV1'];
         /** Host-owned execution placement; conveys no approval or caller authority. */
         actionTarget?: ActionExecutorContext['externalActionTarget'];
+        /** Captured receiving ingress for nested Actions; never supplied by Agent code. */
+        approvalContext?: ActionExecutorContext;
         processOwner?: ProcessOwnerRef;
         pluginId: string;
         pluginVersion: string;

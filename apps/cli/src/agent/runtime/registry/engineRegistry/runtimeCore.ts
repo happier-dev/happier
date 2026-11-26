@@ -1,4 +1,5 @@
 import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type {
     ResolvedAgentRuntimeContribution,
@@ -580,6 +581,9 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                     isCurrent: async () => input.isOccurrenceCurrent() && await captured.isCurrent() });
                                 projectInvocations.add(invocation);
                                 try { return await baseCreateRunInvocationServices({ ...workflowInput,
+                                    ...(captured.ingress ? { approvalContext: buildActionExecutorContextForRpc({
+                                        ...captured.ingress, signal: input.signal,
+                                    }) } : {}),
                                     ...(nativeOperation ? { nativeOperation } : {}), prepareAgentNativeLaunch: invocation.prepareAgentNativeLaunch }); }
                                 catch (error) { projectInvocations.delete(invocation); await invocation.disposeProjectAgentLaunch(); throw error; }
                             }
