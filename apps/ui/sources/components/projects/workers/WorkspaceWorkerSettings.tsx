@@ -62,11 +62,11 @@ export function useWorkspaceWorkerPreference(workspace: WorkspaceAddressV1, opti
       address.serverId,
       address.refId,
     ]),
-    read: (accountId) =>
+    read: (accountId, signal) =>
       executeProjectWorkerActionV1(
         'projects.worker.preferences.get',
         { workspace: address },
-        { expectedAccountId: accountId },
+        { expectedAccountId: accountId, signal },
       ),
     observedFromReceipt: (receipt) =>
       'preference' in receipt

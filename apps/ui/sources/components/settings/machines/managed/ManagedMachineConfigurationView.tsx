@@ -239,7 +239,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const scope = useManagedControllerScope({ serverId: props.serverId, preferred: delegatedPreset ? creationPreset?.controller : props.initialController ?? creationPreset?.controller,
         observeThisComputer: !props.presetOnly,
         delegatedPreset,
-        disabled: busy, testIDPrefix: 'managed-config.controller',
+        selectorDisabled: busy, testIDPrefix: 'managed-config.controller',
         onSelect: React.useCallback((next: ManagedControllerV1) => setDraft(current => current
             ? { ...current, controller: next, controllerPoolId: undefined, check: undefined, optionStatus: 'loading' } : current), []) });
     // Retain the selected computer until the shared host decision places this provisioner's acquire role.

@@ -25,6 +25,7 @@ export function createWorkspaceSyncStatusWatchBoundary() {
             snapshot = { revision: (snapshot?.revision ?? 0) + 1, statuses };
             for (const finish of [...pending]) finish({ changed: true, snapshot });
         },
+        currentRevision: () => snapshot?.revision,
         parkedCount: () => pending.size,
         fail(error: Error): void {
             for (const finish of [...pending]) finish(error);

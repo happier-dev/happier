@@ -80,11 +80,13 @@ export function useProjectServicePlacement(
       address.refId,
       serviceName,
     ]),
-    read: (accountId) =>
+    // Live native service custody requires a fresh read after remount before save/Move admission.
+    cacheReadyObservation: false,
+    read: (accountId, signal) =>
       executeProjectWorkerActionV1(
         'projects.service.placement.get',
         { workspace: address, serviceName },
-        { expectedAccountId: accountId },
+        { expectedAccountId: accountId, signal },
       ),
     // A mutation receipt carries the saved placement only; the actual binding stays as last observed.
     observedFromReceipt: () => null,

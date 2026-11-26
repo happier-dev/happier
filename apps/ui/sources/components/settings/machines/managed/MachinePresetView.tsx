@@ -79,7 +79,7 @@ function MachinePresetPrepareSection(props: Readonly<{
 }>) {
     const target = useManagedControllerScope({ serverId: props.serverId, preferred: props.preset.controller,
         delegatedPreset: props.preset.controller !== undefined, observeThisComputer: false,
-        disabled: !props.canManage || props.busy, testIDPrefix: 'machine-preset.preparation.target' });
+        selectorDisabled: !props.canManage || props.busy, testIDPrefix: 'machine-preset.preparation.target' });
     const machineId = props.preset.controller?.machineId ?? target.controller?.machineId ?? null;
     const preparation = useMachinePresetPreparation({ serverId: props.serverId, preset: props.preset,
         machineId, onChanged: props.onChanged });

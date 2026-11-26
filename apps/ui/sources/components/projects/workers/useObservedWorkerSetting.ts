@@ -1,6 +1,10 @@
 import * as React from 'react';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import {
+  readServerAccountScopeOwnerLifetime,
+  type ServerAccountScopeLifetime,
+} from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ProjectWorkerActionError, type ProjectWorkerActionOptions } from '@/sync/ops/actions/projectWorkerActions';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -30,6 +34,53 @@ export type ObservedWorkerSettingNotice =
 
 type MutationReceipt = Readonly<{ status: string }>;
 
+const MAX_CACHED_READY_OBSERVATIONS_PER_LIFETIME = 64;
+const readyObservationsByLifetime = new WeakMap<ServerAccountScopeLifetime, Map<string, ReadyObservation>>();
+
+function readCachedReadyObservation<TReady extends ReadyObservation>(
+  binding: ServerAccountScopeLifetime | null,
+  key: string,
+): TReady | null {
+  if (!binding?.isCurrent()) return null;
+  const owner = readServerAccountScopeOwnerLifetime(binding);
+  if (!owner.isCurrent()) return null;
+  return (readyObservationsByLifetime.get(owner)?.get(key) as TReady | undefined) ?? null;
+}
+
+function writeCachedReadyObservation(
+  binding: ServerAccountScopeLifetime,
+  key: string,
+  value: ReadyObservation,
+): void {
+  if (!binding.isCurrent()) return;
+  const owner = readServerAccountScopeOwnerLifetime(binding);
+  if (!owner.isCurrent()) return;
+  let cache = readyObservationsByLifetime.get(owner);
+  if (!cache) {
+    cache = new Map();
+    readyObservationsByLifetime.set(owner, cache);
+    owner.onRetire(() => {
+      cache?.clear();
+      readyObservationsByLifetime.delete(owner);
+    });
+  }
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > MAX_CACHED_READY_OBSERVATIONS_PER_LIFETIME) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
+
+function deleteCachedReadyObservation(
+  binding: ServerAccountScopeLifetime | null,
+  key: string,
+): void {
+  if (!binding) return;
+  readyObservationsByLifetime.get(readServerAccountScopeOwnerLifetime(binding))?.delete(key);
+}
+
 /**
  * One Account-scoped semantic setting read through its Action and changed by compare-and-set (30 §5,
  * 32 §5): worker preferences, a service's placement or a Machine's work policy. The displayed value
@@ -43,7 +94,12 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
     scopeKey: string;
     /** False keeps the setting unread (no consumer is showing it). Defaults to true. */
     enabled?: boolean;
-    read: (accountId: string) => Promise<TReady | RefusedRead>;
+    /**
+     * Cache ready observations per Account lifetime across remounts (defaults to true).
+     * Callers carrying volatile live custody that requires a fresh CAS read on every remount pass false.
+     */
+    cacheReadyObservation?: boolean;
+    read: (accountId: string, signal: AbortSignal) => Promise<TReady | RefusedRead>;
     /** The current observation a receipt carries (applied/satisfied/unchanged/conflict), else null. */
     observedFromReceipt: (receipt: TReceipt) => TReady | null;
   }>,
@@ -52,6 +108,8 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
   const accountId = binding?.isCurrent() ? binding.accountId : null;
   const key = JSON.stringify([input.scopeKey, accountId]);
   const enabled = input.enabled !== false;
+  const cacheReady = input.cacheReadyObservation !== false;
+  const cachedReady = cacheReady && enabled ? readCachedReadyObservation<TReady>(binding, key) : null;
   const [observation, setObservation] = React.useState<Readonly<{
     key: string;
     state: ObservedWorkerSettingState<TReady>;
@@ -61,6 +119,7 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
     notice: ObservedWorkerSettingNotice;
   }> | null>(null);
   const [readToken, setReadToken] = React.useState(0);
+  const bypassCacheRef = React.useRef(false);
   // Unsaved intent is not authority. A refreshed/conflicting receipt may replace the observed
   // value without discarding what the person was trying to change.
   const [draft, setDraft] = React.useState<Readonly<{ key: string; value: TDraft }> | null>(null);
@@ -71,10 +130,10 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
   const keyRef = React.useRef(key);
   keyRef.current = key;
 
-  const refresh = React.useCallback(
-    () => setReadToken((token) => token + 1),
-    [],
-  );
+  const refresh = React.useCallback(() => {
+    bypassCacheRef.current = true;
+    setReadToken((token) => token + 1);
+  }, []);
   const approval = useActionApprovalContinuation({
     scopeKey: key,
     serverId: input.serverId,
@@ -93,40 +152,65 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
 
   React.useEffect(() => {
     if (!binding || !accountId || !enabled) return;
+    const bypassCache = bypassCacheRef.current;
+    bypassCacheRef.current = false;
+    if (cacheReady && !bypassCache) {
+      const cached = readCachedReadyObservation<TReady>(binding, key);
+      if (cached) {
+        setObservation((previous) =>
+          previous?.key === key && previous.state.kind === 'ready' && previous.state.value === cached
+            ? previous
+            : { key, state: { kind: 'ready', value: cached } },
+        );
+        return;
+      }
+    }
     let current = true;
-    const retirement = binding.onRetire(() => {
+    const readAbort = new AbortController();
+    const abortRead = () => {
       current = false;
-    });
-    void readRef.current(accountId).then(
+      readAbort.abort();
+    };
+    if (lifetime.signal.aborted) abortRead();
+    else lifetime.signal.addEventListener('abort', abortRead, { once: true });
+    const retirement = binding.onRetire(abortRead);
+    void readRef.current(accountId, readAbort.signal).then(
       (result) => {
-        if (!current || !binding.isCurrent()) return;
+        if (!current || readAbort.signal.aborted || !binding.isCurrent()) return;
+        if (result.status === 'ready') {
+          if (cacheReady) writeCachedReadyObservation(binding, key, result);
+          setObservation({ key, state: { kind: 'ready', value: result as TReady } });
+          return;
+        }
+        deleteCachedReadyObservation(binding, key);
         setObservation({
           key,
-          state:
-            result.status === 'ready'
-              ? { kind: 'ready', value: result as TReady }
-              : { kind: 'refused', status: (result as RefusedRead).status,
-                ...((result as RefusedRead).reasonCode ? { reasonCode: (result as RefusedRead).reasonCode } : {}) },
+          state: { kind: 'refused', status: (result as RefusedRead).status,
+            ...((result as RefusedRead).reasonCode ? { reasonCode: (result as RefusedRead).reasonCode } : {}) },
         });
       },
       (error: unknown) => {
-        if (!current || !binding.isCurrent()) return;
+        if (!current || readAbort.signal.aborted || !binding.isCurrent()) return;
+        deleteCachedReadyObservation(binding, key);
         const reasonCode = error instanceof ProjectWorkerActionError ? error.errorCode : readRpcErrorCode(error);
         setObservation({ key, state: { kind: 'error', ...(reasonCode ? { reasonCode } : {}) } });
       },
     );
     return () => {
-      current = false;
+      lifetime.signal.removeEventListener('abort', abortRead);
       retirement.dispose();
+      abortRead();
     };
-  }, [accountId, binding, enabled, key, readToken]);
+  }, [accountId, binding, cacheReady, enabled, key, lifetime, readToken]);
 
   const mutate = React.useCallback(
     async (
       run: (accountId: string, current: TReady, options: ProjectWorkerActionOptions) => Promise<TReceipt>,
       intended?: TDraft,
     ): Promise<void> => {
-      const state = observation?.key === key ? observation.state : null;
+      const state = observation?.key === key
+        ? observation.state
+        : cachedReady ? { kind: 'ready' as const, value: cachedReady } : null;
       if (!binding?.isCurrent() || !accountId || lifetime.signal.aborted || state?.kind !== 'ready') return;
       const scopedKey = key;
       if (intended !== undefined) setDraft({ key: scopedKey, value: intended });
@@ -147,11 +231,13 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
         });
         if (!binding.isCurrent() || keyRef.current !== scopedKey) return;
         const observed = receiptRef.current(receipt);
-        if (observed)
+        if (observed) {
+          if (cacheReady) writeCachedReadyObservation(binding, scopedKey, observed);
           setObservation({
             key: scopedKey,
             state: { kind: 'ready', value: observed },
           });
+        }
         switch (receipt.status) {
           case 'applied':
           case 'satisfied':
@@ -187,7 +273,7 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
         setScopedNotice('failed');
       }
     },
-    [accountId, binding, key, lifetime, observation, refresh],
+    [accountId, binding, cacheReady, cachedReady, key, lifetime, observation, refresh],
   );
 
   // Dropping an unsaved intent is local only: nothing was written, so nothing is undone.
@@ -197,7 +283,9 @@ export function useObservedWorkerSetting<TReady extends ReadyObservation, TDraft
   }, []);
 
   const state: ObservedWorkerSettingState<TReady> =
-    observation?.key === key ? observation.state : { kind: 'loading' };
+    observation?.key === key
+      ? observation.state
+      : cachedReady ? { kind: 'ready', value: cachedReady } : { kind: 'loading' };
   const currentNotice = notice?.key === key ? notice.notice : null;
   return {
     state,

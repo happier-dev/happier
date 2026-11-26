@@ -121,7 +121,7 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
         return failure;
     };
     if (accepted.kind !== 'accepted') return finishFailure(accepted);
-    let { managedId } = accepted.value;
+    let { managedId, home } = accepted.value;
     if (accepted.value.operation) {
         const { serverId, accountId } = request.scope;
         const { machineId } = request.controller;
@@ -203,10 +203,14 @@ export async function attachRemoteWorkspace(input: AttachRemoteWorkspaceChoice &
         const settled = ManagedAcceptedV1Schema.safeParse(terminal.result);
         if (!settled.success) return finishFailure(failed('invalid_action_output'));
         managedId = settled.data.managedId;
+        home = settled.data.home ?? home;
     }
-    // The attached record carries the guest platform probe; its home is where the person picks a folder.
-    const read = await client.execute('machines.managed.get', { homeId: request.homeId, managedId },
-        { signal: input.signal }).catch(() => null);
-    const home = read?.kind === 'succeeded' ? unwrapManagedMachineReadV1(read.value).workspaceAttachment?.home : undefined;
+    // Current controllers return `home` directly from `machines.managed.acquire`; fall back to a read
+    // only when talking to an older controller that omits it.
+    if (!home) {
+        const read = await client.execute('machines.managed.get', { homeId: request.homeId, managedId },
+            { signal: input.signal }).catch(() => null);
+        home = read?.kind === 'succeeded' ? unwrapManagedMachineReadV1(read.value).workspaceAttachment?.home : undefined;
+    }
     return { kind: 'attached', managedId, controller: request.controller, ...(home ? { home } : {}) };
 }

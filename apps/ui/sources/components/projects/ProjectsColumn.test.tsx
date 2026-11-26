@@ -116,10 +116,20 @@ vi.mock('@/modal', async () => {
 });
 
 // Counting probe only: the real Projects model runs; the test counts how often a surface evaluates it.
-const listModelRuns = vi.hoisted(() => ({ count: 0 }));
+const listModelRuns = vi.hoisted(() => ({ count: 0, mounts: 0, unmounts: 0 }));
 vi.mock('./useProjectsListModel', async (importOriginal) => {
     const actual = await importOriginal<typeof import('./useProjectsListModel')>();
-    return { ...actual, useProjectsListModel: () => { listModelRuns.count += 1; return actual.useProjectsListModel(); } };
+    return {
+        ...actual,
+        useProjectsListModel: () => {
+            listModelRuns.count += 1;
+            React.useEffect(() => {
+                listModelRuns.mounts += 1;
+                return () => { listModelRuns.unmounts += 1; };
+            }, []);
+            return actual.useProjectsListModel();
+        },
+    };
 });
 const { storage } = await import('@/sync/domains/state/storage');
 const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
@@ -616,5 +626,57 @@ describe('Projects index', () => {
         );
         expect(alone.findByTestId('projects-list')).toBeTruthy();
         expect(alone.findByTestId('projects-none-open')).toBeNull();
+    });
+
+    it("mounts useProjectsListModel only once when ProjectsColumn and ProjectsIndexView render together on desktop", async () => {
+        const { AppShellColumnContext } = await import("@/components/navigation/shell/appRail/appShellColumnContext");
+        const { ProjectsColumnModelProvider } = await import("./projectsColumnModelContext");
+        const { ProjectsIndexView } = await import("./ProjectsIndexView");
+        const { ProjectsColumn } = await import("./ProjectsColumn");
+        const { applyProjectAccountRowsFixture } = await import("@/dev/testkit/fixtures/projectAccountRows");
+        machinesMock = [createMachine({ id: "machine-a", host: "Host A", activeAt: Date.now() })];
+        workspaceRefsV1Mock = [workspaceRef("ref-a", "machine-a", "/repo/a")];
+        storage.getState().applyMachines(machinesMock, true);
+        storage.setState({ isDataReady: true });
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: workspaceRefsV1Mock, status: "ready", coverage: "complete" });
+        Object.assign(listModelRuns, { count: 0, mounts: 0, unmounts: 0 });
+        const screen = await renderScreen(
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <ProjectsColumnModelProvider columnActive>
+                    <ProjectsColumn /><ProjectsIndexView />
+                </ProjectsColumnModelProvider>
+            </AppShellColumnContext.Provider>,
+        );
+        try {
+            expect(screen.findByTestId("projects-none-open")).toBeTruthy();
+            expect(listModelRuns.mounts).toBe(1);
+            const afterMount = listModelRuns.count;
+            await act(async () => {
+                storage.getState().applyMachines(machinesMock.map(machine => ({
+                    ...machine,
+                    metadata: { ...machine.metadata!, homeDir: "/Users/moved-once" },
+                    metadataVersion: (machine.metadataVersion ?? 0) + 1,
+                })), false);
+            });
+            expect(listModelRuns.count - afterMount).toBe(1);
+        } finally {
+            await screen.unmount();
+        }
+
+        // Without an active sibling ProjectsColumn, ProjectsNoneOpen still mounts its own model standalone.
+        Object.assign(listModelRuns, { count: 0, mounts: 0, unmounts: 0 });
+        const standalone = await renderScreen(
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <ProjectsColumnModelProvider columnActive={false}>
+                    <ProjectsIndexView />
+                </ProjectsColumnModelProvider>
+            </AppShellColumnContext.Provider>,
+        );
+        try {
+            expect(standalone.findByTestId("projects-none-open")).toBeTruthy();
+            expect(listModelRuns.mounts).toBe(1);
+        } finally {
+            await standalone.unmount();
+        }
     });
 });

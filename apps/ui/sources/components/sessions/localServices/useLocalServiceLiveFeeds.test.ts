@@ -339,15 +339,12 @@ describe('Project Services source feed plus actual native binding', () => {
       if (recovery === 'watch') {
         const key = { ...(await readCatalogBinding(serverId)), machineId: source.machineId,
           scope: 'workspace' as const, workspaceRoot: source.rootPath, projection: 'managed_bindings' as const };
-        await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetsById.get(actual.id)?.serviceState).toBe('healthy'));
-        await vi.waitFor(() => expect(censusReads).toBe(previousCensuses + 1));
-        // The native publication is already present; fresh Machine/topology admission
-        // gates its Project projection. No timer or additional launcher read is needed.
-        expect(readRows()[0]?.status).toBe('stopped');
         const beforeAdmission = feedCommits;
-        await act(async () => { census.resolve(machineRows()); });
+        await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetsById.get(actual.id)?.serviceState).toBe('healthy'));
+        // Steady healthy watch ticks reuse the admitted Machine census (0 fetchMachineRows HTTP calls).
         await vi.waitFor(() => expect(readRows()[0]?.status).toBe('running'));
-        expect(feedCommits - beforeAdmission).toBe(1);
+        expect(censusReads).toBe(previousCensuses);
+        expect(feedCommits - beforeAdmission).toBeLessThanOrEqual(2);
       }
       await vi.waitFor(() => expect(readRows()[0]).toMatchObject({ id: declaration.id, status: 'running', target: actual }));
     } finally { census.resolve(machineRows()); reopenedLauncher.resolve(); await hook.unmount(); }
@@ -781,6 +778,92 @@ describe('Project Services source feed plus actual native binding', () => {
         await expect(failedCensus.readChildMachines(['source'])).rejects.toThrow();
         expect(managedReads - before).toBe(1);
       } finally { account.dispose(); }
+    }
+  });
+
+  it("keeps launcher subscriptions intact across unrelated project-row edits and emits zero fetchMachineRows requests per service status tick", async () => {
+    let censusReads = 0;
+    home = await createPlainArtifactHomeFixture("https://project-services-stability.test", { handleRequest: async path => {
+      if (path !== "/v1/machines?includeRevoked=true") return null;
+      censusReads += 1;
+      return new Response(JSON.stringify([{ id: "source", revokedAt: null, replacedByMachineId: null }]));
+    } });
+    const serverId = home.home.id;
+    const scope = { serverId, accountId: "artifact-account" };
+    const source = { id: "source-ref", machineId: "source", serverId, rootPath: "/source", createdAtMs: 1 };
+    const baseRows = { scope, status: "ready" as const, coverage: "complete" as const,
+      workspaceRefs: [source], relationships: [], organizations: [], revisionsByPhysicalKey: {} };
+    storage.getState().activateProjectAccountRowsScope(scope);
+    storage.getState().applyProjectAccountRowsForScope(scope, baseRows);
+    const declaration = LocalServiceLaunchTargetV1Schema.parse({ id: "source-service", source: "managed_service", machineId: source.machineId,
+      workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
+      declaration: { workspaceRefId: source.id, selection: { kind: "manifest", name: "web" } }, cwd: source.rootPath,
+      title: "web", confidence: "high", state: "available", serviceState: "stopped", actions: ["start"] });
+    const runningActual = LocalServiceLaunchTargetV1Schema.parse({ ...declaration, id: "running-service",
+      sourceClass: { kind: "managed_service", managedServiceId: "managed-1" },
+      serviceState: "healthy", readiness: "ready", actions: ["manage"] });
+    const bindingWatches: Array<(reply: unknown) => void> = [];
+    let abortedBindingWatches = 0;
+    let bindingReads = 0;
+    let updatedAt = 1;
+    let currentTargets = [declaration];
+    remote.mockImplementation(async ({ method, machineId, payload, signal }: {
+      method: string; machineId: string; payload?: { projection?: "managed_bindings"; observationOnly?: true;
+        launcherProjection?: { request?: { projection?: "managed_bindings" } } }; signal?: AbortSignal;
+    }) => {
+      if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+        if (payload?.launcherProjection?.request?.projection === "managed_bindings" && !payload.observationOnly) {
+          return await new Promise(resolve => {
+            signal?.addEventListener("abort", () => { abortedBindingWatches += 1; resolve({ protocolVersion: 1, changed: false }); }, { once: true });
+            bindingWatches.push(resolve);
+          });
+        }
+        return new Promise(() => {});
+      }
+      if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) {
+        if (payload?.projection === "managed_bindings") bindingReads += 1;
+        return { protocolVersion: 1, snapshot: { v: 1 as const, machineId, updatedAt,
+          targets: payload?.projection === "managed_bindings" ? [] : currentTargets } };
+      }
+      return { protocolVersion: 1, snapshot: { v: 1, machineId, generatedAt: 1, refreshState: "idle", entries: [], diagnostics: [] } };
+    });
+    const hook = await renderHook(() => useLocalServiceLiveFeeds({ machineId: source.machineId, serverId,
+      workspaceRefId: source.id, workspaceRoot: source.rootPath, scope: "workspace" }));
+    try {
+      await vi.waitFor(() => expect(bindingWatches).toHaveLength(1));
+      await vi.waitFor(() => expect(censusReads).toBe(1));
+      const bindingReadsAfterMount = bindingReads;
+
+      // 1. Unrelated project-row edits must not tear down launcher subscriptions or re-run fetchMachineRows.
+      for (let i = 1; i <= 3; i += 1) {
+        await act(async () => {
+          storage.getState().applyProjectAccountRowsForScope(scope, {
+            ...baseRows,
+            workspaceRefs: [source, { id: `unrelated-ref-${i}`, machineId: "other-machine", serverId, rootPath: `/other/${i}`, createdAtMs: i + 1 }],
+          });
+        });
+      }
+      await flushHookEffects();
+      expect(abortedBindingWatches).toBe(0);
+      expect(bindingWatches).toHaveLength(1);
+      expect(bindingReads).toBe(bindingReadsAfterMount);
+      expect(censusReads).toBe(1);
+
+      // 2. Service status/port ticks must update projected rows with ZERO fetchMachineRows HTTP requests.
+      for (let tick = 1; tick <= 3; tick += 1) {
+        await vi.waitFor(() => expect(bindingWatches).toHaveLength(tick));
+        updatedAt += 1;
+        const serviceState = tick % 2 === 1 ? "healthy" : "unhealthy";
+        await act(async () => {
+          bindingWatches[tick - 1]!({ protocolVersion: 1, changed: true,
+            snapshot: { v: 1, machineId: source.machineId, updatedAt,
+              targets: [{ ...runningActual, serviceState }] } });
+        });
+        await vi.waitFor(() => expect(hook.getCurrent().launcherState?.targetsById.get("running-service")?.serviceState).toBe(serviceState));
+      }
+      expect(censusReads).toBe(1);
+    } finally {
+      await hook.unmount();
     }
   });
 });

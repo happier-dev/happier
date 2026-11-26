@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ManagedAdmissionOutputV1Schema, ManagedAcquireInputV1Schema, ManagedAdmissionInputV1Schema, resolveManagedAcquireReviewV1,
+  ManagedAcceptedV1Schema, ManagedAdmissionOutputV1Schema, ManagedAcquireInputV1Schema, ManagedAdmissionInputV1Schema, resolveManagedAcquireReviewV1,
   ManagedControllerContextOutputV1Schema,
   ManagedControllerMachineOutputV1Schema,
   ManagedControllerReportV1Schema,
@@ -279,5 +279,20 @@ describe('managed acquire opaque admission', () => {
         ...result.resolvedSources[1], presetRevision: 4,
       }],
     }).success).toBe(false);
+  });
+
+  it("accepts an optional validated guest home in ManagedAcceptedV1Schema while staying backward compatible", () => {
+    expect(ManagedAcceptedV1Schema.parse({
+      managedId: "managed",
+      operation: { operationId: "op-1" },
+      home: "/home/dev",
+    })).toEqual({
+      managedId: "managed",
+      operation: { operationId: "op-1" },
+      home: "/home/dev",
+    });
+    expect(ManagedAcceptedV1Schema.parse({ managedId: "managed" })).toEqual({ managedId: "managed" });
+    expect(ManagedAcceptedV1Schema.safeParse({ managedId: "managed", home: "" }).success).toBe(false);
+    expect(ManagedAcceptedV1Schema.safeParse({ managedId: "managed", home: "/home/\0bad" }).success).toBe(false);
   });
 });

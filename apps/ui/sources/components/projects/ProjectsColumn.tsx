@@ -18,6 +18,7 @@ import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { useProjectsListModel, type ProjectsListModel } from './useProjectsListModel';
+import { usePublishProjectsColumnModel } from './projectsColumnModelContext';
 import { useIsWorkspaceRefPinned } from '@/sync/store/hooks';
 import { ProjectsTreeList, ProjectsTreeSkeletonRows } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
@@ -98,6 +99,7 @@ function readOpenProjectId(pathname: string): string | null {
 export const ProjectsColumn = React.memo(function ProjectsColumn() {
     const pathname = usePathname();
     const model = useProjectsListModel();
+    usePublishProjectsColumnModel(model);
     const creation = useProjectRowCreationActions(model);
     const placed = useColumnDestinations('projects');
     const rowsRetry = useProjectRowsRetry();

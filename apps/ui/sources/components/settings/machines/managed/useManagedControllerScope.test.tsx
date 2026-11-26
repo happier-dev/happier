@@ -97,4 +97,53 @@ describe('Managed controller scope', () => {
       expect(hook.getCurrent().controller?.machineId).toBe(guest.id);
     } finally { await hook.unmount(); }
   });
+
+  it("keeps zero store/availability subscriptions and zero heartbeat re-renders while disabled, then activates when enabled", async () => {
+    const serverIdentityId = "srv_disabled";
+    const accountId = "owner";
+    const serverId = await harness.addHome({ name: "Build", serverUrl: "https://disabled.example", serverIdentityId, accountId, currentAccount: true });
+    const computer = createControllerMachineFixture({ id: "controller-computer", installationId: "computer-installation",
+      activeAt: Date.now(), metadata: createMachineMetadataFixture({ platform: "linux" }) });
+    await publishMachineInventoryForTest({ serverId, accountId }, [computer]);
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+
+    let renders = 0;
+    const hook = await renderHook(({ disabled }: { disabled: boolean }) => {
+      renders += 1;
+      return useManagedControllerScope({ serverId, disabled, observeThisComputer: false, testIDPrefix: "disabled-probe" });
+    }, { initialProps: { disabled: true } });
+    try {
+      expect(hook.getCurrent().controller).toBeUndefined();
+      expect(hook.getCurrent().chip).toBeNull();
+      const rendersAfterMount = renders;
+      for (let pulse = 1; pulse <= 3; pulse += 1) {
+        await act(async () => {
+          await publishMachineInventoryForTest({ serverId, accountId }, [
+            createControllerMachineFixture({
+              id: "controller-computer",
+              installationId: "computer-installation",
+              activeAt: Date.now() + pulse * 1000,
+              metadata: createMachineMetadataFixture({ platform: "linux" }),
+            }),
+          ]);
+        });
+      }
+      const materialization = PluginMachineMaterializationV1Schema.parse({ serverIdentityId, machineId: computer.id,
+        materializationId: "install-provisioner", pluginId: "happier.fixture", version: "1.0.0",
+        sourceClass: "bundledFirstParty", portableRelease: false, uiArtifacts: [], enabled: true, trustState: "trusted", observedAt: Date.now() });
+      await act(async () => {
+        replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId },
+          snapshot: { availabilityCursor: 1, intentReads: [], materializations: [materialization],
+            snapshots: [{ serverIdentityId, machineId: computer.id, materializations: [materialization] }] } });
+      });
+      expect(renders - rendersAfterMount).toBe(0);
+      expect(hook.getCurrent().controller).toBeUndefined();
+
+      await hook.rerender({ disabled: false });
+      expect(hook.getCurrent().controller?.machineId).toBe(computer.id);
+      expect(hook.getCurrent().chip).not.toBeNull();
+    } finally {
+      await hook.unmount();
+    }
+  });
 });

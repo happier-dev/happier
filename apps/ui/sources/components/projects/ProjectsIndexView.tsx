@@ -14,7 +14,8 @@ import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
 import { ProjectOpenResolutionCard, useProjectRowsRetry } from './ProjectOpenResolution';
 import { ProjectsListView } from './ProjectsListView';
-import { useProjectsListModel } from './useProjectsListModel';
+import { useProjectsListModel, type ProjectsListModel } from './useProjectsListModel';
+import { useSharedProjectsColumnModel } from './projectsColumnModelContext';
 
 /**
  * `/projects`. Beside the Projects column the column is the list, so the page says no project is open
@@ -39,7 +40,18 @@ export const ProjectsIndexView = React.memo(function ProjectsIndexView() {
 });
 
 const ProjectsNoneOpen = React.memo(function ProjectsNoneOpen() {
+    const shared = useSharedProjectsColumnModel();
+    if (shared.model) return <ProjectsNoneOpenBody model={shared.model} />;
+    if (shared.columnActive) return null;
+    return <ProjectsNoneOpenStandalone />;
+});
+
+const ProjectsNoneOpenStandalone = React.memo(function ProjectsNoneOpenStandalone() {
     const model = useProjectsListModel();
+    return <ProjectsNoneOpenBody model={model} />;
+});
+
+const ProjectsNoneOpenBody = React.memo(function ProjectsNoneOpenBody({ model }: Readonly<{ model: ProjectsListModel }>) {
     // The same "+" as the column: a folder, a clone, your Sources, each Team's, Manage (plan 10 §2).
     const { addSources, cloneRepository } = model;
     const openNewApp = useOpenNewApp(cloneRepository);

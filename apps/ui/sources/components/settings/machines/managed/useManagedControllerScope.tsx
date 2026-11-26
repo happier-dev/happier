@@ -75,6 +75,18 @@ export function isManagedControllerCandidate(machine: Machine): boolean {
   return !!machine.installationId && !machine.revokedAt && !isMachineReplaced(machine);
 }
 
+const NOOP_SUBSCRIBE = () => () => {};
+const IDLE_MANAGED_CONTROLLER_SCOPE: ManagedControllerScope = Object.freeze({
+  controller: undefined,
+  machine: undefined,
+  hasCandidates: false,
+  hasOnlineCandidate: false,
+  controllerOffline: false,
+  machineList: 'loading',
+  chip: null,
+  selection: undefined,
+});
+
 function readControllerIds(machines: readonly Machine[]): string {
   return JSON.stringify(machines.filter(isManagedControllerCandidate).map(machine => machine.id));
 }
@@ -95,28 +107,33 @@ export function useManagedControllerScope(
     delegatedPreset?: boolean;
     /** Acquisition may prefer this device; recipe authoring does not demand its native task runner. */
     observeThisComputer?: boolean;
+    /** Suspends all controller reads, store subscriptions, and presence observation (e.g. closed menus). */
     disabled?: boolean;
+    /** Disables only the rendered chip control while keeping the controller scope active. */
+    selectorDisabled?: boolean;
     onSelect?: (controller: ManagedControllerV1) => void;
     testIDPrefix: string;
   }>,
 ): ManagedControllerScope {
-  const listSettled = useIsMachineListSettled(input.serverId);
-  const listStatus = useMachineListStatusForServer(input.serverId);
+  const active = input.disabled !== true;
+  const activeServerId = active ? input.serverId : '';
+  const listSettled = useIsMachineListSettled(activeServerId);
+  const listStatus = useMachineListStatusForServer(activeServerId);
   const activeAccountScope = useActiveServerAccountScope();
-  const { binding } = useServerCredentialAccountScopeBinding(input.serverId);
-  const thisMachineId = useThisComputerMachineId(undefined, input.observeThisComputer !== false);
+  const { binding } = useServerCredentialAccountScopeBinding(activeServerId);
+  const thisMachineId = useThisComputerMachineId(undefined, active && input.observeThisComputer !== false);
   const preferences = useSetting('machineAdministrationTargetsLocalV1');
   const settingsScope = useAccountSettingsScope();
-  const observationScope = binding?.isCurrent() ? binding.scope : null;
+  const observationScope = active && binding?.isCurrent() ? binding.scope : null;
   const lastPickedTarget = useMachineAdministrationTargetObservation(observationScope, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines);
   // An explicit named default and a last visit are distinct intents and owners.
-  const defaultTarget = areAccountSettingsScopesEqual(settingsScope, observationScope)
+  const defaultTarget = active && areAccountSettingsScopesEqual(settingsScope, observationScope)
     ? readMachineAdministrationTargetPreference(preferences, MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines) : null;
   const rememberedTarget = defaultTarget ?? lastPickedTarget;
   const [chosen, setChosen] = React.useState<Readonly<{
     serverId: string; accountId: string | undefined; controller: ManagedControllerV1; explicit: boolean;
   }>>();
-  const accountId = binding?.isCurrent() ? binding.scope.accountId : undefined;
+  const accountId = active && binding?.isCurrent() ? binding.scope.accountId : undefined;
   const scopedChoice = chosen && chosen.accountId === accountId && areServerProfileIdentifiersEquivalent(chosen.serverId, input.serverId)
     ? chosen : undefined;
   const preferredMachineId = input.preferred?.machineId;
@@ -124,26 +141,27 @@ export function useManagedControllerScope(
   const { onSelect } = input;
   const draftChoice = input.draftSelection?.choice;
   const selectDraftController = input.draftSelection?.select;
-  const namedRetained = draftChoice && areAccountSettingsScopesEqual(draftChoice.scope, observationScope) ? draftChoice.controller
+  const namedRetained = !active ? undefined
+    : draftChoice && areAccountSettingsScopesEqual(draftChoice.scope, observationScope) ? draftChoice.controller
     : scopedChoice?.explicit ? scopedChoice.controller
     : preferredMachineId && preferredInstallationId ? input.preferred : scopedChoice?.controller;
 
   // The chooser owns its inventory demand, including an answer that removes its last row.
   // Row-owned demand alone would release that answer as soon as filtering unmounts the rows.
   const [pickerOpen, setPickerOpen] = React.useState(false);
-  const closedMachineId = !pickerOpen ? namedRetained?.machineId : undefined;
-  const allMachines = useMachineListForServer(input.serverId, !closedMachineId, true, 'launch');
-  const namedMachine = useServerScopedLaunchMachine(input.serverId, closedMachineId);
-  const machines = React.useMemo(() => closedMachineId ? namedMachine ? [namedMachine] : [] : allMachines,
-    [allMachines, closedMachineId, namedMachine]);
-  const controllerIdsKey = useMachineListForServerSelection(input.serverId, readControllerIds);
+  const closedMachineId = active && !pickerOpen ? namedRetained?.machineId : undefined;
+  const allMachines = useMachineListForServer(activeServerId, active && !closedMachineId, active, 'launch');
+  const namedMachine = useServerScopedLaunchMachine(activeServerId, closedMachineId);
+  const machines = React.useMemo(() => !active ? null : closedMachineId ? namedMachine ? [namedMachine] : [] : allMachines,
+    [active, allMachines, closedMachineId, namedMachine]);
+  const controllerIdsKey = useMachineListForServerSelection(activeServerId, readControllerIds);
   const { inventoryRows: rows, pickerRows } = useMachineAdministrationTargetRows({
-    accountScope: observationScope ?? undefined, selectedMachineId: closedMachineId, managedInventoryDemand: pickerOpen,
+    enabled: active, accountScope: observationScope ?? undefined, selectedMachineId: closedMachineId, managedInventoryDemand: active && pickerOpen,
   });
-  const inventoryHomes = React.useMemo(() => pickerOpen ? [input.serverId] : [], [input.serverId, pickerOpen]);
+  const inventoryHomes = React.useMemo(() => active && pickerOpen ? [input.serverId] : [], [active, input.serverId, pickerOpen]);
   const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(inventoryHomes);
-  const managedByMachineId = machinesByEnrolledMachineIdByServerId[input.serverId];
-  const absentMachineIds = useAdmittedManagedMachineAbsentEnrolledIds(input.serverId, binding);
+  const managedByMachineId = active ? machinesByEnrolledMachineIdByServerId[input.serverId] : undefined;
+  const absentMachineIds = useAdmittedManagedMachineAbsentEnrolledIds(activeServerId, active ? binding : null);
   const controllerMachines = React.useMemo(() => (machines ?? []).filter(isManagedControllerCandidate), [machines]);
   const controllerIds = React.useMemo(() => new Set(JSON.parse(controllerIdsKey) as string[]), [controllerIdsKey]);
   const eligible = React.useMemo(
@@ -152,9 +170,10 @@ export function useManagedControllerScope(
     [absentMachineIds, controllerMachines],
   );
   const eligibleById = React.useMemo(() => new Map(eligible.map(machine => [machine.id, machine])), [eligible]);
-  const availabilityReader = React.useMemo(() => binding?.isCurrent() ? readPluginAccountAvailability(binding.scope) : null, [binding]);
-  const subscribeCapabilities = React.useCallback((notify: () => void) => availabilityReader?.subscribe(notify) ?? (() => {}), [availabilityReader]);
+  const availabilityReader = React.useMemo(() => active && binding?.isCurrent() ? readPluginAccountAvailability(binding.scope) : null, [active, binding]);
+  const subscribeCapabilities = React.useCallback((notify: () => void) => availabilityReader?.subscribe(notify) ?? NOOP_SUBSCRIBE(), [availabilityReader]);
   const readCapabilities = React.useCallback(() => {
+    if (!active) return '';
     const installed = binding?.isCurrent() ? availabilityReader?.readInstalledPlugins() : undefined;
     if (installed?.kind !== 'available') return eligible.map(() => 'unknown').join('|');
     const declarations = new Map<string, 'supported' | 'unknown'>();
@@ -176,7 +195,7 @@ export function useManagedControllerScope(
     // exclude a controller; the primitive result ignores renewal/heartbeat churn.
     return eligible.map(machine => declarations.get(machine.id) === 'supported' ? 'supported'
       : installed.completeness === 'complete' && declarations.get(machine.id) !== 'unknown' ? 'unsupported' : 'unknown').join('|');
-  }, [availabilityReader, binding, eligible, eligibleById, input.serverId]);
+  }, [active, availabilityReader, binding, eligible, eligibleById, input.serverId]);
   const capabilities = React.useSyncExternalStore(subscribeCapabilities, readCapabilities, readCapabilities);
   const capabilityStates = React.useMemo(() => capabilities.split('|'), [capabilities]);
   const installedProvisionerMachines = React.useMemo(() => new Set(eligible.filter((_machine, index) => capabilityStates[index] === 'supported').map(machine => machine.id)), [capabilityStates, eligible]);
@@ -247,8 +266,9 @@ export function useManagedControllerScope(
     [controllerMachineId, controllerInstallationId],
   );
   React.useEffect(() => {
+    if (!active) return;
     if (!namedRetained && controller) setChosen({ serverId: input.serverId, accountId, controller, explicit: false });
-  }, [namedRetained?.machineId, namedRetained?.installationId, controller, input.serverId, accountId]);
+  }, [active, namedRetained?.machineId, namedRetained?.installationId, controller, input.serverId, accountId]);
 
   const selection =
     React.useMemo((): MachineAdministrationTargetSelectionV1 => {
@@ -307,6 +327,7 @@ export function useManagedControllerScope(
       };
     }, [absentMachineIds, binding, controller?.machineId, controller?.installationId, eligible, onSelect, scopedRows, rows, listSettled, activeAccountScope?.serverId, input.serverId, accountId, selectDraftController]);
 
+  if (!active) return IDLE_MANAGED_CONTROLLER_SCOPE;
   const chip =
     controllerMachines.length > 0 || controller ? (
       <MachineAdministrationTargetSelector
@@ -316,7 +337,7 @@ export function useManagedControllerScope(
         selectionPolicy="lastKnown"
         chipOpen={pickerOpen}
         onChipOpenChange={setPickerOpen}
-        disabled={input.disabled}
+        disabled={input.selectorDisabled === true}
         testIDPrefix={input.testIDPrefix}
       />
     ) : null;

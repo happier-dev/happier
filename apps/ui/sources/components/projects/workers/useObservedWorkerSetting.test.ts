@@ -65,4 +65,90 @@ describe('observed worker setting intent custody', () => {
       await hook.unmount();
     },
   );
+
+  it("passes an AbortSignal into read that aborts on unmount, scope change, refresh, and account retirement", async () => {
+    fixture = await createPlainArtifactHomeFixture("https://worker-signal.test");
+    const signals: AbortSignal[] = [];
+    const resolvers: Array<() => void> = [];
+    const hook = await renderHook(({ scopeKey }: { scopeKey: string }) => useObservedWorkerSetting({
+      serverId: fixture!.home.id,
+      scopeKey,
+      read: (_accountId, signal) => {
+        signals.push(signal);
+        return new Promise(resolve => {
+          resolvers.push(() => resolve({ status: "ready" as const }));
+        });
+      },
+      observedFromReceipt: () => null,
+    }), { initialProps: { scopeKey: "scope-a" } });
+    expect(signals).toHaveLength(1);
+    expect(signals[0]!.aborted).toBe(false);
+
+    await act(async () => { hook.getCurrent().refresh(); });
+    expect(signals).toHaveLength(2);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+
+    await hook.rerender({ scopeKey: "scope-b" });
+    expect(signals).toHaveLength(3);
+    expect(signals[1]!.aborted).toBe(true);
+    expect(signals[2]!.aborted).toBe(false);
+
+    await hook.unmount();
+    expect(signals[2]!.aborted).toBe(true);
+    for (const resolve of resolvers) resolve();
+  });
+
+  it("caches ready observations per account lifetime across remounts without leaking across accounts", async () => {
+    fixture = await createPlainArtifactHomeFixture("https://worker-cache.test");
+    type Ready = Readonly<{ status: "ready"; value: number }>;
+    let reads = 0;
+    let remote = 10;
+    const read = async (): Promise<Ready> => {
+      reads += 1;
+      return { status: "ready", value: remote };
+    };
+    const first = await renderHook(() => useObservedWorkerSetting<Ready, number>({
+      serverId: fixture!.home.id,
+      scopeKey: "cached-checkout",
+      read,
+      observedFromReceipt: receipt => "value" in receipt && typeof receipt.value === "number"
+        ? { status: "ready", value: receipt.value } : null,
+    }));
+    expect(reads).toBe(1);
+    expect(first.getCurrent().state).toEqual({ kind: "ready", value: { status: "ready", value: 10 } });
+    await first.unmount();
+
+    // Remount within the same account lifetime reuses cached observation without a duplicate read.
+    const second = await renderHook(() => useObservedWorkerSetting<Ready, number>({
+      serverId: fixture!.home.id,
+      scopeKey: "cached-checkout",
+      read,
+      observedFromReceipt: receipt => "value" in receipt && typeof receipt.value === "number"
+        ? { status: "ready", value: receipt.value } : null,
+    }));
+    expect(reads).toBe(1);
+    expect(second.getCurrent().state).toEqual({ kind: "ready", value: { status: "ready", value: 10 } });
+
+    // Explicit refresh bypasses cache and updates it.
+    remote = 20;
+    await act(async () => { second.getCurrent().refresh(); });
+    expect(reads).toBe(2);
+    expect(second.getCurrent().state).toEqual({ kind: "ready", value: { status: "ready", value: 20 } });
+    await second.unmount();
+
+    // Retiring / switching account clears the cache completely (no cross-account leak).
+    await fixture.dispose();
+    fixture = await createPlainArtifactHomeFixture("https://worker-cache-account-b.test");
+    remote = 99;
+    const otherAccount = await renderHook(() => useObservedWorkerSetting<Ready, number>({
+      serverId: fixture!.home.id,
+      scopeKey: "cached-checkout",
+      read,
+      observedFromReceipt: () => null,
+    }));
+    expect(reads).toBe(3);
+    expect(otherAccount.getCurrent().state).toEqual({ kind: "ready", value: { status: "ready", value: 99 } });
+    await otherAccount.unmount();
+  });
 });

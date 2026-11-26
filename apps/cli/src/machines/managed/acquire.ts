@@ -1512,7 +1512,12 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         originalActionEnvelope: context.originalActionEnvelope, preparedAttachment,
                     }), ManagedAdmissionOutputV1Schema);
                     client.assertConnection(admitted.machine);
-                    const accepted: ManagedAcceptedV1 = { managedId: admitted.machine.id, operation: operationReceipt };
+                    const home = admitted.machine.workspaceAttachment?.home ?? preparedAttachment.home;
+                    const accepted: ManagedAcceptedV1 = {
+                        managedId: admitted.machine.id,
+                        operation: operationReceipt,
+                        ...(home ? { home } : {}),
+                    };
                     context.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: admitted.machine.id,
                         ...(retiredTrustTask ? { bootstrapTask: retiredTrustTask } : {}) } });
                     if (!retiredTrustTask) operation.accept(accepted);

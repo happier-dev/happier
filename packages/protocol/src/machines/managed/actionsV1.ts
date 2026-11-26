@@ -440,7 +440,11 @@ export function readManagedAcquireAccountSignInReviewV1(selection: ManagedAcquir
   return 'requester_confirms' as const;
 }
 
-export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({ managedId: id(), operation: z.optional(actionOperationSchema) }));
+export const ManagedAcceptedV1Schema = lazyZodSchema(() => z.strictObject({
+  managedId: id(),
+  operation: z.optional(actionOperationSchema),
+  home: z.optional(ManagedGuestPlatformV1Schema.shape.home),
+}));
 export const ManagedListInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), archived: mini.optional(z.union([mini.boolean(), z.literal('all')])),
   presetId: mini.optional(id()), enrolledMachineId: mini.optional(id()),
 }));

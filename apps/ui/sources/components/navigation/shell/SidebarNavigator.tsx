@@ -17,6 +17,7 @@ import {
 } from './appRail/appRailModel';
 import { useAppShellLocation } from './appRail/useAppShellLocation';
 import { AppShellColumnContext, type AppShellColumnState } from './appRail/appShellColumnContext';
+import { ProjectsColumnModelProvider } from '@/components/projects/projectsColumnModelContext';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
@@ -257,6 +258,7 @@ const FullSidebarNavigator = React.memo(() => {
     // Responsive chrome changes geometry, never the ordinary route navigator or its ancestry.
     return (
         <AppShellColumnContext.Provider value={appShellState}>
+        <ProjectsColumnModelProvider columnActive={columnShown && column.kind === 'projects'}>
         <WorkspaceBarGeometryContext.Provider value={workspaceBarGeometry}>
         <AppShellPeekProvider enabled={showSidebar} currentId={column.kind === 'none' ? null : location.railEntryId} columnShown={columnShown}>
         <InboxSummaryProvider>
@@ -283,6 +285,7 @@ const FullSidebarNavigator = React.memo(() => {
         </InboxSummaryProvider>
         </AppShellPeekProvider>
         </WorkspaceBarGeometryContext.Provider>
+        </ProjectsColumnModelProvider>
         </AppShellColumnContext.Provider>
     );
 });

@@ -1,7 +1,7 @@
 import type { WorkspaceSyncStatusV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
-import { getWorkspaceSyncStatus, listWorkspaceSyncStatuses, watchWorkspaceSyncStatuses } from '@/sync/ops/workspaceSync';
+import { getWorkspaceSyncStatus, listWorkspaceSyncStatusSnapshot, watchWorkspaceSyncStatuses } from '@/sync/ops/workspaceSync';
 import type { WorkspaceSyncStatusWatchSnapshotV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineRpcTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { createSharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
@@ -42,6 +42,7 @@ type StatusObservation = {
     stop: (() => void) | null;
 };
 const statusObservations = new Map<string, StatusObservation>();
+const seededControllerRevisions = new Map<string, number>();
 const IDLE_SNAPSHOT: WorkspaceSyncStatusSnapshot = { phase: 'idle', status: null, error: null };
 
 type ControllerScope = Pick<WorkspaceSyncStatusScope, 'serverId' | 'controllerMachineId'>;
@@ -78,6 +79,12 @@ const controllerWatches = createSharedSubscriptionStore<ControllerScope, number 
     // A fresh snapshot on arrival/reconnect also clears an observation error
     // when the daemon's material status has not changed since the last reply.
     refresh: async ({ input, snapshotClient, signal }) => {
+        const key = controllerKeyFor(input);
+        const seededRevision = seededControllerRevisions.get(key);
+        if (seededRevision !== undefined) {
+            seededControllerRevisions.delete(key);
+            return seededRevision;
+        }
         const admissions = statusWatchAdmissions(input);
         try {
             const reply = await snapshotClient({ ...input, signal });
@@ -136,8 +143,10 @@ function pauseStatusObservation(observation: StatusObservation | undefined): voi
 }
 
 function startStatusObservation(key: string, observation: StatusObservation): void {
-    if (observation.stop || controllerReads.has(key) || [...observation.entries].some(entry => entry.inFlight)) return;
-    const scope = observation.entries.values().next().value?.scope;
+    if (observation.stop || controllerReads.has(key)) return;
+    const observed = [...observation.entries];
+    if (observed.length === 0 || observed.some(entry => entry.inFlight || entry.snapshot.phase === 'idle')) return;
+    const scope = observed[0]?.scope;
     if (scope) observation.stop = controllerWatches.subscribe(scope, () => {});
 }
 
@@ -187,25 +196,26 @@ export function getWorkspaceSyncStatusSnapshot(scope: WorkspaceSyncStatusScope):
     return entryFor(scope).snapshot;
 }
 
-export function subscribeWorkspaceSyncStatus(scope: WorkspaceSyncStatusScope, listener: () => void): () => void {
+function attachStatusSubscriber(scope: WorkspaceSyncStatusScope, listener: () => void, startImmediately: boolean): () => void {
     const entry = entryFor(scope);
     entry.listeners.add(listener);
     const key = controllerKeyFor(scope);
-    const observation = statusObservations.get(key);
+    let observation = statusObservations.get(key);
     if (observation) observation.entries.add(entry);
     else {
-        const created: StatusObservation = { entries: new Set([entry]), stop: null };
-        statusObservations.set(key, created);
-        startStatusObservation(key, created);
+        observation = { entries: new Set([entry]), stop: null };
+        statusObservations.set(key, observation);
     }
+    if (startImmediately) startStatusObservation(key, observation);
     return () => {
         entry.listeners.delete(listener);
         if (entry.listeners.size > 0) return;
-        const observation = statusObservations.get(key);
-        observation?.entries.delete(entry);
-        if (observation?.entries.size === 0) {
-            pauseStatusObservation(observation);
+        const current = statusObservations.get(key);
+        current?.entries.delete(entry);
+        if (current?.entries.size === 0) {
+            pauseStatusObservation(current);
             statusObservations.delete(key);
+            seededControllerRevisions.delete(key);
         }
         entry.admissionGeneration += 1;
         entry.requestController?.abort();
@@ -225,10 +235,43 @@ export function subscribeWorkspaceSyncStatus(scope: WorkspaceSyncStatusScope, li
     };
 }
 
+export function subscribeWorkspaceSyncStatus(scope: WorkspaceSyncStatusScope, listener: () => void): () => void {
+    return attachStatusSubscriber(scope, listener, true);
+}
+
+/** Subscribe a set of scopes atomically: list any idle controller first, then arm its watch once. */
+export function subscribeWorkspaceSyncStatuses(
+    scopes: readonly WorkspaceSyncStatusScope[],
+    listener: () => void,
+): () => void {
+    const idleScopes: WorkspaceSyncStatusScope[] = [];
+    const controllerKeys = new Set<string>();
+    const unsubscribers = scopes.map((scope) => {
+        const unsubscribe = attachStatusSubscriber(scope, listener, false);
+        const key = controllerKeyFor(scope);
+        controllerKeys.add(key);
+        if (getWorkspaceSyncStatusSnapshot(scope).phase === 'idle') {
+            idleScopes.push(scope);
+        }
+        return unsubscribe;
+    });
+    if (idleScopes.length > 0) {
+        void refreshWorkspaceSyncStatuses(idleScopes).catch(() => undefined);
+    }
+    for (const key of controllerKeys) {
+        const observation = statusObservations.get(key);
+        if (observation) startStatusObservation(key, observation);
+    }
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+}
+
 export function setWorkspaceSyncStatus(scope: WorkspaceSyncStatusScope, status: WorkspaceSyncStatusV1): void {
     const entry = entryFor(scope);
     entry.admissionGeneration += 1;
     publish(entry, { phase: 'ready', status, error: null });
+    const key = controllerKeyFor(scope);
+    const observation = statusObservations.get(key);
+    if (observation) startStatusObservation(key, observation);
 }
 
 /** Settle unknown status after a refused command without replacing known engine state. */
@@ -249,6 +292,7 @@ export function invalidateWorkspaceSyncStatuses(controller: Readonly<{
     serverId: string | null;
     controllerMachineId: string;
 }>): void {
+    seededControllerRevisions.delete(controllerKeyFor(controller));
     controllerWatches.invalidate(controller);
     const scopes: WorkspaceSyncStatusScope[] = [];
     const currentRead = controllerReads.get(controllerKeyFor(controller));
@@ -328,10 +372,14 @@ export async function refreshWorkspaceSyncStatuses(
         if (current) return await current.inFlight;
         // A fresh explicit read supersedes the old parked reply. Re-arm only
         // after this read settles, so an older watch cannot overwrite it.
+        seededControllerRevisions.delete(key);
         pauseStatusObservation(statusObservations.get(key));
-        read.inFlight = listWorkspaceSyncStatuses({ ...controller, signal: read.controller.signal }).then((statuses) => {
+        read.inFlight = listWorkspaceSyncStatusSnapshot({ ...controller, signal: read.controller.signal }).then((snapshot) => {
             if (read.invalidated || read.controller.signal.aborted) return;
-            const byId = new Map(statuses
+            if (snapshot.statusRevision !== undefined) {
+                seededControllerRevisions.set(key, snapshot.statusRevision);
+            }
+            const byId = new Map(snapshot.statuses
                 .filter((status) => status.controllerMachineId === controller.controllerMachineId)
                 .map((status) => [status.relationshipId, status] as const));
             for (const { scope, generation } of read.scopes.values()) {
@@ -370,6 +418,7 @@ export function resetWorkspaceSyncStatusStoreForTests(): void {
         pauseStatusObservation(observation);
     }
     statusObservations.clear();
+    seededControllerRevisions.clear();
     controllerWatches.reset();
     for (const entry of entries.values()) entry.requestController?.abort();
     for (const read of controllerReads.values()) read.controller.abort();

@@ -1272,24 +1272,28 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     }
     return [...observed.values()];
   }
+  private async refreshStatusProjection(signal?: AbortSignal): Promise<readonly WorkspaceSyncStatusV1[]> {
+    const previous = new Map(this.statuses);
+    const statuses = await this.list(signal);
+    abortIfRequested(signal);
+    const ids = new Set(statuses.map(status => status.relationshipId));
+    for (const [id, status] of previous) {
+      if (!ids.has(id) && this.statuses.get(id) === status && this.statuses.delete(id)) this.notifyStatusWatch();
+    }
+    // A lifecycle command can publish while the native read is in flight.
+    // Preserve its newer fact rather than overwriting it with that read.
+    for (const status of statuses) {
+      if (this.statuses.get(status.relationshipId) === previous.get(status.relationshipId)) this.publish(status);
+    }
+    return statuses;
+  }
   async watchStatuses(request: WorkspaceSyncStatusWatchRequestV1, signal?: AbortSignal): Promise<WorkspaceSyncStatusWatchResultV1> {
     if (signal?.aborted) return { changed: false };
     if (this.shuttingDown) throw Object.assign(new Error('Workspace sync runtime is unavailable'), { code: 'workspace_sync_unavailable' });
     // A new viewer reads fresh, including changes made while nobody was watching.
     // Renewals use the retained projection; only parked demand observes the engine.
     if (request.sinceRevision === undefined) {
-      const previous = new Map(this.statuses);
-      const statuses = await this.list(signal);
-      abortIfRequested(signal);
-      const ids = new Set(statuses.map(status => status.relationshipId));
-      for (const [id, status] of previous) {
-        if (!ids.has(id) && this.statuses.get(id) === status && this.statuses.delete(id)) this.notifyStatusWatch();
-      }
-      // A lifecycle command can publish while the native read is in flight.
-      // Preserve its newer fact rather than overwriting it with that read.
-      for (const status of statuses) {
-        if (this.statuses.get(status.relationshipId) === previous.get(status.relationshipId)) this.publish(status);
-      }
+      await this.refreshStatusProjection(signal);
     }
     const result = await this.statusWatches.parkWatch({
       isNewer: () => request.sinceRevision !== this.statusRevision,
@@ -1491,7 +1495,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     // call; a stale caller filter yields found:false, never another scope.
     const local = [...this.definitions.values()].filter(definition => admittedRelationshipIds === undefined
       || admittedRelationshipIds.has(definition.relationshipId));
-    const statuses = await this.list(signal);
+    const statuses = await this.refreshStatusProjection(signal);
+    const statusRevision = this.statusRevision;
     const statusById = new Map(statuses.map((status) => [status.relationshipId, status] as const));
     const topology = await this.deriveRuntimeTopology(local);
     const matchingSets = valid.workspaceRefId === undefined
@@ -1528,6 +1533,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         ? { workspaceRefId: null, found: null }
         : { workspaceRefId: valid.workspaceRefId, found: relationships.length + remoteRelationships.length > 0 },
       discoveryAvailable: all !== null,
+      statusRevision,
     });
   }
   async inspectConflict(request: WorkspaceSyncConflictInspectRpcRequestV1, signal?: AbortSignal, admittedRelationshipIds?: ReadonlySet<string>): Promise<WorkspaceSyncConflictInspectRpcResultV1> {

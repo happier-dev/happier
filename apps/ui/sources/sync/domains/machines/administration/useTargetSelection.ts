@@ -174,6 +174,7 @@ export function useMachineAdministrationTargetPickerRows(): readonly MachineAdmi
 
 /** Retained identities and selectable choices share one inventory projection and explicit resource demand. */
 export function useMachineAdministrationTargetRows(options?: Readonly<{
+    enabled?: boolean;
     accountScope?: ServerAccountScope;
     selectedMachineId?: string;
     managedInventoryDemand?: boolean;
@@ -181,18 +182,19 @@ export function useMachineAdministrationTargetRows(options?: Readonly<{
     inventoryRows: readonly MachineAdministrationTargetPickerRowV1[];
     pickerRows: readonly MachineAdministrationTargetPickerRowV1[];
 }> {
-    const selection = React.useMemo(() => options?.accountScope
+    const enabled = options?.enabled !== false;
+    const selection = React.useMemo(() => enabled && options?.accountScope
         ? { scope: options.accountScope, machineId: null } : undefined,
-    [options?.accountScope?.serverId, options?.accountScope?.accountId]);
+    [enabled, options?.accountScope?.serverId, options?.accountScope?.accountId]);
     // A closed named scope keeps its initial choices, but only its selected
     // record's facts can change its presentation. Opening reads the full chooser.
     const selectedMachineId = options?.selectedMachineId;
     const selectFacts = React.useCallback<typeof readMachineAdministrationTargetFacts>((machine, scope, nowMs) =>
         selectedMachineId && machine.id !== selectedMachineId ? [machine.id]
             : readMachineAdministrationTargetFacts(machine, scope, nowMs), [selectedMachineId]);
-    const snapshots = useAllProfileMachineInventorySnapshots(true, selection, options ? selectFacts : undefined);
-    const inventoryRows = useMachineAdministrationInventoryRows(snapshots, options?.managedInventoryDemand !== false);
-    const pickerRows = React.useMemo(() => buildMachineAdministrationTargetPickerRows(inventoryRows), [inventoryRows]);
+    const snapshots = useAllProfileMachineInventorySnapshots(enabled, selection, options ? selectFacts : undefined);
+    const inventoryRows = useMachineAdministrationInventoryRows(snapshots, enabled && options?.managedInventoryDemand !== false, enabled);
+    const pickerRows = React.useMemo(() => enabled ? buildMachineAdministrationTargetPickerRows(inventoryRows) : [], [enabled, inventoryRows]);
     return React.useMemo(() => ({ inventoryRows, pickerRows }), [inventoryRows, pickerRows]);
 }
 

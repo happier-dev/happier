@@ -1142,6 +1142,7 @@ export const WorkspaceSyncRelationshipsListRpcResultV1Schema = lazyZodSchema(() 
     found: z.nullable(z.boolean()),
   }),
   discoveryAvailable: z.boolean(),
+  statusRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
   requesterAvailability: z.optional(WorkspaceSyncRequesterAvailabilityV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.membership.workspaceRefId === null && value.membership.found !== null) {

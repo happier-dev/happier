@@ -160,13 +160,27 @@ async function runRelationshipLifecycleCommand(
     if (record.ok !== true) unsupported(method);
 }
 
-export async function listWorkspaceSyncStatuses(
+export type WorkspaceSyncStatusListSnapshot = Readonly<{
+    statuses: readonly WorkspaceSyncStatusV1[];
+    statusRevision?: number;
+}>;
+
+export async function listWorkspaceSyncStatusSnapshot(
     scope: WorkspaceSyncControllerScope,
-): Promise<readonly WorkspaceSyncStatusV1[]> {
+): Promise<WorkspaceSyncStatusListSnapshot> {
     const result = WorkspaceSyncRelationshipsListActionOutputV1Schema.parse(await executeWorkspaceSyncRead(
         scope, 'workspace.sync.relationships.list', { controllerMachineId: scope.controllerMachineId },
     ));
-    return result.relationships.flatMap(({ status }) => status ? [status] : []);
+    return {
+        statuses: result.relationships.flatMap(({ status }) => status ? [status] : []),
+        ...(result.statusRevision !== undefined ? { statusRevision: result.statusRevision } : {}),
+    };
+}
+
+export async function listWorkspaceSyncStatuses(
+    scope: WorkspaceSyncControllerScope,
+): Promise<readonly WorkspaceSyncStatusV1[]> {
+    return (await listWorkspaceSyncStatusSnapshot(scope)).statuses;
 }
 
 async function executeWorkspaceSyncRead(scope: WorkspaceSyncControllerScope, actionId: ActionId, input: unknown): Promise<unknown> {

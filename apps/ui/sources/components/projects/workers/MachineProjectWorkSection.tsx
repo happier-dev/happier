@@ -58,11 +58,11 @@ export function useMachineWorkerPolicy(serverId: string, machineId: string) {
     enabled: machine != null && !isMachineActivityPlaceholder(machine),
     serverId,
     scopeKey: JSON.stringify(['machines.worker.policy', serverId, machineId]),
-    read: (accountId) =>
+    read: (accountId, signal) =>
       executeProjectWorkerActionV1(
         'machines.worker.policy.get',
         { serverId, machineId },
-        { expectedAccountId: accountId },
+        { expectedAccountId: accountId, signal },
       ),
     // A receipt that carries the policy is what the Machine now stores.
     observedFromReceipt: (receipt): ReadyPolicy | null =>

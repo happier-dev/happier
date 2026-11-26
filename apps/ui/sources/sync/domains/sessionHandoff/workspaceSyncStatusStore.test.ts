@@ -20,7 +20,7 @@ const workspace = createWorkspaceSyncHarness(async input => {
         return await watchWorkspaceSyncStatuses({ ...scope,
             ...(input.payload as Readonly<{ sinceRevision?: number }>), signal: input.signal });
     }
-    if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture(await listWorkspaceSyncStatuses(scope), input.machineId);
+    if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture(await listWorkspaceSyncStatuses(scope), input.machineId, watchBoundary.currentRevision());
     if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_GET) return { status: await getWorkspaceSyncStatus({ ...scope,
         relationshipId: (input.payload as Readonly<{ relationshipId: string }>).relationshipId }) };
     throw new Error(`Unexpected RPC: ${input.method}`);
@@ -492,5 +492,35 @@ describe('workspaceSyncStatusStore', () => {
             phase: 'ready',
             status: { state: 'paused', lastCycleObservedAtMs: 2 },
         });
+    });
+
+    it("mounts an idle controller with one list read, zero aborted watches, and one parked watch seeded with sinceRevision", async () => {
+        const { renderHook } = await import("@/dev/testkit/hooks/renderHook");
+        const { useWorkspaceSyncRelationshipSummaries } = await import("./useWorkspaceSyncRelationshipSummaries");
+        await workspace.seedProject();
+        const status = {
+            relationshipId: "link-1", controllerMachineId: "machine-a", state: "watching" as const,
+            alphaPath: "/hub", betaPath: "/spoke", mode: "keep_both_in_sync" as const,
+            endpointStates: { alpha: null, beta: null }, conflictCount: 0, lastCycleObservedAtMs: 1,
+        };
+        watchBoundary.publish([status]);
+        listWorkspaceSyncStatuses.mockResolvedValue([status]);
+        let abortedWatches = 0;
+        const watchSinceRevisions: Array<number | undefined> = [];
+        watchWorkspaceSyncStatuses.mockImplementation((input: { sinceRevision?: number; signal?: AbortSignal }) => {
+            watchSinceRevisions.push(input.sinceRevision);
+            input.signal?.addEventListener("abort", () => { abortedWatches += 1; }, { once: true });
+            return watchBoundary.watch(input);
+        });
+        const hook = await renderHook(() => useWorkspaceSyncRelationshipSummaries(undefined, workspace.serverId));
+        try {
+            await vi.waitFor(() => expect(watchBoundary.parkedCount()).toBe(1));
+            expect(listWorkspaceSyncStatuses).toHaveBeenCalledTimes(1);
+            expect(abortedWatches).toBe(0);
+            expect(watchWorkspaceSyncStatuses).toHaveBeenCalledTimes(1);
+            expect(watchSinceRevisions).toEqual([1]);
+        } finally {
+            await hook.unmount();
+        }
     });
 });

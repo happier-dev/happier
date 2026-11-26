@@ -9,8 +9,7 @@ import {
 } from './workspaceSyncRelationshipModel';
 import {
     getWorkspaceSyncStatusSnapshot,
-    refreshWorkspaceSyncStatuses,
-    subscribeWorkspaceSyncStatus,
+    subscribeWorkspaceSyncStatuses,
     type WorkspaceSyncStatusScope,
 } from './workspaceSyncStatusStore';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -85,19 +84,13 @@ export function useWorkspaceSyncRelationshipSummaries(
     const [revision, incrementRevision] = React.useReducer((value: number) => value + 1, 0);
     useHostActivelyViewedEffect((activelyViewed) => {
         if (!activelyViewed) return;
-        const idleScopes: WorkspaceSyncStatusScope[] = [];
-        const unsubscribers = scopedBaseSummaries.map((summary) => {
-            if (!summary.relationship.enabled) return () => {};
-            if (!summary.alpha.workspaceRef || !summary.beta.workspaceRef) return () => {};
-            const scope = scopeFor(summary);
-            const unsubscribe = subscribeWorkspaceSyncStatus(scope, incrementRevision);
-            if (getWorkspaceSyncStatusSnapshot(scope).phase === 'idle') {
-                idleScopes.push(scope);
-            }
-            return unsubscribe;
+        const scopes = scopedBaseSummaries.flatMap((summary) => {
+            if (!summary.relationship.enabled) return [];
+            if (!summary.alpha.workspaceRef || !summary.beta.workspaceRef) return [];
+            return [scopeFor(summary)];
         });
-        if (idleScopes.length > 0) void refreshWorkspaceSyncStatuses(idleScopes).catch(() => undefined);
-        return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+        if (scopes.length === 0) return;
+        return subscribeWorkspaceSyncStatuses(scopes, incrementRevision);
     }, [scopedBaseSummaries]);
 
     return React.useMemo(() => {

@@ -8,7 +8,7 @@ import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForId
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getLocalServiceLauncherState, readLocalServiceLauncherStore, subscribeLocalServiceLauncherStore,
     invalidateLocalServiceLauncherStore, type LocalServiceLauncherStoreKeyInput } from '@/sync/domains/local/services/launch/sharedStore';
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readUiWorkspaceSyncChildMachineFacts } from '@/sync/ops/workspaceSyncChildMachineFacts';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -127,6 +127,58 @@ async function refreshLocalServiceMachine(input: Readonly<{ serverId: string; ma
 }
 
 type ServiceActual = Extract<ProjectServicePlacementGetResultV1, { status: 'ready' }>['actual'];
+type ProjectAccountRowsSnapshot = NonNullable<ReturnType<typeof readCurrentProjectAccountRows>>;
+type ChildMachineFactsSnapshot = Awaited<ReturnType<typeof readUiWorkspaceSyncChildMachineFacts>>;
+
+type RelevantServiceTopology = Readonly<{
+    workspaceRefs: ProjectAccountRowsSnapshot['workspaceRefs'];
+    relationships: ProjectAccountRowsSnapshot['relationships'];
+    relationshipIdsKey: string;
+    topologyKey: string;
+}>;
+
+const EMPTY_TOPOLOGY: RelevantServiceTopology = Object.freeze({
+    workspaceRefs: [],
+    relationships: [],
+    relationshipIdsKey: '[]',
+    topologyKey: '',
+});
+
+/**
+ * Derive stable topology keys for a workspace while preserving full refs/relationships for
+ * bind-mounted parent-child resolution inside `observeProjectServicePlacementActualV1`.
+ * Unrelated workspace-ref edits that touch neither this workspace nor any relationship endpoint
+ * keep `topologyKey` and `relationshipIdsKey` stable.
+ */
+function selectRelevantServiceTopology(
+    rows: ProjectAccountRowsSnapshot | null,
+    workspaceRefId: string | null | undefined,
+): RelevantServiceTopology {
+    if (!rows || !workspaceRefId) return EMPTY_TOPOLOGY;
+    const relationships = [...rows.relationships].sort((left, right) => left.relationshipId.localeCompare(right.relationshipId));
+    const relevantRefIds = new Set<string>([workspaceRefId]);
+    for (const relationship of relationships) {
+        relevantRefIds.add(relationship.alphaWorkspaceRefId);
+        relevantRefIds.add(relationship.betaWorkspaceRefId);
+    }
+    const relevantWorkspaceRefs = rows.workspaceRefs
+        .filter(ref => relevantRefIds.has(ref.id))
+        .sort((left, right) => left.id.localeCompare(right.id));
+    const relationshipIdsKey = JSON.stringify(relationships.map(relationship => relationship.relationshipId));
+    const topologyKey = JSON.stringify({ workspaceRefs: relevantWorkspaceRefs, relationships });
+    return { workspaceRefs: rows.workspaceRefs, relationships: rows.relationships, relationshipIdsKey, topologyKey };
+}
+
+function isProjectRowsReadyForBinding(
+    rows: ReturnType<typeof readCurrentProjectAccountRows>,
+    accountId: string,
+    serverId: string,
+): rows is ProjectAccountRowsSnapshot {
+    return rows?.status === 'ready'
+        && rows.coverage === 'complete'
+        && rows.scope.accountId === accountId
+        && areServerProfileIdentifiersEquivalent(rows.scope.serverId, serverId);
+}
 
 /** Projection only: reads the same launcher store and projected watches as the SOURCE feed.
  * The protocol observation owner selects accepted endpoints and proves native provenance. */
@@ -135,14 +187,53 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
     const enabled = presented && input.available !== false && input.launcherState === undefined && input.scope === 'workspace' && Boolean(input.workspaceRefId && input.serverId);
     const { binding } = useServerCredentialAccountScopeBinding(input.serverId ?? '');
     const rows = storage(state => enabled ? readCurrentProjectAccountRows(state) : null);
-    const canObserve = enabled && binding?.isCurrent() === true && rows?.status === 'ready' && rows.coverage === 'complete'
-        && rows.scope.accountId === binding.accountId && areServerProfileIdentifiersEquivalent(rows.scope.serverId, input.serverId ?? '');
+    const canObserve = enabled && binding?.isCurrent() === true && isProjectRowsReadyForBinding(rows, binding.accountId, input.serverId ?? '');
+    const [bindingTick, bumpBindingTick] = React.useReducer((value: number) => value + 1, 0);
+    const [censusGeneration, renewCensus] = React.useReducer((value: number) => value + 1, 0);
+    const cachedCensusRef = React.useRef<Readonly<{
+        binding: typeof binding;
+        censusGeneration: number;
+        abort: AbortController;
+        account: LazyActionAccountContext;
+        facts: ChildMachineFactsSnapshot;
+    }> | null>(null);
+    const rawTopology = React.useMemo(
+        () => canObserve && rows ? selectRelevantServiceTopology(rows, input.workspaceRefId) : EMPTY_TOPOLOGY,
+        [canObserve, input.workspaceRefId, rows],
+    );
+    const stableTopologyRef = React.useRef<RelevantServiceTopology>(rawTopology);
+    const topology = React.useMemo(() => {
+        if (stableTopologyRef.current.topologyKey === rawTopology.topologyKey) return stableTopologyRef.current;
+        stableTopologyRef.current = rawTopology;
+        return rawTopology;
+    }, [rawTopology]);
+
     const sourceTargets = React.useMemo(() => sourceState ? selectLocalServiceLaunchTargets(sourceState) : [], [sourceState?.targetsById]);
-    const declarations = React.useMemo(() => sourceTargets.filter(target => target.declaration && target.declaration.workspaceRefId === input.workspaceRefId
+    const rawDeclarations = React.useMemo(() => sourceTargets.filter(target => target.declaration && target.declaration.workspaceRefId === input.workspaceRefId
         && target.declaration.selection.kind === 'manifest'), [input.workspaceRefId, sourceTargets]);
-    const [change, observeAgain] = React.useReducer((value: number) => value + 1, 0);
+    const stableDeclarationsRef = React.useRef<typeof rawDeclarations>(rawDeclarations);
+    const declarations = React.useMemo(() => {
+        const previous = stableDeclarationsRef.current;
+        const same = previous.length === rawDeclarations.length && previous.every((target, index) => {
+            const next = rawDeclarations[index]!;
+            return target.id === next.id
+                && sameStrictJsonValue(target.declaration, next.declaration)
+                && sameStrictJsonValue(target.workspace, next.workspace);
+        });
+        if (same) return previous;
+        stableDeclarationsRef.current = rawDeclarations;
+        return rawDeclarations;
+    }, [rawDeclarations]);
+    const disposeCachedCensus = React.useCallback(() => {
+        const previous = cachedCensusRef.current;
+        cachedCensusRef.current = null;
+        previous?.abort.abort();
+        previous?.account.dispose();
+    }, []);
+
+    // Launcher subscriptions track only the workspace's connected relationships, never unrelated project rows.
     const subscriptions = React.useMemo(() => new Map<string, Readonly<{ key: LocalServiceLauncherStoreKeyInput; dispose: () => void }>>(),
-        [binding, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, rows]);
+        [binding, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, topology.relationshipIdsKey]);
     React.useEffect(() => {
         if (!canObserve || !binding || !input.machineId) return;
         // Project admission can fail independently of healthy native snapshots. Reconnect
@@ -154,31 +245,81 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
                 for (const { key } of subscriptions.values()) {
                     if (key.machineId === input.machineId && getLocalServiceLauncherState(key).refreshStatus === 'error') return;
                 }
-                observeAgain();
+                renewCensus();
             });
     }, [binding, canObserve, input.machineId, input.serverId, subscriptions]);
     React.useEffect(() => {
-        const release = () => { for (const subscription of subscriptions.values()) subscription.dispose(); subscriptions.clear(); };
+        const release = () => {
+            for (const subscription of subscriptions.values()) subscription.dispose();
+            subscriptions.clear();
+            disposeCachedCensus();
+        };
         const retirement = binding?.onRetire(release);
         return () => { retirement?.dispose(); release(); };
-    }, [binding, subscriptions]);
-    const [observation, setObservation] = React.useState<Readonly<{ binding: typeof binding; rows: typeof rows; declarations: typeof declarations; values: ReadonlyMap<string, ServiceActual> }> | null>(null);
+    }, [binding, disposeCachedCensus, subscriptions]);
+    React.useEffect(() => {
+        if (!canObserve) disposeCachedCensus();
+    }, [canObserve, disposeCachedCensus]);
+
+    const [observation, setObservation] = React.useState<Readonly<{
+        binding: typeof binding;
+        topologyKey: string;
+        declarations: typeof declarations;
+        values: ReadonlyMap<string, ServiceActual>;
+    }> | null>(null);
     React.useEffect(() => {
         let current = true;
-        if (!canObserve || !binding || !rows) return;
-        const isCurrent = () => current && binding.isCurrent() && readCurrentProjectAccountRows(storage.getState()) === rows;
+        if (!canObserve || !binding || !topology.topologyKey) return;
+        const topologyKey = topology.topologyKey;
+        const isCurrent = () => {
+            if (!current || !binding.isCurrent()) return false;
+            const liveRows = readCurrentProjectAccountRows(storage.getState());
+            return isProjectRowsReadyForBinding(liveRows, binding.accountId, input.serverId!)
+                && selectRelevantServiceTopology(liveRows, input.workspaceRefId).topologyKey === topologyKey;
+        };
         const abort = new AbortController();
         void (async () => {
           if (!declarations.length) return [];
-          const account = await captureLazyActionAccountContext(input.serverId!, abort.signal);
+          const cached = cachedCensusRef.current;
+          const reusable = cached
+              && cached.binding === binding
+              && cached.censusGeneration === censusGeneration
+              && cached.account.accountId === binding.accountId;
+          let facts: ChildMachineFactsSnapshot;
+          if (reusable) {
+              facts = cached.facts;
+          } else {
+              const censusAbort = new AbortController();
+              const abortPendingCensus = () => censusAbort.abort();
+              if (abort.signal.aborted) censusAbort.abort();
+              else abort.signal.addEventListener('abort', abortPendingCensus, { once: true });
+              let account: LazyActionAccountContext;
+              try {
+                  account = await captureLazyActionAccountContext(input.serverId!, censusAbort.signal);
+                  try {
+                      if (account.accountId !== binding.accountId) throw new Error('Project Account changed');
+                      facts = await readUiWorkspaceSyncChildMachineFacts(account, censusAbort.signal);
+                  } catch (error) {
+                      account.dispose();
+                      throw error;
+                  }
+              } finally {
+                  abort.signal.removeEventListener('abort', abortPendingCensus);
+              }
+              if (!isCurrent()) {
+                  censusAbort.abort();
+                  account.dispose();
+                  return [];
+              }
+              disposeCachedCensus();
+              cachedCensusRef.current = { binding, censusGeneration, abort: censusAbort, account, facts };
+          }
           try {
-            if (account.accountId !== binding.accountId) throw new Error('Project Account changed');
-            const facts = await readUiWorkspaceSyncChildMachineFacts(account, abort.signal);
             return await Promise.all(declarations.map(async target => {
             const selection = target.declaration!.selection;
             const serviceName = selection.kind === 'manifest' ? selection.name : target.id;
             const actual = await observeProjectServicePlacementActualV1({ workspace: { serverId: input.serverId!, refId: input.workspaceRefId! }, serviceName,
-                workspaceRefs: rows.workspaceRefs, relationships: rows.relationships, ...facts,
+                workspaceRefs: topology.workspaceRefs, relationships: topology.relationships, ...facts,
                 context: { normalizeServerId: resolveServerProfileScopeIdForIdentifier }, isCurrent,
                 readSnapshot: async request => {
                     const key: LocalServiceLauncherStoreKeyInput = { machineId: request.machineId, serverId: binding.scope.serverId,
@@ -190,12 +331,17 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
                         let previous = getLocalServiceLauncherState(key);
                         const disposeLauncher = subscribeLocalServiceLauncherStore(key, () => {
                             const next = getLocalServiceLauncherState(key);
-                            const observed = previous.updatedAt !== null || previous.refreshStatus === 'error';
+                            const wasError = previous.refreshStatus === 'error';
+                            const observed = previous.updatedAt !== null || wasError;
                             previous = next;
                             // This observation awaits initial hydration below. Restarting it on
                             // that same read would discard its admitted Machine census and result.
                             // The store publishes only changed native facts or availability.
-                            if (observed) observeAgain();
+                            if (!observed) return;
+                            // Recovery from a failed native feed renews the Machine census; steady
+                            // watch ticks reuse the admitted census without calling fetchMachineRows.
+                            if (wasError && next.refreshStatus !== 'error') renewCensus();
+                            else bumpBindingTick();
                         }, {
                             ...(input.launcherSnapshotClient ? { snapshotClient: input.launcherSnapshotClient } : {}),
                         });
@@ -212,23 +358,27 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
             });
             return [target.id, actual] as const;
             }));
-          } finally { account.dispose(); }
-        })().then(values => { if (isCurrent()) setObservation({ binding, rows, declarations, values: new Map(values) }); })
-            .catch(() => { if (isCurrent()) setObservation({ binding, rows, declarations,
+          } catch (error) {
+              if (cachedCensusRef.current?.facts === facts) disposeCachedCensus();
+              throw error;
+          }
+        })().then(values => { if (isCurrent()) setObservation({ binding, topologyKey, declarations, values: new Map(values) }); })
+            .catch(() => { if (isCurrent()) setObservation({ binding, topologyKey, declarations,
                 values: new Map(declarations.map(target => [target.id, { status: 'unavailable' as const }])) }); });
         return () => { current = false; abort.abort(); };
-    }, [binding, canObserve, change, declarations, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, rows, subscriptions]);
+    }, [binding, bindingTick, canObserve, censusGeneration, declarations, disposeCachedCensus, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, subscriptions, topology]);
     const sourceTargetIds = sourceState?.targetIds;
     const sourceTargetsById = sourceState?.targetsById;
     // Project rows depend on native facts and their binding, not a new scan cursor.
     // Reconcile that collection once per structural change; carry freshness separately below.
     const projection = React.useMemo(() => {
         if (!enabled || !sourceTargetIds || !sourceTargetsById || !declarations.length) return null;
-        const values = canObserve && observation?.binding === binding && observation.rows === rows ? observation.values : null;
+        const declarationIds = new Set(declarations.map(target => target.id));
+        const values = canObserve && observation?.binding === binding && observation.topologyKey === topology.topologyKey ? observation.values : null;
         const rowIdsByTargetId = new Map<string, string>();
         let pending = false;
         const targets = sourceTargets.flatMap(target => {
-            if (!declarations.includes(target)) return [target];
+            if (!declarationIds.has(target.id)) return [target];
             // A fresh SOURCE target can change native facts without changing the
             // declaration being observed. Keep its completed binding while the
             // same census refreshes; new declarations/topology still start unread.
@@ -251,7 +401,7 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
         });
         return { collection: reconcileLocalServiceLauncherTargets({ targetIds: sourceTargetIds, targetsById: sourceTargetsById }, targets),
             rowIdsByTargetId, pending };
-    }, [binding, canObserve, declarations, enabled, observation, rows, sourceTargetIds, sourceTargetsById, sourceTargets]);
+    }, [binding, canObserve, declarations, enabled, observation, sourceTargetIds, sourceTargetsById, sourceTargets, topology.topologyKey]);
     const state = React.useMemo(() => !projection || !sourceState ? sourceState : {
         ...sourceState,
         targetIds: projection.collection.targetIds,
@@ -269,7 +419,7 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
         }
         // Retry renews the existing native bindings and Project census even when
         // the source scan is unchanged or unavailable to this requester.
-        if (binding?.isCurrent() && refreshed) observeAgain();
+        if (binding?.isCurrent() && refreshed) renewCensus();
     }, [binding, subscriptions]);
     return { state, refresh, binding };
 }

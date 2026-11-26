@@ -537,4 +537,35 @@ describe('WorkspaceSyncController selected-path inspection', () => {
     await controller.shutdown();
     await rm(fixture, { recursive: true, force: true });
   });
+
+  it("returns statusRevision from listRelationships so an immediate watchStatuses parks without a redundant list", async () => {
+    const adapter = completeAdapter();
+    const controller = new WorkspaceSyncController({
+      adapter, lifecycle: lifecycle(), rootOwnershipManager: stubRootOwnership(),
+      localMachineId: "machine-a",
+      resolveWorkspaceRef: (id) => ({ machineId: id === "workspace-a" ? "machine-a" : "machine-x", rootPath: `/${id}` }),
+    });
+    try {
+      await controller.ensure(definitionAB);
+      adapter.list.mockClear();
+
+      const listed = await controller.listRelationships({});
+      expect(getActionSpec("workspace.sync.relationships.list").outputSchema?.parse(listed)).toEqual(listed);
+      expect(typeof listed.statusRevision).toBe("number");
+      expect(adapter.list).toHaveBeenCalledTimes(1);
+
+      const abort = new AbortController();
+      let settled = false;
+      const watchPromise = controller.watchStatuses({ sinceRevision: listed.statusRevision, timeoutMs: 2_000 }, abort.signal)
+        .then((res) => { settled = true; return res; });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(settled).toBe(false);
+      expect(adapter.list).toHaveBeenCalledTimes(1);
+
+      abort.abort();
+      await expect(watchPromise).resolves.toEqual({ changed: false });
+    } finally {
+      await controller.shutdown();
+    }
+  });
 });

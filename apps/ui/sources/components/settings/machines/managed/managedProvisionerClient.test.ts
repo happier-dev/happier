@@ -79,6 +79,61 @@ describe('managed configurator uses the exact Home Action front door', () => {
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
     });
 
+    it("reads home directly from machines.managed.acquire without an extra machines.managed.get RTT, and falls back when omitted", async () => {
+        const homeId = "srv_attach_home_direct";
+        const serverId = await harness.addHome({ name: "Compute", serverUrl: "https://attach-home.test",
+            serverIdentityId: homeId, accountId: "owner", currentAccount: true });
+        const contribution = { pluginId: "happier.machine.ssh", localId: "ssh" };
+        const controller = { machineId: "host", installationId: "installation" };
+        const hostId = "saved-host";
+        const descriptor = {
+            schemaVersion: 1,
+            launchSchema: defineProtocolObject({ remoteHostId: defineProtocolString() }, { policy: "closed" }).jsonSchema,
+            workspaceAttachment: { when: { op: "truthy" as const, path: "remoteHostId" } },
+        };
+        await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: "machines.provisioners.options", tokenEpoch: 0, execute: () =>
+                createMachineProvisionerOptionsFixture({ base: { launch: {} }, dimensions: {
+                    size: [], location: [], duration: [], network: [], image: [
+                        { id: hostId, title: "Saved server", assignments: [{ path: "remoteHostId", value: hostId }] },
+                    ],
+                } }) });
+        let returnHomeOnAcquire = true;
+        const admitted = await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: "machines.managed.acquire", tokenEpoch: 0, execute: () =>
+                returnHomeOnAcquire ? { managedId: "attached-direct", home: "/home/coder" } : { managedId: "attached-legacy" } });
+        harness.answer(serverId, "/v1/machines", { body: [admitted.machine] });
+        const legacyMachine = ManagedMachinePublicFullV1Schema.parse({
+            id: "attached-legacy", homeId, custodianAccountId: "owner", controller, allocation: "bound",
+            creationState: "active", desired: "start", desiredWhen: "now", intentRevision: 1,
+            launch: { provider: contribution, schemaVersion: 1, name: "Saved server", choices: { remoteHostId: hostId } },
+            resource: { contributionRef: contribution, schemaVersion: 1, value: { remoteHostId: hostId } },
+            workspaceAttachment: { os: "linux", arch: "x64", home: "/home/legacy" },
+            retention: { kind: "until-delete" }, wakeOnAcceptedMessage: false,
+        });
+        harness.answer(serverId, "/v1/machines/managed/actions/get", { body: legacyMachine });
+
+        const { readAttachableRemoteWorkspaces, attachRemoteWorkspace } = await import("./attachableRemoteWorkspaceActions");
+        const signal = new AbortController().signal;
+        const onApprovalPending = () => { throw new Error("Unexpected approval request"); };
+        const account = await readAttachableRemoteWorkspaces({ scope: { serverId, accountId: "owner" }, homeId, controller,
+            contribution, descriptor, selectors: { remoteHostId: hostId }, signal, onApprovalPending });
+        if (account.kind !== "ready") throw new Error("Expected ready attachable workspace account");
+
+        // Direct path: home returned from acquire => 0 machines.managed.get calls.
+        const direct = await attachRemoteWorkspace({ account, workspaceId: hostId, signal, onApprovalPending });
+        expect(direct).toEqual({ kind: "attached", managedId: "attached-direct", controller, home: "/home/coder" });
+        const getRequestsAfterDirect = harness.requests.filter(request => request.path.includes("machines/managed/actions/get") || request.path.includes("machines.managed.get"));
+        expect(getRequestsAfterDirect).toHaveLength(0);
+
+        // Fallback path: older controller omits home => falls back to machines.managed.get once.
+        returnHomeOnAcquire = false;
+        const legacy = await attachRemoteWorkspace({ account, workspaceId: hostId, signal, onApprovalPending });
+        expect(legacy).toEqual({ kind: "attached", managedId: "attached-legacy", controller, home: "/home/legacy" });
+        const getRequestsAfterLegacy = harness.requests.filter(request => request.path.includes("machines/managed/actions/get") || request.path.includes("machines.managed.get"));
+        expect(getRequestsAfterLegacy).toHaveLength(1);
+    });
+
     it.each(['acquired', 'session_holder_unavailable'] as const)('uses the saved SSH host for one existing-workspace acquire (%s)', async outcome => {
         const homeId = 'srv_ssh_attach';
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://ssh.attach.test',
