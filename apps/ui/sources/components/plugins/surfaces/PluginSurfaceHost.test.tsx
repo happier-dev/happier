@@ -8836,8 +8836,9 @@ describe('PluginSurfacePlacementHost', () => {
         } finally { rows.release(); await second.unmount(); await first.unmount(); }
     });
 
-    it('shows unavailable instead of a loading skeleton after a failed cold Account mode read', async () => {
+    it('shows unavailable instead of a loading skeleton when a cold Account mode read fails on an unreachable Home', async () => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { storage } = await import('@/sync/domains/state/storage');
         reactNativeSurfaceRuntime.enabled = true;
         reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(() => React.createElement('Text', {
             testID: 'offline-recovered-surface',
@@ -8850,6 +8851,7 @@ describe('PluginSurfacePlacementHost', () => {
             return undefined;
         }, { serverIdentityId: 'srv_server_1' });
         offline = true;
+        storage.setState({ endpointStatus: 'offline', socketStatus: 'disconnected', endpointReason: null, syncError: null });
         (await import('@/sync/api/account/apiAccountEncryptionMode')).invalidateAccountEncryptionModeCache();
         const projection = withExactGeneratedMountedTarget({
             projection: generatedReactNativeProjection, pluginId: 'acme.browser',
@@ -8865,6 +8867,7 @@ describe('PluginSurfacePlacementHost', () => {
             await vi.waitFor(() => expect(screen.findByTestId(
                 'plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable',
             )).not.toBeNull());
+            expect(screen.findHostByTestId('plugin-surface-unavailable')).toBeTruthy();
             expect(screen.findByTestId('plugin-surface-unavailable-loading-skeleton')).toBeNull();
             expect(screen.findByTestId('offline-recovered-surface')).toBeNull();
         } finally { await screen.unmount(); }
@@ -16566,6 +16569,86 @@ describe('Composer physical surface mount', () => {
             expect(screen.findByTestId('plugin-surface-unavailable-loading-skeleton')).toBeNull();
             expect(screen.getTextContent()).not.toContain('Composer summary');
         } finally { await screen.unmount(); }
+    });
+
+    it('mounts no unavailable card during cold Home resolution or reconnect and shows one for a settled outage', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        const mode = createPlainAccountEncryptionCurrentnessFixture({ version: 2, updatedAt: 2 });
+        let readMode: (() => Promise<Response>) | undefined;
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' }, path =>
+            path === '/v1/account/encryption/currentness' ? readMode?.() : undefined, { serverIdentityId: 'srv_server_a' });
+        const setHomeHealth = (endpointStatus: 'connecting' | 'online' | 'offline') => storage.setState({
+            endpointStatus,
+            socketStatus: endpointStatus === 'online' ? 'connected' : 'disconnected',
+            endpointReason: null,
+            syncError: null,
+        });
+        const beginModeRead = () => {
+            const first = createDeferred<Response>();
+            const retry = createDeferred<Response>();
+            const retryStarted = createDeferred<void>();
+            let firstRead = true;
+            readMode = () => {
+                if (firstRead) {
+                    firstRead = false;
+                    return first.promise.then(response => response.clone());
+                }
+                retryStarted.resolve();
+                return retry.promise.then(response => response.clone());
+            };
+            return { first, retry, retryStarted };
+        };
+        const unavailable = () => Response.json({ error: 'unavailable' }, { status: 503 });
+        const cold = beginModeRead();
+        setHomeHealth('connecting');
+        invalidateAccountEncryptionModeCache();
+        const { composerMount } = createComposerRegionMountFixture();
+        const { PluginSurfaceHost } = await import('./PluginSurfaceHost');
+        const host = <PluginSurfaceHost composerMount={composerMount}
+            serverId="server-a" sessionId="session-a" platform="web" channel="internal" />;
+        const screen = await renderScreen(host, { flushOptions: { cycles: 0 } });
+        const cardId = 'plugin-surface-unavailable';
+        let cardMounted = Boolean(screen.findHostByTestId(cardId));
+        let cardMounts = Number(cardMounted);
+        const stop = screen.subscribe(() => {
+            const visible = Boolean(screen.findHostByTestId(cardId));
+            if (visible && !cardMounted) cardMounts += 1;
+            cardMounted = visible;
+        });
+        try {
+            const recover = async (attempt: ReturnType<typeof beginModeRead>) => {
+                await act(async () => attempt.first.resolve(unavailable()));
+                await attempt.retryStarted.promise;
+                await act(async () => setHomeHealth('online'));
+                await act(async () => attempt.retry.resolve(Response.json(mode)));
+                await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Composer summary'));
+            };
+            await recover(cold);
+            const afterCold = cardMounts;
+
+            const reconnect = beginModeRead();
+            await act(async () => {
+                setHomeHealth('connecting');
+                invalidateAccountEncryptionModeCache();
+            });
+            await recover(reconnect);
+            expect([afterCold, cardMounts - afterCold], 'cold and reconnect unavailable card mounts').toEqual([0, 0]);
+        } finally {
+            stop();
+            await screen.unmount();
+        }
+
+        readMode = async () => unavailable();
+        await act(async () => {
+            setHomeHealth('offline');
+            invalidateAccountEncryptionModeCache();
+        });
+        const offline = await renderScreen(host);
+        try {
+            await waitForHomeGovernance(() => expect(offline.findHostByTestId(cardId)).toBeTruthy());
+            expect(offline.findByTestId('plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable')).toBeTruthy();
+        } finally { await offline.unmount(); }
     });
 
     it.each(['standalone', 'overview', 'footer'] as const)('keeps equivalent %s Composer requests on one physical RN controller across Machine Ask hide/reveal and retires on occurrence replacement', async placement => {

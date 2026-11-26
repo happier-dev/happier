@@ -85,6 +85,19 @@ function subscribeAppliedHomeSummary(listener: () => void): () => void {
     return () => { unsubscribe(); unsubscribeApplied(); unsubscribeAvailability(); };
 }
 
+/** The connection verdict for this mount's Home, when the applied runtime owns it. */
+export function useScopedHomeConnectionKind(serverId: string | null | undefined) {
+    const read = React.useCallback(() => {
+        if (!serverId || !areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId)) {
+            return null;
+        }
+        return readAppliedHomeSummaryKind() ?? 'reconnecting';
+    }, [serverId]);
+    const subscribe = React.useCallback((listener: () => void) =>
+        serverId ? subscribeAppliedHomeSummary(listener) : () => {}, [serverId]);
+    return React.useSyncExternalStore(subscribe, read, read);
+}
+
 /**
  * Whether the Home this device uses is still being reached (its connection summary reads "reconnecting"):
  * right after sign-in, a restart or a network change. A read that fails in that gap has not settled
