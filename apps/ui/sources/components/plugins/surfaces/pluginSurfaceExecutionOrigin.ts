@@ -146,10 +146,14 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
             && arePluginMachineExecutionOriginsEqual(supply.executionOrigin, selection.selectedOrigin!)) ?? null
         : null, [params.entry, selection.selectedOrigin]);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const choiceKey = JSON.stringify([params.pluginId, selection.storedTarget ?? null,
+        contextualTarget === undefined ? 'automatic' : contextualTarget]);
     const lastSelectedSupply = React.useRef<Readonly<{
         accountLifetime: typeof accountLifetime;
         entryId: string;
+        choiceKey: string;
         supply: NonNullable<typeof selectedSupplyFromSelection>;
+        machineProjection: PluginUiProjectionModel | null;
     }> | null>(null);
     const previous = lastSelectedSupply.current;
     // Presence/projection readiness can withdraw execution without replacing
@@ -161,8 +165,10 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         )) : null;
     const sourceNotReady = offlineCandidate?.validation.kind === 'rejected'
         && offlineCandidate.validation.reason === 'source_not_ready';
-    const hasPreviousPresentation = params.enabled && holdsContextualInstallation && accountLifetime?.isCurrent() === true
+    const hasPreviousPresentation = params.enabled && accountLifetime?.isCurrent() === true
         && previous?.accountLifetime === accountLifetime && previous.entryId === params.entry?.id;
+    const exactInstallation = contextualTarget?.installationId;
+    const hasSameExactPresentation = exactInstallation !== undefined && hasPreviousPresentation && previous.choiceKey === choiceKey;
     const matchesPreviousSupply = (supply: NonNullable<typeof selectedSupplyFromSelection>) => (
         supply.executionOrigin !== null && previous?.supply.executionOrigin != null
         && arePluginMachineExecutionOriginsEqual(supply.executionOrigin, previous.supply.executionOrigin)
@@ -170,13 +176,17 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         && supply.pluginVersion === previous.supply.pluginVersion
         && supply.serverId === previous.supply.serverId
     );
-    const canRetainSupply = hasPreviousPresentation
+    // Keep the exact renderer while hidden and while Administration reconnects
+    // its selection observer on return. A completed selection still owns replacement.
+    const keepExactPresentation = hasSameExactPresentation
+        && (!presented || selection.loading && selection.state.kind === 'selectionRequired' && selection.canExecute);
+    const canRetainSupply = hasPreviousPresentation && holdsContextualInstallation
         && (!selection.selectedOrigin || arePluginMachineExecutionOriginsEqual(selection.selectedOrigin, previous.supply.executionOrigin!))
         && offlineCandidate?.validation.kind === 'rejected'
         && (offlineCandidate.validation.reason === 'offline' || offlineCandidate.validation.reason === 'stale'
             || offlineCandidate.validation.reason === 'home_unreachable' || offlineCandidate.validation.reason === 'daemon_unavailable'
             || offlineCandidate.validation.reason === 'daemon_invalid_response' || sourceNotReady);
-    const retainedSupply = canRetainSupply ? readPluginUiContributionSupplies(params.entry).find(supply => (
+    const retainedSupply = keepExactPresentation || canRetainSupply ? readPluginUiContributionSupplies(params.entry).find(supply => (
         matchesPreviousSupply(supply)
         // A registry refresh withdraws authority, not this mounted identity.
         // Otherwise its targeted replacement is immediately canceled and
@@ -193,8 +203,6 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         serverIdentityId: demandOrigin.serverIdentityId,
         machineId: getPluginMachineExecutionOriginRef(demandOrigin).machineId,
     } : selection.projectionTarget ?? (contextualTarget?.installationId === undefined ? contextualTarget : null) ?? null) : null;
-    const choiceKey = JSON.stringify([params.pluginId, selection.storedTarget ?? null,
-        contextualTarget === undefined ? 'automatic' : contextualTarget]);
     const mountedDemand = React.useRef<Readonly<{
         accountLifetime: typeof accountLifetime;
         choiceKey: string;
@@ -217,20 +225,30 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         mountedDemand.current = demandTarget ? { accountLifetime, choiceKey, target: demandTarget } : null;
     }, [accountLifetime, choiceKey, demandTarget]);
     // Only this plugin's slices: a mounted surface never loads the Machine's whole catalogue.
-    const projectionDemand = usePluginExecutionOriginProjectionDemand(demandTarget, { sections: pluginUiSections(params.pluginId) });
+    const projectionDemand = usePluginExecutionOriginProjectionDemand(!presented && exactInstallation !== undefined ? null : demandTarget,
+        { sections: pluginUiSections(params.pluginId) });
+    // Showing the same page again acquires its projection. Keep its artifact
+    // during that read only for the same positively selected supplier.
+    const keepPresentationWhileLoading = hasSameExactPresentation && selection.state.kind === 'selected'
+        && projectionDemand.phase === 'loading' && selectedSupplyFromSelection !== null && matchesPreviousSupply(selectedSupplyFromSelection);
+    const machineProjection = projectionDemand.inputs?.pluginUiProjection
+        ?? ((retainedSupply && keepExactPresentation) || keepPresentationWhileLoading ? previous?.machineProjection ?? null : null);
     // Fresh invocation authority can withdraw before the descriptive selection
     // publication catches up. Do not erase the same establishing presentation
     // in that intermediate turn; the unavailable/refusal guard above still
     // decides whether it survives the completed selection publication.
-    const awaitingSelectionPublication = hasPreviousPresentation && selection.state.kind === 'selected'
+    const awaitingSelectionPublication = hasPreviousPresentation && holdsContextualInstallation && selection.state.kind === 'selected'
         && selectedSupplyFromSelection?.phase === 'establishing' && matchesPreviousSupply(selectedSupplyFromSelection);
     React.useLayoutEffect(() => {
         if (selection.canExecute && selectedSupplyFromSelection && params.entry && accountLifetime?.isCurrent()) {
-            lastSelectedSupply.current = { accountLifetime, entryId: params.entry.id, supply: selectedSupplyFromSelection };
+            lastSelectedSupply.current = {
+                accountLifetime, entryId: params.entry.id, choiceKey, supply: selectedSupplyFromSelection,
+                machineProjection: exactInstallation !== undefined ? machineProjection : null,
+            };
         } else if (!retainedSupply && !awaitingSelectionPublication) {
             lastSelectedSupply.current = null;
         }
-    }, [accountLifetime, awaitingSelectionPublication, params.entry, retainedSupply, selectedSupplyFromSelection, selection.canExecute]);
+    }, [accountLifetime, awaitingSelectionPublication, choiceKey, exactInstallation, machineProjection, params.entry, retainedSupply, selectedSupplyFromSelection, selection.canExecute]);
     const isExecutionOriginCurrent = React.useCallback((options?: Readonly<{ recordUse?: boolean }>) => {
         const fresh = selection.resolveExecutionOrigin({ recordUse: options?.recordUse === true });
         if (!fresh || !selectedSupply?.executionOrigin || !selectedSupply.occurrenceId
@@ -287,6 +305,6 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         for (const target of targets) publishMachineContributionRegistryProjectionInvalidation(target, 'refresh');
     }, [accountLifetime, selection.candidates]);
     return { selection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent,
-        machineProjection: projectionDemand.inputs?.pluginUiProjection ?? null,
+        machineProjection,
         machineActionsById: projectionDemand.phase === 'ready' ? projectionDemand.inputs?.pluginUiProjection?.actionsById ?? null : null };
 }

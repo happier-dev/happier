@@ -937,14 +937,30 @@ describe('plugin app page host route (EU-5b)', () => {
                 contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' };
         };
         const { parsePluginAppPageRoutePath } = await import('@/components/plugins/pages/pluginPageRoute');
+        const { useDestinationVisibilitySignal } = await import('@/components/appShell/workspace/destinationInstanceContext');
         const route = `${NOTES_PAGE_PATH}/~run-on/srv_account_one/${addressed.id}/installation-a`;
         const location = parsePluginAppPageRoutePath(route);
         if (!location) throw new Error('Expected an App page route');
-        const render = await createPageRenderer({ ...location, machineId: null, serverId: null });
+        let visible = true;
+        const navigation = { push() {}, replace() {}, back() {} };
+        const ref = { kind: `plugin:${NOTES_PLUGIN_ID}:notes`, params: {} };
+        let refreshOnReturn: (() => void) | undefined;
+        const ReturnProbe = () => {
+            const visibility = useDestinationVisibilitySignal();
+            React.useEffect(() => visibility.subscribe(() => {
+                if (visibility.get()) refreshOnReturn?.();
+            }), [visibility]);
+            return null;
+        };
+        const render = await createPageRenderer({ ...location, machineId: null, serverId: null,
+            wrap: children => <DestinationInstanceHost tabId="retained-exact-page" ref={ref}
+                pathname={route} focused={visible} visible={visible} navigation={navigation}><ReturnProbe />{children}</DestinationInstanceHost>,
+        });
         const shellProjectionFor = (machineId: string) => coldActions
             ? { ...projectionFor(machineId), actionsById: {} }
             : projectionFor(machineId);
-        await renderScreen(render(composeAppProjection(shellProjectionFor(fallback.id), 'server-1', shellProjectionFor(addressed.id))));
+        const model = composeAppProjection(shellProjectionFor(fallback.id), 'server-1', shellProjectionFor(addressed.id));
+        const screen = await renderScreen(render(model));
 
         await vi.waitFor(() => expect(readRenderContext().surface.machineExecutionReady).toBe(true));
         if (!coldActions) {
@@ -954,6 +970,29 @@ describe('plugin app page host route (EU-5b)', () => {
         }
         const renderer = reactNativeSurfaceProps.at(-1) as { loadedRuntimeIdentity?: { artifactDigest: string } };
         expect(renderer.loadedRuntimeIdentity?.artifactDigest).toBe(addressedDigest);
+        const originalContext = readRenderContext();
+        const originalRenderer = reactNativeSurfaceInstanceRefs.at(-1);
+        visible = false;
+        await screen.update(render(model));
+        expect(originalContext.signal.aborted).toBe(false);
+        let refresh: Promise<unknown> | undefined;
+        if (!coldActions) {
+            await expect(originalContext.hostApi.readResource('connection', { input: { operation: 'describe' } })).rejects.toThrow();
+            expect(resourceMachines).toEqual([addressed.id]);
+            refreshOnReturn = () => {
+                refresh = originalContext.hostApi.readResource('connection', { input: { operation: 'describe' } }).catch(error => error);
+            };
+        }
+        visible = true;
+        await screen.update(render(model));
+        await vi.waitFor(() => expect(readRenderContext().surface.machineExecutionReady).toBe(true));
+        expect(reactNativeSurfaceInstanceRefs.at(-1)).toBe(originalRenderer);
+        expect(readRenderContext().hostApi).toBe(originalContext.hostApi);
+        expect(originalContext.signal.aborted).toBe(false);
+        if (!coldActions) {
+            expect(await refresh).toMatchObject({ contentType: 'application/json' });
+            expect(resourceMachines).toEqual([addressed.id, addressed.id]);
+        }
     });
 
     it.each([
