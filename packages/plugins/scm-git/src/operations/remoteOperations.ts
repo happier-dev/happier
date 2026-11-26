@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { redactGitRemotePasswords } from '../remoteListParser.js';
 import type { ScmOperationEffect, ScmOperationErrorCode, ScmOperationOutcome, ScmOperationRepositoryState, ScmRemoteRequest, ScmRemoteResponse, ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/scm';
 import { normalizeScmOperationOutcome, SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
@@ -16,7 +17,8 @@ type RemoteTarget = { remote: string; branch?: string };
 type RecoveryStash = NonNullable<ScmOperationOutcome['recoveryStash']>;
 
 function failure(errorCode: ScmOperationErrorCode, error: string): ScmRemoteResponse {
-    return { success: false, errorCode, error, outcome: normalizeScmOperationOutcome({ success: false, errorCode, error }) };
+    const message = redactGitRemotePasswords(error);
+    return { success: false, errorCode, error: message, outcome: normalizeScmOperationOutcome({ success: false, errorCode, error: message }) };
 }
 
 async function git(context: ScmBackendContext, args: string[], timeoutMs = 10_000) {
@@ -72,11 +74,13 @@ function commandCode(command: ScmExecResult) {
 }
 
 function warning(input: { command: ScmExecResult; effect: ScmOperationEffect; errorCode: ScmOperationErrorCode; error: string; repositoryState?: ScmOperationRepositoryState; recoveryStash?: RecoveryStash }): ScmRemoteResponse {
-    return { success: true, stdout: input.command.stdout, stderr: input.command.stderr, errorCode: input.errorCode, error: input.error, outcome: { v: 1, kind: 'effect_applied_with_warning', effect: input.effect, errorCode: input.errorCode, message: input.error, repositoryState: input.repositoryState, recoveryStash: input.recoveryStash, nextActions: [{ kind: 'refresh' }] } };
+    return { success: true, stdout: redactGitRemotePasswords(input.command.stdout), stderr: redactGitRemotePasswords(input.command.stderr), errorCode: input.errorCode, error: redactGitRemotePasswords(input.error), outcome: { v: 1, kind: 'effect_applied_with_warning', effect: input.effect, errorCode: input.errorCode, message: redactGitRemotePasswords(input.error), repositoryState: input.repositoryState, recoveryStash: input.recoveryStash, nextActions: [{ kind: 'refresh' }] } };
 }
 
 export async function finalizeGitRemoteMutation(input: { context: ScmBackendContext; kind: 'fetch' | 'pull' | 'push'; command: ScmExecResult; target?: RemoteTarget; effect?: ScmOperationEffect; recoveryStash?: RecoveryStash }): Promise<ScmRemoteResponse> {
-    const { context, command, target, effect, recoveryStash } = input;
+    const { context, target, effect, recoveryStash } = input;
+    const command = { ...input.command, stdout: redactGitRemotePasswords(input.command.stdout),
+        stderr: redactGitRemotePasswords(input.command.stderr) };
     const errorCode = commandCode(command);
     let remoteRefreshFailed = false;
     if (!command.success && input.kind === 'push' && errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_NON_FAST_FORWARD && target) {

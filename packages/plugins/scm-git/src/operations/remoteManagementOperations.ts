@@ -16,7 +16,7 @@ import type { ScmBackendContext } from '../types.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
-import { parseGitRemoteVerbose } from '../remoteListParser.js';
+import { parseGitRemoteVerbose, redactGitRemotePasswords } from '../remoteListParser.js';
 
 const GIT_REMOTE_MANAGEMENT_TIMEOUT_MS = 30_000;
 const ALLOWED_REMOTE_URL_SCHEMES = new Set(['https:', 'ssh:', 'git:', 'file:']);
@@ -29,7 +29,7 @@ type RemoteListResult =
     | { ok: true; remotes: ScmRemoteInfo[] }
     | { ok: false; response: ScmRemoteManagementResponse };
 
-async function readGitRemotes(context: ScmBackendContext): Promise<RemoteListResult> {
+async function readGitRemotes(context: ScmBackendContext, preserveStoredUrls = false): Promise<RemoteListResult> {
     const result = await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
@@ -43,14 +43,16 @@ async function readGitRemotes(context: ScmBackendContext): Promise<RemoteListRes
             response: {
                 success: false,
                 errorCode: mapGitErrorCode(result.stderr),
-                error: result.stderr || 'Failed to list Git remotes',
-                stderr: result.stderr,
+                error: redactGitRemotePasswords(result.stderr) || 'Failed to list Git remotes',
+                stderr: redactGitRemotePasswords(result.stderr),
             },
         };
     }
     return {
         ok: true,
-        remotes: parseGitRemoteVerbose(result.stdout),
+        remotes: parseGitRemoteVerbose(result.stdout,
+            // Mutation rollback must restore the actual stored URL, never its display mask.
+            preserveStoredUrls ? url => url : undefined),
     };
 }
 
@@ -62,8 +64,8 @@ async function successWithRemotes(input: {
     const remotes = await readGitRemotes(input.context);
     return {
         success: true,
-        stdout: input.stdout,
-        stderr: input.stderr,
+        stdout: input.stdout === undefined ? undefined : redactGitRemotePasswords(input.stdout),
+        stderr: input.stderr === undefined ? undefined : redactGitRemotePasswords(input.stderr),
         ...(remotes.ok ? { remotes: remotes.remotes } : {}),
     };
 }
@@ -141,15 +143,15 @@ async function runGitRemoteCommand(input: {
         env: buildScmNonInteractiveEnv(),
     });
     return result.success
-        ? { ok: true, stdout: result.stdout, stderr: result.stderr }
+        ? { ok: true, stdout: redactGitRemotePasswords(result.stdout), stderr: redactGitRemotePasswords(result.stderr) }
         : {
             ok: false,
             response: {
                 success: false,
                 errorCode: mapGitErrorCode(result.stderr),
-                error: result.stderr || input.failureMessage,
-                stdout: result.stdout,
-                stderr: result.stderr,
+                error: redactGitRemotePasswords(result.stderr) || input.failureMessage,
+                stdout: redactGitRemotePasswords(result.stdout),
+                stderr: redactGitRemotePasswords(result.stderr),
             },
         };
 }
@@ -171,16 +173,16 @@ async function clearGitRemotePushUrl(input: {
             response: {
                 success: false,
                 errorCode: mapGitErrorCode(unsetPush.stderr),
-                error: unsetPush.stderr || 'Failed to clear Git remote push URL',
-                stdout: unsetPush.stdout,
-                stderr: unsetPush.stderr,
+                error: redactGitRemotePasswords(unsetPush.stderr) || 'Failed to clear Git remote push URL',
+                stdout: redactGitRemotePasswords(unsetPush.stdout),
+                stderr: redactGitRemotePasswords(unsetPush.stderr),
             },
         };
     }
     return {
         ok: true,
-        stdout: unsetPush.stdout,
-        stderr: unsetPush.stderr,
+        stdout: redactGitRemotePasswords(unsetPush.stdout),
+        stderr: redactGitRemotePasswords(unsetPush.stderr),
     };
 }
 
@@ -248,7 +250,7 @@ export async function gitRemoteAdd(input: {
         : normalizeRemoteUrlForRequest(input.request.pushUrl, 'Remote push URL');
     if (pushUrl && !pushUrl.ok) return pushUrl.response;
 
-    const current = await readGitRemotes(input.context);
+    const current = await readGitRemotes(input.context, true);
     if (!current.ok) return current.response;
     if (findRemote(current.remotes, name.name)) {
         return {
@@ -317,7 +319,7 @@ export async function gitRemoteSetUrl(input: {
         : normalizeRemoteUrlForRequest(input.request.pushUrl, 'Remote push URL');
     if (pushUrl && !pushUrl.ok) return pushUrl.response;
 
-    const current = await readGitRemotes(input.context);
+    const current = await readGitRemotes(input.context, true);
     if (!current.ok) return current.response;
     const previousRemote = findRemote(current.remotes, name.name);
     if (!previousRemote) {
@@ -422,7 +424,7 @@ export async function gitRemoteRemove(input: {
     const name = normalizeRemoteNameForRequest(input.request.name);
     if (!name.ok) return name.response;
 
-    const current = await readGitRemotes(input.context);
+    const current = await readGitRemotes(input.context, true);
     if (!current.ok) return current.response;
     if (!findRemote(current.remotes, name.name)) {
         return {

@@ -2,7 +2,13 @@ import type { ScmRemoteInfo } from '@happier-dev/plugin-sdk/scm';
 
 const GIT_REMOTE_VERBOSE_LINE = /^(\S+)\s+(.+?)\s+\((fetch|push)\)$/;
 
-export function parseGitRemoteVerbose(output: string): ScmRemoteInfo[] {
+/** Redact only a URL password; keep address bytes and password-free/scp-style remotes intact. */
+export function redactGitRemotePasswords(text: string): string {
+    return text.replace(/([a-z][a-z0-9+.-]*:\/\/[^\s/:@]*:)[^\s/]+@/gi, '$1***@');
+}
+
+export function parseGitRemoteVerbose(output: string,
+    projectUrl: (url: string) => string = redactGitRemotePasswords): ScmRemoteInfo[] {
     const remotesByName = new Map<string, ScmRemoteInfo>();
 
     for (const line of output.split(/\r?\n/)) {
@@ -19,9 +25,9 @@ export function parseGitRemoteVerbose(output: string): ScmRemoteInfo[] {
 
         const remote = remotesByName.get(name) ?? { name };
         if (kind === 'fetch') {
-            remote.fetchUrl = url;
+            remote.fetchUrl = projectUrl(url);
         } else if (kind === 'push') {
-            remote.pushUrl = url;
+            remote.pushUrl = projectUrl(url);
         }
         remotesByName.set(name, remote);
     }
