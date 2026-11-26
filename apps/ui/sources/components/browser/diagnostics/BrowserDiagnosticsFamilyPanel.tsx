@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
@@ -674,6 +675,8 @@ export function DiagnosticsRow(props: Readonly<{
     meta?: readonly (DiagnosticsMetaCell | null)[];
     copyText?: string;
     renderDetail?: () => React.ReactNode;
+    /** A person-only detail may still expose its safe Collapse command once opened by the person. */
+    publishExpandCommand?: boolean;
     accessibilityLabel?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
@@ -683,6 +686,12 @@ export function DiagnosticsRow(props: Readonly<{
     const glyph = toneGlyph(tone);
     const expandable = typeof props.renderDetail === 'function';
     const toggle = React.useCallback(() => setOpen((value) => !value), []);
+    useCurrentUiContextLocalCommands(expandable && (open || props.publishExpandCommand !== false) ? [{
+        key: 'toggle',
+        title: t(open ? 'common.collapse' : 'common.expand'),
+        description: props.testID,
+        invoke: toggle,
+    }] : [], { contextKey: props.testID });
 
     const glyphColor = tone === 'danger'
         ? theme.colors.state.danger.foreground

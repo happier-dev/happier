@@ -9,8 +9,9 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { SegmentedTabBar, type SegmentedTabBarProps } from '@/components/ui/navigation/SegmentedTabBar';
 import { CORE_CAPSULE_HOST, useCoreCapsuleColors } from '@/components/ui/status/capsuleHost';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { t } from '@/text';
@@ -75,13 +76,33 @@ function RemoteViewerBarSurface(props: React.ComponentProps<RemoteViewerControlB
     </Surface>;
 }
 
+function ViewerTabs<T extends string>(props: Pick<SegmentedTabBarProps<T>, 'tabs' | 'activeTabId' | 'onSelectTab' | 'testIDPrefix' | 'compact'>) {
+    useCurrentUiContextLocalCommands(props.tabs.map(tab => ({
+        key: tab.id,
+        title: tab.label,
+        invoke: () => props.onSelectTab(tab.id),
+    })), { contextKey: props.testIDPrefix });
+    return <SegmentedTabBar {...props} />;
+}
+
+function ViewerIconButton(props: React.ComponentProps<RemoteViewerControlBarHost['IconButton']>) {
+    // The shared bar's keys and clipboard remain with their existing input Actions.
+    // Only these two existing buttons change the local viewer presentation.
+    useCurrentUiContextLocalCommands(!props.disabled && (props.iconName === 'keyboard' || props.iconName === 'arrows-in') ? [{
+        key: 'press',
+        title: props.accessibilityLabel,
+        invoke: props.onPress,
+    }] : [], { contextKey: props.testID });
+    return <IconButton {...props} />;
+}
+
 // Cold Browser imports can reach this binding before capsuleHost finishes loading.
 // Keep the host stable and resolve its canonical leaves when the bar renders.
 const HOST: RemoteViewerControlBarHost = {
     Surface: RemoteViewerBarSurface,
     get Button() { return CORE_CAPSULE_HOST.Button; },
-    IconButton,
-    SegmentedTabBar,
+    IconButton: ViewerIconButton,
+    SegmentedTabBar: ViewerTabs,
     KeyHint,
 };
 

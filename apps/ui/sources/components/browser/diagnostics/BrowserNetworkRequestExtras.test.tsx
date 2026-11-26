@@ -17,6 +17,15 @@ import type {
 import { BrowserDiagnosticsPanel } from './BrowserDiagnosticsPanel';
 import { BrowserNetworkPanel } from './BrowserNetworkPanel';
 import { BrowserDiagnosticsRequestDetailSourceContext } from './BrowserNetworkRequestExtras';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { t } from '@/text';
 
 const daemonRpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -25,7 +34,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-vi.mock('@/sync/domains/state/storage', async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({}));
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: (key) => key }));
 
 const browser = await installBrowserRuntimeForTests({ url: 'https://diagnostics.test/' });
@@ -72,6 +80,77 @@ async function renderWith(client?: (input: BrowserDiagnosticsRequestDetailClient
 
 const row = 'diag-network-row-evt_post';
 const extras = `${row}-detail-extras-req_1`;
+
+it('keeps selected HTTP body reads behind the person press while exposing safe disclosure commands', async () => {
+    const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://selected-request-controls.test', accountId: 'account-a' }],
+        route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+    const server = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+    const socketRow = 'diag-network-row-evt_socket';
+    const socket = { eventId: 'evt_socket', family: 'network', kind: 'network.websocketSummary', fidelity: 'cdp', trusted: true,
+        capturedAtMs: 2, detail: { fields: [{ key: 'socketId', value: 'socket_1' }, { key: 'state', value: 'open' }] } } as const;
+    // The daemon RPC is the network boundary; retain the real detail hook, decoder and disclosure path.
+    daemonRpc.mockReset();
+    daemonRpc.mockResolvedValue({ protocolVersion: 1,
+        snapshot: { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] },
+        requestDetail: { status: 'available', requestId: 'req_1',
+            requestBody: { status: 'available', text: 'private selected body', encoding: 'utf8' },
+            responseBody: { status: 'unavailable', reason: 'not_finished' },
+            requestExtraInfo: [{ cookies: [{ name: 'sid', value: 'private selected cookie', blockedReasons: [] }] }], responseExtraInfo: [] } });
+    function Host() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return <BrowserDiagnosticsRequestDetailSourceContext.Provider value={{ view, machineId: 'machine', serverId: server.id }}>
+            <BrowserNetworkPanel family={{ family: 'network', status: 'available', fidelity: 'cdp', trusted: true }}
+                events={[request, socket]} testID="diag" />
+        </BrowserDiagnosticsRequestDetailSourceContext.Provider>;
+    }
+    const screen = await renderMountedCurrentUiContext(<Host />);
+    const executor = createDefaultActionExecutor();
+    const caller = { serverId: server.id, surface: 'agent' as const, authority: 'account_automation' as const };
+    async function inventory() {
+        const read = await executor.execute('ui.current_context.read', {}, caller);
+        if (!read.ok) throw new Error(read.errorCode);
+        return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+    }
+    async function invoke(commandId: string) {
+        await act(async () => expect(await executor.execute('ui.current_context.command.invoke', { commandId }, caller))
+            .toMatchObject({ ok: true, result: { value: null } }));
+    }
+    const describe = (commands: Awaited<ReturnType<typeof inventory>>) => commands.map(command => ({ title: command.title, description: command.description }));
+    try {
+        const closed = await inventory();
+        expect.soft(describe(closed)).toEqual([{ title: t('common.expand'), description: socketRow }]);
+        for (const command of closed) await invoke(command.id);
+        expect(daemonRpc).not.toHaveBeenCalled();
+        expect(screen.findByTestId(`${socketRow}-detail`)).toBeTruthy();
+        const socketCollapse = (await inventory()).find(command => command.description === socketRow)!;
+        await invoke(socketCollapse.id);
+        expect(screen.findHostByTestId(`${socketRow}-detail`)).toBeNull();
+
+        await screen.pressByTestIdAsync(row);
+        expect(daemonRpc).toHaveBeenCalledTimes(1);
+        expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT,
+            payload: expect.objectContaining({ requestId: 'req_1' }) }));
+        expect(screen.getTextContent()).toContain('private selected body');
+        expect(screen.getTextContent()).toContain('sid=private selected cookie');
+        const open = await inventory();
+        expect(describe(open).sort((a, b) => a.description!.localeCompare(b.description!))).toEqual([
+            { title: t('common.collapse'), description: row }, { title: t('common.expand'), description: socketRow },
+        ].sort((a, b) => a.description.localeCompare(b.description)));
+        expect(JSON.stringify(open)).not.toContain('private selected');
+        const collapse = open.find(command => command.description === row)!;
+        await invoke(collapse.id);
+        expect(screen.findHostByTestId(`${row}-detail`)).toBeNull();
+        expect(daemonRpc).toHaveBeenCalledTimes(1);
+        expect(describe(await inventory())).toEqual([{ title: t('common.expand'), description: socketRow }]);
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: collapse.id }, caller)).toMatchObject({ ok: false });
+    } finally {
+        await screen.unmount();
+        await home.dispose();
+        daemonRpc.mockReset();
+    }
+});
 
 it('reads bodies and cookies only once the request detail is open, then shows them with their states', async () => {
     const client = vi.fn(async (): Promise<BrowserDiagnosticsRequestDetailClientResult> => ({ ok: true, detail: {

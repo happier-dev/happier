@@ -11,6 +11,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 import type { BrowserViewDiagnosticsProjection } from '@/sync/domains/browser/diagnostics';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { CurrentUiContextCommandInvokeOutputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
 installSettingsViewCommonModuleMocks({ storage: 'real', modal: () => vi.importActual('@/modal') });
 vi.mock('@/components/ui/popover', async importOriginal =>
@@ -83,6 +84,7 @@ async function invoke(title: string, expectedOk = true) {
     let result: Awaited<ReturnType<typeof executor.execute>> | undefined;
     await act(async () => { result = await executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, caller); });
     expect(result).toMatchObject({ ok: expectedOk });
+    if (result?.ok) CurrentUiContextCommandInvokeOutputSchema.parse(result.result);
     return result;
 }
 
@@ -96,11 +98,26 @@ it('opens the mounted diagnostics drawer and selects an available section throug
     expect(screen.findByTestId('diagnostics-container-expanded')).toBeNull();
     await invoke(t('browserShell.devtools.title'));
     expect(screen.findByTestId('diagnostics-container-expanded')).not.toBeNull();
+    const executor = createDefaultActionExecutor();
+    const caller = { serverId, surface: 'agent' as const, authority: 'account_automation' as const };
+    const read = await executor.execute('ui.current_context.read', {}, caller);
+    if (!read.ok) throw new Error(read.errorCode);
+    const commands = (read.result as { commands: readonly { id: string; title: string }[] }).commands;
+    expect(commands.map(command => command.title).sort()).toEqual([
+        t('browserShell.devtools.title'), t('browserShell.devtools.close'), t('browserShell.devtools.collapse'),
+        t('browserShell.devtools.section.console'), t('browserShell.devtools.section.elements'),
+    ].sort());
+    const staleCollapse = commands.find(command => command.title === t('browserShell.devtools.collapse'))!.id;
+    await invoke(t('browserShell.devtools.collapse'));
+    expect(screen.findByTestId('diagnostics-container-collapsed')).not.toBeNull();
+    await screen.pressByTestIdAsync('diagnostics-expand');
+    expect(screen.findByTestId('diagnostics-container-expanded')).not.toBeNull();
     await invoke(t('browserShell.devtools.section.elements'));
     expect(screen.findByTestId('diagnostics-body-elements-panel')).not.toBeNull();
     expect(screen.findByTestId('diagnostics-body-console-panel')).toBeNull();
     await invoke(t('browserShell.devtools.close'));
     expect(screen.findByTestId('diagnostics-container-expanded')).toBeNull();
+    expect(await executor.execute('ui.current_context.command.invoke', { commandId: staleCollapse }, caller)).toMatchObject({ ok: false });
     await screen.unmount();
 });
 
@@ -108,10 +125,11 @@ it('opens the mounted privacy panel with the profile storage and permission fact
     const screen = await mount(<BrowserPrivacyPopover testID="privacy" model={{ profile: null,
         activePermissionGrantCount: 2, permissionState: 'allowed' }} />);
     expect(screen.findByTestId('privacy-panel')).toBeNull();
-    expect(await invoke(t('browserShell.privacy.title'))).toMatchObject({ ok: true, result: {
+    // The canonical current-context Action envelope carries the local settlement in result.value.
+    expect(await invoke(t('browserShell.privacy.title'))).toMatchObject({ ok: true, result: { value: {
         profileId: null, storageMode: null, storagePersistence: null,
         activePermissionGrantCount: 2, permissionState: 'allowed',
-    } });
+    } } });
     expect(screen.findByTestId('privacy-panel')).not.toBeNull();
     expect(screen.findByTestId('privacy-status-identity')).not.toBeNull();
     await screen.pressByTestIdAsync('privacy');
@@ -141,7 +159,7 @@ it('opens the actual Computer picker modal and navigates to policy settings thro
     expect(screen.findByTestId('computer-target-picker-modal')).not.toBeNull();
     vi.mocked(router.push).mockClear();
     await invoke(t('computerUse.picker.policyChange'));
-    expect(router.push).toHaveBeenCalledWith('/settings/actions');
+    expect(vi.mocked(router.push).mock.calls.map(([route]) => route)).toContain('/settings/actions');
     const closingModal = screen.findByType(CustomModal);
     expect(closingModal.props.visible).toBe(false);
     // Native exit animation completion retires the retained modal frame.
@@ -204,17 +222,17 @@ it('selects, pins and unpins retained Details tabs through the Agent command own
         await act(async () => pane!.openDetailsTab(second));
         const group = () => pane!.scopeState!.details.groups![0]!;
         expect(group().activeTabKey).toBe(second.key);
-        expect.soft(await invoke('first.txt')).toMatchObject({ ok: true, result: {
+        expect.soft(await invoke('first.txt')).toMatchObject({ ok: true, result: { value: {
             tabKey: first.key, activeTabKey: first.key, isPinned: true, isPreview: false,
-        } });
+        } } });
         expect(group().activeTabKey).toBe(first.key);
-        expect.soft(await invoke(`${t('session.detailsPanel.pinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: {
+        expect.soft(await invoke(`${t('session.detailsPanel.pinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: { value: {
             tabKey: second.key, activeTabKey: first.key, isPinned: true, isPreview: false,
-        } });
+        } } });
         expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: true, isPreview: false });
-        expect.soft(await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: {
+        expect.soft(await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: { value: {
             tabKey: second.key, activeTabKey: second.key, isPinned: false, isPreview: true,
-        } });
+        } } });
         expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: false });
         // The person's callback returns the same settlement the Agent receives.
         await act(async () => {
@@ -226,9 +244,9 @@ it('selects, pins and unpins retained Details tabs through the Agent command own
             pane!.setDetailsTabState(second.key, readWorkspaceFileEditorDraft({ accountId: 'presentation_owner',
                 isEditingFile: true, editorOriginalHash: null, editorText: 'retained draft' }, 'presentation_owner'));
         });
-        expect(await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: {
+        expect(await invoke(`${t('session.detailsPanel.unpinTabA11y')}: second.txt`)).toMatchObject({ ok: true, result: { value: {
             tabKey: second.key, activeTabKey: first.key, isPinned: true, isPreview: false,
-        } });
+        } } });
         expect(group().tabs.find(tab => tab.key === second.key)).toMatchObject({ isPinned: true, isPreview: false });
         await act(async () => {
             pane!.closeDetailsTab(first.key);

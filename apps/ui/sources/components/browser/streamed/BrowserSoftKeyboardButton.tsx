@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Icon } from '@/components/ui/icons/Icon';
 import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
 import { t } from '@/text';
@@ -23,6 +24,11 @@ export function BrowserSoftKeyboardButton(
   props: Readonly<{ visible: boolean; onPress: () => void; testID: string }>,
 ): React.ReactElement | null {
   const { theme } = useUnistyles();
+  useCurrentUiContextLocalCommands(props.visible ? [{
+    key: 'show',
+    title: t('browserPresence.interaction.showKeyboard'),
+    invoke: props.onPress,
+  }] : [], { contextKey: props.testID });
   const Dock = CORE_CAPSULE_HOST.Dock!;
   const { Surface, Button } = CORE_CAPSULE_HOST;
   return (

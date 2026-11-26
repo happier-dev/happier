@@ -11771,6 +11771,14 @@ is omitted from approval Artifacts and observations, as with `clipboard.write`.
 
 In unreleased 0.3 source, mounted Browser, Computer, Services, Board and phone-preview presentation controls extend this same current-context command inventory. Read the answering app's inventory before invoking a drawer, tab, detail or device choice; command ids retire with their mounted owner. These commands reuse the UI's existing presentation state and do not change Browser interaction enablement, import credentials or disclose capability links. Generic current-context Actions currently refuse plugin-surface calls; their generated SDK DTOs do not establish plugin admission. Plugins retain `context.ui.present` for the supported Session presentation intents.
 
+Browser annotation tool/style choices, diagnostics disclosure, download-bar
+Dismiss and viewer presentation controls use those same mounted handlers.
+Browser and Computer share the viewer tabs, input mode, keyboard panel and reset
+controls. Confidential input, clipboard delivery and diagnostics consent remain
+outside these presentation commands.
+HTTP request expansion remains person-only because it reads selected bodies and
+cookies; after the person opens it, a mounted Collapse command may close it.
+
 In unreleased 0.3 source, each presented Workspace sync relationship row also
 publishes a Details command through that inventory. It opens the same details
 view as pressing the row and retires when the row leaves the presented surface.

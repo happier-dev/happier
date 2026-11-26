@@ -8,6 +8,7 @@ import {
   type HappierFocusable,
 } from '@happier-dev/plugin-ui/presentation';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -20,21 +21,38 @@ const SWATCH_HIT = 30;
 /** Picker order: warm to cool, ink last (MIS §3.3). */
 const COLOR_ORDER: readonly ImageMarkColorV1[] = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'ink'];
 
+type ColorChoicesProps = Readonly<{
+  color: ImageMarkColorV1;
+  size: ImageMarkSizeV1;
+  onColor: (color: ImageMarkColorV1) => void;
+  onSize: (size: ImageMarkSizeV1) => void;
+}>;
+
+function useStyleCommands(props: ColorChoicesProps, showTextSize: boolean, visible = true) {
+  useCurrentUiContextLocalCommands(visible ? [
+    ...COLOR_ORDER.map(color => ({
+      key: `color:${color}`,
+      title: t(`files.annotate.colours.${color}`),
+      invoke: () => props.onColor(color),
+    })),
+    ...SIZES.map(size => ({
+      key: `size:${size}`,
+      title: showTextSize ? t(`files.annotate.textSize.${size}`) : t(`files.annotate.stroke.${size}`),
+      invoke: () => props.onSize(size),
+    })),
+  ] : [], { contextKey: 'annotator-style' });
+}
+
 /**
  * The colour and stroke panel behind the palette's swatch (MIS §3.3, lab `an · AN`). Picking does not
  * close it, because colour and stroke are usually set together; ←/→ walk the swatches and Tab reaches
  * the stroke row. Text size shows only while Text is the tool or a text mark is selected.
  */
 export function AnnotatorColorPanel(
-  props: Readonly<{
-    color: ImageMarkColorV1;
-    size: ImageMarkSizeV1;
-    showTextSize: boolean;
-    onColor: (color: ImageMarkColorV1) => void;
-    onSize: (size: ImageMarkSizeV1) => void;
-  }>,
+  props: ColorChoicesProps & Readonly<{ showTextSize: boolean }>,
 ) {
   const { theme } = useUnistyles();
+  useStyleCommands(props, props.showTextSize);
   const swatchRefs = React.useRef<Array<HappierFocusable | null>>([]);
   const { onColor } = props;
   const moveFocus = React.useCallback(
@@ -169,14 +187,10 @@ export function AnnotatorColorPanel(
  * thumb, so there is nothing to open. Every swatch takes the row's height for its target.
  */
 export function AnnotatorColorRow(
-  props: Readonly<{
-    color: ImageMarkColorV1;
-    size: ImageMarkSizeV1;
-    onColor: (color: ImageMarkColorV1) => void;
-    onSize: (size: ImageMarkSizeV1) => void;
-  }>,
+  props: ColorChoicesProps & Readonly<{ visible?: boolean }>,
 ) {
   const { theme } = useUnistyles();
+  useStyleCommands(props, false, props.visible);
   return (
     <View style={styles.phoneRow}>
       {COLOR_ORDER.map((color) => {

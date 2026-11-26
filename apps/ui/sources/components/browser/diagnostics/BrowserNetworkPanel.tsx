@@ -135,6 +135,7 @@ function renderNetworkRows(requests: readonly NetworkRequest[], testID: string):
                     <DiagnosticsRow
                         key={request.key}
                         testID={rowTestID}
+                        publishExpandCommand={request.kind !== 'http'}
                         tone={failure ? 'danger' : 'neutral'}
                         lead={leadLabel(request)}
                         subject={displayPath(request.url) ?? (request.kind === 'socket' ? lastValue(request.events, (event) => getBrowserDiagnosticString(event, 'socketId') ?? getBrowserDiagnosticString(event, 'sourceId')) : null) ?? request.events[0]?.summary ?? t('browserDiagnostics.host.devtools.network.noUrl')}

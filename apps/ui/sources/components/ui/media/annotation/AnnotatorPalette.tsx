@@ -2,6 +2,7 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import {
   IconButton,
   type IconButtonIconName,
@@ -185,7 +186,7 @@ function PhonePalette(props: Readonly<{ annotator: ImageAnnotator }>) {
   return (
     <View style={[styles.phoneRows, keyboardUp ? styles.phoneRowsHidden : null]} testID="annotator-palette" pointerEvents="box-none">
       <GlassPanel shadowLevel={2} innerShadow={false} style={styles.phoneRow}>
-        {cropping ? <AnnotatorCropActions annotator={annotator} /> : <PhoneColorRow annotator={annotator} />}
+        {cropping ? <AnnotatorCropActions annotator={annotator} /> : <PhoneColorRow annotator={annotator} visible={!keyboardUp} />}
       </GlassPanel>
       <GlassPanel shadowLevel={2} innerShadow={false} style={styles.phoneRow}>
         <View
@@ -206,7 +207,7 @@ function PhonePalette(props: Readonly<{ annotator: ImageAnnotator }>) {
           >
             <View style={[styles.phoneTools, toolGap]} accessibilityRole="radiogroup" accessibilityLabel={t('files.annotate.tools.title')}>
               {tools.map((entry) => (
-                <ToolButton key={entry.tool} annotator={annotator} entry={entry} phone />
+                <ToolButton key={entry.tool} annotator={annotator} entry={entry} phone visible={!keyboardUp} />
               ))}
             </View>
             <PaletteDivider />
@@ -233,11 +234,12 @@ function resolvePhoneToolGap(width: number, count: number, minGap: number): numb
   return Math.max(minGap, width / (whole + PHONE_TOOL_PEEK) - PHONE_TOOL_SIZE);
 }
 
-function PhoneColorRow(props: Readonly<{ annotator: ImageAnnotator }>) {
+function PhoneColorRow(props: Readonly<{ annotator: ImageAnnotator; visible: boolean }>) {
   const { annotator } = props;
   const style = useImageAnnotatorState(annotator, (state) => state.style);
   return (
     <AnnotatorColorRow
+      visible={props.visible}
       color={style.color}
       size={style.size}
       onColor={(color) => annotator.setStyle({ color })}
@@ -266,7 +268,7 @@ function PhoneRevertButton(props: Readonly<{ annotator: ImageAnnotator }>) {
 
 /** Each tool subscribes to whether it is the tool, so switching repaints two buttons, not the palette. */
 function ToolButton(
-  props: Readonly<{ annotator: ImageAnnotator; entry: PaletteTool; phone?: boolean }>,
+  props: Readonly<{ annotator: ImageAnnotator; entry: PaletteTool; phone?: boolean; visible?: boolean }>,
 ) {
   const { annotator, entry } = props;
   const shortcut = useKeyboardShortcutLabel(entry.command);
@@ -275,6 +277,15 @@ function ToolButton(
     (state) => state.tool === entry.tool,
   );
   const label = t(`files.annotate.tools.${entry.tool}` as const);
+  const selectTool = () => {
+    if (!active) void hapticsSelection();
+    annotator.setTool(entry.tool);
+  };
+  useCurrentUiContextLocalCommands(props.visible !== false ? [{
+    key: entry.tool,
+    title: label,
+    invoke: selectTool,
+  }] : [], { contextKey: `annotator-tool-${entry.tool}` });
   return (
     <IconButton
       variant="plain"
@@ -287,10 +298,7 @@ function ToolButton(
       accessibilityLabel={label}
       tooltip={props.phone ? undefined : withShortcut(label, shortcut)}
       tooltipPlacement="bottom"
-      onPress={() => {
-        if (!active) void hapticsSelection();
-        annotator.setTool(entry.tool);
-      }}
+      onPress={selectTool}
       testID={`annotator-tool-${entry.tool}`}
     />
   );
@@ -322,6 +330,12 @@ function ColorSwatchButton(props: Readonly<{ annotator: ImageAnnotator }>) {
     );
   });
   const label = t('files.annotate.colourAndStroke');
+  const toggle = () => setOpen((value) => !value);
+  useCurrentUiContextLocalCommands([{
+    key: 'toggle',
+    title: label,
+    invoke: toggle,
+  }], { contextKey: 'annotator-color' });
   return (
     <>
       <View ref={anchorRef} collapsable={false}>
@@ -349,7 +363,7 @@ function ColorSwatchButton(props: Readonly<{ annotator: ImageAnnotator }>) {
               />
             </View>
           }
-          onPress={() => setOpen((value) => !value)}
+          onPress={toggle}
           testID="annotator-color"
         />
       </View>

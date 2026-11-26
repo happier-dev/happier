@@ -438,10 +438,15 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
         : undefined;
 
     const bodyVisible = drawerState !== 'closed';
+    const collapseDrawer = () => setDrawerState('collapsed');
+    const expandDrawer = () => setDrawerState('expanded');
     const commands = useCurrentUiContextLocalCommands([
         { key: 'open', title: t('browserShell.devtools.title'), invoke: () => setDrawerState('expanded') },
         ...(bodyVisible ? [
             { key: 'close', title: t('browserShell.devtools.close'), invoke: () => setDrawerState('closed') },
+            drawerState === 'expanded'
+                ? { key: 'collapse', title: t('browserShell.devtools.collapse'), invoke: collapseDrawer }
+                : { key: 'expand', title: t('browserShell.devtools.expand'), invoke: expandDrawer },
             ...sections.map(section => ({ key: `section:${section}`, title: sectionLabel(section), invoke: () => setActiveSection(section) })),
         ] : []),
     ], { contextKey: persistenceKey, unbound: 'local' });
@@ -504,7 +509,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                             size={30}
                             interactiveTargetGapPx={8}
                             iconSize={16}
-                            onPress={() => setDrawerState('collapsed')}
+                            onPress={collapseDrawer}
                         />
                     ) : (
                         <IconButton
@@ -515,7 +520,7 @@ export function BrowserDiagnosticsDrawer(props: Readonly<{
                             size={30}
                             interactiveTargetGapPx={8}
                             iconSize={16}
-                            onPress={() => setDrawerState('expanded')}
+                            onPress={expandDrawer}
                         />
                     )}
                     <IconButton

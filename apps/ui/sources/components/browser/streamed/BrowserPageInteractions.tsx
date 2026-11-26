@@ -15,6 +15,7 @@ import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import {
   ModalChoiceRow,
@@ -447,6 +448,14 @@ function BrowserDownloads(
   const shown = props.downloads.filter(
     (download) => !dismissed.has(download.downloadId),
   );
+  const dismiss = () => setDismissed(
+    new Set(props.downloads.map((entry) => entry.downloadId)),
+  );
+  useCurrentUiContextLocalCommands(shown.length > 0 ? [{
+    key: 'dismiss',
+    title: t('browserPresence.interaction.dismissDownloads'),
+    invoke: dismiss,
+  }] : [], { contextKey: props.testID });
   if (shown.length === 0) return null;
   return (
     <View
@@ -517,11 +526,7 @@ function BrowserDownloads(
                   accessibilityLabel={t(
                     'browserPresence.interaction.dismissDownloads',
                   )}
-                  onPress={() =>
-                    setDismissed(
-                      new Set(props.downloads.map((entry) => entry.downloadId)),
-                    )
-                  }
+                  onPress={dismiss}
                   testID={`${props.testID}-dismiss`}
                 />
               ) : (
