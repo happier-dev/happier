@@ -44,6 +44,12 @@ func TestPackagedWrapper(t *testing.T) {
 
 	port := reservePort(t)
 	command := exec.Command(executable)
+	// The host keeps stdin open for the managed wrapper's starter lifetime.
+	starter, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer starter.Close()
 	command.Env = append(commandEnvironment,
 		"HOST=127.0.0.1",
 		"PORT="+strconv.Itoa(port),
