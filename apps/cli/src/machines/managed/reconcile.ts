@@ -248,6 +248,7 @@ async function readBootstrapCredentialValue(params: ManagedNativeInvocationInput
         import('@/api/accountProfile'), import('@/api/client/connectedServiceCredentialApi'),
     ]);
     const credentials = params.input.credentials;
+    const { token } = credentials;
     const cryptoSnapshot = credentials.encryption ? createAccountScopedCryptoMaterialSnapshotV1({
         accountEncryptionMode: 'e2ee', material: credentials.encryption,
         ...(credentials.encryption.type === 'dataKey' ? { dataKeyPublicKey: credentials.encryption.publicKey } : {}),
@@ -257,18 +258,21 @@ async function readBootstrapCredentialValue(params: ManagedNativeInvocationInput
     if (cryptoSnapshot?.material.type === 'dataKey') cryptoSnapshot.material.machineKey.fill(0);
     else if (cryptoSnapshot?.material.type === 'legacy') cryptoSnapshot.material.secret.fill(0);
     const readAccountCurrentness = async () => await runWithServerHttpBaseUrl(params.input.serverUrl, async () => {
-        const [profile, currentness] = await Promise.all([
-            fetchAccountProfile({ token: credentials.token, projection: 'self', signal: params.options.signal }),
-            fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token, serverBaseUrl: params.input.serverUrl, signal: params.options.signal }),
-        ]);
-        return profile.id === machine.custodianAccountId
-            && (currentness.mode === 'plain' ? credentials.encryption === null : credentials.encryption !== null)
+        const currentness = await fetchAccountEncryptionCurrentness({ credentials, token,
+            serverBaseUrl: params.input.serverUrl, signal: params.options.signal });
+        return (currentness.mode === 'plain' ? credentials.encryption === null : credentials.encryption !== null)
             && (currentness.mode === 'plain' || currentness.contentKeyFingerprint === contentKeyFingerprint) ? currentness : null;
     });
-    const admitted = await readAccountCurrentness();
-    if (!admitted) throw new ManagedMachineControllerError('credential_unavailable');
+    const [profile, admitted] = await Promise.all([
+        runWithServerHttpBaseUrl(params.input.serverUrl, () => fetchAccountProfile({ token,
+            projection: 'self', signal: params.options.signal })),
+        readAccountCurrentness(),
+    ]);
+    if (profile.id !== machine.custodianAccountId || !admitted) throw new ManagedMachineControllerError('credential_unavailable');
     const isCurrent = async () => {
         const current = await readAccountCurrentness();
+        // Home already proved this bearer names the custodian. Each later read
+        // authenticates the same bearer and checks the changing encryption identity.
         // Account.seq also advances for the import below and unrelated writes.
         // Custody follows the canonical mode/key/timestamp identity instead.
         return current !== null && sameAccountEncryptionIdentity(current, admitted);

@@ -6278,6 +6278,7 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
         let catalogReady = false;
         let materialRevision = 1;
         let bootstrapMaterialReads = 0;
+        let bootstrapProfileReads = 0;
         let disclosedContent: ReturnType<typeof openSavedSecretResourceStoredContentV1>;
         let loginPrivateKey = '';
         const sshLeaseFiles: string[] = [];
@@ -6350,7 +6351,10 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: nativeHomeId, allocation: 'unsubmitted' });
         vi.spyOn(axios, 'get').mockImplementation(async (url) => {
             const path = String(url);
-            if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (path.endsWith('/account/profile')) {
+                bootstrapProfileReads += 1;
+                return { status: 200, data: { id: 'owner' } };
+            }
             if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: currentMode, version: accountSequence, settingsVersion,
                 signingKeyFingerprint: null, contentKeyFingerprint: currentMode === 'plain' ? null
                     : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey), updatedAt: encryptionIdentityTimestamp } };
@@ -6484,6 +6488,7 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
         expect(bundle.guestHostPrivateKey).toMatch(/^-----BEGIN OPENSSH PRIVATE KEY-----\n/);
         expect(bundle.guestHostPrivateKey).not.toBe(loginPrivateKey);
         const retry = { homeId: nativeHomeId, managedId: retained.id, expectedIntentRevision: 0 };
+        bootstrapProfileReads = 0;
         let retryWork: Promise<JsonValue | null> | undefined;
         await operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry, actionRequestId: 'retry', execute: async (context) => {
             retryWork = keyDriver.execute('machines.managed.bootstrap.retry', retry, { requestId: 'retry', context, signal: context.signal });
@@ -6491,11 +6496,14 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
             catch { return { ok: false, errorCode: 'credential_unavailable', error: 'Account catalog unavailable' }; }
         } });
         await expect(retryWork).rejects.toMatchObject({ reason: 'reference_forbidden' });
+        console.info('MANAGED_BOOTSTRAP_PROFILE_READS', JSON.stringify({ mode, requests: bootstrapProfileReads, material: 'absent' }));
+        expect.soft(bootstrapProfileReads).toBe(1);
         expect(paths.some(path => path.endsWith('/submit'))).toBe(false);
         expect(nativeCalls).toEqual([]);
         disclosedContent = content;
         catalogReady = true;
         settingsRaw = { inferenceOpenAIKey: 'legacy-bootstrap-adjacent', preferredLanguage: 'fr' };
+        bootstrapProfileReads = 0;
         let privateLeaseWork: Promise<JsonValue | null> | undefined;
         await operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry, actionRequestId: 'private-lease', execute: async context => {
             privateLeaseWork = keyDriver.execute('machines.managed.bootstrap.retry', retry, { requestId: 'private-lease', context, signal: context.signal });
@@ -6505,6 +6513,8 @@ require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify
         // The admitted operation retains this key across roles; the fixture's
         // bootstrap handler then stops before executing any guest command.
         await expect(privateLeaseWork).rejects.toMatchObject({ code: 'plugin_action_execution_failed' });
+        console.info('MANAGED_BOOTSTRAP_PROFILE_READS', JSON.stringify({ mode, requests: bootstrapProfileReads, material: 'imported' }));
+        expect(bootstrapProfileReads).toBe(1);
         expect(imported).toHaveLength(1);
         expect(settingsVersion).toBe(2);
         expect(settingsRaw).toEqual({ preferredLanguage: 'fr' });
