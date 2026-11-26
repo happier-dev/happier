@@ -617,15 +617,18 @@ describe("review comment durable storage", () => {
             const result = await handler({ userId: account.id, authAuthority: "present_user", method: "POST", url: request.path, body: request.body,
                 headers: { [REVIEW_COMMENT_PRINCIPAL_HEADER_V1]: createSignedPrincipalHeader({ actor: actingActor, keyPair, machineId, installationId, body: request.body, path: request.path,
                     ...(logicalCreate ? { currentIntent: { v: 1, kind: "review_findings_materialization", actionId: "reviews.comments.create", sessionId,
-                        runId: logicalCreate.runId, callId: `call-${logicalCreate.runId}`, agentId: actor.agentId, workspace,
+                        runId: logicalCreate.runId, callId: `call-${logicalCreate.runId}`, agentId: logicalCreate.engineId, workspace,
                         effectBodySha256Base64Url: request.contentCommitment! } as ReviewCommentCurrentIntentV1 } : {}) }) },
             }, reply);
-            expect(reply.statusCode).toBe(200);
+            expect(reply.statusCode, JSON.stringify(result)).toBe(200);
             return result;
         };
-        const materialize = async (body: typeof input) => ReviewCommentCreateResponseV1Schema.parse(await executeReviewCommentTransportV1({
-            actionId: "reviews.comments.create", input: body, actor, context, randomBytes, request: signedRequest(actor, body),
-        }));
+        const materialize = async (body: typeof input) => {
+            const actingActor = { ...actor, agentId: body.engineId };
+            return ReviewCommentCreateResponseV1Schema.parse(await executeReviewCommentTransportV1({
+                actionId: "reviews.comments.create", input: body, actor: actingActor, context, randomBytes, request: signedRequest(actingActor, body),
+            }));
+        };
         const created = await materialize(input);
         const transitionInput = { workspace, commentId: created.comment.id, expectedServerRevision: 1, expectedState: "open", toState: "dismissed", reason: "Verified no issue",
             clientMutationId: "encrypted-dismiss" };

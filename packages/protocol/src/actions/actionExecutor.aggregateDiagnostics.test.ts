@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
 import type { ActionOutputDiagnostic } from './executor/actionFailureDiagnostic.js';
+import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 
 const transportError = () => Object.assign(new TypeError('Transport response lost'), { code: 'ECONNRESET' });
 const context = { surface: 'ui', authority: 'present_user', bypassApprovals: true, defaultSessionId: 's1' } as const;
@@ -43,7 +44,9 @@ it('records report discovery failure while retaining the successful lead archive
 
 it.each(['start', 'narration'] as const)('records a review %s transport failure inside the existing aggregate result', async phase => {
   const diagnostics: ActionOutputDiagnostic[] = [];
+  const records = createInMemoryReviewRecordPortV1();
   const executor = createActionExecutor({ recordActionOutputDiagnostic: diagnostic => diagnostics.push(diagnostic),
+    reviewRecords: () => records,
     resolveAgentStartContext: async () => startContext,
     reviewEnginesList: async () => ({ items: ['codex', 'claude'].map(value => ({ value, label: value,
       capabilities: { structuredNarration: true } })) }),
@@ -53,9 +56,10 @@ it.each(['start', 'narration'] as const)('records a review %s transport failure 
     },
     executionRunAction: async () => { throw transportError(); },
   });
-  const result = await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex', 'claude'],
-    instructions: 'Review', outputs: ['walkthrough'], comparisonId: 'comparison-1' }, context);
-  expect(result).toMatchObject({ ok: true, result: { narration: { state: 'failed' } } });
+  const result = await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }],
+    instructions: 'Review', outputs: ['walkthrough'], narrator: { engineId: 'claude' }, comparisonId: 'c'.repeat(64),
+    cwd: '/workspace', source: { kind: 'workingTree' } }, { ...context, defaultSessionMachineId: 'm1' });
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { narration: { state: 'failed' } } });
   expect(JSON.stringify(result)).not.toContain('failureCause');
   expect(diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
     source: phase === 'start' ? 'action.execution_run.fanout.start' : 'action.review.narration',
