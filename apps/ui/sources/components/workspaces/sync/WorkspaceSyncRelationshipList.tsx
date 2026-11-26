@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     useReportSessionInfoSectionSummary,
@@ -240,6 +241,9 @@ export const WorkspaceSyncRelationshipRow = React.memo(function WorkspaceSyncRel
         machineDirectionLabel ? folderTitle : null,
         modeKey ? t(modeKey) : t('workspaceSync.unknownMode'),
     ].filter(Boolean).join(' · ');
+    useCurrentUiContextLocalCommands([
+        { key: 'details', title: `${t('approvals.details')}: ${machineDirectionLabel ?? folderTitle}`, invoke: openDetails },
+    ], { contextKey: JSON.stringify([scope.serverId, scope.controllerMachineId, scope.relationshipId]) });
 
     return (
         <Item

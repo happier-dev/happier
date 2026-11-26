@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { renderScreen } from '@/dev/testkit';
 import type { WorkspaceSyncRelationshipSummary } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { resetWorkspaceSyncStatusStoreForTests } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
@@ -27,10 +28,8 @@ installSessionHandoffCommonModuleMocks({
                 useMachineDisplayNamesById: () => ({}),
         });
     },
-    text: async () => ({
-        t: (key: string, params?: Record<string, unknown>) => params
-            ? `${key}:${JSON.stringify(params)}`
-            : key,
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
+        translate: (key, params) => params ? `${key}:${JSON.stringify(params)}` : key,
     }),
 });
 
@@ -148,6 +147,51 @@ describe('WorkspaceSyncRelationshipRow', () => {
     beforeEach(() => {
         mountedExecuteSpy.mockClear();
         resetWorkspaceSyncStatusStoreForTests();
+    });
+
+    it('publishes the complete row navigation inventory and retires its opaque addresses', async () => {
+        const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://sync-controls.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        let reader: CurrentUiContextReader | null = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+        const counter = createCommittedFiberRenderCounter();
+        let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+        const opened: string[] = [];
+        const summary = createSummary(0);
+        const onOpenDetails = (value: WorkspaceSyncRelationshipSummary) => { opened.push(value.relationshipId); };
+        const tree = (unrelated: string) => <React.Profiler id="sync-row" onRender={() => { if (readRoot) counter.onCommitRoot(readRoot()); }}>
+            <Observe /><span>{unrelated}</span><WorkspaceSyncRelationshipRow summary={summary} onOpenDetails={onOpenDetails} />
+        </React.Profiler>;
+        const screen = await renderMountedCurrentUiContext(tree('before'));
+        readRoot = readTestRendererRoot(screen.tree.root);
+        try {
+            counter.start();
+            await screen.update(tree('unrelated'));
+            counter.stop();
+            expect(counter.read().rendersFor(WorkspaceSyncRelationshipRow)).toBe(0);
+            console.info('Sync unrelated-update row renders:', counter.read().rendersFor(WorkspaceSyncRelationshipRow));
+            const current = reader!;
+            expect(current.readCurrentUiContext()!.commands.map(row => row.title)).toEqual([
+                `approvals.details: ${screen.findByTestId('workspace-sync-relationship-relationship-1')!.props.title}`,
+            ]);
+            const address = current.readCurrentUiContext()!.commands[0]!.id;
+            const command = current.resolveCurrentUiCommand(address)!;
+            if (command.command.kind !== 'hostLocal') throw new Error('Expected mounted local command');
+            await act(async () => {
+                expect(await command.command.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } })).toMatchObject({ ok: true });
+            });
+            expect(opened).toEqual(['relationship-1']);
+            await act(async () => { screen.findByTestId('workspace-sync-relationship-relationship-1')!.props.onPress(); });
+            expect(opened).toEqual(['relationship-1', 'relationship-1']);
+            await screen.update(<Observe />);
+            expect(current.readCurrentUiContext()!.commands).toEqual([]);
+            expect(current.resolveCurrentUiCommand(address)).toBeNull();
+            expect(command.retirementSignal.aborted).toBe(true);
+        } finally { await screen.unmount(); await home.dispose(); }
     });
 
     it('routes termination through its Action even when a private modal would refuse', async () => {

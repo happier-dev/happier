@@ -11763,6 +11763,10 @@ is omitted from approval Artifacts and observations, as with `clipboard.write`.
 
 In unreleased 0.3 source, mounted Browser, Computer, Services, Board and phone-preview presentation controls extend this same current-context command inventory. Read the answering app's inventory before invoking a drawer, tab, detail or device choice; command ids retire with their mounted owner. These commands reuse the UI's existing presentation state and do not change Browser interaction enablement, import credentials or disclose capability links. Generic current-context Actions currently refuse plugin-surface calls; their generated SDK DTOs do not establish plugin admission. Plugins retain `context.ui.present` for the supported Session presentation intents.
 
+In unreleased 0.3 source, each presented Workspace sync relationship row also
+publishes a Details command through that inventory. It opens the same details
+view as pressing the row and retires when the row leaves the presented surface.
+
 In unreleased 0.3 source, each Usage/Vitals scrub lens publishes a fixed command
 set rather than a command per chart bucket. Its chart-values command returns
 the latest exact bucket titles, totals and rows. Invoke it without input to
