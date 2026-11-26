@@ -87,6 +87,14 @@ export class ConnectedServiceCredentialResolutionError extends Error {
   }
 }
 
+function throwCredentialReadError(binding: CredentialBinding, error: unknown): never {
+  if (error instanceof ConnectedServiceCredentialBindingMismatchError) throw error;
+  throw new ConnectedServiceCredentialResolutionError(
+    binding,
+    error instanceof ConnectedServiceCredentialUnsupportedFormatError ? 'present_but_unusable' : 'unknown',
+  );
+}
+
 async function resolveAbsentCredential(api: ProfileHealthApi, binding: CredentialBinding): Promise<ConnectedServiceCredentialResolutionError> {
   const health = (await readConnectedServiceProfileHealths({
     api, serviceId: binding.serviceId, profileIds: [binding.profileId],
@@ -123,7 +131,7 @@ async function readPlainConnectedServiceCredential(params: Readonly<{
   const plain = await params.api.getConnectedServiceCredentialPlain({
     serviceId: params.binding.serviceId,
     profileId: params.binding.profileId,
-  });
+  }).catch((error: unknown) => throwCredentialReadError(params.binding, error));
   if (!plain) return null;
   const record = parseConnectedServiceCredentialRecord({
     binding: params.binding,
@@ -162,7 +170,7 @@ async function readSealedConnectedServiceCredential(params: Readonly<{
   const sealed = await params.api.getConnectedServiceCredentialSealed({
     serviceId: params.binding.serviceId,
     profileId: params.binding.profileId,
-  });
+  }).catch((error: unknown) => throwCredentialReadError(params.binding, error));
   if (!sealed) return null;
 
   requireEncryptionCredentials(params.credentials);
@@ -226,11 +234,6 @@ export async function resolveConnectedServiceCredentialsWithRevisions(params: Re
       api: params.api,
       credentials: params.credentials,
       binding,
-    }).catch((error: unknown) => {
-      if (error instanceof ConnectedServiceCredentialUnsupportedFormatError) {
-        throw new ConnectedServiceCredentialResolutionError(binding, 'present_but_unusable');
-      }
-      throw error;
     });
     if (!sealed) {
       throw await resolveAbsentCredential(params.api, binding);

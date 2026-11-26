@@ -108,10 +108,11 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   const resolutionError = readRecord(input.error);
   if (readStringField(resolutionError, 'name') === 'ConnectedServiceCredentialResolutionError'
     && readStringField(resolutionError, 'kind') === 'unknown') {
-    const code = 'connected_service_credential_resolution_unavailable';
-    const message = 'Happier could not verify the selected login. Try again or choose a login in Connected Accounts.';
-    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      errorMessage: message, errorDetail: { kind: 'launch_error', code, message } };
+    return {
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'Happier could not verify the selected login. Try again or choose a login in Connected Accounts.',
+    };
   }
 
   const missingCredential = readCredentialMissingSpawnError(input.error);

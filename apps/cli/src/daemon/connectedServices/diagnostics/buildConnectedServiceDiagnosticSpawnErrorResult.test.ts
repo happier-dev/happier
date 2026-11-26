@@ -4,6 +4,7 @@ import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   SPAWN_SESSION_ERROR_CODES,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
+  isSpawnSessionErrorDetail,
   type ConnectedServiceUxDiagnosticCodeV1,
 } from '@happier-dev/protocol';
 
@@ -16,6 +17,24 @@ import {
 } from './buildConnectedServiceDiagnosticSpawnErrorResult';
 
 describe('buildConnectedServiceDiagnosticSpawnValidationErrorResult', () => {
+  it('presents unknown credential health in the released spawn error envelope', () => {
+    const result = buildConnectedServiceCredentialSpawnErrorResult({
+      agentId: 'claude',
+      error: {
+        name: 'ConnectedServiceCredentialResolutionError',
+        kind: 'unknown',
+        serviceId: 'claude-subscription',
+        profileId: 'work',
+      },
+    });
+
+    expect(result).toMatchObject({
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: expect.stringContaining('Connected Accounts'),
+    });
+    expect(result?.errorDetail === undefined || isSpawnSessionErrorDetail(result.errorDetail)).toBe(true);
+  });
+
   it('attaches a protocol-owned ux diagnostic to connected-service spawn validation errors', () => {
     const result = buildConnectedServiceDiagnosticSpawnValidationErrorResult({
       errorMessage: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,

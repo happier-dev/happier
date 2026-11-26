@@ -247,6 +247,32 @@ describe('resolveConnectedServiceCredentials', () => {
     })).rejects.toBeInstanceOf(ConnectedServiceCredentialResolutionError);
   });
 
+  it.each(['plain', 'e2ee'] as const)('keeps a failed %s credential read unknown', async (mode) => {
+    const listConnectedServiceProfiles = vi.fn(async () => ({
+      serviceId: 'claude-subscription' as const,
+      profiles: [],
+    }));
+    const failRead = async () => { throw new Error('offline'); };
+    const api = {
+      getAccountEncryptionMode: async () => mode,
+      getConnectedServiceCredentialPlain: failRead,
+      getConnectedServiceCredentialSealed: failRead,
+      listConnectedServiceProfiles,
+    };
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials: { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
+      api,
+      bindings: [{ serviceId: 'claude-subscription', profileId: 'work' }],
+    })).rejects.toMatchObject({
+      name: 'ConnectedServiceCredentialResolutionError',
+      kind: 'unknown',
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+    });
+    expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
+  });
+
   it('falls back to plaintext credentials when the account-mode probe errors', async () => {
     const now = Date.now();
     const record = buildConnectedServiceCredentialRecord({
