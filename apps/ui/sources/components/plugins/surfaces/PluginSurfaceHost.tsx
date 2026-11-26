@@ -3348,8 +3348,16 @@ function PluginSurfaceHostMount(props: Readonly<(
     const accountEncryptionMode = accountEncryptionModeReadiness.status === 'ready'
         ? accountEncryptionModeReadiness.mode
         : null;
+    const stateSize = useSurfaceStateCardSize();
+    const composerRole = composerBinding?.mount.role;
+    const compactSurface = stateSize === 'line'
+        || composerRole === 'region'
+        || composerRole === 'controlCompact'
+        || composerRole === 'attachmentDisplay'
+        || (stateSize === undefined
+            && (props.inlineMount?.presentation === 'content' || targetedBinding?.mount.presentation === 'content'));
     const accountModeHomeEndpoint = useScopedHomeEndpointStatus(
-        accountEncryptionMode === null ? accountLifetime?.scope.serverId ?? serverId : null,
+        !compactSurface && accountEncryptionMode === null ? accountLifetime?.scope.serverId ?? serverId : null,
     );
     const accountModeReadRetrying = accountEncryptionModeReadiness.status === 'unavailable'
         && accountEncryptionModeReadiness.retrying === true;
@@ -3622,7 +3630,9 @@ function PluginSurfaceHostMount(props: Readonly<(
     // A resolved Account mode is required before building a new renderer
     // context. Revalidation keeps only the incumbent presentation within its
     // controller lifetime; it does not replace current Account/Action admission.
-    if (accountLocalInteractionEnabled && !accountEncryptionMode) {
+    if (!accountEncryptionMode && (compactSurface || accountLocalInteractionEnabled)) {
+        // The shell owns the Home notice. A compact surface leaves its slot empty.
+        if (compactSurface) return null;
         return accountModePending || accountEncryptionModeReadiness.status === 'loading' || accountModeReadRetrying
             ? <PluginSurfacePresentation lifetime={controller}
                 notice={(retained) => retained

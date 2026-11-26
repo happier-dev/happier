@@ -8837,38 +8837,54 @@ describe('PluginSurfacePlacementHost', () => {
         } finally { rows.release(); await second.unmount(); await first.unmount(); }
     });
 
-    it('shows unavailable instead of a loading skeleton when a cold Account mode read fails on an unreachable Home', async () => {
+    it.each(['pane', 'line'] as const)('renders the Account-mode outage only in a sized surface (%s)', async (size) => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
         const { storage } = await import('@/sync/domains/state/storage');
+        const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        const { invalidateAllServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
         reactNativeSurfaceRuntime.enabled = true;
         reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(() => React.createElement('Text', {
             testID: 'offline-recovered-surface',
         }, 'Recovered')) };
         let offline = false;
         await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, path => {
+            if (path === '/health' || path === '/v1/auth/ping') {
+                return offline ? Promise.reject(new TypeError('Failed to fetch')) : Response.json({});
+            }
             if (offline && path === '/v1/account/encryption/currentness') {
                 return Response.json({ error: 'unavailable' }, { status: 503 });
             }
             return undefined;
-        }, { serverIdentityId: 'srv_server_1' });
+        }, { serverIdentityId: 'srv_server_1', requestOwnsReachabilityProbes: true });
         offline = true;
-        storage.setState({ endpointStatus: 'offline', socketStatus: 'disconnected', endpointReason: null, syncError: null });
-        (await import('@/sync/api/account/apiAccountEncryptionMode')).invalidateAccountEncryptionModeCache();
+        await act(async () => {
+            await invalidateAllServerReachabilitySupervisors();
+            invalidateAccountEncryptionModeCache();
+        });
+        await waitForHomeGovernance(() => expect(storage.getState().endpointStatus).toBe('offline'));
         const projection = withExactGeneratedMountedTarget({
             projection: generatedReactNativeProjection, pluginId: 'acme.browser',
             occurrenceId: 'browser-offline-generation-44', projectionGeneration: 44,
             displayName: 'Browser Inspector', version: '3.2.1',
             declaresContributionPoints: false,
         }).projection;
-        const screen = await renderScreen(<PluginSurfacePlacementHost
-            placement={generatedReactNativePlacement({ occurrenceId: 'browser-offline-generation-44' })}
-            resourceBrowserTarget={target} machineId="machine_1" serverId="server_1"
-            pluginUiProjection={projection} platform="web" />);
+        const screen = await renderScreen(<SurfaceStateSizeProvider size={size}>
+            <PluginSurfacePlacementHost
+                placement={generatedReactNativePlacement({ occurrenceId: 'browser-offline-generation-44' })}
+                resourceBrowserTarget={target} machineId="machine_1" serverId="server_1"
+                pluginUiProjection={projection} platform="web" />
+        </SurfaceStateSizeProvider>);
         try {
-            await vi.waitFor(() => expect(screen.findByTestId(
-                'plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable',
-            )).not.toBeNull());
-            expect(screen.findHostByTestId('plugin-surface-unavailable')).toBeTruthy();
+            if (size === 'pane') {
+                await vi.waitFor(() => expect(screen.findByTestId(
+                    'plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable',
+                )).not.toBeNull());
+                expect(screen.findHostByTestId('plugin-surface-unavailable')).toBeTruthy();
+            } else {
+                expect(screen.findHostByTestId('plugin-surface-unavailable')).toBeNull();
+                expect(screen.tree.toJSON()).toBeNull();
+            }
             expect(screen.findByTestId('plugin-surface-unavailable-loading-skeleton')).toBeNull();
             expect(screen.findByTestId('offline-recovered-surface')).toBeNull();
         } finally { await screen.unmount(); }
@@ -13003,8 +13019,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
 
         if (pendingAccountMode) {
             await flushHookEffects();
-            expect(screen.findByTestId('plugin-surface-unavailable-loading-skeleton')).toBeTruthy();
-            expect(screen.findByTestId('targeted-declared-fallback')).toBeNull();
+            expect(screen.tree.toJSON()).toBeNull();
             await act(async () => { resolveMode?.(createPlainAccountEncryptionCurrentnessFixture({ version: 2, updatedAt: 2 })); });
             await flushHookEffects();
         }
@@ -16543,9 +16558,7 @@ describe('Composer physical surface mount', () => {
         }), undefined);
     });
 
-    // An inline Composer region is not a page: while it loads it reserves nothing (no page-shaped
-    // skeleton in the thread), keeping only the hidden diagnostic marker for QA.
-    it('reserves no visible placeholder while an inline Composer region is still loading', async () => {
+    it('reserves no space while an inline Composer region is still loading', async () => {
         let holdModeRead = false;
         await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-a', accountId: 'account-a' }, (path) => {
             if (path !== '/v1/account/encryption/currentness' || !holdModeRead) return undefined;
@@ -16566,13 +16579,11 @@ describe('Composer physical surface mount', () => {
         }), { flushOptions: { cycles: 0 } });
         try {
             await flushHookEffects();
-            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-account_encryption_mode_pending')).toBeTruthy();
-            expect(screen.findByTestId('plugin-surface-unavailable-loading-skeleton')).toBeNull();
-            expect(screen.getTextContent()).not.toContain('Composer summary');
+            expect(screen.tree.toJSON()).toBeNull();
         } finally { await screen.unmount(); }
     });
 
-    it('keeps a cold Composer empty through failed reads and shows one card for a settled Home outage', async () => {
+    it('keeps a cold Composer empty through failed reads and a settled Home outage', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { sync } = await import('@/sync/sync');
         const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
@@ -16647,8 +16658,8 @@ describe('Composer physical surface mount', () => {
         await waitForHomeGovernance(() => expect(storage.getState().endpointStatus).toBe('offline'));
         const offline = await renderScreen(host);
         try {
-            await waitForHomeGovernance(() => expect(offline.findHostByTestId(cardId)).toBeTruthy());
-            expect(offline.findByTestId('plugin-surface-unavailable-diagnostic-account_encryption_mode_unavailable')).toBeTruthy();
+            expect(offline.findHostByTestId(cardId)).toBeNull();
+            expect(offline.tree.toJSON()).toBeNull();
         } finally { await offline.unmount(); }
     });
 
