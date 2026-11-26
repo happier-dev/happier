@@ -352,9 +352,10 @@ async function runExchange<T>(input: Readonly<{
   if (!executablePath) throw unsafe('native workspace filesystem confinement is unavailable');
   const spawnChild: SpawnChild = input.dependencies.spawnChild
     ?? ((path, args, options) => nodeSpawn(path, args, options));
+  const autoCommit = input.assertCurrentAuthority === undefined;
   let child: WorkspaceSyncNativeConfinedChild;
   try {
-    child = spawnChild(executablePath, [input.command], {
+    child = spawnChild(executablePath, autoCommit ? [input.command, '--auto-commit'] : [input.command], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -383,6 +384,15 @@ async function runExchange<T>(input: Readonly<{
 
     const handleLine = async (line: string) => {
       if (phase === 'preparing') {
+        if (autoCommit) {
+          const record = parseRecord(line);
+          if (record.v === 1 && record.t === 'workspace-confined-result') {
+            result = { value: input.parseResult(line) };
+            phase = 'closing';
+            if (!child.stdin.writableEnded) child.stdin.end();
+            return;
+          }
+        }
         parsePrepared(line);
         phase = 'authority';
         try {
@@ -436,7 +446,7 @@ async function runExchange<T>(input: Readonly<{
       }
       stderr += stderrDecoder.write(bytes);
     });
-    child.stdin.on('error', (error: Error) => finishReject(unsafe('native workspace confinement input failed', error)));
+    child.stdin.on('error', (error: Error) => { if (phase === 'closing') return; finishReject(unsafe('native workspace confinement input failed', error)); });
     child.on('error', (error: Error) => finishReject(unsafe('native workspace confinement process failed', error), false));
     child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
       stdoutBuffer += stdoutDecoder.end();

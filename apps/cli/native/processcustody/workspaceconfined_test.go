@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 )
@@ -106,5 +107,63 @@ func TestWorkspaceConfinedCommandRejectsArgumentsBeforeReadingInput(t *testing.T
 	}
 	if output.Len() != 0 {
 		t.Fatalf("unexpected protocol output: %q", output.String())
+	}
+}
+
+type stubWorkspaceConfinedOperation struct {
+	committed int
+	closed    int
+	res       workspaceConfinedResult
+}
+
+func (s *stubWorkspaceConfinedOperation) commit() workspaceConfinedResult {
+	s.committed++
+	return s.res
+}
+
+func (s *stubWorkspaceConfinedOperation) close() {
+	s.closed++
+}
+
+func TestWorkspaceConfinedExchangeAutoCommitSkipsPreparedHandshake(t *testing.T) {
+	op := &stubWorkspaceConfinedOperation{res: workspaceConfinedSuccess("deleted")}
+	var output strings.Builder
+	err := runWorkspaceConfinedExchange(
+		[]string{"--auto-commit"},
+		strings.NewReader(`{"v":1}`+"\n"),
+		&output,
+		func(_ []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+			return op, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("auto-commit exchange failed: %v", err)
+	}
+	if op.committed != 1 || op.closed != 1 {
+		t.Fatalf("expected 1 commit and 1 close, got committed=%d closed=%d", op.committed, op.closed)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly 1 output line (no prepared handshake), got %d: %q", len(lines), output.String())
+	}
+	var record map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &record); err != nil {
+		t.Fatalf("invalid JSON result: %v", err)
+	}
+	if record["t"] != "workspace-confined-result" || record["status"] != "deleted" {
+		t.Fatalf("unexpected auto-commit record: %v", record)
+	}
+
+	var rejectedOutput strings.Builder
+	if err := runWorkspaceConfinedExchange(
+		[]string{"--auto-commit", "extra"},
+		strings.NewReader(""),
+		&rejectedOutput,
+		func(_ []byte, _ io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+			t.Fatal("decoder should not be called when extra args are present")
+			return nil, nil
+		},
+	); err == nil || rejectedOutput.Len() != 0 {
+		t.Fatalf("expected extra args rejection with empty output, err=%v out=%q", err, rejectedOutput.String())
 	}
 }

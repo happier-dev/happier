@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import { configuration } from '@/configuration';
 import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
-import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
+import { openSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
@@ -435,5 +437,90 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('man
       });
     expect(failure).toMatchObject({ ok: false, errorCode: 'workspace_file_unsupported',
       details: { appliedPaths: [], path: 'nested' } });
+  });
+
+  it('captures only O(K) changed host paths via atomic captureLeaf without scanning the full remote tree', async () => {
+    await mkdir(join(hostRoot, 'pkg'), { recursive: true });
+    await mkdir(join(targetRoot, 'pkg'), { recursive: true });
+    for (let i = 0; i < 40; i++) {
+      await writeFile(join(hostRoot, 'pkg', `file-${i}.txt`), `unchanged-${i}\n`);
+      await writeFile(join(targetRoot, 'pkg', `file-${i}.txt`), `unchanged-${i}\n`);
+    }
+    const baseline = await scanWorkspaceManifest({ workspaceRoot: hostRoot, safeFilterPolicy: { excludeAdministrativePaths: false } });
+    // Target edits only K=2 files; host also edits one of them to verify both_changed detection.
+    await writeFile(join(targetRoot, 'pkg', 'file-3.txt'), 'target-clean-edit\n');
+    await writeFile(join(targetRoot, 'pkg', 'file-17.txt'), 'target-conflict-edit\n');
+    await writeFile(join(hostRoot, 'pkg', 'file-17.txt'), 'host-conflict-edit\n');
+
+    const child = spawn(holderPath!, ['workspace', '--root', hostRoot], { stdio: ['pipe', 'pipe', 'ignore'] });
+    const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+    const rawHolder = openSessionHolderWorkspaceChannel(channel);
+    let helperSpawns = 0;
+    const spiedHolder = new Proxy(rawHolder, {
+      get(target, prop, receiver) {
+        if (prop === 'spawnStream') {
+          return (req: Parameters<typeof rawHolder.spawnStream>[0]) => {
+            helperSpawns++;
+            return rawHolder.spawnStream(req);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const baseSource = createHolderWorkspaceSource({
+      id: 'remote-host-test',
+      rootPath: hostRoot,
+      holder: spiedHolder,
+      helperPath: helperPath!,
+    });
+    let readdirCalls = 0;
+    let lstatCalls = 0;
+    let observeCalls = 0;
+    let openCalls = 0;
+    let captureLeafCalls = 0;
+    const spiedSource: WorkspaceSource = {
+      ...baseSource,
+      readdir: async (p) => { readdirCalls++; return baseSource.readdir(p); },
+      lstat: async (p) => { lstatCalls++; return baseSource.lstat(p); },
+      ...(baseSource.observeSyncEntry ? { observeSyncEntry: async (p) => { observeCalls++; return baseSource.observeSyncEntry!(p); } } : {}),
+      open: async (p, opts) => { openCalls++; return baseSource.open(p, opts); },
+      ...(baseSource.captureLeaf ? { captureLeaf: async (p) => { captureLeafCalls++; return baseSource.captureLeaf!(p); } } : {}),
+    };
+    const remoteWorkspace = {
+      v: 2 as const,
+      kind: 'managed' as const,
+      serverId: 'home',
+      workspaceId: 'remote-host-ws',
+      managedId: 'remote-host-managed',
+      rootPath: hostRoot,
+      controller: { machineId: 'controller-1', installationId: 'install-1' },
+    };
+
+    try {
+      const preview = await prepareManagedWorkspaceReturnFromStage({
+        sessionId,
+        activeServerDir: directory,
+        hostRoot,
+        stageRoot: targetRoot,
+        baseline,
+        registry,
+        original: { workspace: remoteWorkspace, source: spiedSource },
+      });
+      // O(K) cost contract: zero full-tree remote scans, zero per-file lstat/observe/open chatter.
+      expect(readdirCalls).toBe(0);
+      expect(lstatCalls).toBe(0);
+      expect(observeCalls).toBe(0);
+      expect(openCalls).toBe(0);
+      expect(captureLeafCalls).toBeGreaterThan(0);
+      expect(captureLeafCalls).toBeLessThanOrEqual(4);
+      expect(helperSpawns).toBeLessThanOrEqual(4);
+      // Correctness contract: exact diffs + both_changed conflict preserved.
+      const files = preview.paths.flatMap(group => group.files);
+      expect(files.map(file => file.path)).toEqual(['pkg/file-17.txt', 'pkg/file-3.txt']);
+      expect(preview.paths.flatMap(group => group.conflicts)).toEqual([{ path: 'pkg/file-17.txt', code: 'both_changed' }]);
+    } finally {
+      channel.end();
+      child.kill();
+    }
   });
 });

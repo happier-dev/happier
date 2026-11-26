@@ -53,6 +53,8 @@ export type PrivateProjectNativeSync = Pick<WorkspaceSyncTargetAuthority,
   }>>;
   /** One chunk of a blob named by that seed, read as the member. */
   readSourceSeedBlob(request: Readonly<{ operationId: string; transferId: string; offset: number; length: number }>): Promise<Uint8Array>;
+  /** Release a prepared source seed or conflict-resolution export once transfer custody ends. */
+  releaseSourceSeedExport(request: Readonly<{ operationId: string }>): Promise<void>;
   dispose(): Promise<void>;
   agentExecutablePath: string;
 }>;
@@ -299,7 +301,7 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
   let disposal: Promise<void> | undefined;
   let capturedSeed: Awaited<ReturnType<typeof materializeWorkspaceSyncSeedExport>> | undefined;
   // The daemon serves these seeds but never opens a path in this member folder (MEMBER-CHILD-READS-1115).
-  const sourceSeeds = new Map<string, Readonly<{ scope: Awaited<ReturnType<typeof createWorkspaceSyncSeedExport>>['onDemandScope']; actionReceiptId?: string }>>();
+  const sourceSeeds = new Map<string, Readonly<{ scope: Awaited<ReturnType<typeof createWorkspaceSyncSeedExport>>['onDemandScope']; actionReceiptId?: string; dispose?: () => Promise<void> | void }>>();
   const disposableHandle = (handle: WorkspaceRootOwnershipHandle): DisposableRootHandle => ({ ...handle, dispose: handle.release });
   return {
     agentExecutablePath,
@@ -377,7 +379,7 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
       assertLocalRoot(request.sourcePath);
       const built = await createWorkspaceSyncSeedExport({ operationId: request.operationId, activeServerDir: stateDirectory,
         sourcePath: request.sourcePath, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(request.contentPolicy, request.exclusionCandidates), registry: registry.registry });
-      sourceSeeds.set(request.operationId, { scope: built.onDemandScope });
+      sourceSeeds.set(request.operationId, { scope: built.onDemandScope, ...(built.payloadSource.dispose ? { dispose: built.payloadSource.dispose } : {}) });
       return new Uint8Array(built.payloadSource.payload);
     }),
     materializeCapturedSeed: request => call(async () => {
@@ -401,7 +403,7 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     prepareSourceConflictResolutionExport: request => call(async () => {
       assertBoundId(request.sourceWorkspaceRefId);
       const built = await authority.prepareConflictResolutionExport(request);
-      sourceSeeds.set(request.operationId, { scope: built.onDemandScope, actionReceiptId: request.actionReceiptId });
+      sourceSeeds.set(request.operationId, { scope: built.onDemandScope, actionReceiptId: request.actionReceiptId, ...(built.payloadSource.dispose ? { dispose: built.payloadSource.dispose } : {}) });
       return { payload: new Uint8Array(await readTransferPayloadChunk({ source: built.payloadSource, offset: 0,
         length: await resolveTransferPayloadSizeBytes(built.payloadSource) })), blobs: built.blobs };
     }),
@@ -410,6 +412,11 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
       if (!seed?.allowTransferId(request.transferId)) throw privateProjectCheckoutRefusal();
       const source = await seed.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: undefined });
       return new Uint8Array(await readTransferPayloadChunk({ source, offset: request.offset, length: request.length }));
+    }),
+    releaseSourceSeedExport: request => call(async () => {
+      const entry = sourceSeeds.get(request.operationId);
+      sourceSeeds.delete(request.operationId);
+      await entry?.dispose?.();
     }),
     stageConflictResolutionHere: (request, signal) => call(async () => {
       assertBoundId(request.targetWorkspaceRefId); context.onEffectsIssued();
@@ -424,9 +431,14 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     }),
     releaseConflictResolutionCaptureHere: request => call(async () => {
       await authority.releaseConflictResolutionCaptureHere(request);
+      const removed: Array<(() => Promise<void> | void) | undefined> = [];
       for (const [operationId, entry] of sourceSeeds) {
-        if (entry.actionReceiptId === request.actionReceiptId) sourceSeeds.delete(operationId);
+        if (entry.actionReceiptId === request.actionReceiptId) {
+          sourceSeeds.delete(operationId);
+          removed.push(entry.dispose);
+        }
       }
+      await Promise.allSettled(removed.map(dispose => dispose?.()));
     }),
     readFileHere: (request, signal, _context, admittedWriterRead) => call(async () => {
       assertBoundId(request.workspaceRefId);
@@ -447,6 +459,9 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
         request: { ...checkout.request, source: { kind: 'workspace', workspaceId: checkout.workspaceRefId }, materialization: { kind: 'attach' }, subdir } }, context);
     }),
     dispose: () => disposal ??= (async () => {
+      const retainedSeeds = [...sourceSeeds.values()];
+      sourceSeeds.clear();
+      await Promise.allSettled(retainedSeeds.map(entry => entry.dispose?.()));
       await authority.releaseAllRetainedBootstraps();
       for (const root of localRoots.values()) {
         await root.ownership?.release();

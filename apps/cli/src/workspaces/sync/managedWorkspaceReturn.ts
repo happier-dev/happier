@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join, posix } from 'node:path';
 import { configuration } from '@/configuration';
+import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency';
 import { readStoredScmComparison, writeStoredScmComparison, resolveStoredScmComparisonPath, resolveStoredScmComparisonEndpointsPath, type StoredScmComparison } from '@/scm/comparisons/comparisonStorage';
 import type { ScmComparisonFile, WorkspaceManifest, WorkspaceManifestEntry } from '@happier-dev/protocol';
 import { buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
@@ -21,7 +22,7 @@ import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { runWithWorkspaceSource, runWithWorkspaceSourceDemand, workspaceTargetUnavailable, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createWorkspaceSyncSeedExport, materializeWorkspaceSyncSeedExport } from './workspaceSyncSeedTransfer';
-import { captureWorkspaceSyncEntryAtRoot, captureWorkspaceSyncLeafFromTarget, applyCapturedWorkspaceSyncEntryAtRoot,
+import { captureWorkspaceSyncEntryAtRoot, captureWorkspaceSyncLeafFromTarget, writeCapturedWorkspaceSyncLeaf, applyCapturedWorkspaceSyncEntryAtRoot,
   type ApplyCapturedWorkspaceSyncEntryAtRootInput } from './workspaceSyncConflicts';
 import type { NativeConfinedApplyOutcome } from './workspaceSyncNativeConfinedFileSystem';
 import { observeWorkspaceSyncEntryAtRoot } from './workspaceSyncFileRead';
@@ -109,43 +110,78 @@ async function snapshotRoot(root: string, destination: string, registry: ScmBack
   }
 }
 
+// Caps concurrent workspace-confined helper subprocesses / open FDs (and remote holder RPCs) per depth level.
+const HOST_SNAPSHOT_CONCURRENCY = 8;
+
 async function snapshotSelectedHostRoot(root: string, destination: string, paths: ReadonlySet<string>,
-  source: WorkspaceSource, registry: ScmBackendRegistry, signal?: AbortSignal) {
-  await mkdir(destination, { mode: 0o700 });
-  const topology = new Map<string, Readonly<{ kind: WorkspaceManifestEntry['kind'] }>>();
-  for (const path of [...paths].sort((left, right) => left.split('/').length - right.split('/').length || left.localeCompare(right))) {
+  source: WorkspaceSource, registry: ScmBackendRegistry, signal?: AbortSignal,
+  existingTopology?: Map<string, Readonly<{ kind: WorkspaceManifestEntry['kind'] }>>) {
+  await mkdir(destination, { recursive: true, mode: 0o700 });
+  const topology = existingTopology ?? new Map<string, Readonly<{ kind: WorkspaceManifestEntry['kind'] }>>();
+  const byDepth = new Map<number, string[]>();
+  for (const path of paths) {
+    if (topology.has(path)) continue;
     if (isAdministrativeWorkspacePathWithScmWorkspace({ relativePath: path, registry })) continue;
-    signal?.throwIfAborted();
-    // Paths include their ancestors and are visited parent first. A link or missing
-    // parent has no child in this snapshot, even when lstat could follow that link.
-    const parent = posix.dirname(path);
-    if (parent !== '.' && topology.get(parent)?.kind !== 'directory') continue;
-    const sourcePath = join(root, path);
-    const stats = await source.lstat(sourcePath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
-      throw error;
+    const depth = path.split('/').length;
+    const bucket = byDepth.get(depth);
+    if (bucket) bucket.push(path);
+    else byDepth.set(depth, [path]);
+  }
+  const depths = [...byDepth.keys()].sort((left, right) => left - right);
+  for (const depth of depths) {
+    const levelPaths = byDepth.get(depth)!.sort((left, right) => left.localeCompare(right));
+    await mapWithConcurrency(levelPaths, HOST_SNAPSHOT_CONCURRENCY, async path => {
+      signal?.throwIfAborted();
+      // Paths include their ancestors and are visited depth-by-depth, parent first. A link or missing
+      // parent has no child in this snapshot, even when lstat could follow that link.
+      const parent = posix.dirname(path);
+      if (parent !== '.' && topology.get(parent)?.kind !== 'directory') return;
+      const sourcePath = join(root, path);
+      if (source.kind === 'target' && source.captureLeaf) {
+        const captured = await source.captureLeaf(sourcePath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return { kind: 'missing' as const };
+          throw error;
+        });
+        if (captured.kind === 'missing') return;
+        if (captured.kind === 'directory') {
+          topology.set(path, { kind: 'directory' });
+          await mkdir(join(destination, path), { recursive: true, mode: 0o700 });
+          return;
+        }
+        if (captured.kind === 'other') throw new ManagedWorkspaceReturnError('workspace_file_unsupported',
+          'The selected host entry is not a regular file or symlink', { appliedPaths: [], path });
+        topology.set(path, { kind: captured.kind });
+        const destinationPath = join(destination, path);
+        await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
+        await writeCapturedWorkspaceSyncLeaf({ source, sourcePath, captured, destinationPath });
+        return;
+      }
+      const stats = await source.lstat(sourcePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+        throw error;
+      });
+      if (!stats) return;
+      if (stats.isDirectory()) {
+        topology.set(path, { kind: 'directory' });
+        await mkdir(join(destination, path), { recursive: true, mode: 0o700 });
+        return;
+      }
+      if (!stats.isFile() && !stats.isSymbolicLink()) throw new ManagedWorkspaceReturnError('workspace_file_unsupported',
+        'The selected host entry is not a regular file or symlink', { appliedPaths: [], path });
+      topology.set(path, { kind: stats.isSymbolicLink() ? 'symlink' : 'file' });
+      const destinationPath = join(destination, path);
+      await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
+      if (source.kind === 'target') {
+        await captureWorkspaceSyncLeafFromTarget({ source, sourcePath, entry: stats, destinationPath });
+        return;
+      }
+      const expected = await observeWorkspaceSyncEntryAtRoot({ rootPath: root, relativePath: path });
+      if (expected.kind === 'directory') throw new ManagedWorkspaceReturnError('conflict_changed',
+        'The host entry changed while capturing its review', { appliedPaths: [], path });
+      const captured = await captureWorkspaceSyncEntryAtRoot({ rootPath: root, relativePath: path, expected,
+        captureDirectory: destination, operationId: randomUUID() });
+      if (captured.materialPath) await rename(captured.materialPath, destinationPath);
     });
-    if (!stats) continue;
-    if (stats.isDirectory()) {
-      topology.set(path, { kind: 'directory' });
-      await mkdir(join(destination, path), { recursive: true, mode: 0o700 });
-      continue;
-    }
-    if (!stats.isFile() && !stats.isSymbolicLink()) throw new ManagedWorkspaceReturnError('workspace_file_unsupported',
-      'The selected host entry is not a regular file or symlink', { appliedPaths: [], path });
-    topology.set(path, { kind: stats.isSymbolicLink() ? 'symlink' : 'file' });
-    const destinationPath = join(destination, path);
-    await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
-    if (source.kind === 'target') {
-      await captureWorkspaceSyncLeafFromTarget({ source, sourcePath, entry: stats, destinationPath });
-      continue;
-    }
-    const expected = await observeWorkspaceSyncEntryAtRoot({ rootPath: root, relativePath: path });
-    if (expected.kind === 'directory') throw new ManagedWorkspaceReturnError('conflict_changed',
-      'The host entry changed while capturing its review', { appliedPaths: [], path });
-    const captured = await captureWorkspaceSyncEntryAtRoot({ rootPath: root, relativePath: path, expected,
-      captureDirectory: destination, operationId: randomUUID() });
-    if (captured.materialPath) await rename(captured.materialPath, destinationPath);
   }
   return topology;
 }
@@ -348,28 +384,85 @@ export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
     const directory = await privateDirectory(input.activeServerDir);
     try {
       const beforeRoot = join(directory, 'before'); const afterRoot = join(directory, 'after');
-      const hostSelection = await runWithWorkspaceSource(hostSource, () => resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
-        sourcePath: input.hostRoot, workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], contentOnly: true }, registry }));
       const excludedPaths = new Set(input.excludedPaths);
-      const selectedHostPaths = new Set(hostSelection.entries.filter(entry => !excludedPaths.has(entry.relativePath))
-        .flatMap(entry => ancestors(entry.relativePath)));
-      for (const entry of hostSelection.entries) await entry.disposeSource?.();
+      let lazySelectedHostPaths: Promise<ReadonlySet<string>> | undefined;
+      const readSelectedHostPaths = (): Promise<ReadonlySet<string>> => lazySelectedHostPaths ??= (async () => {
+        const hostSelection = await runWithWorkspaceSource(hostSource, () => resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
+          sourcePath: input.hostRoot, workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], contentOnly: true }, registry }));
+        const selected = new Set(hostSelection.entries.filter(entry => !excludedPaths.has(entry.relativePath))
+          .flatMap(entry => ancestors(entry.relativePath)));
+        for (const entry of hostSelection.entries) await entry.disposeSource?.();
+        return selected;
+      })();
       await snapshotRoot(input.stageRoot, afterRoot, registry, input.signal);
       await mkdir(join(directory, 'recovery'), { mode: 0o700 });
       const rawAfter = await scanWorkspaceManifest({ workspaceRoot: afterRoot,
         safeFilterPolicy: { excludeAdministrativePaths: false }, assertCanContinue: () => input.signal?.throwIfAborted() });
       const after = withoutAdministrativeMetadata(rawAfter, registry);
-      // An admitted sandbox file can collide with an ignored host file. Retain
-      // that host version as a conflict rather than presenting an empty preimage.
-      const captureHostPaths = new Set([...selectedHostPaths, ...after.entries.flatMap(entry => ancestors(entry.relativePath))]);
-      const rawBeforeEntries = await snapshotSelectedHostRoot(input.hostRoot, beforeRoot, captureHostPaths, hostSource, registry, input.signal);
-      const before = await scanWorkspaceManifest({ workspaceRoot: beforeRoot,
-        safeFilterPolicy: { excludeAdministrativePaths: false }, assertCanContinue: () => input.signal?.throwIfAborted() });
-      const beforeEntries = new Map(before.entries.map(entry => [entry.relativePath, entry]));
       const afterEntries = new Map(after.entries.map(entry => [entry.relativePath, entry]));
-      const different = changes(before, after);
-      const targetChanged = input.baseline ? changes(withoutAdministrativeMetadata(input.baseline, registry), after) : new Set(different);
-      const hostChanged = input.baseline ? changes(withoutAdministrativeMetadata(input.baseline, registry), before) : new Set<string>();
+      const baselineClean = input.baseline ? withoutAdministrativeMetadata(input.baseline, registry) : undefined;
+      let rawBeforeEntries: Map<string, Readonly<{ kind: WorkspaceManifestEntry['kind'] }>>;
+      let before: WorkspaceManifest;
+      let different: Set<string>;
+      let targetChanged: Set<string>;
+      let hostChanged: Set<string>;
+      if (baselineClean) {
+        // O(K) baseline-scoped capture: only inspect host paths touched by target changes (plus ancestors).
+        // Fall back to full host selection lazily only when a host directory is removed or replaced structurally.
+        targetChanged = changes(baselineClean, after);
+        for (const path of excludedPaths) targetChanged.delete(path);
+        const capturedScope = new Set([...targetChanged].flatMap(ancestors));
+        rawBeforeEntries = await snapshotSelectedHostRoot(input.hostRoot, beforeRoot, capturedScope, hostSource, registry, input.signal);
+        const structuralHostDirs = [...rawBeforeEntries.entries()]
+          .filter(([path, entry]) => entry.kind === 'directory' && afterEntries.get(path)?.kind !== 'directory')
+          .map(([path]) => path);
+        if (structuralHostDirs.length > 0) {
+          const selectedHostPaths = await readSelectedHostPaths();
+          const afterAncestors = new Set(after.entries.flatMap(entry => ancestors(entry.relativePath)));
+          for (const dir of structuralHostDirs) {
+            if (selectedHostPaths.has(dir) || afterAncestors.has(dir)) continue;
+            await rm(join(beforeRoot, dir), { recursive: true, force: true });
+            for (const path of [...capturedScope]) {
+              if (path === dir || path.startsWith(`${dir}/`)) {
+                capturedScope.delete(path);
+                rawBeforeEntries.delete(path);
+              }
+            }
+          }
+          const extraHostPaths = new Set<string>();
+          for (const path of selectedHostPaths) {
+            if (capturedScope.has(path)) continue;
+            if (structuralHostDirs.some(dir => path.startsWith(`${dir}/`))) {
+              for (const ancestor of ancestors(path)) {
+                capturedScope.add(ancestor);
+                if (!rawBeforeEntries.has(ancestor)) extraHostPaths.add(ancestor);
+              }
+            }
+          }
+          if (extraHostPaths.size > 0) {
+            await snapshotSelectedHostRoot(input.hostRoot, beforeRoot, extraHostPaths, hostSource, registry, input.signal, rawBeforeEntries);
+          }
+        }
+        before = await scanWorkspaceManifest({ workspaceRoot: beforeRoot,
+          safeFilterPolicy: { excludeAdministrativePaths: false }, assertCanContinue: () => input.signal?.throwIfAborted() });
+        const inScope = (manifest: WorkspaceManifest): WorkspaceManifest => ({
+          entries: manifest.entries.filter(entry => capturedScope.has(entry.relativePath)),
+        });
+        different = changes(before, inScope(after));
+        hostChanged = changes(inScope(baselineClean), before);
+      } else {
+        const selectedHostPaths = await readSelectedHostPaths();
+        // An admitted sandbox file can collide with an ignored host file. Retain
+        // that host version as a conflict rather than presenting an empty preimage.
+        const captureHostPaths = new Set([...selectedHostPaths, ...after.entries.flatMap(entry => ancestors(entry.relativePath))]);
+        rawBeforeEntries = await snapshotSelectedHostRoot(input.hostRoot, beforeRoot, captureHostPaths, hostSource, registry, input.signal);
+        before = await scanWorkspaceManifest({ workspaceRoot: beforeRoot,
+          safeFilterPolicy: { excludeAdministrativePaths: false }, assertCanContinue: () => input.signal?.throwIfAborted() });
+        different = changes(before, after);
+        targetChanged = new Set(different);
+        hostChanged = new Set<string>();
+      }
+      const beforeEntries = new Map(before.entries.map(entry => [entry.relativePath, entry]));
       for (const path of excludedPaths) { different.delete(path); targetChanged.delete(path); hostChanged.delete(path); }
       const hostChangedAncestors = new Set([...hostChanged].flatMap(ancestors));
       const conflictAncestors = new Set([...hostChanged].filter(path => different.has(path)).flatMap(ancestors));
@@ -386,6 +479,7 @@ export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
         const known = protectedHostPaths.get(path);
         if (known !== undefined) return known;
         input.signal?.throwIfAborted();
+        const selectedHostPaths = await readSelectedHostPaths();
         const children = await hostSource.readdir(join(input.hostRoot, path));
         children.sort((left, right) => left.name.localeCompare(right.name));
         for (const child of children) {

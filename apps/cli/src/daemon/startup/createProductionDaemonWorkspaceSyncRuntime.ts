@@ -824,7 +824,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         if (member) {
           return createMemberWorkspaceSyncSeedExport({ operationId,
             envelope: await member.prepareSourceSeedExport({ operationId, sourcePath, contentPolicy, ...(exclusionCandidates ? { exclusionCandidates } : {}) }),
-            readBlob: request => member.readSourceSeedBlob({ operationId, ...request }) });
+            readBlob: request => member.readSourceSeedBlob({ operationId, ...request }),
+            dispose: () => member.releaseSourceSeedExport({ operationId }) });
         }
         return await factories.prepareSourceSeedExport({
           operationId,
@@ -944,14 +945,18 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
                 envelope: await reader.prepareSourceSeedExport({ operationId: request.operationId, sourcePath,
                   contentPolicy: request.contentPolicy, exclusionCandidates: request.exclusionCandidates }),
                 readBlob: chunk => reader.readSourceSeedBlob({ operationId: request.operationId, ...chunk }) });
-              return await factories.materializeSeedExport({ ...request, targetPath: request.canonicalRoot,
-                requestPayload: async ({ transferId, destinationPath }) => {
-                  request.signal?.throwIfAborted();
-                  const source = transferId === request.operationId ? exported.payloadSource
-                    : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: undefined });
-                  await writeTransferPayloadSourceToFile({ source, destinationPath });
-                },
-                materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace });
+              try {
+                return await factories.materializeSeedExport({ ...request, targetPath: request.canonicalRoot,
+                  requestPayload: async ({ transferId, destinationPath }) => {
+                    request.signal?.throwIfAborted();
+                    const source = transferId === request.operationId ? exported.payloadSource
+                      : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: undefined });
+                    await writeTransferPayloadSourceToFile({ source, destinationPath });
+                  },
+                  materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace });
+              } finally {
+                await reader.releaseSourceSeedExport?.({ operationId: request.operationId }).catch(() => undefined);
+              }
             });
         }
         if (!input.openMachineCarrierTunnel || !input.requestDirectTransferPayloadFile) {
@@ -3660,7 +3665,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       if (!native) return targetAuthority.prepareConflictResolutionExport(request);
       const exported = await native.prepareSourceConflictResolutionExport(request);
       const blobs = new Map(exported.blobs.map(blob => [blob.transferId, blob]));
-      return { payloadSource: createBufferTransferPayloadSource(Buffer.from(exported.payload)), onDemandScope: {
+      const bufferSource = createBufferTransferPayloadSource(Buffer.from(exported.payload));
+      return { payloadSource: { ...bufferSource, dispose: () => native.releaseSourceSeedExport({ operationId: request.operationId }) }, onDemandScope: {
         allowTransferId: transferId => blobs.has(transferId), maxResolvedTransfers: blobs.size,
         resolvePayloadSourceOnOpen: async ({ transferId }) => {
           const blob = blobs.get(transferId);

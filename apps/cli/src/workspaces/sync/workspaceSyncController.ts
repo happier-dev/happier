@@ -36,7 +36,8 @@ export type WorkspaceSyncResolvedRef = Readonly<{
   rootPath: string;
 }> | ManagedWorkspaceRefV2;
 type ManagedSourceSeedReader = Pick<import('@/workspaces/activation/privateProjectSyncEffect').PrivateProjectNativeSync,
-  'prepareSourceSeedExport' | 'readSourceSeedBlob'>;
+  'prepareSourceSeedExport' | 'readSourceSeedBlob'>
+  & Partial<Pick<import('@/workspaces/activation/privateProjectSyncEffect').PrivateProjectNativeSync, 'releaseSourceSeedExport'>>;
 type WorkspaceSyncSourceSeedEndpoints = Readonly<{
   acceptedTarget?: WorkspaceRefV1;
   managedSource?: Readonly<{ workspace: ManagedWorkspaceRefV2; ownership: WorkspaceRootOwnershipHandle; reader?: ManagedSourceSeedReader }>;

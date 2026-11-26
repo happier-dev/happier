@@ -174,10 +174,11 @@ export async function createWorkspaceSyncSeedExport(input: Readonly<{
     workspaceExportArtifacts: built.workspaceExportArtifacts,
     blobTransferIds: Object.fromEntries(transferIdByDigest),
   };
+  const bufferSource = createBufferTransferPayloadSource(Buffer.from(JSON.stringify(envelope), 'utf8'));
   return {
     blobTransferIds: [...digestByTransferId.keys()],
     ...(built.workspaceExportArtifacts.excludedPaths ? { excludedPaths: built.workspaceExportArtifacts.excludedPaths } : {}),
-    payloadSource: createBufferTransferPayloadSource(Buffer.from(JSON.stringify(envelope), 'utf8')),
+    payloadSource: built.blobProvider?.dispose ? { ...bufferSource, dispose: () => built.blobProvider?.dispose?.() } : bufferSource,
     onDemandScope: {
       allowTransferId: (transferId) => digestByTransferId.has(transferId),
       maxResolvedTransfers: digests.length,
@@ -218,14 +219,16 @@ export function createMemberWorkspaceSyncSeedExport(input: Readonly<{
   operationId: string;
   envelope: Uint8Array;
   readBlob(request: Readonly<{ transferId: string; offset: number; length: number }>): Promise<Uint8Array>;
+  dispose?: () => Promise<void> | void;
 }>): Readonly<{ payloadSource: TransferPayloadSource; onDemandScope: DirectPeerOnDemandTransferScope }> {
   const payload = Buffer.from(input.envelope);
   const envelope = parseEnvelope(payload, input.operationId);
   const sizeByDigest = new Map(envelope.workspaceExportArtifacts.manifest.entries.flatMap((entry) => (
     entry.kind === 'file' ? [[entry.digest, entry.sizeBytes] as const] : [])));
   const digestByTransferId = new Map(Object.entries(envelope.blobTransferIds).map(([digest, transferId]) => [transferId, digest]));
+  const bufferSource = createBufferTransferPayloadSource(payload);
   return {
-    payloadSource: createBufferTransferPayloadSource(payload),
+    payloadSource: input.dispose ? { ...bufferSource, dispose: input.dispose } : bufferSource,
     onDemandScope: {
       allowTransferId: (transferId) => digestByTransferId.has(transferId),
       maxResolvedTransfers: digestByTransferId.size,

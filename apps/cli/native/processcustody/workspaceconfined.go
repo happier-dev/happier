@@ -595,8 +595,11 @@ func runWorkspaceConfinedExchange(
 	output io.Writer,
 	decodeRequest func([]byte, io.Reader) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError),
 ) error {
-	if len(args) != 0 {
-		return fmt.Errorf("workspace-confined command accepts no arguments")
+	autoCommit := false
+	if len(args) == 1 && args[0] == "--auto-commit" {
+		autoCommit = true
+	} else if len(args) != 0 {
+		return fmt.Errorf("workspace-confined command accepts only --auto-commit")
 	}
 	reader := bufio.NewReader(input)
 	requestLine, err := readWorkspaceConfinedLine(reader)
@@ -608,6 +611,9 @@ func runWorkspaceConfinedExchange(
 		return writeWorkspaceConfinedRecord(output, domainErr.result())
 	}
 	defer operation.close()
+	if autoCommit {
+		return writeWorkspaceConfinedRecord(output, operation.commit())
+	}
 	if err := writeWorkspaceConfinedRecord(output, struct {
 		V int    `json:"v"`
 		T string `json:"t"`

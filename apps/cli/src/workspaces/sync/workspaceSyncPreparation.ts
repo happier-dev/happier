@@ -92,15 +92,24 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
   prepareBetween(request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>, signal: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
 }>) {
   const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-  const readCurrent = async (signal: AbortSignal, source: WorkspaceRefV1) => {
+  const resolvedSnapshots = new WeakMap<WorkspaceSyncWorkerTargetBasis, Awaited<ReturnType<typeof readWorkspaceSyncWorkerRouteSnapshot>>>();
+  const assertHomeIdentity = async (source: WorkspaceRefV1) => {
     if (!await isServerProfileHomeIdentity(input.serverId, source.serverId)) fail('target_mismatch');
+  };
+  const readTargetSnapshot = async (signal: AbortSignal, source: WorkspaceRefV1) => {
+    await assertHomeIdentity(source);
     return await readWorkspaceSyncWorkerTargetSnapshot({ ...input, serverId: source.serverId,
+      signal, sourceWorkspaceRefId: source.id });
+  };
+  const readRouteSnapshot = async (signal: AbortSignal, source: WorkspaceRefV1) => {
+    await assertHomeIdentity(source);
+    return await readWorkspaceSyncWorkerRouteSnapshot({ ...input, serverId: source.serverId,
       signal, sourceWorkspaceRefId: source.id });
   };
   return {
     resolveWorkerTarget: async ({ source, signal }: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>): Promise<WorkspaceSyncWorkerTargetBasis> => {
       signal.throwIfAborted();
-      const snapshot = await readCurrent(signal, source);
+      const snapshot = await readTargetSnapshot(signal, source);
       const basis = resolveWorkspaceSyncWorkerTarget({ serverId: source.serverId,
         sourceWorkspaceRefId: source.id, targetMachineId: input.targetMachineId,
         workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
@@ -110,17 +119,27 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
         || basis.source.projectKey !== source.projectKey
         || projectWorkspaceRefV1(basis.target).projectKey !== projectWorkspaceRefV1(source).projectKey) fail('project_workspace_changed');
       await readWorkspaceSyncRootObjectIdentity(basis.target.rootPath);
+      resolvedSnapshots.set(basis, snapshot);
       return basis;
     },
-    prepareDequeue: async ({ choice, basis, signal }: Readonly<{
-      workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal;
+    prepareDequeue: async ({ choice, basis, signal, recheckCurrent }: Readonly<{
+      workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal; recheckCurrent?: boolean;
     }>): Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void> => withWebLatencyTrace(
       readWebLatencyTracePoint()?.requestId ?? input.authorization?.binding.requestId,
       () => timeWebLatencyPhase('workspaceSync.worker.prepareDequeue', async () => {
         signal.throwIfAborted();
         if (choice.kind !== 'workers') return;
         if (!basis) return fail('workspace_sync_source_unavailable');
-        assertWorkspaceSyncWorkerTargetCurrent(basis, { ...await readCurrent(signal, basis.source), serverId: basis.source.serverId });
+        const cached = resolvedSnapshots.get(basis);
+        resolvedSnapshots.delete(basis);
+        let current: Awaited<ReturnType<typeof readWorkspaceSyncWorkerRouteSnapshot>>;
+        if (!recheckCurrent && cached) {
+          await assertHomeIdentity(basis.source);
+          current = cached;
+        } else {
+          current = await readRouteSnapshot(signal, basis.source);
+        }
+        assertWorkspaceSyncWorkerTargetCurrent(basis, { ...current, serverId: basis.source.serverId });
         await readWorkspaceSyncRootObjectIdentity(basis.target.rootPath);
         const prepared = await input.prepareBetween({ sourceWorkspaceRefId: basis.source.id, targetWorkspaceRefId: basis.target.id }, signal);
         if (!prepared.ok) return fail(prepared.errorCode);

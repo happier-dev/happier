@@ -725,22 +725,32 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
   });
 }
 
+export type ProjectAccountSnapshotMutationOptions = Readonly<{
+  /** Best-effort Project listing piggybacked onto the same `/mutate` batch when opening a Project. */
+  ensureProjectListed?: (snapshot: ProjectAccountSnapshotV1) => Readonly<{ serverId: string; projectKey: string }> | null | undefined;
+}>;
 export type ProjectAccountSnapshotMutationResult =
-  | Readonly<{ status: 'applied' | 'unchanged'; version: number; snapshot: ProjectAccountSnapshotV1 }>
+  | Readonly<{ status: 'applied' | 'unchanged'; version: number; snapshot: ProjectAccountSnapshotV1; projectListed?: boolean }>
   | Readonly<{ status: 'conflict' | 'cancelled' | 'unavailable' }>
   | Readonly<{ status: 'outcomeUnknown'; lastKnownVersion: number }>;
-export type ProjectAccountSnapshotMutation = (mutate: (snapshot: ProjectAccountSnapshotV1) => ProjectAccountSnapshotV1 | Promise<ProjectAccountSnapshotV1>, signal?: AbortSignal) => Promise<ProjectAccountSnapshotMutationResult>;
+export type ProjectAccountSnapshotMutation = (
+  mutate: (snapshot: ProjectAccountSnapshotV1) => ProjectAccountSnapshotV1 | Promise<ProjectAccountSnapshotV1>,
+  signal?: AbortSignal,
+  options?: ProjectAccountSnapshotMutationOptions,
+) => Promise<ProjectAccountSnapshotMutationResult>;
 
 /** The existing semantic owner re-admits on each fresh graph/ref census; the server commits its complete CAS atomically. */
 export function createProjectAccountSnapshotMutation(authority: StoredCredentials | ReadInput): ProjectAccountSnapshotMutation {
-  return async (mutate, signal) => runWithServerHttpBaseUrl(resolveServerHttpBaseUrl(), async () => {
+  return async (mutate, signal, options) => runWithServerHttpBaseUrl(resolveServerHttpBaseUrl(), async () => {
     const input: ReadInput = { ...('token' in authority ? { credentials: authority } : authority),
       serverId: 'token' in authority ? configuration.activeServerId : authority.serverId
         ?? authority.authorization?.requesterAccountProjection?.serverId ?? configuration.activeServerId,
       ...(signal ? { signal } : {}) };
     signal?.throwIfAborted();
     const mode = await readMode(input);
-    const before = await fetchSnapshot(input, mode, { kinds: ['workspace-ref', 'relationship-graph'] });
+    const kinds: ProjectAccountRowListRequestV1['kinds'] = options?.ensureProjectListed
+      ? ['workspace-ref', 'relationship-graph', 'project-organization'] : ['workspace-ref', 'relationship-graph'];
+    const before = await fetchSnapshot(input, mode, { kinds });
     const base = parseProjectAccountSnapshotV1(before);
     const next = parseProjectAccountSnapshotV1(await mutate(base));
     assertProjectAccountSnapshotTransition(base, next);
@@ -776,11 +786,41 @@ export function createProjectAccountSnapshotMutation(authority: StoredCredential
       const key = { kind: 'relationship-graph' as const };
       mutations.push({ key, expectedRevision: before.graphRevision, payload: { key, value: { relationships: [...next.relationships] } } });
     }
+    const listing = options?.ensureProjectListed?.(next) ?? null;
+    let orgMutation: OpenedProjectAccountRowMutationRequest['mutations'][number] | undefined;
+    let alreadyListed = false;
+    if (listing) {
+      const orgKey = { kind: 'project-organization' as const, serverId: listing.serverId, projectKey: listing.projectKey };
+      const orgIdentity = buildProjectAccountRowPhysicalKeyV1(orgKey);
+      const existingOrg = before.organizations.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === orgIdentity);
+      if (existingOrg?.value.hidden === false) {
+        alreadyListed = true;
+      } else {
+        orgMutation = { key: orgKey, expectedRevision: byKey.get(orgIdentity)?.revision ?? 'absent',
+          payload: { key: orgKey, value: { ...(existingOrg?.value ?? {}), hidden: false } } };
+      }
+    }
     const version = before.graphRevision === 'absent' ? -1 : before.graphRevision;
     if (mutations.length === 0) {
+      if (orgMutation) {
+        let orgResult: OpenedProjectAccountRowMutationResponse | undefined;
+        try {
+          orgResult = await submitOpenedRows({ ...input, request: { mutations: [orgMutation], topologyChange: false, expectedRefs: [] } }, mode);
+        } catch {
+          signal?.throwIfAborted();
+        }
+        if (orgResult?.status === 'updated') {
+          const accepted = await acceptMutationSnapshot(input, applyAcknowledgedRows(before, orgResult.openedRows));
+          return { status: 'unchanged', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted, projectListed: true };
+        }
+        await assertRequesterCurrent(input);
+        const accepted = acceptSnapshot(input, before);
+        return { status: 'unchanged', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted, projectListed: false };
+      }
       await assertRequesterCurrent(input);
       const accepted = acceptSnapshot(input, before);
-      return { status: 'unchanged', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted };
+      return { status: 'unchanged', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted,
+        ...(listing ? { projectListed: alreadyListed } : {}) };
     }
     const reached = new Map<string, Extract<ProjectAccountRowKeyV1, { kind: 'workspace-ref' }>>();
     const previousRelationships = new Map(base.relationships.map(relationship => [relationship.relationshipId, relationship]));
@@ -797,19 +837,31 @@ export function createProjectAccountSnapshotMutation(authority: StoredCredential
         if (!mutatedKeys.has(identity)) reached.set(identity, key);
       }
     }
-    const request: OpenedProjectAccountRowMutationRequest = { mutations, topologyChange,
+    const baseRequest: OpenedProjectAccountRowMutationRequest = { mutations, topologyChange,
       expectedRefs: [...reached.entries()].map(([identity, key]) => ({ key, expectedRevision: byKey.get(identity)?.revision ?? 'absent' })),
     };
-    let result: OpenedProjectAccountRowMutationResponse;
-    try {
-      result = await submitOpenedRows({ ...input, request }, mode);
-    } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'project_account_row_outcome_unknown') return { status: 'outcomeUnknown', lastKnownVersion: version };
-      throw error;
+    let orgIncluded = orgMutation !== undefined;
+    const submit = async (request: OpenedProjectAccountRowMutationRequest) => {
+      try {
+        return await submitOpenedRows({ ...input, request }, mode);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'project_account_row_outcome_unknown') return null;
+        throw error;
+      }
+    };
+    let result = await submit(orgMutation ? { ...baseRequest, mutations: [...mutations, orgMutation] } : baseRequest);
+    if (result === null) return { status: 'outcomeUnknown', lastKnownVersion: version };
+    // Best-effort org listing must never fail workspace-ref acceptance on org row contention.
+    if (result.status === 'conflict' && orgIncluded && orgMutation
+      && buildProjectAccountRowPhysicalKeyV1(result.key) === buildProjectAccountRowPhysicalKeyV1(orgMutation.key)) {
+      orgIncluded = false;
+      result = await submit(baseRequest);
+      if (result === null) return { status: 'outcomeUnknown', lastKnownVersion: version };
     }
     if (result.status === 'conflict') return { status: 'conflict' };
     if (result.status !== 'updated') throw rowError(`project_account_rows_${result.status}`);
     const accepted = await acceptMutationSnapshot(input, applyAcknowledgedRows(before, result.openedRows));
-    return { status: 'applied', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted };
+    return { status: 'applied', version: accepted.graphRevision === 'absent' ? -1 : accepted.graphRevision, snapshot: accepted,
+      ...(listing ? { projectListed: alreadyListed || orgIncluded } : {}) };
   });
 }

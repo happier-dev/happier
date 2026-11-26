@@ -101,7 +101,7 @@ export type ProjectFiniteActionRuntime = ProjectRuntimeAccountAccess & Readonly<
         & Pick<ProjectDefinitionInspectOutput, 'commands' | 'toolchainExecutionInputs' | 'commandExecutedFiles' | 'effectiveDefinition'>>;
     resolveWorkerTarget?: (input: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>) => Promise<WorkspaceSyncWorkerTargetBasis>;
     /** Real B7 Sync/dequeue preparation; revalidation follows this callback. */
-    prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
+    prepareDequeue?: (input: Readonly<{ workspace: WorkspaceRefV1; choice: ProjectExecutionChoiceV1; basis?: WorkspaceSyncWorkerTargetBasis; signal: AbortSignal; recheckCurrent?: boolean }>) => Promise<Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }> | void>;
 }>;
 
 const failure = (errorCode: string, details?: unknown): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode,
@@ -831,11 +831,12 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             const operationSignal = AbortSignal.any([signal, operation.signal]);
             const material = Object.freeze({ materializationKey: operationId, environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
             let lastCleanSyncAtMs: ProjectSetupExecutionInput['lastCleanSyncAtMs'];
-            const prepareDequeue = () => stage('project.sync.prepare', async () => {
+            let wasQueued = false;
+            const prepareDequeue = (recheckCurrent = false) => stage('project.sync.prepare', async () => {
                 try {
                     if (workerBasis) await assertNotCancelled();
                     const prepared = await runtime.prepareDequeue?.({ workspace: workerBasis?.source ?? association.workspace, choice: acceptedChoice!,
-                        ...(workerBasis ? { basis: workerBasis } : {}), signal: operationSignal });
+                        ...(workerBasis ? { basis: workerBasis } : {}), ...(recheckCurrent ? { recheckCurrent: true } : {}), signal: operationSignal });
                     // Primary preparation performs no copy. Keep its accepted root
                     // until an actual setup/native effect needs fresh association.
                     if (workerBasis) association = await resolveAccepted();
@@ -895,6 +896,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     ...commandIdentity, ...(originRun ? { originRun } : {}) });
                     if (!removal) operation.operationAcceptance?.accept(handle); },
                 onQueue: ahead => {
+                    wasQueued = true;
                     traceExternalActionStage(args.actionId, rootRequestId, 'project.reservation.queued');
                     operation.operationProgress.update({ phase: 'queued', queueAhead: ahead, label: `Queued — ${ahead} ahead` });
                 },
@@ -931,7 +933,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                             // writing Trust, not discover changed SOURCE only after
                             // a stale grant has woken this retained invocation.
                             preparationPhase('copying');
-                            await prepareDequeue();
+                            await prepareDequeue(true);
                             preparationPhase('setup');
                             const refreshed = await prepareProjectSetup(preparation());
                             await assertNotCancelled();
@@ -959,7 +961,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         await assertSourceExecutionCurrent(source);
                         if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) throw coded('project_script_effect_changed');
                         preparationPhase('copying');
-                        await prepareDequeue();
+                        await prepareDequeue(true);
                         return true;
                     };
                     const reviewBeforeEffects = async (sourceReview?: Awaited<ReturnType<typeof reviewSourcePlacement>>): Promise<Review> => {
@@ -991,7 +993,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                         await assertSourceExecutionCurrent(source);
                         if (acceptedPrimaryBasis !== undefined && await readPrimaryAdmissionBasis(source.localAcceptedSetup) !== acceptedPrimaryBasis) return finish(failure('project_script_effect_changed'));
                         preparationPhase('copying');
-                        await prepareDequeue();
+                        await prepareDequeue(wasQueued);
                         // A real Sync copy may await remote work and change policy.
                         const current = await reviewBeforeEffects(workerBasis ? undefined : source);
                         if (current.kind === 'failed') return finish(current.result);

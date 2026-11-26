@@ -59,12 +59,15 @@ export function registerManagedWorkspaceTarget(input: Readonly<{
     requesterAccountId: string;
     target: Readonly<{ lifetime: AbortSignal; holderPath: string; helperPath: string;
         openChannel(argv: readonly string[], signal: AbortSignal): Duplex }>;
+    initialChannel?: Readonly<{ channel: Duplex; holder: SessionHolderChild }>;
 }>): boolean {
     const { target, workspace } = input;
     const key = managedWorkspaceKey(workspace, input.requesterAccountId);
     if (target.lifetime.aborted || entries.has(key)) return false;
     let demands = 0;
-    let active: { channel: Duplex; holder: SessionHolderChild } | undefined;
+    let active: { channel: Duplex; holder: SessionHolderChild } | undefined =
+        input.initialChannel && !input.initialChannel.channel.destroyed && !input.initialChannel.holder.holderConnectionFailed
+            ? input.initialChannel : undefined;
     const close = () => {
         const previous = active;
         active = undefined;

@@ -1,8 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceRefV1, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 
-import { prepareWorkspaceSyncBetween, resolveWorkspaceSyncWorkerTarget, assertWorkspaceSyncWorkerTargetCurrent,
+import { createWorkspaceSyncWorkerPreparation, prepareWorkspaceSyncBetween, resolveWorkspaceSyncWorkerTarget, assertWorkspaceSyncWorkerTargetCurrent,
   resolveWorkspaceSyncRelationshipDependencyMachines } from './workspaceSyncPreparation';
 import type { WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -263,5 +270,81 @@ describe('prepareWorkspaceSyncBetween', () => {
     expect(flushed).toEqual(['ca', 'ab']);
     await expect(prepareWorkspaceSyncBetween(input)).resolves.toMatchObject({ ok: false });
     expect(flushed).toEqual(['ca', 'ab']);
+  });
+});
+
+describe('createWorkspaceSyncWorkerPreparation', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('reuses the fresh unqueued snapshot once and never calls DAEMON_WORKSPACE_SYNC_LIST on prepareDequeue', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ws-prep-rank6-'));
+    const targetDir = join(dir, 'target');
+    await mkdir(targetDir, { recursive: true });
+    try {
+      const serverId = 'srv_prep_rank6';
+      await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl: 'https://prep.invalid' });
+      const credentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
+      const sourceRef: WorkspaceRefV1 = { id: 'src', serverId, machineId: 'ma', rootPath: '/src', projectKey: 'proj-1', createdAtMs: 1 };
+      const targetRef: WorkspaceRefV1 = { id: 'tgt', serverId, machineId: 'mb', rootPath: targetDir, projectKey: 'proj-1', createdAtMs: 1 };
+      const rel = workerCopy(relationship('rel-1', 'src', 'tgt', 'keep_synced'));
+      const rows: import('@happier-dev/protocol/projects/projectAccountRowsV1').ProjectAccountRowV1[] = [
+        { key: { kind: 'workspace-ref', serverId, id: 'src' }, revision: 1, content: { t: 'plain', v: { key: { kind: 'workspace-ref', serverId, id: 'src' }, value: sourceRef } } },
+        { key: { kind: 'workspace-ref', serverId, id: 'tgt' }, revision: 1, content: { t: 'plain', v: { key: { kind: 'workspace-ref', serverId, id: 'tgt' }, value: targetRef } } },
+        { key: { kind: 'relationship-graph' }, revision: 1, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [rel] } } } },
+      ];
+      const http = createProjectAccountRowsHttpBoundary(rows);
+      let rowListCalls = 0;
+      let machineGetCalls = 0;
+      vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+        if (url.includes('/v1/machines/')) {
+          machineGetCalls += 1;
+          const id = decodeURIComponent(url.slice(url.lastIndexOf('/') + 1));
+          return { status: 200, data: { machine: { id, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain', managedMachineRef: null } } };
+        }
+        return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+      });
+      vi.spyOn(axios, 'post').mockImplementation(async (url: string, body?: unknown) => {
+        if (url.endsWith('/project-rows/list')) rowListCalls += 1;
+        return await http(url, body);
+      });
+      const rpcSpy = vi.spyOn(machineRpcTransport, 'callMachineRpc').mockResolvedValue({ statuses: [status('rel-1')] });
+      const preparation = createWorkspaceSyncWorkerPreparation({
+        serverId, serverHttpBaseUrl: 'https://prep.invalid', targetMachineId: 'mb', credentials,
+        prepareBetween: async () => ({ ok: true, traversed: [] }),
+      });
+      const signal = new AbortController().signal;
+      const choice = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'mb' } };
+
+      const basis = await preparation.resolveWorkerTarget({ source: sourceRef, signal });
+      expect(rowListCalls).toBe(1);
+      expect(machineGetCalls).toBe(2);
+      expect(rpcSpy).toHaveBeenCalledTimes(1);
+
+      // Immediate unqueued prepareDequeue consumes the single-use snapshot: 0 extra Home reads, 0 extra DAEMON_WORKSPACE_SYNC_LIST.
+      await preparation.prepareDequeue({ workspace: sourceRef, choice, basis, signal });
+      expect(rowListCalls).toBe(1);
+      expect(machineGetCalls).toBe(2);
+      expect(rpcSpy).toHaveBeenCalledTimes(1);
+
+      // A second prepareDequeue on the same basis MUST re-read Home rows (still without DAEMON_WORKSPACE_SYNC_LIST) and detect relationship changes.
+      rows[2] = { key: { kind: 'relationship-graph' }, revision: 2, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [] } } } };
+      await expect(preparation.prepareDequeue({ workspace: sourceRef, choice, basis, signal }))
+        .rejects.toMatchObject({ code: 'relationship_changed' });
+      expect(rowListCalls).toBe(2);
+      expect(rpcSpy).toHaveBeenCalledTimes(1);
+
+      // An explicit recheckCurrent: true (e.g. queued operation) MUST re-read Home rows even on first use, still without DAEMON_WORKSPACE_SYNC_LIST.
+      rows[2] = { key: { kind: 'relationship-graph' }, revision: 3, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [rel] } } } };
+      const freshBasis = await preparation.resolveWorkerTarget({ source: sourceRef, signal });
+      expect(rowListCalls).toBe(3);
+      expect(rpcSpy).toHaveBeenCalledTimes(2);
+      rows[2] = { key: { kind: 'relationship-graph' }, revision: 4, content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships: [] } } } };
+      await expect(preparation.prepareDequeue({ workspace: sourceRef, choice, basis: freshBasis, signal, recheckCurrent: true }))
+        .rejects.toMatchObject({ code: 'relationship_changed' });
+      expect(rowListCalls).toBe(4);
+      expect(rpcSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

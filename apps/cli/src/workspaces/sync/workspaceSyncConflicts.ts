@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readlink, readdir, rm, symlink } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
-import type { WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import type { WorkspaceCapturedLeaf, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { withConfinedWorkspaceSyncParent } from './workspaceSyncConfinedFileSystem';
 import { observeWorkspaceSyncEntryAtRoot } from './workspaceSyncFileRead';
@@ -76,6 +76,51 @@ async function copyConfinedLinuxEntry(sourcePath: string, destinationPath: strin
   }
 }
 
+/** Write one atomically captured target leaf into the review shelf and verify locally. */
+export async function writeCapturedWorkspaceSyncLeaf(input: Readonly<{
+  source: WorkspaceSource;
+  sourcePath: string;
+  captured: Extract<WorkspaceCapturedLeaf, { kind: 'file' | 'symlink' }>;
+  destinationPath: string;
+}>): Promise<void> {
+  const { source, sourcePath, captured, destinationPath } = input;
+  if (captured.kind === 'symlink') {
+    await symlink(captured.target, destinationPath);
+    const staged = await observeWorkspaceSyncEntryAtRoot({ rootPath: dirname(destinationPath), relativePath: basename(destinationPath) });
+    if (staged.kind !== 'symlink' || staged.target !== captured.target) {
+      throw conflictError('conflict_changed', 'Reviewed workspace source changed during capture');
+    }
+    return;
+  }
+  const expected = {
+    kind: 'file' as const,
+    digest: captured.digest,
+    executable: (captured.entry.mode & 0o111) !== 0,
+    size: captured.entry.size,
+  };
+  if (captured.content !== null) {
+    const destination = await open(destinationPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    try {
+      let written = 0;
+      while (written < captured.content.byteLength) {
+        const result = await destination.write(captured.content, written, captured.content.byteLength - written, written);
+        if (result.bytesWritten === 0) throw new Error('Reviewed workspace capture could not write staged material');
+        written += result.bytesWritten;
+      }
+      await destination.chmod(captured.entry.mode & 0o777);
+    } finally {
+      await destination.close();
+    }
+  } else {
+    const file = await source.open(sourcePath, { noFollow: true });
+    await copyConfinedWorkspaceSyncFile(file, captured.entry, destinationPath);
+  }
+  const staged = await observeWorkspaceSyncEntryAtRoot({ rootPath: dirname(destinationPath), relativePath: basename(destinationPath) });
+  if (JSON.stringify(staged) !== JSON.stringify(expected)) {
+    throw conflictError('conflict_changed', 'Reviewed workspace source changed during capture');
+  }
+}
+
 /** Capture one selected leaf from an already admitted workspace into the review shelf. */
 export async function captureWorkspaceSyncLeafFromTarget(input: Readonly<{
   source: WorkspaceSource;
@@ -84,6 +129,15 @@ export async function captureWorkspaceSyncLeafFromTarget(input: Readonly<{
   destinationPath: string;
 }>): Promise<void> {
   const { source, sourcePath, entry, destinationPath } = input;
+  if (source.captureLeaf) {
+    const captured = await source.captureLeaf(sourcePath);
+    if (captured.kind === 'symlink' && entry.isSymbolicLink()
+      || captured.kind === 'file' && entry.isFile()) {
+      await writeCapturedWorkspaceSyncLeaf({ source, sourcePath, captured, destinationPath });
+      return;
+    }
+    throw conflictError('conflict_changed', 'Selected workspace leaf changed before capture');
+  }
   if (!source.observeSyncEntry) throw Object.assign(new Error('Native workspace capture is unavailable'), { code: 'workspace_source_operation_unavailable' });
   const expected = await source.observeSyncEntry(sourcePath);
   if (expected.kind === 'symlink' && entry.isSymbolicLink()) {

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,9 @@ import (
 
 // SYMLOOP_MAX on Linux (the kernel's own link-follow bound, MAXSYMLINKS = 40).
 const workspaceTargetMaxLinkHops = 40
+
+// Inline capture-leaf payload ceiling so huge binaries fall back to streaming reads instead of JSON blowup.
+const workspaceTargetCaptureLeafMaxBytes uint64 = 32 * 1024 * 1024
 
 // openWorkspaceTargetPath opens the handle chain for a root-relative path; "" is the root itself.
 func openWorkspaceTargetPath(rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
@@ -150,6 +154,53 @@ func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetR
 		result := workspaceTargetStatus("link")
 		result.Target = &target
 		return result
+	case "capture-leaf":
+		switch final.kind {
+		case workspaceConfinedKindDirectory:
+			result := workspaceTargetStatus("entry")
+			result.Entry = workspaceTargetEntryOf(final)
+			return result
+		case workspaceConfinedKindSymlink:
+			if len(path.components) == 0 {
+				return workspaceTargetError("not_link", "workspace path is not a symbolic link")
+			}
+			parent := path.handles[len(path.handles)-2]
+			target, err := readlinkatString(parent.fd, path.components[len(path.components)-1])
+			if err != nil {
+				return workspaceTargetError("io_failed", "link could not be read")
+			}
+			if domainErr := revalidateWorkspaceTargetPath(path); domainErr != nil {
+				return workspaceTargetDomainResult(domainErr)
+			}
+			result := workspaceTargetStatus("link")
+			result.Entry = workspaceTargetEntryOf(final)
+			result.Target = &target
+			return result
+		case workspaceConfinedKindFile:
+			digest, content, _, readErr := readWorkspaceConfinedLinuxFile(final, true, workspaceTargetCaptureLeafMaxBytes)
+			if readErr != nil {
+				return workspaceTargetDomainResult(readErr)
+			}
+			if domainErr := revalidateWorkspaceTargetPath(path); domainErr != nil {
+				return workspaceTargetDomainResult(domainErr)
+			}
+			if content == nil {
+				result := workspaceTargetStatus("entry")
+				result.Entry = workspaceTargetEntryOf(final)
+				result.Digest = digest
+				return result
+			}
+			encoded := base64.StdEncoding.EncodeToString(content)
+			result := workspaceTargetStatus("leaf")
+			result.Entry = workspaceTargetEntryOf(final)
+			result.Digest = digest
+			result.ContentBase64 = &encoded
+			return result
+		default:
+			result := workspaceTargetStatus("entry")
+			result.Entry = workspaceTargetEntryOf(final)
+			return result
+		}
 	}
 	return workspaceTargetError("workspace_root_unsafe", "unknown op")
 }

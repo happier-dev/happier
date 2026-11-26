@@ -101,7 +101,17 @@ export async function prepareEnrolledWorkspaceReturn(input: Readonly<{
   const open = (child: HostReviewedChildrenPlanV1['children'][number]) => invokeReviewedProjectOpen({
     request: OpenProjectInputV1Schema.parse(child.input), role: child.role,
     invokeReviewedChild: input.invokeReviewedChild, signal: input.signal });
-  const source = await open(input.prepared.children[0]);
+  const managedTarget = input.prepared.origin.targetWorkspace.kind === 'managed';
+  const [source, child1] = await Promise.all([
+    open(input.prepared.children[0]),
+    managedTarget
+      ? (async () => {
+        input.signal?.throwIfAborted();
+        return await input.invokeReviewedChild!({ ...SESSION_WORKSPACE_RETURN_CAPTURE_CHILD_V1,
+          input: input.prepared.children[1].input! });
+      })()
+      : open(input.prepared.children[1]),
+  ]);
   if (!source.ok) return source;
   let stageRoot = input.prepared.targetPath;
   try {
@@ -112,10 +122,8 @@ export async function prepareEnrolledWorkspaceReturn(input: Readonly<{
     let baseline = input.prepared.origin.baseline;
     let excludedPaths: readonly string[] | undefined;
     let copied: Awaited<ReturnType<typeof open>>;
-    if (input.prepared.origin.targetWorkspace.kind === 'managed') {
-      input.signal?.throwIfAborted();
-      const captured = await input.invokeReviewedChild({ ...SESSION_WORKSPACE_RETURN_CAPTURE_CHILD_V1,
-        input: input.prepared.children[1].input! });
+    if (managedTarget) {
+      const captured = child1 as Awaited<ReturnType<NonNullable<typeof input.invokeReviewedChild>>>;
       if (!captured.ok) return captured;
       const parsed = SessionWorkspaceReturnCaptureResultV1Schema.safeParse(captured.result);
       if (!parsed.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
@@ -126,7 +134,7 @@ export async function prepareEnrolledWorkspaceReturn(input: Readonly<{
         role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role,
         invokeReviewedChild: input.invokeReviewedChild, signal: input.signal,
       });
-    } else copied = await open(input.prepared.children[1]);
+    } else copied = child1 as Awaited<ReturnType<typeof open>>;
     if (!copied.ok) return copied;
     stageRoot = copied.opened.directory;
     excludedPaths ??= copied.opened.copyOnceExcludedPaths;

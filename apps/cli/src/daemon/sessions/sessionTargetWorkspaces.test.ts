@@ -88,7 +88,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         const source = resolveSessionTargetWorkspace({ workspace: result.workspace, requesterAccountId: 'owner' });
         await expect(runWithWorkspaceSourceDemand(source!, () => source!.readFile(join(guestRoot, 'a.txt'))))
             .resolves.toEqual(Buffer.from('in the target\n'));
-        expect(opened).toBe(2);
+        expect(opened).toBe(1);
     });
 
     it('reuses the holder while demanded and replaces a dropped channel only on the next request', async () => {

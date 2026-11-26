@@ -173,3 +173,64 @@ it.each([false, true])('reviews enrolled changes against the copied base and kee
     expect(await readFile(join(hostRoot, 'local.env'), 'utf8')).toBe('copied private local values\n');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+it.each([false, true])('opens Child 0 and Child 1 concurrently (native=%s)', async native => {
+  const root = await mkdtemp(join(tmpdir(), 'enrolled-return-parallel-'));
+  const hostRoot = join(root, 'host'); const sandboxRoot = join(root, 'sandbox');
+  await mkdir(hostRoot); await mkdir(sandboxRoot);
+  await writeFile(join(hostRoot, 'a.txt'), 'before\n');
+  await writeFile(join(sandboxRoot, 'a.txt'), 'after\n');
+  const registry = createScmBackendRegistry([]);
+  const baseline = await scanWorkspaceManifest({ workspaceRoot: hostRoot, scmRegistry: registry, safeFilterPolicy: { excludeAdministrativePaths: true } });
+  const sourceWorkspace = { serverId: 'home', machineId: 'original', workspaceId: 'host', rootPath: hostRoot };
+  const targetWorkspace = native ? { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest', rootPath: sandboxRoot,
+    managedId: 'guest', controller: { machineId: 'sandbox', installationId: 'installation' } }
+    : { serverId: 'home', machineId: 'sandbox', workspaceId: 'guest', rootPath: sandboxRoot };
+  const metadata = { sessionCreationCorrespondenceV1: { v: 1,
+    sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'created' }), recipe: {
+      execution: { machineId: 'sandbox', directory: { kind: 'path', path: sandboxRoot } },
+      organization: { folderId: null, tagIds: [] }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+      connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+      agentSessionStartupInstructionsMarkerV1: null, checkout: null, projectFilesOrigin: { sourceWorkspace, targetWorkspace, baseline },
+    } } };
+  const prepared = await prepareEnrolledWorkspaceReturnChildren({ sessionId: 'session-par', machineId: 'original',
+    metadata, activeServerDir: root, actionRequestId: 'return-par',
+    readRequesterWorkspaceScope: async () => ({ kind: 'available', homeDir: root, workspaceRoot: null }) });
+  if (!prepared) throw new Error('expected enrolled return origin');
+
+  let releaseChild0!: () => void;
+  const child0Gate = new Promise<void>(resolve => { releaseChild0 = resolve; });
+  let child0Started = false;
+  let child1StartedWhileChild0Pending = false;
+  let child0Settled = false;
+
+  try {
+    const preview = await prepareEnrolledWorkspaceReturn({ sessionId: 'session-par', activeServerDir: root, prepared, registry,
+      invokeReviewedChild: async child => {
+        if (child.action === SESSION_WORKSPACE_RETURN_CAPTURE_CHILD_V1.action) {
+          if (child0Started && !child0Settled) child1StartedWhileChild0Pending = true;
+          releaseChild0();
+          return { ok: true, result: { workspace: { serverId: 'home', machineId: 'sandbox', workspaceId: 'private-stage',
+            rootPath: sandboxRoot }, baseline, excludedPaths: [] } };
+        }
+        const request = OpenProjectInputV1Schema.parse(child.input);
+        if (request.materialization.kind === 'attach') {
+          child0Started = true;
+          await Promise.race([child0Gate, new Promise<void>(resolve => setTimeout(resolve, 250))]);
+          child0Settled = true;
+          return { ok: true, result: { kind: 'opened', directory: hostRoot, workspace: sourceWorkspace, setup: 'notRequired' } };
+        }
+        if (!native && child0Started && !child0Settled) {
+          child1StartedWhileChild0Pending = true;
+          releaseChild0();
+        }
+        await cp(sandboxRoot, prepared.targetPath, { recursive: true });
+        return { ok: true, result: { kind: 'opened', directory: prepared.targetPath,
+          workspace: { ...sourceWorkspace, workspaceId: 'stage', rootPath: prepared.targetPath }, setup: 'notRequired' } };
+      },
+    });
+    if ('ok' in preview) throw new Error(`return failed: ${preview.errorCode}`);
+    expect(child1StartedWhileChild0Pending).toBe(true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

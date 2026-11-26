@@ -140,7 +140,7 @@ describe('workspaceSyncNativeConfinedFileSystem', () => {
       }]);
       expect(harness.dependencies.spawnChild).toHaveBeenCalledWith(
         'C:\\happier-process-custody.exe',
-        ['workspace-confined-inspect'],
+        ['workspace-confined-inspect', '--auto-commit'],
         expect.any(Object),
       );
       expect(harness.writes[0]).toEqual({ v: 1, recoveryDirectory, operationId: 'reviewed' });
@@ -519,5 +519,83 @@ describe('workspaceSyncNativeConfinedFileSystem', () => {
       recoveryDirectory: 'C:\\private\\recovery',
       operationId: 'op',
     }, settled.dependencies)).resolves.toEqual({ status: 'settled' });
+  });
+
+  it('passes --auto-commit and completes in 1 RTT when assertCurrentAuthority is omitted', async () => {
+    const writes: unknown[] = [];
+    const spawnChild = vi.fn((_executable: string, args: readonly string[]) => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const child = Object.assign(new EventEmitter(), {
+        stdin,
+        stdout,
+        stderr,
+        kill: vi.fn(),
+      });
+      let buffer = '';
+      stdin.on('data', (chunk) => {
+        buffer += chunk.toString('utf8');
+        let newline = buffer.indexOf('\n');
+        while (newline >= 0) {
+          const line = buffer.slice(0, newline);
+          buffer = buffer.slice(newline + 1);
+          writes.push(JSON.parse(line));
+          if (writes.length === 1) {
+            // Auto-commit helper emits result directly with no prepared handshake.
+            stdout.write(`${JSON.stringify({
+              v: 1,
+              t: 'workspace-confined-result',
+              status: 'observed',
+              expectation: { kind: 'missing' },
+            })}\n`);
+            stdout.end();
+            child.emit('close', 0, null);
+          }
+          newline = buffer.indexOf('\n');
+        }
+      });
+      return child;
+    });
+
+    await expect(runNativeConfinedWorkspaceSyncObserve({
+      rootPath: 'C:\\work',
+      relativePath: 'missing.txt',
+    }, {
+      platform: 'win32',
+      resolveExecutable: () => 'C:\\happier-process-custody.exe',
+      spawnChild,
+    })).resolves.toEqual({ kind: 'missing' });
+
+    expect(spawnChild).toHaveBeenCalledWith(
+      'C:\\happier-process-custody.exe',
+      ['workspace-confined-observe', '--auto-commit'],
+      expect.any(Object),
+    );
+    expect(writes).toHaveLength(1);
+  });
+
+  it('omits --auto-commit and enforces the 2-phase prepared boundary when assertCurrentAuthority is provided', async () => {
+    const harness = createHarness({
+      v: 1,
+      t: 'workspace-confined-result',
+      status: 'observed',
+      expectation: { kind: 'missing' },
+    });
+    const assertCurrentAuthority = vi.fn(async () => undefined);
+    await expect(runNativeConfinedWorkspaceSyncObserve({
+      rootPath: 'C:\\work',
+      relativePath: 'missing.txt',
+      assertCurrentAuthority,
+    }, harness.dependencies)).resolves.toEqual({ kind: 'missing' });
+
+    expect(harness.dependencies.spawnChild).toHaveBeenCalledWith(
+      'C:\\happier-process-custody.exe',
+      ['workspace-confined-observe'],
+      expect.any(Object),
+    );
+    expect(assertCurrentAuthority).toHaveBeenCalledTimes(1);
+    expect(harness.writes).toHaveLength(2);
+    expect(harness.writes[1]).toEqual({ v: 1, decision: 'commit' });
   });
 });

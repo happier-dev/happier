@@ -23,6 +23,14 @@ export type WorkspaceDirent = Pick<Dirent, 'name' | 'isFile' | 'isDirectory' | '
 /** Positional reads over one opened file; node `FileHandle` satisfies it. */
 export type WorkspaceReadHandle = Pick<FileHandle, 'read' | 'close'> & Readonly<{ stat(): Promise<WorkspaceEntryStats> }>;
 
+/** One atomic confined leaf capture from a target workspace (single helper exchange). */
+export type WorkspaceCapturedLeaf =
+  | Readonly<{ kind: 'missing' }>
+  | Readonly<{ kind: 'directory'; entry: WorkspaceEntryStats }>
+  | Readonly<{ kind: 'other'; entry: WorkspaceEntryStats }>
+  | Readonly<{ kind: 'symlink'; entry: WorkspaceEntryStats; target: string }>
+  | Readonly<{ kind: 'file'; entry: WorkspaceEntryStats; digest: string; content: Buffer | null }>;
+
 export type WorkspaceWriteStream = Readonly<{
   write(bytes: Uint8Array): void | Promise<void>;
   close(): void | Promise<void>;
@@ -68,6 +76,8 @@ export interface WorkspaceSource {
   readonly commandPaths?: Readonly<{ toCommandPath(path: string): string; fromCommandPath(path: string): string }>;
   /** Native Sync capture compares this target preimage with the staged material. */
   observeSyncEntry?(path: string): Promise<WorkspaceSyncEntryExpectationV1>;
+  /** Atomic confined leaf capture (stat + digest + bytes/readlink in one helper exchange). */
+  captureLeaf?(path: string): Promise<WorkspaceCapturedLeaf>;
   /** Publication effects. Read-only sources omit these operations. */
   readonly filePublication?: Readonly<{
     copyFileExclusive(from: string, to: string): Promise<Readonly<{ atime: Date; mtime: Date }>>;

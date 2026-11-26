@@ -58,8 +58,10 @@ type workspaceTargetResult struct {
 	Entry   *workspaceTargetEntry      `json:"entry,omitempty"`
 	Entries []workspaceTargetListEntry `json:"entries,omitempty"`
 	Target  *string                    `json:"target,omitempty"`
-	Path    *string                    `json:"path,omitempty"`
-	Sha256  string                     `json:"sha256,omitempty"`
+	Path          *string                    `json:"path,omitempty"`
+	Sha256        string                     `json:"sha256,omitempty"`
+	Digest        string                     `json:"digest,omitempty"`
+	ContentBase64 *string                    `json:"contentBase64,omitempty"`
 	Code    string                     `json:"code,omitempty"`
 	Message string                     `json:"message,omitempty"`
 }
@@ -112,7 +114,7 @@ func decodeWorkspaceTargetMetaRequest(encoded []byte) (workspaceTargetMetaReques
 		return request, err
 	}
 	switch request.op {
-	case "lstat", "stat", "list", "readlink", "realpath", "access-executable":
+	case "lstat", "stat", "list", "readlink", "realpath", "access-executable", "capture-leaf":
 		return request, nil
 	}
 	return request, fmt.Errorf("unknown op")

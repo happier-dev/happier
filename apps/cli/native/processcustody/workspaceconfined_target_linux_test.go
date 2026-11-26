@@ -4,7 +4,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -203,5 +205,66 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceTargetMetaCaptureLeafAtomicFileSymlinkDirectoryMissingAndEscape(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "ws")
+	must(t, os.MkdirAll(filepath.Join(root, "src"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "src", "exec.sh"), []byte("#!/bin/sh\necho hi\n"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "src", "empty.txt"), []byte(""), 0o644))
+	must(t, os.WriteFile(filepath.Join(parent, "secret"), []byte("outside"), 0o600))
+	must(t, os.Symlink("../secret", filepath.Join(root, "escape-link")))
+	must(t, os.Symlink(parent, filepath.Join(root, "dir-link")))
+
+	// Regular executable file
+	fileRes := meta(t, root, "src/exec.sh", "capture-leaf")
+	if fileRes.Status != "leaf" || fileRes.Entry == nil || fileRes.Entry.Kind != "file" {
+		t.Fatalf("capture-leaf regular file: %+v", fileRes)
+	}
+	if fileRes.Entry.Mode&0o111 == 0 {
+		t.Fatalf("expected executable mode bit preserved: %o", fileRes.Entry.Mode)
+	}
+	expectedBytes := []byte("#!/bin/sh\necho hi\n")
+	sum := sha1.Sum(expectedBytes)
+	if fileRes.Digest != hex.EncodeToString(sum[:]) {
+		t.Fatalf("digest mismatch: got %q want %q", fileRes.Digest, hex.EncodeToString(sum[:]))
+	}
+	if fileRes.ContentBase64 == nil {
+		t.Fatalf("expected contentBase64 for regular file: %+v", fileRes)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(*fileRes.ContentBase64)
+	must(t, err)
+	if !bytes.Equal(decoded, expectedBytes) {
+		t.Fatalf("decoded content mismatch: %q", string(decoded))
+	}
+
+	// Empty file retains empty string ContentBase64
+	emptyRes := meta(t, root, "src/empty.txt", "capture-leaf")
+	if emptyRes.Status != "leaf" || emptyRes.ContentBase64 == nil || *emptyRes.ContentBase64 != "" {
+		t.Fatalf("capture-leaf empty file: %+v", emptyRes)
+	}
+
+	// Symlink (never followed; returns raw target and link entry metadata)
+	linkRes := meta(t, root, "escape-link", "capture-leaf")
+	if linkRes.Status != "link" || linkRes.Entry == nil || linkRes.Entry.Kind != "symlink" || linkRes.Target == nil || *linkRes.Target != "../secret" {
+		t.Fatalf("capture-leaf symlink: %+v", linkRes)
+	}
+
+	// Directory
+	dirRes := meta(t, root, "src", "capture-leaf")
+	if dirRes.Status != "entry" || dirRes.Entry == nil || dirRes.Entry.Kind != "directory" {
+		t.Fatalf("capture-leaf directory: %+v", dirRes)
+	}
+
+	// Missing (and under missing ancestor)
+	if missRes := meta(t, root, "no/such/file.txt", "capture-leaf"); missRes.Status != "missing" {
+		t.Fatalf("capture-leaf missing: %+v", missRes)
+	}
+
+	// Traversal through symlink ancestor is refused (O_NOFOLLOW)
+	if escRes := meta(t, root, "dir-link/secret", "capture-leaf"); escRes.Status != "error" || escRes.Code != "workspace_root_unsafe" {
+		t.Fatalf("capture-leaf symlink ancestor escape must fail closed: %+v", escRes)
 	}
 }

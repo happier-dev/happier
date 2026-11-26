@@ -17,7 +17,7 @@ import {
   type WorkspaceSyncNativeConfinedDependencies,
 } from '@/workspaces/sync/workspaceSyncNativeConfinedFileSystem';
 
-import type { WorkspaceChildProcess, WorkspaceDirent, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from './workspaceSource';
+import type { WorkspaceCapturedLeaf, WorkspaceChildProcess, WorkspaceDirent, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from './workspaceSource';
 import { runWithWorkspaceSource } from './workspaceSource';
 import { holderWorkspaceRelativePath, mapHolderWorkspacePath, resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
 
@@ -41,7 +41,7 @@ export async function runWithHolderWorkspaceSource<T>(input: Readonly<{
 type TargetEntry = Readonly<{ kind: string; size: number; atimeMs: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
 type TargetListEntry = Readonly<{ name: string; kind: string; stats?: Pick<TargetEntry, 'size' | 'mtimeMs'> | null }>;
 type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly TargetListEntry[];
-  target?: string; path?: string; sha256?: string; code?: string; message?: string }>;
+  target?: string; path?: string; sha256?: string; digest?: string; contentBase64?: string; code?: string; message?: string }>;
 
 // Bind the positive resolution to the client so a replacement holder resolves its own PATH.
 const holderGitExecutables = new WeakMap<SessionHolderChild, Promise<string | null>>();
@@ -214,6 +214,36 @@ export function createHolderWorkspaceSource(input: Readonly<{
     return Buffer.from(outcome.content);
   };
   const observeSyncEntry = (target: string) => runNativeConfinedWorkspaceSyncObserve({ rootPath: guestRoot, relativePath: relative(target) }, helper);
+  const captureLeaf = async (target: string): Promise<WorkspaceCapturedLeaf> => {
+    const result = await runHelper('workspace-confined-meta', { relativePath: relative(target), op: 'capture-leaf' });
+    if (result.status === 'missing') return { kind: 'missing' };
+    if (result.status === 'error') {
+      throw result.code === 'not_directory' ? errno('ENOTDIR', result.message ?? 'Not a directory')
+        : result.code === 'EACCES' ? errno('EACCES', result.message ?? 'Permission denied')
+        : result.code === 'not_link' ? errno('EINVAL', result.message ?? 'Not a link')
+          : result.code === 'symlink_loop' ? errno('ELOOP', result.message ?? 'Too many links')
+            : new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
+    }
+    if (result.status === 'leaf' && result.entry?.kind === 'file'
+      && typeof result.digest === 'string' && typeof result.contentBase64 === 'string') {
+      const content = Buffer.from(result.contentBase64, 'base64');
+      if (content.toString('base64') !== result.contentBase64 || content.byteLength !== result.entry.size) {
+        throw errno('io_failed', 'Target helper returned invalid leaf content');
+      }
+      return { kind: 'file', entry: entryStats(result.entry), digest: result.digest, content };
+    }
+    if (result.status === 'link' && result.entry?.kind === 'symlink' && typeof result.target === 'string') {
+      return { kind: 'symlink', entry: entryStats(result.entry), target: result.target };
+    }
+    if (result.status === 'entry' && result.entry) {
+      if (result.entry.kind === 'directory') return { kind: 'directory', entry: entryStats(result.entry) };
+      if (result.entry.kind === 'file' && typeof result.digest === 'string') {
+        return { kind: 'file', entry: entryStats(result.entry), digest: result.digest, content: null };
+      }
+      return { kind: 'other', entry: entryStats(result.entry) };
+    }
+    throw errno('io_failed', 'Target helper returned an invalid leaf capture result');
+  };
   const remove = async (target: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>) => {
     const relativePath = relative(target);
     const expectation = await observeSyncEntry(target);
@@ -306,6 +336,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
     },
     readFile,
     observeSyncEntry,
+    captureLeaf,
     open: async (target) => {
       const bytes = await readFile(target);
       const stats = await source.lstat(target);

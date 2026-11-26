@@ -289,3 +289,49 @@ it('captures a private host SOURCE through the controller loan and refuses new c
     } finally { await port.dispose(); }
   });
 });
+
+it('releases prepared source seeds on explicit releaseSourceSeedExport and on port dispose', async () => {
+  await withTempDir('private-sync-seed-release-', async fixture => {
+    const parent = await realpath(fixture);
+    const root = join(parent, 'source');
+    await mkdir(root);
+    await writeFile(join(root, 'a.txt'), 'seed payload');
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIncludePatterns: [], extraIgnorePatterns: [] };
+    const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
+    const snapshot: ActiveProjectAccountRowsSnapshot = { source: 'network', workspaceRefs: [
+      { id: 'source', serverId: 'home', machineId: 'host', rootPath: root, createdAtMs: 1 },
+    ], relationships: [], organizations: [], rows: [], graphRevision: 1, loadedAtMs: 1, scopeKey: 'owner' };
+    const port = await executePrivateProjectSyncEffect({ kind: 'native_sync', memberHome: parent, checkout: {
+      workspaceRefId: 'source', workspaceRoot: parent, generation: 1, plugins: [], contributions: {},
+      request: { serverId: 'home', machineId: 'host', source: { kind: 'workspace', workspaceId: 'source' },
+        materialization: { kind: 'sync', targetPath: root, workspaceAction: { kind: 'copy_once', contentPolicy } } },
+    } }, { serverId: 'home', machineId: 'host', accountId: 'owner', snapshot, agent: { executablePath: '/unused-native-agent' } }, {
+      callMachineRpc: async () => { throw new Error('No Machine RPC expected'); },
+      prepareSourceSeed: async () => { throw new Error('No source transfer expected'); },
+    }, { signal: new AbortController().signal, onEffectsIssued() {} });
+    try {
+      const envelope1 = JSON.parse(Buffer.from(await port.prepareSourceSeedExport({
+        operationId: 'seed-1', sourcePath: root, contentPolicy,
+      })).toString('utf8')) as { blobTransferIds: Record<string, string> };
+      const transferId1 = Object.values(envelope1.blobTransferIds)[0]!;
+      expect(Buffer.from(await port.readSourceSeedBlob({
+        operationId: 'seed-1', transferId: transferId1, offset: 0, length: 12,
+      })).toString('utf8')).toBe('seed payload');
+      await port.releaseSourceSeedExport({ operationId: 'seed-1' });
+      await expect(port.readSourceSeedBlob({
+        operationId: 'seed-1', transferId: transferId1, offset: 0, length: 12,
+      })).rejects.toMatchObject({ code: 'workspace_private_checkout_required' });
+
+      const envelope2 = JSON.parse(Buffer.from(await port.prepareSourceSeedExport({
+        operationId: 'seed-2', sourcePath: root, contentPolicy,
+      })).toString('utf8')) as { blobTransferIds: Record<string, string> };
+      const transferId2 = Object.values(envelope2.blobTransferIds)[0]!;
+      await port.dispose();
+      await expect(port.readSourceSeedBlob({
+        operationId: 'seed-2', transferId: transferId2, offset: 0, length: 12,
+      })).rejects.toMatchObject({ code: 'workspace_private_checkout_required' });
+    } finally {
+      await port.dispose();
+    }
+  });
+});
