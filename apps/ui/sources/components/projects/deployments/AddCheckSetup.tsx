@@ -14,9 +14,7 @@ import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionErro
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
-import { useMachineListStatusForServer, useServerScopedMachine } from '@/sync/store/hooks';
 import { sync } from '@/sync/sync';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -26,8 +24,6 @@ type Settlement = Parameters<
   >['onSettled']
 >[0];
 type Configured = Extract<Settlement, { kind: 'configured' }>;
-
-const readMachineOwnership = (machine: Machine | null) => machine ? !machine.isShared : null;
 
 /** The write owner's typed failure as this host says it: its reason sentence and whether the outcome is known. */
 function presentAddCheckWriteFailure(failure: PluginUiActionFailureV1) {
@@ -53,7 +49,6 @@ export function AddCheckSetup(
     lifetime: ServerAccountScopeLifetime;
     deploymentEnvironment: DeploymentEnvironmentRefV1;
     seed: PluginUiOpenAutomationEventRequestV1 | undefined;
-    collectorPlacement?: boolean;
     onClose: () => void;
     testID: string;
   }>,
@@ -94,12 +89,6 @@ export function AddCheckSetup(
   const machineLabel = (machineName: string | null) =>
     machineName ?? t('machine.unnamedMachine');
   const seed = props.seed;
-  const collectorId = props.collectorPlacement ? seed?.monitoringMachineId : undefined;
-  const serverId = props.lifetime.scope.serverId;
-  const ownedCollector = useServerScopedMachine(serverId, collectorId, readMachineOwnership);
-  const inventoryStatus = useMachineListStatusForServer(serverId);
-  const collectorRefused = collectorId && (ownedCollector === false || (ownedCollector === null && inventoryStatus === 'idle'));
-  const waitingForCollector = collectorId && ownedCollector === null && inventoryStatus === 'loading';
   const writeFailure = unsettledWrite && presentAddCheckWriteFailure(unsettledWrite);
   return (
     <View testID={props.testID}>
@@ -115,24 +104,7 @@ export function AddCheckSetup(
             .filter(line => line.key !== 'code').map(line => `${line.label} ${line.value}`).join('\n')}
           action={{ label: t('common.close'), onPress: props.onClose }}
         />
-      ) : collectorRefused ? (
-        <SurfaceStateCard
-          testID={`${props.testID}.collector-refused`}
-          size="line"
-          kind="unavailable"
-          title={t('projects.deployments.services.addCheckFailed')}
-          reason={t(ownedCollector === false ? 'projects.deployments.monitoring.addCheckCollectorOwnership' : 'workflows.problem.targetUnavailable')}
-          diagnosticCode={ownedCollector === false ? AUTOMATION_EVENT_WATCHER_NOT_OWNED : AUTOMATION_EVENT_WATCHER_NOT_CURRENT}
-          accessibilitySemantics="alert"
-          action={{ label: t('common.close'), onPress: props.onClose }}
-        />
-      ) : waitingForCollector ? (
-        <SurfaceStateCard
-          size="line"
-          kind="loading"
-          title={t('common.loading')}
-        />
-      ) : seed && (!collectorId || ownedCollector === true) ? (
+      ) : seed ? (
         <PluginEventAutomationEditor
           automationId="new"
           clientId="add-check"

@@ -52,6 +52,7 @@ vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
 afterEach(standardCleanup);
 
 const { DeploymentTelemetryPanel, TelemetryRequestDetail } = await import('./DeploymentTelemetryPanel');
+const { PluginEventAutomationEditor } = await import('@/components/automations/editor/PluginEventAutomationEditor');
 const { createTelemetryCaptureReads } = await import('./telemetryCaptureReads');
 const { LocalServiceCaptureView } = await import('@/components/sessions/localServices/LocalServiceCaptureView');
 const { TelemetryCaptureFixtureProvider, createTelemetryCaptureFixtureTransport } =
@@ -906,23 +907,20 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('refuses saved checks on a collector shared from another Account before opening setup', async () => {
+  it('opens setup on a shared collector and leaves watcher admission to the save owner', async () => {
     await publishMachineInventoryForTest(lifetime.scope, [
       createMachineFixture({ id: 'collector', isShared: true }),
     ]);
-    const { invoke, calls } = collector(answers);
+    const { invoke } = collector(answers);
     const screen = await mount(invoke);
     try {
       await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
       const row = screen.find(node => Array.isArray(node.props?.secondaryActions)
         && typeof node.props?.onSecondaryAction === 'function');
-      const beforeSetup = calls.length;
       await act(async () => row.props.onSecondaryAction('add-check'));
-      expect(screen.getTextContent()).toContain('Saved checks need this Environment’s collector on one of your Machines.');
-      await screen.pressByTestIdAsync('project-deployments.telemetry.add-check.collector-refused-details-toggle');
-      expect(screen.findByTestId('project-deployments.telemetry.add-check.collector-refused-details-code')?.props.children)
-        .toBe('event_watcher_not_owned');
-      expect(calls).toHaveLength(beforeSetup);
+      expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
+        .toEqual(['collector']);
+      expect(screen.findByTestId('project-deployments.telemetry.add-check.collector-refused')).toBeNull();
     } finally {
       await screen.unmount();
     }
@@ -948,7 +946,7 @@ describe('Environment Telemetry tabs', () => {
         row.props.onSecondaryAction('add-check');
       });
       expect(screen.findByTestId('project-deployments.telemetry.add-check')).not.toBeNull();
-      expect(screen.findByTestId('project-deployments.telemetry.add-check.collector-refused')).toBeNull();
+      expect(screen.findAllByType(PluginEventAutomationEditor)).toHaveLength(1);
     } finally {
       await screen.unmount();
     }
