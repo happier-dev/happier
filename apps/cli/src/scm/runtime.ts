@@ -6,6 +6,7 @@ import path from 'node:path';
 import { closeSync, openSync, realpathSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
+import { normalizeScmRepoRootRelativePath } from '@happier-dev/protocol/scm/pathScope';
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ScmWorkingSnapshot } from '@happier-dev/protocol/scm';
@@ -679,33 +680,7 @@ export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pat
 export function normalizeRepoRootRelativePath(
     rawPath: string
 ): { ok: true; relativePath: string; pathspec: string } | { ok: false; error: string } {
-    const requestedPath = String(rawPath ?? '');
-    if (!requestedPath.trim()) {
-        return { ok: false, error: 'Path cannot be empty' };
-    }
-    if (requestedPath.includes('\0')) {
-        return { ok: false, error: 'Path contains null bytes' };
-    }
-    if (requestedPath.startsWith('-')) {
-        return { ok: false, error: 'Path cannot start with "-"' };
-    }
-    if (requestedPath.startsWith(':')) {
-        // Prevent injecting git pathspec magic like :(icase) or :(exclude)
-        return { ok: false, error: 'Path contains unsupported syntax' };
-    }
-    if (isAbsolute(requestedPath)) {
-        return { ok: false, error: 'Absolute paths are not supported' };
-    }
-
-    const normalized = requestedPath.split(sep).join('/').replace(/^\.\/+/, '').replace(/^\/+/, '');
-    const parts = normalized.split('/');
-    if (parts.some((part) => part === '..')) {
-        return { ok: false, error: `Path contains unsupported ".." segment: ${rawPath}` };
-    }
-    if (!normalized || normalized === '.') {
-        return { ok: true, relativePath: '.', pathspec: ':(top).' };
-    }
-    return { ok: true, relativePath: normalized, pathspec: `:(top)${normalized}` };
+    return normalizeScmRepoRootRelativePath(rawPath, sep === '\\' ? 'win32' : 'posix');
 }
 
 // The UI sends repo-root-relative paths (from status snapshots), but sessions can run from subdirectories.

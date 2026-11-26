@@ -64,7 +64,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
     const previous = stepIndex > 0 ? [result(`step-${stepIndex}-result`, [], { kind: 'outer', levels: 1 })] : [];
     const instructions = stage.kind === 'verify'
       ? `${REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1}\nRead this Review's canonical finding pages with reviews.comments.list and follow the cursor when more findings are needed.\n${stage.instructions}`
-      : `${stage.instructions}\nReview read-only. Return structured findings, including a complete empty result when no defects are found.`;
+      : `${stage.instructions}\nReview read-only. Return structured findings, including a complete empty result when no defects are found. Review only the prepared scmReviewScope.selectedPaths when present; the broader captured comparison is supporting context, not an expansion of the selected change.`;
     const branches = stage.reviewers.flatMap<Extract<WorkflowBlock, { kind: 'parallel' }>['branches'][number]>((reviewer, reviewerIndex) => {
         if (reviewer.kind === 'person') return [];
         const { includeSessionTranscript, ...participant } = reviewer;

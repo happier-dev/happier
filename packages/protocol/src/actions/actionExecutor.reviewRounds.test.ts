@@ -6,7 +6,7 @@ import { prepareReviewRoundV1 } from '../reviews/prepareReviewRoundV1.js';
 import { ReviewPrepareRoundInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 import { WorkflowRunStartRequestV1Schema } from '../workflows/actionsV1.js';
-import { evaluateWorkflowCondition, resolveWorkflowActionFieldBinding } from '../../../../apps/cli/src/daemon/workflows/input.js';
+import { evaluateWorkflowCondition, resolveWorkflowActionFieldBinding, resolveWorkflowValueReference } from '../../../../apps/cli/src/daemon/workflows/input.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { createScmCapabilities } from '../scm/index.js';
 import { buildReviewStepsWorkflowV1 } from '../workflows/builtins/reviewAndConverge.js';
@@ -60,6 +60,86 @@ describe('committed Review source admission', () => {
 });
 
 describe('Review round preparation', () => {
+  it.each([false, true])('keeps repository admission and preparation free of changed-file scope (source: %s)', async explicitSource => {
+    const records = createInMemoryReviewRecordPortV1();
+    let request: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse> | undefined;
+    let captures = 0;
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      resolveApiTokenGrantSessionMachineId: async () => 'review-machine',
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      scmActionExecute: async () => {
+        captures++;
+        const source = { kind: 'branch' as const, head: 'topic', base: 'main' };
+        return { success: true, comparison: { id: 'c'.repeat(64), source, repository: { rootPath: '/review-repo' },
+          endpoints: { before: 'base', after: 'head' }, inventory: { state: 'complete', files: [], reasons: [] } },
+          metadata: { source, sourceKey: 'repository-neighbor' } };
+      },
+      workflowAction: async invocation => {
+        request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    });
+    expect(await executor.execute('review.start', { sessionId: 'review-session', cwd: '/review-repo', scope: 'repository',
+      ...(explicitSource ? { source: { kind: 'branch', head: 'topic', base: 'main' } } : {}),
+      instructions: 'Review the whole repository, including unchanged files.',
+      reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'codex' }],
+    }, { surface: 'ui' })).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect(captures).toBe(0);
+    if (!request || request.source.kind !== 'inline') throw new Error('Expected actual admitted Review Workflow');
+    const admitted = request;
+    const prepare = admitted.source.definition.blocks.find(block => block.kind === 'action' && block.id === 'prepare');
+    if (prepare?.kind !== 'action') throw new Error('Expected round preparation');
+    const prepareInput = Object.fromEntries(await Promise.all(Object.entries(prepare.input ?? {}).map(async ([key, binding]) =>
+      [key, await resolveWorkflowActionFieldBinding(binding, { inputs: admitted.inputs ?? {},
+        resolveResult: async () => { throw new Error('No earlier result'); },
+        resolveWorkspace: async () => { throw new Error('No workspace reference'); } })])));
+    const prepared = await executor.execute('review.prepare_round', prepareInput, { surface: 'ui' });
+    expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+    if (!prepared.ok) throw new Error('Expected whole-repository preparation');
+    expect(prepared.result).not.toHaveProperty('comparison');
+    expect(prepared.result).not.toHaveProperty('scmReviewScope');
+  });
+  it.each(['selectedPaths', 'selectedFiles'] as const)('retains admitted %s in actual Session and model reviewer inputs', async selector => {
+    const records = createInMemoryReviewRecordPortV1();
+    const comparison = { id: 'b'.repeat(64), source: { kind: 'workingTree' as const, area: 'pending' as const },
+      repository: { rootPath: '/review-repo' }, endpoints: {}, inventory: { state: 'complete' as const, reasons: [],
+        files: ['billing.ts', 'README.md'].map(path => ({ path, changeKind: 'modified' as const, binary: false,
+          generated: false, lockfile: false, evidence: { state: 'deferred' as const, reason: 'Open the retained file evidence.' }, occurrences: [] })) } };
+    const reviewRound = await records.start({ reviewId: 'selected-review', title: 'Review', subjectKind: 'comparison',
+      sourceKind: 'workflow', reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'], comparisonId: comparison.id, startedAt: 1 });
+    const reviewInput = ReviewStartInputSchema.parse({ cwd: '/review-repo', comparisonId: comparison.id,
+      instructions: 'Find defects in the selected change.', [selector]: ['./billing.ts'],
+      reviewers: [{ kind: 'session', session: { serverId: 'home', sessionId: 'existing-reviewer' } },
+        { kind: 'model', launch: { executionTarget: { serverId: 'home', machineId: 'machine' },
+          directory: { kind: 'path', path: '/review-repo' },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'default' } } } }] });
+    const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound, comparison);
+    const prepare = built.definition.blocks.find(block => block.kind === 'action' && block.id === 'prepare');
+    if (prepare?.kind !== 'action') throw new Error('Expected Review preparation');
+    const runtime = { inputs: built.inputs, resolveResult: async () => { throw new Error('No earlier result'); },
+      resolveWorkspace: async () => { throw new Error('No workspace reference'); } };
+    const prepareInput = Object.fromEntries(await Promise.all(Object.entries(prepare.input ?? {}).map(async ([key, binding]) =>
+      [key, await resolveWorkflowActionFieldBinding(binding, runtime)])));
+    const executor = createActionExecutor({ reviewRecords: () => records });
+    const result = await executor.execute('review.prepare_round', prepareInput, { surface: 'ui' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error('Expected prepared Review');
+    const stage = built.definition.blocks.find(block => block.kind === 'parallel');
+    if (stage?.kind !== 'parallel') throw new Error('Expected Session/model reviewer stage');
+    for (const branch of stage.branches) {
+      const leaf = branch.blocks[0];
+      if (leaf?.kind !== 'step') throw new Error('Expected ordinary participant review');
+      const inputs = await Promise.all((leaf.input ?? []).map(reference => resolveWorkflowValueReference(reference,
+        { ...runtime, resolveResult: async () => StrictJsonValueSchema.parse(result.result) })));
+      expect(inputs[0]).toMatchObject({ scmReviewScope: { status: 'supported', selectedPaths: ['billing.ts'],
+        changedPaths: [{ path: 'billing.ts' }] },
+        // Broader captured evidence stays available for justified supporting context.
+        comparison: { inventory: { files: [{ path: 'billing.ts' }, { path: 'README.md' }] } } });
+    }
+    const denied = await executor.execute('review.prepare_round', { ...prepareInput,
+      reviewInput: { ...reviewInput, [selector]: ['missing.ts'] } }, { surface: 'ui' });
+    expect(denied).toMatchObject({ ok: false, errorCode: 'invalid_path' });
+  });
   it.each([
     { mode: 'native', knownTitle: 'Keep selected changes separate', expectedTitle: 'Keep selected changes separate' },
     { mode: 'workflow', knownTitle: 'Show retained reviewer outcomes', expectedTitle: 'Show retained reviewer outcomes' },

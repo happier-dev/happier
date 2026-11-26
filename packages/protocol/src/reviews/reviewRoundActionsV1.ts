@@ -4,6 +4,7 @@ import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { ScmComparisonSchema } from '../scm/comparison.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
+import { ReviewScmScopeV1Schema } from './scope.js';
 import { ReviewStartInputSchema } from './reviewStart.js';
 import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 import { ExecutionRunStartResponseSchema, type ExecutionRunPublicState } from '../execution/runs/responseSchemas.js';
@@ -27,6 +28,7 @@ export const ReviewPreparedRoundV1Schema = lazyZodSchema(() => z.strictObject({
   inlineThreshold: z.optional(ReviewFindingSeveritySchema),
   comparisonId: z.optional(z.string().check(z.minLength(1))),
   comparison: z.optional(ScmComparisonSchema),
+  scmReviewScope: z.optional(ReviewScmScopeV1Schema),
   /** Roster slots a single-reviewer retry leaves out of this round; their leaves do not run. */
   skippedReviewers: z.optional(z.record(z.string().check(z.minLength(1)), z.literal(true))),
 }));

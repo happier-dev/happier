@@ -6,7 +6,7 @@ import type { ReviewPrepareRoundInputV1, ReviewPreparedRoundV1 } from './reviewR
 import { reviewReviewerDisplayNamesForStartV1, reviewReviewerIdsForStartV1, type ReviewBase, type ReviewStartInput } from './reviewStart.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import type { ScmWorkingSnapshot } from '../scm/workingSnapshot.js';
-import type { ReviewScmScopeBaseRefV1 } from './scope.js';
+import { resolveCapturedReviewScmScopeV1, type ReviewScmScopeBaseRefV1 } from './scope.js';
 
 /** Review base inference is shared by Action capture and direct Run preparation. */
 export function resolveReviewBaseRefV1(base: ReviewBase,
@@ -24,8 +24,9 @@ export function resolveReviewBaseRefV1(base: ReviewBase,
 export async function resolveReviewComparisonSourceV1(input: Pick<ReviewStartInput, 'changeType' | 'base'>
   & Partial<Pick<ReviewStartInput, 'scope' | 'comparisonId' | 'scmPullRequestReviewScope' | 'source' | 'headRef'>>,
   readSnapshot?: () => Promise<Pick<ScmWorkingSnapshot, 'branch' | 'repo'> | undefined>): Promise<ScmComparisonSource | undefined> {
+  if (input.scope === 'repository') return undefined;
   if (input.source !== undefined) return ScmComparisonSourceSchema.parse(input.source);
-  if (input.scope === 'repository' || input.comparisonId || input.scmPullRequestReviewScope) return undefined;
+  if (input.comparisonId || input.scmPullRequestReviewScope) return undefined;
   if (input.changeType === 'committed') {
     const explicit = resolveReviewBaseRefV1(input.base);
     const base = explicit.ref ? explicit : resolveReviewBaseRefV1(input.base, await readSnapshot?.());
@@ -123,6 +124,11 @@ export async function prepareReviewRoundV1(input: ReviewRoundPreparationInputV1,
     };
     comparison = await deps.captureComparison(comparisonCapture);
   }
+  const scmReviewScope = comparison ? resolveCapturedReviewScmScopeV1(comparison, input.reviewInput) : undefined;
+  if (scmReviewScope?.status === 'unsupported') {
+    const diagnostic = scmReviewScope.diagnostics[0];
+    throw new RpcError(diagnostic?.message ?? 'The selected review scope is unavailable.', diagnostic?.code ?? 'scm_status_unavailable');
+  }
   const { projection: _projection, ...retainedCaptureInput } = comparisonCapture ?? {};
   const roster = reviewReviewerIdsForStartV1(input.reviewInput);
   const retried = isNewRound ? readRetriedReviewerIds(input.previousRoundContext, roster) : undefined;
@@ -142,7 +148,7 @@ export async function prepareReviewRoundV1(input: ReviewRoundPreparationInputV1,
     startedAt: deps.startedAt, newRound: true, signal: deps.signal,
   }) : input.reviewRound;
   const skipped = retried ? roster.filter(id => !retried.includes(id)) : [];
-  return { reviewRound, newRoundCostConsent: isNewRound ? readRecord(input.previousRoundContext).costConsent === true : null,
+  return { reviewRound, ...(scmReviewScope ? { scmReviewScope } : {}), newRoundCostConsent: isNewRound ? readRecord(input.previousRoundContext).costConsent === true : null,
     ...(skipped.length ? { skippedReviewers: Object.fromEntries(skipped.map(id => [id, true as const])) } : {}),
     ...(comparison ? { comparisonId: comparison.id, comparison } : {}),
     ...(input.reviewInput.inlineThreshold === undefined ? {} : { inlineThreshold: input.reviewInput.inlineThreshold }) };
