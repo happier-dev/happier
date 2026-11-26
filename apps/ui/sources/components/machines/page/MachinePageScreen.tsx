@@ -104,12 +104,10 @@ export function MachinePageScreen() {
     const enrolledDetailId = managedEnrolled.machine ? managedMachineEnrolledDetailId(managedEnrolled.machine, Boolean(machine)) : undefined;
 
     const [refreshKey, bumpRefreshKey] = React.useReducer((value: number) => value + 1, 0);
-    const { execute: refreshInventory } = useMountedActionExecution(serverId);
     const reload = React.useCallback(async () => {
         bumpRefreshKey();
-        const result = await refreshInventory('machines.list', { serverId, refresh: true });
-        if (!result.ok) throw new Error(result.error);
-    }, [refreshInventory, serverId]);
+        await sync.refreshMachines({ serverId, machineId });
+    }, [machineId, serverId]);
     const [isRefreshing, setIsRefreshing] = React.useState(false);
     const handleRefresh = React.useCallback(async () => {
         setIsRefreshing(true);

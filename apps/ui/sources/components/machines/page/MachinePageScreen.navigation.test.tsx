@@ -4,6 +4,10 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -32,10 +36,63 @@ const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { Modal } = await import('@/modal');
 
 beforeEach(() => { installReactDomPortalBoundaryForTests(); });
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); probe.rpc.mockReset(); });
+
+it('refreshes the open Machine without fetching the rest of the fleet', async () => {
+    await prepareSessionDraftPersistenceStorage();
+    const machine = createMachineFixture({
+        id: 'navigation-machine', active: false, storageMode: 'plain', isShared: false,
+    });
+    const sibling = createMachineFixture({
+        id: 'other-machine', active: false, storageMode: 'plain', isShared: false,
+    });
+    const updated = { ...machine, metadataVersion: machine.metadataVersion + 1 };
+    const rows = new Map([machine, sibling].map(row => [row.id, createPlainMachineRowFixture({ id: row.id, accountId: 'account-a', machine: row })]));
+    const reads: (string | readonly string[])[] = [];
+    const connection = await restoreServerAccountForTest({
+        serverUrl: 'https://machine-navigation.example.test', serverIdentityId: 'srv_machine_navigation',
+        request: async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/machines') {
+                reads.push('fleet');
+                return Response.json([...rows.values()]);
+            }
+            if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+                const input = MachineReadBatchRequestV1Schema.parse(JSON.parse(String(init.body)));
+                reads.push(input.machineIds);
+                return createMachineReadBatchResponseFixture(input, id => rows.get(id) ?? null);
+            }
+            return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({}, { status: 404 });
+        },
+    });
+    onTestFinished(() => connection.dispose());
+    const settings = storage.getState().settings;
+    storage.setState({ isDataReady: true, isSessionDraftsReady: true, settings: { ...settings, voice: {
+        ...settings.voice, privacy: { ...settings.voice.privacy, shareDeviceInventory: true },
+    } } });
+    await publishMachineInventoryForTest({ serverId: connection.serverId, accountId: 'account-a' }, [machine, sibling]);
+    probe.rpc.mockImplementation(() => new Promise(() => {}));
+    const screen = await renderScreen(<AuthProvider initialCredentials={connection.credentials}>
+        <PresentedDetailNavigationProvider><MachinePageScreen /></PresentedDetailNavigationProvider>
+    </AuthProvider>);
+    onTestFinished(() => screen.unmount());
+    const list = screen.findAllByType(ItemList).find(node => node.props.refreshControl);
+    expect(list).toBeDefined();
+    const retainedSibling = storage.getState().machines[sibling.id];
+    expect(storage.getState().machines[machine.id]?.metadataVersion).toBe(machine.metadataVersion);
+    rows.set(machine.id, createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine: updated }));
+    reads.length = 0;
+    await act(async () => { await list!.props.refreshControl.props.onRefresh(); });
+    expect(reads).toEqual([[machine.id]]);
+    expect(storage.getState().machines[machine.id]?.metadataVersion).toBe(updated.metadataVersion);
+    expect(storage.getState().machines[sibling.id]).toBe(retainedSibling);
+});
 
 it('detail-navigation.Machine: lists core pages without mounting siblings and selects through the existing column Action', async () => {
     const serverId = 'srv_machine_navigation';

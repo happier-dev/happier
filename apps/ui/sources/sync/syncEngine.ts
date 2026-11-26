@@ -8442,17 +8442,17 @@ class Sync {
         return resolveServerScopedMachine(storage.getState(), params.serverId, params.machineId);
     }
 
-    private refreshAttachedMachineInventory = async (serverId?: string): Promise<boolean> => {
+    private refreshAttachedMachineInventory = async (serverId?: string, machineId?: string): Promise<boolean> => {
         if (serverId && !areServerProfileIdentifiersEquivalent(serverId, this.getAppliedTransportTarget()?.serverId ?? '')) {
             const { refreshConcurrentMachineList } = await import('./runtime/orchestration/concurrentSessionCache');
-            return refreshConcurrentMachineList(serverId);
+            return refreshConcurrentMachineList(serverId, machineId);
         }
-        await this.fetchMachines();
+        await this.fetchMachines(machineId ? [machineId] : undefined);
         return true;
     }
 
-    public refreshMachines = async (params?: Readonly<{ serverId?: string }>) => {
-        if (!await this.refreshAttachedMachineInventory(params?.serverId)) throw new Error('machine_inventory_unavailable');
+    public refreshMachines = async (params?: Readonly<{ serverId?: string; machineId?: string }>) => {
+        if (!await this.refreshAttachedMachineInventory(params?.serverId, params?.machineId)) throw new Error('machine_inventory_unavailable');
     }
 
       /** Every recovery queue this engine owns; Retry ends their failure backoffs. */

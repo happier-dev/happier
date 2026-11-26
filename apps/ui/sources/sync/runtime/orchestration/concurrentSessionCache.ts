@@ -1009,10 +1009,11 @@ export async function refreshConcurrentOrdinarySessionList(serverIdRaw: string):
 }
 
 /** Manual inventory refresh uses this Home's incumbent Machine fetch/apply lifecycle. */
-export async function refreshConcurrentMachineList(serverIdRaw: string): Promise<boolean> {
+export async function refreshConcurrentMachineList(serverIdRaw: string, machineId?: string): Promise<boolean> {
     const entry = getManagedServer(serverIdRaw);
     if (!entry?.snapshotDemanded) return false;
-    entry.machineRefreshIds = null;
+    if (machineId) entry.machineRefreshIds?.add(machineId);
+    else entry.machineRefreshIds = null;
     await runRefresh(entry, 'other', 'machines');
     return true;
 }
