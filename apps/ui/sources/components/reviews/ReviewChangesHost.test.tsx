@@ -9,7 +9,7 @@ import { decodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64S
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import type { ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ScmComparisonCaptureInputSchema, type ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
-import { flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
@@ -29,12 +29,16 @@ it.each([
     const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
     let capturedSession: typeof fixture.session | null = null;
     const sessions = createSessionMetadataHttpBoundary(() => capturedSession ? { [capturedSession.id]: capturedSession } : {});
+    const coldSession = createDeferred<void>();
     fixture = await createSessionFilesViewFixture({ rootPath: '/repo', sessionId: sessionId ? 'walkthrough-control' : undefined,
         // The captured Session exists at the Home, but has not been opened on this client.
         request: createSessionReadBatchFetchBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
-            return sessionId && (path === `/v2/sessions/${sessionId}` || path === `/v1/sessions/${sessionId}/turns`)
-                ? sessions.handle(url, init) : null;
+            if (sessionId && (path === `/v2/sessions/${sessionId}` || path === `/v1/sessions/${sessionId}/turns`)) {
+                await coldSession.promise;
+                return sessions.handle(url, init);
+            }
+            return null;
         }),
         rpc: request => {
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return { protocolVersion: 1,
@@ -82,6 +86,13 @@ it.each([
     const screen = await fixture.render(<ReviewChangesHost reviewId="walkthrough-review" roundOrdinal={1}
         scope={{ serverId: fixture.scope.serverId, accountId: 'alice' }} capture={capture} comments={[]}
         view="walkthrough" onSelectView={() => {}} onOpenComment={() => {}} />);
+    try {
+        // The pinned selection must survive the first render, before Session metadata can bind a Machine.
+        const walkthrough = screen.findAllByType(ScmWalkthroughView)[0];
+        expect(walkthrough?.props.comparison).toMatchObject({ comparisonId });
+        expect(walkthrough?.props.bound.comparison).toMatchObject({ comparisonId });
+        if (sessionId) expect(fixture.storage.getState().sessions[sessionId]).toBeUndefined();
+    } finally { coldSession.resolve(); }
     await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled, screen.getTextContent()).toBe(false));
     await screen.pressByTestIdAsync('walkthrough-start');
     await vi.waitFor(() => expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)).toHaveLength(2));
