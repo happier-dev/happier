@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 
-it('reuses revision-local TypeScript disk transforms without retaining payloads after GC', async () => {
+it.each(['mutable checkout', 'immutable revision'])('reuses %s daemon TypeScript transforms without retaining payloads after GC', async (tree) => {
   const fixture = await mkdtemp(join(tmpdir(), 'happier-revision-transform-retention-'));
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
   const common = join(fixture, 'packages/cli-common');
@@ -21,7 +21,9 @@ it('reuses revision-local TypeScript disk transforms without retaining payloads 
     await cp(join(repo, 'apps/cli/src/cli/readStartedByArg.mjs'), join(cli, 'cli/readStartedByArg.mjs'));
     await symlink(join(repo, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
-    await writeFile(join(fixture, '.happier-revision-tree-ref.json'), JSON.stringify({ revision: 'a'.repeat(40) }));
+    if (tree === 'immutable revision') {
+      await writeFile(join(fixture, '.happier-revision-tree-ref.json'), JSON.stringify({ revision: 'a'.repeat(40) }));
+    }
     await writeFile(join(cli, 'value.mts'), 'export enum Value { answer = 42 }');
     await writeFile(join(cli, 'value.cts'), 'export enum Value { answer = 43 }');
 
@@ -71,6 +73,8 @@ console.log(JSON.stringify({ esm, cjs, ...await transformRetention() }));
     };
     expect(await start()).toMatchObject({ esm: 42, cjs: 43, read: 0 });
     expect(await start()).toEqual({ esm: 42, cjs: 43, read: 2, retained: 0 });
+    await writeFile(join(cli, 'value.mts'), 'export enum Value { answer = 44 }');
+    expect(await start()).toEqual({ esm: 44, cjs: 43, read: 1, retained: 0 });
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }

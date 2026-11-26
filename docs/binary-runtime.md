@@ -1732,14 +1732,14 @@ workspace source resolver before the tool entry is linked. In current 0.3
 development it selects the cache before loading the adapter. CLI entrypoints in
 Stack's immutable source revision trees reuse tsx's content-keyed transforms from
 a private directory inside that tree. The tree's existing retirement removes its
-cache, and only tsx registration uses the private temp directory. The tsx disk
-cache releases completed transform payloads after successful writes and serves
-warm payloads from disk in these revision trees. When that
-directory cannot be created, the CLI logs the failure and uses in-process
-transforms. In ordinary checkouts, the existing CLI lifetime policy controls
-shared disk reuse. Source tools and the daemon-hosted roles detected by that
-policy use in-process transforms. Installed runtime artifacts use built
-JavaScript. Public/npm preparation
+cache. Daemon-hosted CLI roles in mutable checkouts use the checkout's ignored
+`.happier/tsx-cache` directory, with expiry owned by tsx. Only tsx registration
+uses the scoped temp directory. The disk cache releases completed transform
+payloads after successful writes and serves warm payloads from disk across
+process restarts. When the scoped directory cannot be created, the CLI logs the
+failure and uses in-process transforms. Finite CLI commands in mutable checkouts
+use the shared tsx disk cache. Source tools use in-process transforms. Installed
+runtime artifacts use built JavaScript. Public/npm preparation
 explicitly requests `--package-artifacts` when installed plugin manifests and
 runtime bytes must be materialized. Its workspace compilation and strict declaration
 checks remain owned by `buildSharedDeps.mjs` and the package-build owner, not by the

@@ -337,7 +337,7 @@ console.log(JSON.stringify([esm.Value.answer, cjs.Value.answer]));
     }
   });
 
-  it('reuses finite CLI source transforms while observing source edits and leaving daemon roles uncached', async () => {
+  it('reuses finite CLI source transforms while scoping daemon-hosted cache indexes', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'happier-finite-source-cache-'));
     const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
     try {
@@ -397,7 +397,7 @@ console.log(JSON.stringify({ value: (await import('./value.mts')).Value.answer, 
         ['codex', '--started-by', 'daemon'], ['codex', '--started-by=daemon']]) {
         await rm(indexed, { force: true });
         expect(await run(args)).toBe('43');
-        expect(existsSync(indexed), 'daemon-hosted roles must not retain the shared index').toBe(false);
+        expect(dirname(await readFile(indexed, 'utf8'))).toBe(join(fixture, '.happier', 'tsx-cache'));
       }
 
       await writeFile(join(fixture, '.happier-revision-tree-ref.json'), JSON.stringify({ revision: 'a'.repeat(40) }));

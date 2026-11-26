@@ -19,23 +19,23 @@ const cliDir = join(repoDir, 'apps', 'cli');
 const isCliEntrypoint = ['src/index.ts', 'src/index.mjs', 'bin/happier.mjs', 'bin/happier-dev.mjs']
   .some(entry => entrypoint === join(cliDir, entry));
 const isRevisionCli = isCliEntrypoint && existsSync(join(repoDir, '.happier-revision-tree-ref.json'));
-let revisionCacheRoot;
-if (isRevisionCli) {
-  const cacheRoot = join(repoDir, '.happier-tsx-cache');
+const isDaemonHostedCli = isCliEntrypoint && !isRevisionCli && (await import(
+  new URL('../../apps/cli/src/cli/readStartedByArg.mjs', import.meta.url)
+)).isDaemonHostedCliInvocation(process.argv.slice(2));
+// Scope the index for long-lived hosts. Revision trees already own their
+// cache directory and retirement, and mutable checkouts use ignored state.
+const useScopedCache = isRevisionCli || isDaemonHostedCli;
+let scopedCacheRoot;
+if (useScopedCache) {
+  const cacheRoot = isRevisionCli ? join(repoDir, '.happier-tsx-cache') : join(repoDir, '.happier', 'tsx-cache');
   try {
     mkdirSync(cacheRoot, { mode: 0o700, recursive: true });
-    revisionCacheRoot = cacheRoot;
+    scopedCacheRoot = cacheRoot;
   } catch (error) {
-    console.error(`[source-runtime] revision tsx cache unavailable (${error?.code ?? 'mkdir_failed'})`);
+    console.error(`[source-runtime] scoped tsx cache unavailable (${error?.code ?? 'mkdir_failed'})`);
   }
 }
-// tsx retains the index of its whole cache directory. Source revision trees
-// own their directory and its cleanup. Other hosts keep the CLI lifetime policy.
-const cacheTransforms = isRevisionCli
-  ? revisionCacheRoot !== undefined
-  : isCliEntrypoint && !(await import(
-      new URL('../../apps/cli/src/cli/readStartedByArg.mjs', import.meta.url)
-    )).isDaemonHostedCliInvocation(process.argv.slice(2));
+const cacheTransforms = useScopedCache ? scopedCacheRoot !== undefined : isCliEntrypoint;
 if (cacheTransforms) delete process.env.TSX_DISABLE_CACHE;
 else process.env.TSX_DISABLE_CACHE = '1';
 let tsconfig = process.env.TSX_TSCONFIG_PATH || undefined;
@@ -53,9 +53,9 @@ if (!tsconfig && process.argv[1] && existsSync(process.argv[1])) {
 // temporary directory override to that registration, keeping app temp IO local.
 const overrides = new Map();
 if (tsconfig) overrides.set('TSX_TSCONFIG_PATH', tsconfig);
-if (revisionCacheRoot) {
-  for (const key of ['TMPDIR', 'TMP', 'TEMP']) overrides.set(key, revisionCacheRoot);
-  // Keep the revision's disk reuse without retaining completed transform payloads.
+if (scopedCacheRoot) {
+  for (const key of ['TMPDIR', 'TMP', 'TEMP']) overrides.set(key, scopedCacheRoot);
+  // Reuse disk transforms without retaining completed payloads in the host.
   overrides.set('HAPPIER_TSX_FILE_CACHE_RELEASE_TRANSFORMS', '1');
 }
 const inheritedEnvironment = new Map();
