@@ -148,10 +148,6 @@ export type CodexAppServerEvent =
       kind: 'session-id-publish';
       publishedSessionId: string;
       source: string;
-    }>)
-  | (CodexAppServerEventBase & Readonly<{
-      kind: 'descriptor-update';
-      descriptor: unknown;
     }>);
 
 export type CodexAppServerEventInput = CodexAppServerEvent extends infer Event

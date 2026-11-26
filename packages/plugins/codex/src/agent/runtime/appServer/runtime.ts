@@ -77,7 +77,6 @@ import {
   mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot,
 } from '../../auth/services/usage/snapshot.js';
 import {
-  buildCodexAgentRuntimeDescriptorV1,
   readExactCodexProviderSessionId,
 } from '../../../protocol/runtimeDescriptorV1.js';
 import {
@@ -1658,16 +1657,6 @@ export function createCodexAppServerRuntime(
       kind: 'session-id-publish',
       publishedSessionId: exactThreadId,
       source: 'codex-app-server',
-    });
-    publishRuntimeEvent({
-      kind: 'descriptor-update',
-      descriptor: buildCodexAgentRuntimeDescriptorV1({
-        backendMode: 'appServer',
-        providerSessionId: exactThreadId,
-        appServerEndpoint: params.appServerEndpoint,
-        appServerTransport: params.appServerTransport,
-        homePath: resolveCodexHome(readRuntimeProcessEnv()),
-      }),
     });
   };
 

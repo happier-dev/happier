@@ -49,6 +49,7 @@ import {
 } from './native.js';
 import type { CodexAppServerEvent, CodexAppServerSession } from './core.js';
 import { handleTokenUsageNotification } from '../../usage/handleTokenUsageNotification.js';
+import { exportCodexSessionBundle } from '../../surfaces/sessions/handoff/export.js';
 
 function createAppServerSession(): Readonly<{
   runtime: Parameters<typeof createCodexNativeAppServerSessionRuntime>[0];
@@ -128,6 +129,56 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       request: vi.fn(async () => ({ threadId: 'forked-thread' })),
       dispose: vi.fn(async () => undefined),
     });
+  });
+
+  it('records the Codex home a new Session launched with, so its handoff exports from that home', async () => {
+    // Live shape (wave 36 H02): a Use guest's Session runs on its own materialized
+    // CODEX_HOME while the Machine daemon's environment names the owner's home.
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-launch-home-'));
+    try {
+      const sessionHome = join(root, 'requester-session-home', 'codex');
+      const machineHome = join(root, 'machine-owner-home');
+      const rolloutDir = join(sessionHome, 'sessions', '2026', '11', '26');
+      const rolloutPath = join(rolloutDir, 'rollout-2026-11-26T21-45-06-thread-1.jsonl');
+      await mkdir(rolloutDir, { recursive: true });
+      await mkdir(machineHome, { recursive: true });
+      await writeFile(rolloutPath, `${JSON.stringify({ type: 'session_meta', payload: { id: 'thread-1' } })}\n`);
+      const appServer = createAppServerSession();
+      runtimeModuleMocks.createCodexAppServerRuntime.mockReturnValueOnce({
+        ...appServer.runtime,
+        prepareProviderCliAttach: vi.fn(async () => 'thread-1'),
+      });
+      const context = {
+        signal: new AbortController().signal,
+        services: {
+          logger: { debug: vi.fn() },
+          sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
+          connectedAccounts: createConnectedAccountsFixture(),
+        },
+        session: { id: 'session-1', services: {} },
+        workState: { publisher: () => ({ publish: async () => ({ status: 'applied', revision: 'fixture-plan' }) }) },
+        ui: { title: { set: vi.fn(async () => undefined) } },
+      } as unknown as AgentSessionRuntimeContext;
+
+      const session = await openCodexNativeAppServerSession({
+        kind: 'create',
+        sessionId: 'session-1',
+        cwd: root,
+        runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } },
+        launchEnvironment: { values: { CODEX_HOME: sessionHome }, unset: [] },
+      }, context);
+
+      const bundle = await exportCodexSessionBundle({
+        metadata: { path: root, runtimeDescriptorV1: session.runtimeDescriptorV1 },
+        remoteSessionId: 'thread-1',
+        env: { CODEX_HOME: machineHome },
+        activeServerDir: join(root, 'active-server'),
+      });
+      expect(bundle.files.map(file => file.contentFile?.filePath)).toEqual([rolloutPath]);
+      await session.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('reuses the native Codex daemon for an exact daemon-proxy resume', async () => {

@@ -35,7 +35,7 @@ import type {
 import { forkCodexNativeAppServerConversation } from '../../surfaces/sessions/fork/native.js';
 import { OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL } from '../../auth/services/quota/rateLimitResetCreditsClient.js';
 import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
-import { createCodexNativeAppServerClient } from './client.js';
+import { createCodexNativeAppServerClient, resolveCodexHome } from './client.js';
 import { CODEX_TOOL_RESTRICTION_RUNTIME_REMEDY } from '../../cli/supportedRuntime.js';
 import {
   createCodexAppServerRuntime,
@@ -1222,7 +1222,9 @@ export async function openCodexNativeAppServerSession(
       backendMode: 'appServer',
       providerSessionId: providerSessionId ?? runtime.identity.read().providerSessionId,
       home: runtimeDescriptor?.home,
-      homePath: runtimeDescriptor?.homePath,
+      // The CODEX_HOME this Session's app-server runs with; Session handoff exports from it.
+      // A daemon-proxied resume reuses a server this open did not launch.
+      homePath: appServerTransport === 'daemonProxy' ? runtimeDescriptor?.homePath : resolveCodexHome(processEnv),
       connectedServiceId: runtimeDescriptor?.connectedServiceId,
       connectedServiceProfileId: runtimeDescriptor?.connectedServiceProfileId,
       connectedServiceGroupId: runtimeDescriptor?.connectedServiceGroupId,
