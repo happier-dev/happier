@@ -335,7 +335,7 @@ describe("Team credential resource lifecycle", () => {
                 manageAudience: false,
                 managePolicy: false,
                 manageLimits: false,
-                updateBrokerPlacement: true,
+                updateBrokerPlacement: false,
                 narrowDisclosure: true,
                 refreshDirectMaterial: false,
                 disable: true,
@@ -763,12 +763,19 @@ describe("Team credential resource lifecycle", () => {
             authentication: TEST_AUTHENTICATION,
             patch: { resourceId: resource.id, expectedRevision: 0, deliveryPolicy: { preferredAllowedModes: ["brokered"] } },
         }))).resolves.toEqual({ ok: false, error: "resource_forbidden" });
-        await db.teamMembership.deleteMany({ where: { teamId: team.id, accountId: custodian.id } });
         await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
             actorAccountId: custodian.id,
             authentication: TEST_AUTHENTICATION,
             patch: { resourceId: resource.id, expectedRevision: 0, brokerPlacement: { kind: "machine", machineId: broker.id } },
         }))).resolves.toEqual({ ok: true, resourceId: resource.id, revision: 1 });
+        // Selecting a broker location is current custodian consent: after leaving
+        // the Team the custodian may still withdraw, but no longer retarget.
+        await db.teamMembership.deleteMany({ where: { teamId: team.id, accountId: custodian.id } });
+        await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
+            actorAccountId: custodian.id,
+            authentication: TEST_AUTHENTICATION,
+            patch: { resourceId: resource.id, expectedRevision: 1, brokerPlacement: null },
+        }))).resolves.toEqual({ ok: false, error: "resource_forbidden" });
     });
 
     it("replaces the complete resource document and a bounded limit delta at one CAS revision", async () => {

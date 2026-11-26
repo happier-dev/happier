@@ -27,10 +27,14 @@ export function projectTeamCredentialResourceAdministrationCapabilities(
         manageAudience: manager,
         managePolicy: manager,
         manageLimits: manager,
-        updateBrokerPlacement: custodian,
+        // Retargeting and widening are current custodian consent; withdrawal
+        // stays with the source custodian after leaving the Team.
+        updateBrokerPlacement: custodian && input.isQualifiedTeamMember,
         updateDeliveryPolicy: custodian,
         narrowDisclosure: custodian && input.resource.deliveryPolicy.preferredAllowedModes.some(route => route !== 'brokered'),
-        widenDisclosure: custodian && !input.resource.deliveryPolicy.preferredAllowedModes.includes('direct'),
+        widenDisclosure: custodian
+            && input.isQualifiedTeamMember
+            && !input.resource.deliveryPolicy.preferredAllowedModes.includes('direct'),
         refreshDirectMaterial: custodian
             && input.isQualifiedTeamMember
             && input.resource.enabled

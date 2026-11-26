@@ -8,6 +8,7 @@ import type { TeamOperationAuthenticationContext } from "../actorContext";
 import { qualifyTeamOperationAuthenticationInTx, resolveTeamActorContextInTx } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { readTeamCredentialBrokerPlacement, resolveTeamCredentialBrokerPlacementInTx } from "./brokerPlacementResolver";
+import { authorizeTeamCredentialCustodianConsentInTx } from "./resourceUpdate";
 
 type TeamCredentialResourceTestAuthorization = Readonly<{
     teamId: string;
@@ -41,13 +42,19 @@ export async function authorizeTeamCredentialResourceTestActorInTx(
         error: "not_found_or_not_visible" | "team_authentication_required" | "team_authentication_policy_unavailable";
     }>
 > {
-    if (input.custodianAccountId === input.actorAccountId) {
-        return { ok: true, authority: "source_owner", verifiedCredentialEvidence: undefined };
-    }
     const actor = await resolveTeamActorContextInTx(tx, {
         teamId: input.teamId,
         actorAccountId: input.actorAccountId,
     });
+    if (input.custodianAccountId === input.actorAccountId) {
+        // Testing exercises the custodian's source for this Team, so it needs
+        // the same current custodian consent as retargeting it.
+        const consent = await authorizeTeamCredentialCustodianConsentInTx(tx, { ...input, actor });
+        if (!consent.ok) {
+            return { ok: false, error: consent.error === "resource_forbidden" ? "not_found_or_not_visible" : consent.error };
+        }
+        return { ok: true, authority: "source_owner", verifiedCredentialEvidence: input.authentication.authenticationEvidence };
+    }
     if (!actor || !resolveTeamCredentialCapabilities({
         ...actor,
         teamArchivedAt: actor.team.archivedAt,

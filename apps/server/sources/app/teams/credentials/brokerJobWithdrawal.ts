@@ -10,14 +10,20 @@ async function advanceResourceRevisionsInTx(tx: Tx, teamId: string, resourceIds:
     }
 }
 
-/** A removed or suspended membership withdraws every resource it could use. */
+/**
+ * A removed or suspended membership withdraws every resource it could use, and
+ * every resource it offers as custodian: Team use requires an effective custodian.
+ */
 export async function advanceBrokerJobRevisionsForMembershipInTx(
     tx: Tx,
-    input: Readonly<{ teamId: string; teamMembershipId: string }>,
+    input: Readonly<{ teamId: string; teamMembershipId: string; accountId: string }>,
 ): Promise<void> {
-    const [allMembers, directGrants, groupMemberships] = await Promise.all([
+    const [allMembers, custodied, directGrants, groupMemberships] = await Promise.all([
         tx.teamCredentialResource.findMany({
             where: { teamId: input.teamId, allMembersDeliveryMode: { not: null } }, select: { id: true },
+        }),
+        tx.teamCredentialResource.findMany({
+            where: { custodianAccountId: input.accountId, teamId: input.teamId }, select: { id: true },
         }),
         tx.teamCredentialMemberGrant.findMany({
             where: { teamMembershipId: input.teamMembershipId, resource: { teamId: input.teamId } },
@@ -38,6 +44,7 @@ export async function advanceBrokerJobRevisionsForMembershipInTx(
     }
     await advanceResourceRevisionsInTx(tx, input.teamId, [
         ...allMembers.map(row => row.id),
+        ...custodied.map(row => row.id),
         ...directGrants.map(row => row.resourceId),
         ...groupGrants.map(row => row.resourceId),
     ]);

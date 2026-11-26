@@ -65,6 +65,8 @@ describe("Team credential resource administration capabilities", () => {
     });
 
     it("withdraws current-Team-only and state-inapplicable operations", () => {
+        // A custodian outside current, qualified Team participation keeps only
+        // withdrawal: no broker retargeting and no widening of route consent.
         expect(projectTeamCredentialResourceAdministrationCapabilities({
             resource: { enabled: false, deliveryPolicy: { preferredAllowedModes: ['brokered'] } },
             isSourceCustodian: true,
@@ -74,10 +76,10 @@ describe("Team credential resource administration capabilities", () => {
             manageAudience: false,
             managePolicy: false,
             manageLimits: false,
-            updateBrokerPlacement: true,
+            updateBrokerPlacement: false,
             updateDeliveryPolicy: true,
             narrowDisclosure: false,
-            widenDisclosure: true,
+            widenDisclosure: false,
             refreshDirectMaterial: false,
             disable: false,
             enable: false,

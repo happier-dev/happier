@@ -26,6 +26,8 @@ import {
 } from "./sessionBinding";
 import { readSessionTeamCredentialNativeSelectionInTx } from './nativeDeliveryRead';
 import { deleteTeamCredentialResourceInTx } from './resourceDelete';
+import { setTeamCredentialAudienceInTx } from './resourceAudience';
+import { updateTeamCredentialResourceInTx } from './resourceUpdate';
 import { projectTeamCredentialResourceSummaryInTx, readTeamCredentialCatalogInTx } from './resourceRead';
 import { projectTeamCredentialCatalogBrokerReadiness } from './brokerReadiness';
 import { projectTeamCredentialCatalogModels } from './catalogModels';
@@ -99,6 +101,26 @@ describe("planned Session Team credential selection (SQLite)", () => {
             accountId: f.creator.id, intents: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: null }],
             authentication: TEST_AUTHENTICATION }))).resolves.toEqual({ ok: true });
         expect(await db.sessionTeamCredentialBinding.count({ where: { nativeManagedId: f.row.id } })).toBe(0);
+        const after = await db.accountChange.findFirst({ where });
+        expect(after?.hint).toEqual({ managedMachinePolicy: true, machineId: f.controller.id });
+        expect(after?.cursor).toBeGreaterThan(before?.cursor ?? 0);
+    });
+
+    it.each(['disabled', 'withdrawn from its audience'] as const)('wakes the native controller when the resource is %s', async (withdrawal) => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        expect(await inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id,
+            accountId: f.creator.id, intents: [f.intent], authentication: TEST_AUTHENTICATION }))).toEqual({ ok: true });
+        const where = { accountId: f.custodian.id, kind: 'account', entityId: f.row.id };
+        const before = await db.accountChange.findFirst({ where });
+        if (withdrawal === 'disabled') await expect(inTx(tx => updateTeamCredentialResourceInTx(tx, {
+            actorAccountId: f.custodian.id, authentication: TEST_TEAM_AUTHENTICATION,
+            patch: { resourceId: f.credential.id, expectedRevision: f.credential.revision, enabled: false },
+        }))).resolves.toMatchObject({ ok: true });
+        else await expect(inTx(tx => setTeamCredentialAudienceInTx(tx, {
+            actorAccountId: f.custodian.id, authentication: TEST_TEAM_AUTHENTICATION,
+            input: { resourceId: f.credential.id, expectedRevision: f.credential.revision,
+                allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [] },
+        }))).resolves.toMatchObject({ ok: true });
         const after = await db.accountChange.findFirst({ where });
         expect(after?.hint).toEqual({ managedMachinePolicy: true, machineId: f.controller.id });
         expect(after?.cursor).toBeGreaterThan(before?.cursor ?? 0);

@@ -105,10 +105,17 @@ it('refreshes a recently expired watcher only while its Event trigger and Team e
             automationId: automation.id, triggerId: trigger.id, triggerRevision: trigger.revision, sourceSelectorId,
         };
         let advertisePresence = true;
-        app.decorate('machineDaemonPresence', { in: () => ({ fetchSockets: async () => advertisePresence ? [
+        // Runs once inside the live presence read, after admission and before placement.
+        let duringPresenceRead: (() => Promise<unknown>) | null = null;
+        app.decorate('machineDaemonPresence', { in: () => ({ fetchSockets: async () => {
+            const concurrent = duringPresenceRead;
+            duringPresenceRead = null;
+            await concurrent?.();
+            return advertisePresence ? [
             { data: { clientType: 'machine-scoped', userId: requester.id, machineId: initiatorMachineId } },
             { data: { clientType: 'machine-scoped', userId: custodian.id, machineId: broker.id } },
-        ] : [] }) });
+        ] : [];
+        } }) });
         registerTeamCredentialProviderBrokerRoutes(app);
 
         const body = ProviderBrokerWatcherOpenRequestV1Schema.parse({
@@ -155,6 +162,11 @@ it('refreshes a recently expired watcher only while its Event trigger and Team e
             authority: result.authority, signingCapability: signing.capability, nowMs: result.authority.payload.issuedAt,
         });
         expect(verifies()).toBe(true);
+        // A withdrawal committed while the open awaits live presence advances the
+        // authority revision; the open must not sign a grant for the admitted one.
+        duringPresenceRead = () => db.teamCredentialResource.update({ where: { id: resource.id }, data: { revision: { increment: 1 } } });
+        expect((await open({ ...body, activation })).json()).toEqual({ ok: false, reasonCode: 'resource_changed' });
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { revision: resource.revision } });
         expect((await open({ ...body, caller: { ...body.caller, occurrenceId: 'different-occurrence' } }, proof(body))).json())
             .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect((await open({ ...body, initiatorMachineId: broker.id })).json())

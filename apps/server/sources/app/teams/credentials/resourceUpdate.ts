@@ -1,7 +1,7 @@
 import { deleteTeamCredentialUsageCountersInTx } from './teamCredentialUsageCounters';
 import { isDeepStrictEqual } from "node:util";
 import { z } from 'zod/mini';
-import { TeamCredentialDeliveryPolicyV1Schema, TeamCredentialSessionUsePolicyV1Schema, TeamCredentialRequestPolicyV1Schema, TeamCredentialBrokerPlacementV1Schema, TeamCredentialResourceReplacementV1Schema, TeamCredentialResourceUpdateInputV1Schema, type TeamCredentialResourceUpdateInputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialDeliveryPolicyV1Schema, TeamCredentialSessionUsePolicyV1Schema, TeamCredentialRequestPolicyV1Schema, TeamCredentialBrokerPlacementV1Schema, TeamCredentialResourceReplacementV1Schema, TeamCredentialResourceUpdateInputV1Schema, type TeamCredentialDeliveryPolicyV1, type TeamCredentialResourceUpdateInputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { narrowTeamCredentialAudience, readTeamCredentialAudience, readTeamCredentialDeliveryConfiguration, serializeTeamCredentialAudience } from './resourceDeliveryRead';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
@@ -10,6 +10,7 @@ import { AccountStatus } from "@/storage/enums.generated";
 import { acquireTeamMutationLockInTx, resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { publishTeamChangedInTx } from "../teamChanges";
+import { publishNativeCredentialPolicyChangesInTx, readNativeCredentialPolicyPublicationAccountIdsInTx } from "./nativePolicyChanges";
 import { recordTeamCredentialResourceActivityInTx } from "./resourceActivity";
 import { readTeamCredentialBrokerPlacement, validateTeamCredentialBrokerPlacementForSaveInTx } from "./brokerPlacementResolver";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
@@ -38,6 +39,101 @@ export type UpdateTeamCredentialResourceResult =
     | Readonly<{ ok: true; resourceId: string; revision: number }>
     | Readonly<{ ok: false; error: "resource_not_found" | "resource_forbidden" | "resource_changed" | "invalid_resource_input" | "invalid_audience" | "invalid_limit" | "subject_not_in_team" | "token_limit_unavailable" | "cost_limit_unavailable" | "source_replaced_or_missing" | "disclosure_not_allowed" | "broker_unavailable" | "update_required" | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
+type TeamCredentialAuthorityRefusal = Readonly<{
+    ok: false;
+    error: "resource_forbidden" | "team_authentication_required" | "team_authentication_policy_unavailable";
+}>;
+type TeamCredentialAuthorityResult = Readonly<{ ok: true }> | TeamCredentialAuthorityRefusal;
+type TeamCredentialActor = NonNullable<Awaited<ReturnType<typeof resolveTeamActorContextInTx>>>;
+
+/**
+ * A custodian's consent to expand or retarget their own credential (widen
+ * route consent, select another source or broker location, run the saved test)
+ * is current Team participation: the custodian may offer credentials in this
+ * unarchived Team and satisfies its authentication policy.
+ */
+export async function authorizeTeamCredentialCustodianConsentInTx(
+    tx: Tx,
+    input: Readonly<{ teamId: string; actorAccountId: string; authentication: TeamOperationAuthenticationContext; actor?: TeamCredentialActor | null }>,
+): Promise<TeamCredentialAuthorityResult> {
+    const actor = input.actor !== undefined ? input.actor : await resolveTeamActorContextInTx(tx, {
+        teamId: input.teamId,
+        actorAccountId: input.actorAccountId,
+    });
+    if (actor === null || !resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt }).offerOwnCredential) {
+        return { ok: false, error: "resource_forbidden" };
+    }
+    const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
+    return qualification.ok ? { ok: true } : qualification;
+}
+
+/**
+ * The one update authority decision shared by patch and replacement.
+ *
+ * Withdrawal (disabling the resource or narrowing route consent) stays
+ * available to the active source custodian even after they leave the Team, so
+ * they can always take their own credential out of service. Every expanding or
+ * retargeting custodian change needs current custodian consent, and every
+ * manager-owned change needs a qualified Team manager. Only an active custodian
+ * or a qualified manager is admitted to read stored row state.
+ */
+async function resolveTeamCredentialUpdateAuthorityInTx(
+    tx: Tx,
+    input: Readonly<{
+        resource: Readonly<{ teamId: string; custodianAccountId: string }>;
+        actorAccountId: string;
+        authentication: TeamOperationAuthenticationContext;
+    }>,
+) {
+    const actor = await resolveTeamActorContextInTx(tx, {
+        teamId: input.resource.teamId,
+        actorAccountId: input.actorAccountId,
+    });
+    const canManageStructurally = actor !== null
+        && resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt }).manageCredentials;
+    const isCustodian = input.resource.custodianAccountId === input.actorAccountId;
+    const custodianAccount = isCustodian
+        ? await tx.account.findUnique({ where: { id: input.actorAccountId }, select: { status: true } })
+        : null;
+    const isActiveCustodian = custodianAccount?.status === AccountStatus.active;
+    let manager: Promise<TeamCredentialAuthorityResult> | undefined;
+    let consent: Promise<TeamCredentialAuthorityResult> | undefined;
+    const requireManager = (): Promise<TeamCredentialAuthorityResult> => manager ??= actor === null || !canManageStructurally
+        ? Promise.resolve({ ok: false, error: "resource_forbidden" })
+        : qualifyTeamCredentialOperationInTx(tx, actor, input.authentication)
+            .then((result): TeamCredentialAuthorityResult => result.ok ? { ok: true } : result);
+    const requireCustodianConsent = (): Promise<TeamCredentialAuthorityResult> => consent ??= !isActiveCustodian
+        ? Promise.resolve({ ok: false, error: "resource_forbidden" })
+        : authorizeTeamCredentialCustodianConsentInTx(tx, {
+            teamId: input.resource.teamId,
+            actorAccountId: input.actorAccountId,
+            authentication: input.authentication,
+            actor,
+        });
+    const requireWithdrawal = (): Promise<TeamCredentialAuthorityResult> => isActiveCustodian
+        ? Promise.resolve({ ok: true })
+        : requireManager();
+    if (!canManageStructurally && !isActiveCustodian) {
+        return { ok: false as const, error: "resource_forbidden" as const };
+    }
+    // An actor admitted only as a manager qualifies before any stored-row
+    // state is disclosed; the active custodian may read its own resource.
+    if (!isActiveCustodian) {
+        const qualified = await requireManager();
+        if (!qualified.ok) return qualified;
+    }
+    return { ok: true as const, isCustodian, requireManager, requireCustodianConsent, requireWithdrawal };
+}
+
+/** Keeping or removing routes in their stored order withdraws; adding or reordering is consent. */
+function withdrawsRouteConsent(
+    stored: TeamCredentialDeliveryPolicyV1,
+    next: TeamCredentialDeliveryPolicyV1,
+): boolean {
+    const kept = stored.preferredAllowedModes.filter(route => next.preferredAllowedModes.includes(route));
+    return isDeepStrictEqual(kept, next.preferredAllowedModes);
+}
+
 function parseJson(value: string | null): unknown {
     if (value === null) return null;
     try { return JSON.parse(value) as unknown; } catch { return undefined; }
@@ -60,42 +156,12 @@ async function applyResourceReplacementInTx(
     }>,
 ): Promise<UpdateTeamCredentialResourceResult> {
     const resource = input.resource;
-    const actor = await resolveTeamActorContextInTx(tx, {
-        teamId: resource.teamId,
+    const authority = await resolveTeamCredentialUpdateAuthorityInTx(tx, {
+        resource,
         actorAccountId: input.actorAccountId,
+        authentication: input.authentication,
     });
-    const capabilities = actor === null
-        ? null
-        : resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt });
-    const canManageStructurally = capabilities?.manageCredentials === true;
-    const isCustodian = resource.custodianAccountId === input.actorAccountId;
-    const custodianAccount = isCustodian
-        ? await tx.account.findUnique({ where: { id: input.actorAccountId }, select: { status: true } })
-        : null;
-    const isActiveCustodian = custodianAccount?.status === AccountStatus.active;
-    const canActAsCustodian = isCustodian
-        && isActiveCustodian
-        && capabilities?.offerOwnCredential === true;
-    if (!canManageStructurally && !canActAsCustodian) {
-        return { ok: false, error: "resource_forbidden" };
-    }
-    type QualificationResult = Awaited<ReturnType<typeof qualifyTeamCredentialOperationInTx>>
-        | Readonly<{ ok: false; error: "resource_forbidden" }>;
-    let qualification: QualificationResult | undefined;
-    const qualify = async (): Promise<QualificationResult> => {
-        if (qualification !== undefined) return qualification;
-        qualification = actor === null
-            ? { ok: false as const, error: "resource_forbidden" as const }
-            : await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
-        return qualification;
-    };
-    // An actor admitted only as a manager may change only manager-owned
-    // fields, so it qualifies before any stored-row state is disclosed. The
-    // active custodian may read its own resource's state.
-    if (!canActAsCustodian) {
-        const managerQualification = await qualify();
-        if (!managerQualification.ok) return managerQualification;
-    }
+    if (!authority.ok) return authority;
     if (resource.revision !== input.expectedRevision) return { ok: false, error: "resource_changed" };
 
     const storedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
@@ -151,7 +217,7 @@ async function applyResourceReplacementInTx(
             sortedAudience(storedCurrentAudience.memberGrants, "teamMembershipId"),
             sortedAudience(requestedAudience.memberGrants, "teamMembershipId"),
         );
-    const managerOwnedChanged = resource.enabled !== replacement.enabled
+    const managerOwnedChanged = (!resource.enabled && replacement.enabled)
         || input.replacement.displayName !== undefined
         || resource.sessionUsePolicy !== replacement.sessionUsePolicy
         || !isDeepStrictEqual(storedRequestPolicy.data, replacement.requestPolicy)
@@ -161,18 +227,24 @@ async function applyResourceReplacementInTx(
     const requestPolicyChanged = !isDeepStrictEqual(storedRequestPolicy.data, replacement.requestPolicy);
 
     if (managerOwnedChanged) {
-        if (!canManageStructurally) return { ok: false, error: "resource_forbidden" };
-        const managerQualification = await qualify();
-        if (!managerQualification.ok) return managerQualification;
+        const managerAuthority = await authority.requireManager();
+        if (!managerAuthority.ok) return managerAuthority;
+    }
+    if (resource.enabled && !replacement.enabled) {
+        const withdrawal = await authority.requireWithdrawal();
+        if (!withdrawal.ok) return withdrawal;
     }
 
     const custodianBlock = replacement.custodian;
     if (custodianBlock !== undefined) {
-        if (!canActAsCustodian || actor === null) {
-            return { ok: false, error: "resource_forbidden" };
-        }
-        const custodianQualification = await qualify();
-        if (!custodianQualification.ok) return custodianQualification;
+        if (!authority.isCustodian) return { ok: false, error: "resource_forbidden" };
+        const withdrawsOnly = isDeepStrictEqual(storedSource.data, custodianBlock.source)
+            && isDeepStrictEqual(storedPlacement.placement, custodianBlock.brokerPlacement)
+            && withdrawsRouteConsent(storedDelivery.data.policy, custodianBlock.deliveryPolicy);
+        const custodianAuthority = withdrawsOnly
+            ? await authority.requireWithdrawal()
+            : await authority.requireCustodianConsent();
+        if (!custodianAuthority.ok) return custodianAuthority;
     }
     const displayName = input.replacement.displayName === undefined
         ? { kind: 'ready' as const, label: storedDisplayName, serialized: resource.displayName }
@@ -411,6 +483,9 @@ async function applyResourceReplacementInTx(
     } else if (nextAudienceChanged) {
         await retainEntitledTeamCredentialRecipientMaterialInTx(tx, { resourceId: resource.id });
     }
+    // Vendor-native rules keep serving until their controller re-reads the
+    // authority, so an authority change wakes it like resource deletion does.
+    if (authorityChanged) await publishNativeCredentialPolicyChangesInTx(tx, { resourceIds: [resource.id] });
     await recordTeamCredentialResourceActivityInTx(tx, {
         teamId: resource.teamId,
         resourceId: resource.id,
@@ -450,7 +525,8 @@ export async function updateTeamCredentialResourceInTx(
     });
     const recheckAdmission = await acquireTeamMembershipAccountAdmissionInTx(tx, {
         teamId: resourceIdentity.teamId,
-        accountIds: [input.actorAccountId, resourceIdentity.custodianAccountId, ...materializedRecipients.map(row => row.recipientAccountId)],
+        accountIds: [input.actorAccountId, resourceIdentity.custodianAccountId, ...materializedRecipients.map(row => row.recipientAccountId),
+            ...await readNativeCredentialPolicyPublicationAccountIdsInTx(tx, { resourceIds: [patch.resourceId] })],
         membershipIds: patch.replacement?.memberGrants?.map(grant => grant.teamMembershipId) ?? [],
     });
     await acquireTeamMutationLockInTx(tx, resourceIdentity.teamId);
@@ -470,39 +546,37 @@ export async function updateTeamCredentialResourceInTx(
             requestPolicySupport: input.requestPolicySupport,
         });
     }
-    const isCustodian = resource.custodianAccountId === input.actorAccountId;
-    const actor = await resolveTeamActorContextInTx(tx, { teamId: resource.teamId, actorAccountId: input.actorAccountId });
-    const canManageStructurally = actor !== null
-        && resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt }).manageCredentials;
-    const custodianAccount = isCustodian
-        ? await tx.account.findUnique({ where: { id: input.actorAccountId }, select: { status: true } })
-        : null;
-    const isActiveCustodian = custodianAccount?.status === AccountStatus.active;
-    if (!canManageStructurally && !isActiveCustodian) return { ok: false, error: "resource_forbidden" };
-    // A broker Machine is part of the private source binding. Team managers may
-    // administer policy and audience, but they neither receive nor set another
-    // Account's Machine identity.
-    if (patch.brokerPlacement !== undefined && !isCustodian) {
+    const authority = await resolveTeamCredentialUpdateAuthorityInTx(tx, {
+        resource,
+        actorAccountId: input.actorAccountId,
+        authentication: input.authentication,
+    });
+    if (!authority.ok) return authority;
+    // A broker Machine is part of the private source binding, and delivery
+    // allowance and preference are the custodian's consent. Team managers may
+    // administer policy and audience within that allowance, but they neither
+    // receive nor set another Account's Machine identity or route consent.
+    if ((patch.brokerPlacement !== undefined || patch.deliveryPolicy !== undefined) && !authority.isCustodian) {
         return { ok: false, error: "resource_forbidden" };
     }
-    // Delivery allowance and preference are the custodian's consent; Team
-    // management may only shape audiences within that existing allowance.
-    if (patch.deliveryPolicy !== undefined && !isCustodian) {
-        return { ok: false, error: "resource_forbidden" };
-    }
-    const requiresManagerAuthority = !isCustodian
-        || patch.displayName !== undefined
+    if (patch.displayName !== undefined
         || patch.requestPolicy !== undefined
         || patch.sessionUsePolicy !== undefined
-        || patch.enabled === true;
-    if (requiresManagerAuthority && !canManageStructurally) return { ok: false, error: "resource_forbidden" };
-    const qualification = requiresManagerAuthority
-        ? actor === null
-            ? { ok: false as const, error: "resource_forbidden" as const }
-            : await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication)
-        : { ok: true as const };
-    if (!qualification.ok) return qualification;
-    const canManage = canManageStructurally && qualification.ok;
+        || patch.enabled === true) {
+        const managerAuthority = await authority.requireManager();
+        if (!managerAuthority.ok) return managerAuthority;
+    }
+    if (patch.enabled === false) {
+        const withdrawal = await authority.requireWithdrawal();
+        if (!withdrawal.ok) return withdrawal;
+    }
+    const requestedPlacement = patch.brokerPlacement;
+    if (requestedPlacement !== undefined && (
+        (requestedPlacement?.kind === "machine" ? requestedPlacement.machineId : null) !== resource.brokerMachineId
+        || (requestedPlacement?.kind === "machine_pool" ? requestedPlacement.poolId : null) !== resource.brokerPoolId)) {
+        const consent = await authority.requireCustodianConsent();
+        if (!consent.ok) return consent;
+    }
     if (resource.revision !== patch.expectedRevision) return { ok: false, error: "resource_changed" };
     const storedDisplayName = readTeamCredentialResourceDisplayNameStored(resource.displayName);
     if (storedDisplayName === null) return { ok: false, error: 'resource_corrupt' };
@@ -518,6 +592,10 @@ export async function updateTeamCredentialResourceInTx(
     if (!storedDelivery.success || !sessionPolicy.success || !requestPolicy.success) return { ok: false, error: "resource_corrupt" };
     const nextDeliveryPolicy = patch.deliveryPolicy ?? storedDelivery.data.policy;
     const deliveryPolicyChanged = !isDeepStrictEqual(storedDelivery.data.policy, nextDeliveryPolicy);
+    if (!withdrawsRouteConsent(storedDelivery.data.policy, nextDeliveryPolicy)) {
+        const consent = await authority.requireCustodianConsent();
+        if (!consent.ok) return consent;
+    }
     const [currentGroups, currentMembers] = await Promise.all([
         tx.teamCredentialGroupGrant.findMany({ where: { resourceId: resource.id }, select: { teamGroupId: true, deliveryMode: true } }),
         tx.teamCredentialMemberGrant.findMany({ where: { resourceId: resource.id }, select: { teamMembershipId: true, deliveryMode: true } }),
@@ -558,18 +636,10 @@ export async function updateTeamCredentialResourceInTx(
             : null;
         if (nextRequestPolicy === null) return { ok: false, error: "update_required" };
     }
-    if (!canManage) {
-        const changesManagerOwnedField = patch.displayName !== undefined
-            || patch.requestPolicy !== undefined
-            || patch.sessionUsePolicy !== undefined
-            || patch.enabled === true;
-        if (changesManagerOwnedField) return { ok: false, error: "resource_forbidden" };
-    }
     const isWideningDisclosure = nextDeliveryPolicy.preferredAllowedModes.some(route => !storedDelivery.data.policy.preferredAllowedModes.includes(route));
     if (isWideningDisclosure) {
-        // Widening is the active source custodian's own consent; the source
-        // must still be current and able to export direct material.
-        if (!isActiveCustodian) return { ok: false, error: "resource_forbidden" };
+        // Widening was consented above; the source must still be current and
+        // able to export direct material.
         const storedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
         if (!storedSource.success) return { ok: false, error: "resource_corrupt" };
         const currentSource = await resolveTeamCredentialResourceSourceInTx(tx, {
@@ -671,6 +741,7 @@ export async function updateTeamCredentialResourceInTx(
             data: { directSourceVersionsJson: null },
         });
     }
+    if (authorityChanged) await publishNativeCredentialPolicyChangesInTx(tx, { resourceIds: [resource.id] });
     await recordTeamCredentialResourceActivityInTx(tx, {
         teamId: resource.teamId, resourceId: resource.id, kind: "resource_updated",
         actor: { kind: "account", accountId: input.actorAccountId }, subjectDisplayName: displayName.label,

@@ -156,6 +156,16 @@ server that requires the full replacement rejects a custodian-only input without
 changing the resource; clients surface that operation's failure rather than
 filling hidden fields with presentation defaults.
 
+Patch, replacement and the saved-resource test share one custodian rule. Withdrawal
+(disabling the resource, or removing routes from its consent in their stored order) stays
+available to the active source custodian after they leave the Team, so they can always take
+their own credential out of service. Every other custodian change (adding or reordering
+routes, another source or broker location, and the saved-resource test) is current
+consent: the custodian may offer credentials in the unarchived Team and satisfies its
+authentication policy. Suspending or removing the custodian's membership advances the
+authority revision of the resources they offer, and an authority change wakes vendor-native
+controllers as resource deletion does.
+
 The initiator may be a foreign-owned Machine on which the recipient has current
 Machine Use admission and the exact Session/AccessKey binding. The Machine grant
 owner maps the stored `view` level to Use; broker admission does not require an

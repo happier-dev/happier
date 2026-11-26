@@ -49,7 +49,6 @@ import {
     prepareTeamCredentialRecipientMaterialInTx,
     readTeamCredentialDirectMaterialCensusInTx,
     readCurrentTeamCredentialRecipientMaterialInTx,
-    readTeamCredentialRecipientMaterialInTx,
     upsertTeamCredentialRecipientMaterialInTx,
     withdrawTeamCredentialRecipientMaterialInTx,
 } from "./recipientMaterial";
@@ -388,11 +387,7 @@ describe("Team credential recipient material", () => {
             expectedPublishedSourceVersion: null,
         }))).resolves.toEqual({ ok: false, reason: "source_changed" });
         queries.length = 0;
-        await expect(inTx(tx => readTeamCredentialRecipientMaterialInTx(tx, {
-            resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey,
-            expectedSourceVersion: sourceVersion, recipientMode: "plain",
-            expectedRecipientContentPublicKeyFingerprint: null,
-        }))).resolves.toMatchObject({ ok: true, stored });
+        await expect(readCurrent()).resolves.toMatchObject({ ok: true, stored });
         expect(entitlementReads()).toBe(1);
         await expect(inTx(tx => upsertTeamCredentialRecipientMaterialInTx(tx, {
             actorAccountId: recipient.id, resourceId: resource.id, recipientAccountId: recipient.id,
@@ -459,18 +454,14 @@ describe("Team credential recipient material", () => {
         await expect(readCatalog()).resolves.toMatchObject({
             ok: true, page: { resources: [expect.objectContaining({ id: resource.id, directMaterialState: 'current' })] },
         });
-        // Even with an unchanged Home basis, callers cannot fetch the obsolete
-        // private snapshot by supplying its old full version, including a row
-        // not yet replaced after another recipient advances publication.
+        // Even with an unchanged Home basis, the current reader never serves an
+        // obsolete private snapshot, including a row not yet replaced after
+        // another recipient advances publication.
         await db.teamCredentialRecipientMaterial.updateMany({
             where: { resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey },
             data: { sourceVersion, storedMaterial: Buffer.from(JSON.stringify(stored)) },
         });
-        await expect(inTx(tx => readTeamCredentialRecipientMaterialInTx(tx, {
-            resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey,
-            expectedSourceVersion: sourceVersion, recipientMode: 'plain',
-            expectedRecipientContentPublicKeyFingerprint: null,
-        }))).resolves.toMatchObject({ ok: false, reason: 'source_changed' });
+        await expect(readCurrent()).resolves.toMatchObject({ ok: false, reason: 'source_changed' });
         await expect(readCatalog()).resolves.toMatchObject({
             ok: true, page: { resources: [expect.objectContaining({ id: resource.id, directMaterialState: 'stale' })] },
         });
@@ -508,11 +499,7 @@ describe("Team credential recipient material", () => {
             } },
         }));
         expect(replacement).toMatchObject({ ok: true, revision: resource.revision + 1 });
-        const retained = await inTx(tx => readTeamCredentialRecipientMaterialInTx(tx, {
-            resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey,
-            expectedSourceVersion: rotatedSourceVersion, recipientMode: 'plain',
-            expectedRecipientContentPublicKeyFingerprint: null,
-        }));
+        const retained = await readCurrent();
         expect(retained).toMatchObject({ ok: true });
         if (!retained.ok) throw new Error('Expected retained recipient material');
         expect(materializeTeamCredentialDirectMaterialV1({
@@ -601,23 +588,10 @@ describe("Team credential recipient material", () => {
             recipients: [{ recipientAccountId: recipient.id, readiness: "preparing" }],
         });
 
-        // E2EE/plain mode authority: a plain envelope never satisfies an E2EE
-        // recipient binding, and a stale recipient fingerprint fails closed.
-        await expect(inTx(tx => readTeamCredentialRecipientMaterialInTx(tx, {
-            resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey,
-            expectedSourceVersion: rotatedSourceVersion, recipientMode: "e2ee",
-            expectedRecipientContentPublicKeyFingerprint: "deadbeef",
-        }))).resolves.toEqual({ ok: false, reason: "recipient_mode_mismatch" });
-
         await db.teamCredentialMemberGrant.delete({ where: {
             resourceId_teamMembershipId: { resourceId: resource.id, teamMembershipId: membership.id },
         } });
-        await expect(inTx(tx => readTeamCredentialRecipientMaterialInTx(tx, {
-            resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey,
-            expectedSourceVersion: rotatedSourceVersion,
-            recipientMode: "plain",
-            expectedRecipientContentPublicKeyFingerprint: null,
-        }))).resolves.toEqual({ ok: false, reason: "access_removed" });
+        await expect(readCurrent()).resolves.toMatchObject({ ok: false, reason: "access_removed" });
 
         await db.teamCredentialResource.delete({ where: { id: resource.id } });
         await expect(inTx(tx => readTeamCredentialActivityInTx(tx, {
@@ -932,14 +906,18 @@ describe("Team credential recipient material", () => {
             where: { groupDbId: pool.id, credentialId: credential.id },
             data: { enabled: false },
         });
-        await expect(inTx((tx) => readTeamCredentialRecipientMaterialInTx(tx, {
+        await expect(inTx((tx) => readCurrentTeamCredentialRecipientMaterialInTx(tx, {
+            teamId: team.id,
             resourceId: resource.id,
             recipientAccountId: recipient.id,
-            sourceMemberKey,
-            expectedSourceVersion: poolSourceVersion,
-            recipientMode: "plain",
-            expectedRecipientContentPublicKeyFingerprint: null,
-        }))).resolves.toEqual({ ok: false, reason: "source_changed" });
+            slot: { kind: "connected_service_purpose", purpose: {
+                consumer: { pluginId: "example.agent", localId: "runtime" }, purpose: "model-request",
+            } },
+            disclosedMember: accountRef,
+            consumer: { kind: "platform_operation", operationId: "pool-member-disabled" },
+            sessionAuthentication: { env: process.env, authority: "present_user", authenticationEvidence: [] },
+            authentication: { authenticationAuthority: "present_user" },
+        }))).resolves.toMatchObject({ ok: false, reason: "source_changed" });
         await expect(inTx((tx) => readTeamCredentialDirectMaterialCensusInTx(tx, {
             actorAccountId: custodian.id,
             teamId: team.id,

@@ -206,10 +206,19 @@ export async function openTeamCredentialWatcherBroker(input: WatcherOpenInput): 
     }
 
     const initiatorAddress = { machineId: request.initiatorMachineId, endpointId: initiator.endpointId };
-    const placement = await inTx(tx => resolveTeamCredentialBrokerPlacementInTx(tx, {
-        resource, presence: presence.brokerPresence, requestKey: request.caller.occurrenceId,
-        poolInitiator: initiatorAddress, requiredProtocolVersion: 1, poolEligibleMachineIds,
-    }));
+    // The presence and Pool reads above are outside admission. Like the ordinary
+    // broker open, place only against the admitted authority revision: a
+    // withdrawal or retarget committed meanwhile advanced it.
+    const placement = await inTx(async tx => {
+        const current = await tx.teamCredentialResource.findUnique({ where: { id: resource.id }, select: { revision: true } });
+        if (current?.revision !== binding.resourceRevision) return {
+            ok: false as const, error: 'resource_changed' as const, refusalReason: 'prepared_resource_revision_changed',
+        };
+        return await resolveTeamCredentialBrokerPlacementInTx(tx, {
+            resource, presence: presence.brokerPresence, requestKey: request.caller.occurrenceId,
+            poolInitiator: initiatorAddress, requiredProtocolVersion: 1, poolEligibleMachineIds,
+        });
+    });
     signal.throwIfAborted();
     if (!placement.ok) return reportBrokerAdmissionFailure('open', {
         ok: false, reasonCode: placement.error,

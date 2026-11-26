@@ -2523,7 +2523,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 manageAudience: false,
                 managePolicy: false,
                 manageLimits: false,
-                updateBrokerPlacement: true,
+                updateBrokerPlacement: false,
                 narrowDisclosure: true,
                 refreshDirectMaterial: false,
                 disable: true,
@@ -4030,12 +4030,11 @@ describe("Team credential resource routes (SQLite integration)", () => {
             custodian.id,
             { teamId: team.id, resourceId: resource.id },
         );
-        expect(departedSourceOwnerTest.statusCode, departedSourceOwnerTest.body).toBe(200);
-        expect(dispatch).toHaveBeenCalledTimes(2);
-        expect(dispatch).toHaveBeenLastCalledWith(expect.objectContaining({
-            actorAccountId: custodian.id,
-            verifiedCredentialEvidence: undefined,
-        }));
+        // Testing is current custodian consent; a departed source owner sees
+        // the same opaque refusal as an unrelated Account.
+        expect({ status: departedSourceOwnerTest.statusCode, body: departedSourceOwnerTest.json() })
+            .toEqual({ status: 404, body: { error: "not_found_or_not_visible" } });
+        expect(dispatch).toHaveBeenCalledTimes(1);
         const unrelated = await createAccount();
         const unrelatedTest = await post(
             "/v1/teams/credential-resources/test",
@@ -4043,7 +4042,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             { teamId: team.id, resourceId: resource.id },
         );
         expect(unrelatedTest.statusCode, unrelatedTest.body).toBe(404);
-        expect(dispatch).toHaveBeenCalledTimes(2);
+        expect(dispatch).toHaveBeenCalledTimes(1);
     });
 
     it("qualifies every restricted-Team resource administration route before reads or effects", async () => {
@@ -4840,7 +4839,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 manageAudience: false,
                 managePolicy: false,
                 manageLimits: false,
-                updateBrokerPlacement: true,
+                updateBrokerPlacement: false,
                 narrowDisclosure: true,
                 refreshDirectMaterial: false,
                 disable: true,

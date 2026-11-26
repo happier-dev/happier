@@ -222,7 +222,7 @@ export async function setTeamMembershipStatusInTx(
         });
         if (current.status === 'active' && params.status === 'suspended') {
             await advanceBrokerJobRevisionsForMembershipInTx(tx, {
-                teamId: params.teamId, teamMembershipId: params.membershipId,
+                teamId: params.teamId, teamMembershipId: params.membershipId, accountId: params.accountId,
             });
         }
     });

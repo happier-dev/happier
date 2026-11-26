@@ -15,6 +15,7 @@ import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { retainEntitledTeamCredentialRecipientMaterialInTx } from "./recipientMaterial";
 import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolver";
 import { advanceBrokerJobRevisionsForMembershipInTx } from './brokerJobWithdrawal';
+import { publishNativeCredentialPolicyChangesInTx, readNativeCredentialPolicyPublicationAccountIdsInTx } from './nativePolicyChanges';
 import { readTeamCredentialResourceDisplayNameStored } from './privateLabels';
 
 export type TeamCredentialAudienceInput = Readonly<{
@@ -112,7 +113,7 @@ export async function revokeTeamCredentialAudienceForMembershipInTx(
         [...grantedResources, ...materializedResources].map(resource => [resource.id, resource]),
     );
     await advanceBrokerJobRevisionsForMembershipInTx(tx, {
-        teamId: input.teamId, teamMembershipId: input.teamMembershipId,
+        teamId: input.teamId, teamMembershipId: input.teamMembershipId, accountId: input.accountId,
     });
     if (affectedResources.size === 0) return;
 
@@ -168,7 +169,8 @@ export async function setTeamCredentialAudienceInTx(
     });
     const recheckAdmission = await acquireTeamMembershipAccountAdmissionInTx(tx, {
         teamId: resourceIdentity.teamId,
-        accountIds: [params.actorAccountId, resourceIdentity.custodianAccountId, ...materializedRecipients.map(row => row.recipientAccountId)],
+        accountIds: [params.actorAccountId, resourceIdentity.custodianAccountId, ...materializedRecipients.map(row => row.recipientAccountId),
+            ...await readNativeCredentialPolicyPublicationAccountIdsInTx(tx, { resourceIds: [input.resourceId] })],
         membershipIds: input.memberGrants.map(grant => grant.teamMembershipId),
     });
     await acquireTeamMutationLockInTx(tx, resourceIdentity.teamId);
@@ -289,6 +291,7 @@ export async function setTeamCredentialAudienceInTx(
     // audience edit, so the published source versions are unchanged too and a
     // retained recipient keeps working while the custodian is offline.
     await retainEntitledTeamCredentialRecipientMaterialInTx(tx, { resourceId: resource.id });
+    await publishNativeCredentialPolicyChangesInTx(tx, { resourceIds: [resource.id] });
     await recordTeamCredentialResourceActivityInTx(tx, {
         teamId: resource.teamId, resourceId: resource.id, kind: "audience_changed",
         actor: { kind: "account", accountId: params.actorAccountId }, subjectDisplayName: displayName,

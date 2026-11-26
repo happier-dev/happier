@@ -377,20 +377,18 @@ describe('Team credential resource-test broker admission', () => {
             where: { id: resource.id },
             data: { brokerMachineId: broker.id, brokerPoolId: null },
         });
+        // Testing is current custodian consent: a departed source owner is
+        // refused at dispatch and at Home admission, like any non-member.
         await expect(dispatch({
             ...dispatchInput,
             actorAccountId: custodian.id,
             verifiedCredentialEvidence: undefined,
-        })).resolves.toEqual({
-            ok: false,
-            error: 'broker_unavailable',
-            failureDetail: { code: 'broker_unavailable', stage: 'feature' },
-        });
+        })).resolves.toEqual({ ok: false, error: 'policy_denied' });
         await expect(admitRequest(signRequest({
             ...restrictedBindingWithoutEvidence,
             requestId: 'resource-test-departed-source-owner',
             actorAccountId: custodian.id,
-        }), new Date('2026-09-10T10:01:04.000Z'))).resolves.toMatchObject({ ok: true });
+        }), new Date('2026-09-10T10:01:04.000Z'))).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
         const unrelated = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: unrelated.id, role: 'member' } });
         await expect(dispatch({
@@ -406,7 +404,7 @@ describe('Team credential resource-test broker admission', () => {
             ok: false,
             reasonCode: 'operation_not_current',
         });
-        expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(5);
+        expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(4);
         await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: null } });
 
         await db.teamCredentialResource.update({ where: { id: resource.id }, data: { revision: 3 } });
