@@ -17008,6 +17008,7 @@ settingsSession: {
             factApiEquivalent: "Valor a precios actuales de API",
             factInvoice: "Facturado",
             factReported: "Coste informado por agentes",
+            factReportedByProvider: "Coste informado por el proveedor",
             factEstimated: "Estimaciones registradas",
             factUnpriced: "Sin precio de API",
             costRowPartUnpriced: "Una parte sin precio de API",

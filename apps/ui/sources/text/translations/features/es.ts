@@ -295,6 +295,8 @@ const es: Shared_deploymentTelemetryTranslations.Copy = {
     note: 'Las llamadas a modelos de tu app, con tus precios de Uso. Lo que usan tus agentes está en Uso, y nunca se suman.',
     openUsage: 'Abrir Uso',
     dailyCost: 'Coste diario',
+    hourlyCost: 'Coste por hora',
+    allServices: 'Todos los servicios',
     byRoute: 'Por ruta',
     reading: 'Leyendo llamadas a modelos',
     unavailable: 'Las llamadas a modelos no están disponibles en este momento',

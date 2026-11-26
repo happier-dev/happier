@@ -295,6 +295,8 @@ const pl: Shared_deploymentTelemetryTranslations.Copy = {
     note: 'Wywołania modeli przez Twoją aplikację, wycenione według Twoich cen z sekcji Użycie. Użycie agentów jest w sekcji Użycie i nigdy nie jest do nich doliczane.',
     openUsage: 'Otwórz sekcję Użycie',
     dailyCost: 'Koszt dzienny',
+    hourlyCost: 'Koszt godzinowy',
+    allServices: 'Wszystkie usługi',
     byRoute: 'Według trasy',
     reading: 'Odczytywanie wywołań modeli',
     unavailable: 'Wywołania modeli są teraz niedostępne',

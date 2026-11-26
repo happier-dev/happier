@@ -17285,6 +17285,7 @@ settingsSession: {
             factApiEquivalent: "現在の API 価格での価値",
             factInvoice: "請求済み",
             factReported: "エージェント報告のコスト",
+            factReportedByProvider: "プロバイダー報告のコスト",
             factEstimated: "記録された見積もり",
             factUnpriced: "API 価格なし",
             costRowPartUnpriced: "一部は API 価格なし",

@@ -295,6 +295,8 @@ const ja: Shared_deploymentTelemetryTranslations.Copy = {
     note: 'アプリ自身のモデル呼び出しを、使用量の料金で計算しています。エージェントの使用分は使用量にあり、両者が合算されることはありません。',
     openUsage: '使用量を開く',
     dailyCost: '日別コスト',
+    hourlyCost: '時間別コスト',
+    allServices: 'すべてのサービス',
     byRoute: 'ルート別',
     reading: 'モデル呼び出しを読み込み中',
     unavailable: '現在、モデル呼び出しを表示できません',

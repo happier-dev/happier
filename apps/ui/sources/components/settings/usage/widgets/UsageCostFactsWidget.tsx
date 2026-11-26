@@ -22,6 +22,7 @@ import {
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { usagePageCostCaption, usageTokensFromPartsNote } from '../usageCostPresentation';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
+import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
 
 /** Each kind of money is its own fact; they are never summed into one figure. */
 const KIND_ORDER: readonly UsageAnalyticsCostFactKind[] = [
@@ -49,6 +50,11 @@ const KIND_TITLE: Readonly<
   unpriced: 'usage.board.page.factUnpriced',
 };
 
+/** A fact's name: App calls have no agents, so what the provider reported says who reported it. */
+function costFactTitle(kind: UsageAnalyticsCostFactKind, appCalls: boolean): string {
+  return kind === 'reported' && appCalls ? t('usage.board.page.factReportedByProvider') : t(KIND_TITLE[kind]);
+}
+
 /**
  * "What the money means": up to five separate facts — worth at API prices, invoiced, reported,
  * estimated and unpriced tokens. A missing kind is absent, not $0; unpriced is tokens, never money.
@@ -60,6 +66,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   // Unknown never leads: without a known amount the facts stand on their own.
   const total = pageCost?.amountUsd != null && pageCost.selection ? { amountUsd: pageCost.amountUsd, selection: pageCost.selection } : null;
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
+  const appCalls = readUsageAppCallsEnvironmentIds(props.query.sources) !== null;
   const facts = KIND_ORDER.flatMap((kind) => (props.slice.costFactTotals ?? []).filter((fact) => fact.kind === kind &&
       (fact.kind === 'unpriced'
         ? fact.eventCount > 0 || (resolveUsageMeasuredTokens(fact.tokens).total ?? 0) > 0
@@ -112,7 +119,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               theme={chartTheme}
               size="stat"
               showLabel
-              label={t(KIND_TITLE[fact.kind])}
+              label={costFactTitle(fact.kind, appCalls)}
               value={fact.amountUsd ?? tokens.total ?? '—'}
               {...(fact.amountUsd === null
                 ? { unit: t('usage.board.page.tokensUnit') }
@@ -138,7 +145,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
             />;
           return <View key={`${fact.kind}:${fact.currency}`} style={styles.cell}>
             {hiddenPrecision ? <ChartDatum testID={`${props.testID}.fact.${fact.kind}.detail`}
-              datum={{ label: t(KIND_TITLE[fact.kind]),
+              datum={{ label: costFactTitle(fact.kind, appCalls),
                 value: exactAmount === null ? `${exactTokens} ${t('usage.board.page.tokensUnit')}` : `${fact.currency} ${exactAmount}`,
                 subtitle: [fact.amountUsd === null ? null : fact.kind === 'api_equivalent'
                   ? t('usage.board.page.factApiTokens', { tokens: exactTokens }) : t('usage.board.page.factCostTokens', { tokens: exactTokens }),

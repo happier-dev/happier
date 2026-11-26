@@ -289,6 +289,8 @@ const de: Shared_deploymentTelemetryTranslations.Copy = {
     note: 'Die Modellaufrufe deiner App, berechnet mit deinen Nutzungspreisen. Was deine Agenten verbrauchen, steht unter Nutzung; beides wird nie zusammengerechnet.',
     openUsage: 'Nutzung öffnen',
     dailyCost: 'Tägliche Kosten',
+    hourlyCost: 'Stündliche Kosten',
+    allServices: 'Alle Dienste',
     byRoute: 'Nach Route',
     reading: 'Modellaufrufe werden gelesen',
     unavailable: 'Modellaufrufe sind gerade nicht verfügbar',

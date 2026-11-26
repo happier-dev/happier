@@ -23,13 +23,12 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { usageMeterFill } from '@/components/settings/usage/usageAccent';
 import { UsageWidgetBody, type UsageWidgetSuppliedFacts } from '@/components/settings/usage/widgets/UsageWidgetBody';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { readUsageAppCallsPriceOverrides } from '@/sync/api/account/usageAppCallsAccounting';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { appCallsUsageSlice, usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
@@ -119,11 +118,6 @@ export function TelemetryAppLlmCalls(
   const demand = { accountLifetime: lifetime, targetMachineId: reads.targetMachineId, active, follow: true, createClient: createResourceClient };
   const costs = useMachineServiceResource({ ...demand, reference: costsReference, projection: COSTS_PROJECTION });
   const calls = useMachineServiceResource({ ...demand, reference: callsReference, projection: CALLS_PROJECTION });
-  const [service, setService] = React.useState(selection.serviceName ?? '');
-  const [version, setVersion] = React.useState(selection.serviceVersion ?? '');
-  const serviceName = service.trim() || undefined;
-  const serviceVersion = version.trim() || undefined;
-  const selectionChanged = selection.serviceName !== serviceName || selection.serviceVersion !== serviceVersion;
   const scope = lifetime?.scope ?? null;
   const totals = costs?.value ?? null;
   const { pricing, failure: pricingFailure, retry: retryPricing } = useAppCallsPricing(scope, totals);
@@ -138,7 +132,7 @@ export function TelemetryAppLlmCalls(
     });
     const usage = projectAppCallsUsageV1(totals, pricing.catalog, pricing.viewerOverrides, { granularity, costMode: 'api_equivalent' });
     return { query, usage, slice: appCallsUsageSlice({ key: `environment-llm:${environmentId}`, query, usage,
-      catalog: pricing.catalog, readAtMs: totals.until }) };
+      catalog: pricing.catalog, viewerOverrides: pricing.viewerOverrides, readAtMs: totals.until }) };
   }, [environmentId, granularity, pricing, totals]);
   const refreshAll = React.useCallback(async () => {
     await Promise.all([costs?.refresh(), calls?.refresh(), retryPricing()]);
@@ -147,25 +141,33 @@ export function TelemetryAppLlmCalls(
     authority: scope, query: priced.query, slice: priced.slice, pending: false, error: null, refresh: refreshAll,
   } : null, [priced, refreshAll, scope]);
 
+  // What the window shows, as the page's filter chips (lab p7Flows-metrics chips): the services and versions the
+  // retained calls report. A choice applies at once; the chosen one stays offered while it narrows the calls.
+  const services = React.useMemo(() => [...new Set([...(calls?.value ?? []).flatMap(call => call.serviceName ? [call.serviceName] : []),
+    ...(selection.serviceName ? [selection.serviceName] : [])])].sort(), [calls?.value, selection.serviceName]);
+  const versions = React.useMemo(() => [...new Set([...(calls?.value ?? []).flatMap(call =>
+    call.serviceVersion && (!selection.serviceName || call.serviceName === selection.serviceName) ? [call.serviceVersion] : []),
+  ...(selection.serviceVersion ? [selection.serviceVersion] : [])])].sort(), [calls?.value, selection.serviceName, selection.serviceVersion]);
+  const allServices = t('deploymentTelemetry.llm.allServices');
+  const allVersions = t('deploymentTelemetry.metrics.allVersions');
   const filters = (
-    <ItemGroup>
-      <View style={styles.facts}>
-        <FieldItem label={t('deploymentTelemetry.metrics.service')} style={styles.fact}>
-          <FieldTextInput testID="project-deployments.telemetry.llm.service" accessibilityLabel={t('deploymentTelemetry.metrics.service')}
-            value={service} onChangeText={setService} autoCapitalize="none" />
-        </FieldItem>
-        <FieldItem label={t('common.version')} style={styles.fact}>
-          <FieldTextInput testID="project-deployments.telemetry.llm.version" accessibilityLabel={t('common.version')}
-            value={version} onChangeText={setVersion} autoCapitalize="none" />
-        </FieldItem>
-      </View>
-      <View style={styles.note}>
-        <TextLinkButton testID="project-deployments.telemetry.llm.applyFilters" label={t('common.apply')} disabled={!selectionChanged}
-          onPress={() => {
-            onSelect({ ...(serviceName ? { serviceName } : {}), ...(serviceVersion ? { serviceVersion } : {}) });
-          }} />
-      </View>
-    </ItemGroup>
+    <View style={styles.chips}>
+      <SelectionListFilterChip filter={{
+        id: 'project-deployments.telemetry.llm.service', testID: 'project-deployments.telemetry.llm.service',
+        label: t('deploymentTelemetry.metrics.service'), valueLabel: selection.serviceName ?? allServices,
+        selectedId: selection.serviceName ?? ALL, muted: !selection.serviceName,
+        options: [{ id: ALL, label: allServices }, ...services.map(name => ({ id: name, label: name }))],
+        onChange: (id: string) => onSelect(id === ALL ? {} : { serviceName: id }),
+      }} />
+      {versions.length > 0 || selection.serviceVersion ? <SelectionListFilterChip filter={{
+        id: 'project-deployments.telemetry.llm.version', testID: 'project-deployments.telemetry.llm.version',
+        label: t('common.version'), valueLabel: selection.serviceVersion ?? allVersions,
+        selectedId: selection.serviceVersion ?? ALL, muted: !selection.serviceVersion,
+        options: [{ id: ALL, label: allVersions }, ...versions.map(version => ({ id: version, label: version }))],
+        onChange: (id: string) => onSelect({ ...(selection.serviceName ? { serviceName: selection.serviceName } : {}),
+          ...(id === ALL ? {} : { serviceVersion: id }) }),
+      }} /> : null}
+    </View>
   );
 
   const failure = costs?.error ?? calls?.error;
@@ -194,20 +196,20 @@ export function TelemetryAppLlmCalls(
     annotation: t('deploymentTelemetry.llm.tokens', { count: formatTokenCount(entry.tokens.total ?? null, locale) }),
     color: usageMeterFill(theme, index === 0),
   }));
-  const card = (testID: string, title: string | null, children: React.ReactNode) => (
-    <WidgetFrame testID={testID} frameStyle="card" placement="home" rows={0} title={title}
-      body={{ kind: 'content', children }} />
+  const usageCard = (id: 'usage_cost_facts' | 'usage_daily', testID: string, title: string | null) => (
+    <LlmCard testID={`${testID}.frame`} title={title}>
+      {facts ? <UsageWidgetBody id={id} input={NO_INPUT} serverId={facts.authority.serverId} testID={testID} facts={facts} /> : (
+        <SurfaceStateCard testID={`${testID}.reading`} kind="loading" size="line" title={t('deploymentTelemetry.llm.reading')} />
+      )}
+    </LlmCard>
   );
-  const usageCard = (id: 'usage_cost_facts' | 'usage_daily', testID: string, title: string | null) => card(`${testID}.frame`, title,
-    facts ? <UsageWidgetBody id={id} input={NO_INPUT} serverId={facts.authority.serverId} testID={testID} facts={facts} /> : (
-      <SurfaceStateCard testID={`${testID}.reading`} kind="loading" size="line" title={t('deploymentTelemetry.llm.reading')} />
-    ));
   return (
     <View style={styles.body} testID="project-deployments.telemetry.llm">
       {filters}
-      {usageCard('usage_cost_facts', 'project-deployments.telemetry.llm.costFacts', null)}
-      {usageCard('usage_daily', 'project-deployments.telemetry.llm.daily', t('deploymentTelemetry.llm.dailyCost'))}
-      {routeRows.length > 0 ? card('project-deployments.telemetry.llm.routes.frame', t('deploymentTelemetry.llm.byRoute'),
+      {usageCard('usage_cost_facts', 'project-deployments.telemetry.llm.costFacts', t('usage.cost'))}
+      {usageCard('usage_daily', 'project-deployments.telemetry.llm.daily',
+        granularity === 'hour' ? t('deploymentTelemetry.llm.hourlyCost') : t('deploymentTelemetry.llm.dailyCost'))}
+      {routeRows.length > 0 ? <LlmCard testID="project-deployments.telemetry.llm.routes.frame" title={t('deploymentTelemetry.llm.byRoute')}>
         <UsageBreakdownsBody theme={chartTheme} spacing={theme.space} testID="project-deployments.telemetry.llm.routes" model={{
           namedByCard: true,
           blocks: [{
@@ -215,7 +217,7 @@ export function TelemetryAppLlmCalls(
             testID: 'project-deployments.telemetry.llm.routes.rows',
             valueFormatter: value => formatUsageCost(value, 'USD', locale),
           }],
-        }} />) : null}
+        }} /></LlmCard> : null}
       {coverage && (coverage.lostObservations > 0 || coverage.reason !== null) ? (
         <Text variant="meta" style={[styles.quiet, styles.partial]} testID="project-deployments.telemetry.llm.partial">
           {t('deploymentTelemetry.measurement.partial')}
@@ -242,17 +244,29 @@ export function TelemetryAppLlmCalls(
   );
 }
 
+/**
+ * One card of the tab, in the shared widget frame on the page's sheet edge. The Usage body names its period and price
+ * basis beneath the title, as it does on Usage and Home.
+ */
+function LlmCard(props: Readonly<{ testID: string; title: string | null; children: React.ReactNode }>) {
+  const [caption, setCaption] = React.useState<string | null>(null);
+  const body = React.useMemo(() => ({ kind: 'content' as const, children: (
+    <WidgetFrameBodyCaptionContext.Provider value={setCaption}>{props.children}</WidgetFrameBodyCaptionContext.Provider>
+  ) }), [props.children]);
+  return <View style={styles.card}>
+    <WidgetFrame testID={props.testID} frameStyle="card" placement="home" rows={0} title={props.title}
+      {...(caption ? { source: caption } : {})} body={body} />
+  </View>;
+}
+
+const ALL = '';
+
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
-  facts: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    columnGap: theme.space.s24,
-    rowGap: theme.space.s16,
-    paddingVertical: theme.space.s16,
-    paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
-  },
-  fact: { flexGrow: 1, flexBasis: 160, minWidth: 0 },
+  // Cards stand on the sheets' edge, like the groups and lists around them.
+  card: { marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8,
+    paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   quiet: { color: theme.colors.text.secondary },
   partial: { paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   // The note stands on the cards' text edge, as the lab's footnote does.

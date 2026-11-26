@@ -1,7 +1,7 @@
 import type { UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
-import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
+import { projectUsageAccountingSnapshotPrices, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { AppCallsUsageV1 } from '@happier-dev/plugin-sdk/usage';
 import { projectUsageCostFactTotals } from '@happier-dev/protocol/usage/usageCostFactTotals';
 
@@ -22,23 +22,27 @@ export function resolveUsageShownBreakdown(
 }
 
 /**
- * An already admitted App calls read, priced by the viewer's Usage prices (`projectAppCallsUsageV1`), as the result
- * slice the Usage bodies draw. A host that holds its own collector read (an Environment's LLM calls) shows it through the
- * same bodies as Usage → Your apps, instead of drawing its own charts; the query names the App calls subject.
+ * An already admitted App calls read as the result slice the Usage bodies draw, priced the way Usage → Your apps prices
+ * it: the accounting snapshot owner applies the viewer's catalog and overrides for the query's cost basis. A host that
+ * holds its own collector read (an Environment's LLM calls) shows it through the same bodies instead of its own charts.
  */
 export function appCallsUsageSlice(input: Readonly<{
   key: string;
   query: UsageQuery;
   usage: AppCallsUsageV1;
   catalog: UsageModelPriceCatalog;
+  viewerOverrides: UsageModelPriceOverridesV1;
   readAtMs: number;
 }>): UsageQueryResultSlice {
+  const snapshot = projectUsageAccountingSnapshotPrices({ query: input.query, status: 'available', readAtMs: input.readAtMs,
+    value: { ...input.usage.accounting, priceCatalog: input.catalog } }, input.viewerOverrides, input.catalog);
+  const accounting = snapshot.priceProjection?.value ?? snapshot.value!;
   return {
     key: input.key,
     requestedQuery: input.query,
     shownQuery: input.query,
-    accounting: { ...input.usage.accounting, priceCatalog: input.catalog },
-    costFactTotals: projectUsageCostFactTotals(input.usage.accounting.costFacts ?? []),
+    accounting,
+    costFactTotals: projectUsageCostFactTotals(accounting.costFacts ?? []),
     sources: [{ source: 'accounting', status: 'available', asOfMs: input.readAtMs }],
     pending: false,
   };

@@ -295,6 +295,8 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
     note: '你的应用自身的模型调用，按你的用量价格计价。智能体的用量在“用量”中，两者从不相加。',
     openUsage: '打开用量',
     dailyCost: '每日费用',
+    hourlyCost: '每小时费用',
+    allServices: '所有服务',
     byRoute: '按路由',
     reading: '正在读取模型调用',
     unavailable: '暂时无法查看模型调用',

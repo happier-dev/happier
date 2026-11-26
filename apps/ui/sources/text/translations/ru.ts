@@ -16953,6 +16953,7 @@ settingsSession: {
             factApiEquivalent: "Стоимость по текущим ценам API",
             factInvoice: "Выставлено в счетах",
             factReported: "Стоимость по данным агентов",
+            factReportedByProvider: "Стоимость по данным провайдера",
             factEstimated: "Записанные оценки",
             factUnpriced: "Без цены API",
             costRowPartUnpriced: "Частично без цены API",

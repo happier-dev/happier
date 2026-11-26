@@ -926,6 +926,25 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
+  it('opens a shared collector check on the Account’s own online Machine', async () => {
+    await publishMachineInventoryForTest(lifetime.scope, [
+      createMachineFixture({ id: 'collector', isShared: true, active: true, activeAt: Date.now() }),
+      createMachineFixture({ id: 'observer-offline', isShared: false, active: false, activeAt: 1 }),
+      createMachineFixture({ id: 'observer', isShared: false, active: true, activeAt: Date.now() }),
+    ]);
+    const screen = await mount(collector(answers).invoke);
+    try {
+      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
+      const row = screen.find(node => Array.isArray(node.props?.secondaryActions)
+        && typeof node.props?.onSecondaryAction === 'function');
+      await act(async () => row.props.onSecondaryAction('add-check'));
+      expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
+        .toEqual(['observer']);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('offers Add a check… on a route row to managers and opens the check editor on their collector', async () => {
     await publishMachineInventoryForTest(lifetime.scope, [
       createMachineFixture({ id: 'collector', isShared: false }),
@@ -985,9 +1004,10 @@ describe('Environment Telemetry capability views', () => {
         return { ok: true, source, since: now - 86_400_000, until: now, items: [{ bucketStartMs: now - 3_600_000,
           route: { method: 'POST', path: '/checkout' }, provider: 'openai',
           modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat', callCount: 2,
-          tokens: { input: 1800, output: 680, total: 2480, reasoning: null, cacheRead: null, cacheWrite: null }, tokenCategories: null,
+          tokens: { input: 1800, output: 680, total: 2480, reasoning: null, cacheRead: null, cacheWrite: null },
+          tokenCategories: { input: 1800, output: 680, total: 2480, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
           reportedCost: { amount: 0.0042, currency: 'USD' }, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
-          coverage: { lostObservations: 0, reason: null, callCount: 2, tokenCategoryCallCount: 0, reportedCostCallCount: 2 } };
+          coverage: { lostObservations: 0, reason: null, callCount: 2, tokenCategoryCallCount: 2, reportedCostCallCount: 2 } };
       if (call_.actionId.endsWith('/capture/traces/list') && (call_.input as { appLlmCalls?: unknown }).appLlmCalls)
         return { ok: true, source, items: [call] };
       if (call_.actionId.endsWith('/capture/metrics/read')) {
@@ -1121,17 +1141,24 @@ describe('Environment Telemetry capability views', () => {
       ]);
       // Priced with the viewer's Usage prices and drawn by Usage's own bodies: the provider's figure stays its own fact.
       expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0042');
+      // Worth at API prices: 1,800 input and 680 output tokens at the catalog's $0.25 and $2 per million.
+      expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0018');
+      // An app's calls have no agents: the provider reported that cost.
+      expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('Provider-reported cost');
       expect(screen.findByTestId('project-deployments.telemetry.llm.daily.drawn')).not.toBeNull();
       expect(textIn('project-deployments.telemetry.llm.routes')).toContain('POST /checkout');
-      const service = screen.findByTestId('project-deployments.telemetry.llm.service');
-      const version = screen.findByTestId('project-deployments.telemetry.llm.version');
-      expect(service).not.toBeNull();
-      expect(version).not.toBeNull();
-      await act(async () => {
-        service!.props.onChangeText('billing-api');
-        version!.props.onChangeText('v1.43');
+      // Service and version are the window's own facts, chosen from chips; a choice applies at once.
+      await screen.pressByTestIdAsync('project-deployments.telemetry.llm.service');
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('project-deployments.telemetry.llm.service:billing-api')).not.toBeNull();
       });
-      await screen.pressByTestIdAsync('project-deployments.telemetry.llm.applyFilters');
+      await screen.pressByTestIdAsync('project-deployments.telemetry.llm.service:billing-api');
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.llm.version');
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('project-deployments.telemetry.llm.version:v1.43')).not.toBeNull();
+      });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.llm.version:v1.43');
       await settle();
       const selectedReads = calls.filter(read => read.actionId.endsWith('/capture/costs/read') || read.actionId.endsWith('/capture/traces/list')).slice(-2);
       expect(selectedReads).toEqual([
@@ -1147,8 +1174,8 @@ describe('Environment Telemetry capability views', () => {
 
       await screen.pressByTestIdAsync('project-deployments.telemetry.request.back');
       await settle();
-      expect(screen.findByTestId('project-deployments.telemetry.llm.service')?.props.value).toBe('billing-api');
-      expect(screen.findByTestId('project-deployments.telemetry.llm.version')?.props.value).toBe('v1.43');
+      expect(textIn('project-deployments.telemetry.llm.service')).toContain('billing-api');
+      expect(textIn('project-deployments.telemetry.llm.version')).toContain('v1.43');
 
       await screen.pressByTestIdAsync('project-deployments.telemetry.tab:metrics');
       await settle();

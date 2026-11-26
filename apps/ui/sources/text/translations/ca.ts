@@ -16170,6 +16170,7 @@ settingsSession: {
           factApiEquivalent: "Valor als preus actuals d’API",
           factInvoice: "Facturat",
           factReported: "Cost informat pels agents",
+          factReportedByProvider: "Cost informat pel proveïdor",
           factEstimated: "Estimacions registrades",
           factUnpriced: "Sense preu d’API",
           costRowPartUnpriced: "Una part sense preu d’API",

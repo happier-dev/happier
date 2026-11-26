@@ -315,9 +315,9 @@ export function ServiceCheckList(
         // The value and uptime sit beside the trend in the body, so the card has no facts line. Without this the
         // card falls back to its byline as the foot and says line 2 twice.
         facts: () => null,
-        // What it is, or why it fails (lab B2): the row's line 2 without its phone bars.
+        // What it is, or why it fails (lab B2): the row's line 2 without its phone bars; the body states the result.
         description: (row) => (
-          <CheckByline row={row} facts={factsOf(row)} scope={scope} stale={staleOf(row)} loading={settling} columns />
+          <CheckByline row={row} facts={factsOf(row)} scope={scope} stale={staleOf(row)} loading={settling} columns resultInColumn />
         ),
       },
       accessibilityLabel: (row) =>
@@ -465,16 +465,11 @@ function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts; scope: M
       <View style={{ flex: 1, minWidth: 0 }}>
         <ServiceCheckResponseTrend facts={props.facts} scope={props.scope} form="area" label={result.history} />
       </View>
-      {/* The saved result leads the card's figures: its value, then the window and limit it was judged on. */}
+      {/* The saved result leads the card's figures; the description above says the window and limit it was judged on. */}
       <View style={{ alignItems: 'flex-end' }} accessible accessibilityLabel={[result.readout, uptime ? t(`${m}.uptimeOverDays`, { percent: uptime }) : null].filter(Boolean).join(' · ')}>
         {result.value ? (
           <Text style={{ ...Typography.variant('label', 'semiBold'), color: result.tone ?? theme.colors.text.primary, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
             {result.value}
-          </Text>
-        ) : null}
-        {props.facts.ruleText ? (
-          <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary }} numberOfLines={1}>
-            {props.facts.ruleText}
           </Text>
         ) : null}
         {uptime ? (

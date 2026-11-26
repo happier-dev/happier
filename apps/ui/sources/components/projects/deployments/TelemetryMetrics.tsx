@@ -223,7 +223,8 @@ export function TelemetryMetrics(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-  selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
+  // The chips choose what the charts below show; the charts start a step below them.
+  selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8, marginBottom: theme.space.s16 },
   charts: { gap: theme.space.s16 },
   chartsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   chart: { minWidth: 0, gap: theme.space.s8 },

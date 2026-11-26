@@ -50,6 +50,10 @@ export type Copy = Readonly<{
     openUsage: string;
     /** The LLM calls tab's daily cost card (Usage's daily body, App calls subject). */
     dailyCost: string;
+    /** The same card when the window is a day or less and its bars are hours. */
+    hourlyCost: string;
+    /** The service filter chip with no service chosen. */
+    allServices: string;
     /** The LLM calls tab's ranking of the routes that spend it. */
     byRoute: string;
     reading: string;
@@ -220,6 +224,8 @@ const en: Copy = {
     note: 'Your app’s own model calls, priced with your Usage prices. What your agents use is in Usage, and the two are never added together.',
     openUsage: 'Open Usage',
     dailyCost: 'Daily cost',
+    hourlyCost: 'Hourly cost',
+    allServices: 'All services',
     byRoute: 'By route',
     reading: 'Reading model calls',
     unavailable: 'Model calls aren’t available right now',

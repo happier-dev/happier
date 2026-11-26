@@ -20431,6 +20431,7 @@ const enUsage = {
       factApiEquivalent: "Value at current API prices",
       factInvoice: "Invoiced",
       factReported: "Agent-reported cost",
+      factReportedByProvider: "Provider-reported cost",
       factEstimated: "Recorded estimates",
       factUnpriced: "Without an API price",
       costRowPartUnpriced: "Part without an API price",

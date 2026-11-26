@@ -17163,6 +17163,7 @@ settingsSession: {
             factApiEquivalent: "Wert zu aktuellen API-Preisen",
             factInvoice: "In Rechnung gestellt",
             factReported: "Von Agenten gemeldete Kosten",
+            factReportedByProvider: "Vom Anbieter gemeldete Kosten",
             factEstimated: "Erfasste Schätzungen",
             factUnpriced: "Ohne API-Preis",
             costRowPartUnpriced: "Teilweise ohne API-Preis",

@@ -16650,6 +16650,7 @@ settingsSession: {
             factApiEquivalent: "按当前 API 价格计算的价值",
             factInvoice: "已开票",
             factReported: "智能体上报的费用",
+            factReportedByProvider: "提供方上报的费用",
             factEstimated: "已记录的估算",
             factUnpriced: "无 API 价格",
             costRowPartUnpriced: "部分无 API 价格",

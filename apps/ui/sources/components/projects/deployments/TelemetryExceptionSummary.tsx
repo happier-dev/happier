@@ -71,6 +71,8 @@ export function TelemetryExceptionSummary(props: Readonly<{
         }) : undefined}
         mode="info"
         showChevron={false}
+        // The action is wider than a value: on a phone it moves beneath the summary (DESIGN "Phones recompose").
+        accessoryLayout="adaptive"
         rightElementOutsidePressable
         rightElement={<TextLinkButton testID="project-deployments.telemetry.exceptions.open-triage"
           label={t('deploymentTelemetry.exceptionSummary.openTriage')} onPress={open} />}

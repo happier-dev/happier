@@ -268,7 +268,9 @@ const COSTS = COST_ROUTES.flatMap(([method, path, modelId, provider, calls, inpu
       bucketStartMs, route: { method, path }, provider, modelId, requestedModel: modelId, operation: 'chat',
       callCount: Math.max(1, Math.round(calls * share)),
       tokens: { input: inTokens, output: outTokens, total: inTokens + outTokens, reasoning: null, cacheRead: null, cacheWrite: null },
-      tokenCategories: null, reportedCost: reported === null ? null : { amount: Math.round(reported * share * 10_000) / 10_000, currency: 'USD' },
+      // The SDK reports input and output separately, so Usage can price each call.
+      tokenCategories: { input: inTokens, output: outTokens, total: inTokens + outTokens, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+      reportedCost: reported === null ? null : { amount: Math.round(reported * share * 10_000) / 10_000, currency: 'USD' },
       firstSeenMs: bucketStartMs + 2 * MINUTE, lastSeenMs: bucketStartMs + HOUR - 40 * SECOND,
     };
   }));
@@ -339,7 +341,7 @@ export function createTelemetryCaptureFixtureInvoke(
           : { metrics: Date.now() - MINUTE, appLlmCost: Date.now() - 3 * MINUTE, exceptions: null } };
     if (actionId.endsWith('/capture/costs/read'))
       return { ok: true, source, since: NOW - 24 * HOUR, until: NOW, items: waiting ? [] : COSTS,
-        coverage: { lostObservations: 0, reason: null, callCount: waiting ? 0 : COST_CALLS, tokenCategoryCallCount: 0,
+        coverage: { lostObservations: 0, reason: null, callCount: waiting ? 0 : COST_CALLS, tokenCategoryCallCount: waiting ? 0 : COST_CALLS,
           reportedCostCallCount: waiting ? 0 : COST_REPORTED_CALLS } };
     if (actionId.endsWith('/capture/metrics/read')) {
       const selection = input as { view?: string; serviceName?: string; serviceVersion?: string };
