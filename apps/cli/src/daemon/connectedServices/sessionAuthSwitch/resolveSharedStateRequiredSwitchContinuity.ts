@@ -43,6 +43,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
   vendorResumeId?: string | null;
   cwd?: string | null;
   candidatePersistedSessionFile?: string | null;
+  failedFirstLaunch?: 'retry_original_transition';
   warnings?: readonly string[];
 }>): Promise<SessionConnectedServiceSwitchContinuity> {
   if (!input.accountSettings) {
@@ -69,21 +70,13 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
       };
     }
 
-    const vendorResumeId = asNonEmptyString(input.vendorResumeId);
-    // No resume id AND no referenced session file means no provider conversation was ever created
-    // for this Session under this Agent (for example a cross-Agent switch whose target failed to
-    // start). There is no state to carry, so there is nothing to prove reachable: the Session simply
-    // starts fresh under the selected account. Refusing here as "state unavailable" stranded such a
-    // Session, because it blocked the one action that could move it to a working account. A
-    // referenced session file WITHOUT an id is different: a conversation exists and its id was
-    // lost, which stays refused below.
-    if (!vendorResumeId && !asNonEmptyString(input.candidatePersistedSessionFile)) {
-      return {
-        mode: 'restart_rematerialize',
-        warnings: input.warnings ?? [],
-      };
+    if (input.failedFirstLaunch === 'retry_original_transition'
+      && !asNonEmptyString(input.vendorResumeId)
+      && !asNonEmptyString(input.candidatePersistedSessionFile)) {
+      return { mode: 'restart_rematerialize', warnings: input.warnings ?? [] };
     }
 
+    const vendorResumeId = asNonEmptyString(input.vendorResumeId);
     const serviceId = asNonEmptyString(input.serviceId);
     const targetMaterializedRoot = asNonEmptyString(input.targetMaterializedRoot);
     const cwd = asNonEmptyString(input.cwd);

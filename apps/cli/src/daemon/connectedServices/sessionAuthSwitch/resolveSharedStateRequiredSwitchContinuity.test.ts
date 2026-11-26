@@ -1,12 +1,17 @@
+import * as pending from '@/api/session/pendingQueueV2Transport';
+import { observeTransitionTargetSpawn, resolveFailedFirstLaunchAccountSwitch, runFirstTransitionLaunch } from '@/session/agentTransition/failedFirstLaunch';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
 import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+
+import { prepareAgentNativeReturnStrictResume } from '@/session/agentTransition/agentNativeReturn';
+import { resolveTrackedConnectedServiceSwitchContinuityContext } from './resolveTrackedConnectedServiceSwitchContinuityContext';
 
 import { resolveSharedStateRequiredSwitchContinuity } from './resolveSharedStateRequiredSwitchContinuity';
 
@@ -18,6 +23,45 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       await rm(dir, { recursive: true, force: true });
     }));
     tempDirs.length = 0;
+  });
+
+  it('only admits the original refused launch while its handoff and queued input stay current', async () => {
+    const attempt = { sessionId: 'first-launch', agentId: 'claude', localId: 'original-input', metadataVersion: 4, pendingVersion: 2 };
+    const current = { ...attempt, token: 'test-token', active: false };
+    const pendingEligibility = vi.spyOn(pending, 'readPendingQueueV2ActivationEligibilityFromServer');
+    try {
+      pendingEligibility.mockResolvedValue('eligible');
+      await runFirstTransitionLaunch(attempt, async nonce => {
+        const refused = observeTransitionTargetSpawn(attempt.sessionId, nonce);
+        refused?.();
+      });
+      const input = {
+        agentId: 'claude' as const,
+        accountSettings: accountSettingsParse({
+          connectedServicesProviderStateSharingSettingsV1: {
+            v: 1,
+            defaults: { configMode: 'linked', stateMode: 'shared' },
+          },
+        }),
+      };
+      await expect(resolveSharedStateRequiredSwitchContinuity({
+        ...input,
+        failedFirstLaunch: await resolveFailedFirstLaunchAccountSwitch(current),
+      })).resolves.toMatchObject({ mode: 'restart_rematerialize' });
+      expect(pendingEligibility).toHaveBeenLastCalledWith({
+        token: 'test-token', sessionId: 'first-launch', requestId: 'original-input',
+      });
+      expect(await resolveFailedFirstLaunchAccountSwitch({ ...current, metadataVersion: 5 })).toBeUndefined();
+      expect(await resolveFailedFirstLaunchAccountSwitch({ ...current, active: true })).toBeUndefined();
+      expect(await resolveFailedFirstLaunchAccountSwitch({ ...current, pendingVersion: 3 })).toBeUndefined();
+      pendingEligibility.mockResolvedValue('missing');
+      expect(await resolveFailedFirstLaunchAccountSwitch(current)).toBeUndefined();
+      pendingEligibility.mockResolvedValue('eligible');
+      observeTransitionTargetSpawn(attempt.sessionId, 'later-attempt');
+      expect(await resolveFailedFirstLaunchAccountSwitch(current)).toBeUndefined();
+    } finally {
+      pendingEligibility.mockRestore();
+    }
   });
 
   it('fails closed for Codex shared-state switches when resume reachability cannot be proven', async () => {
@@ -85,24 +129,6 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       cwd: '/tmp/project',
     };
 
-    it('lets the switch proceed, because there is no state to carry', async () => {
-      await expect(resolveSharedStateRequiredSwitchContinuity({
-        ...baseInput,
-        accountSettings: sharedCodexSettings(),
-        warnings: ['codex_shared_state_required'],
-      } as any)).resolves.toEqual({
-        mode: 'restart_rematerialize',
-        warnings: ['codex_shared_state_required'],
-      });
-    });
-
-    it('does not need the rest of the target context when there is nothing to carry', async () => {
-      await expect(resolveSharedStateRequiredSwitchContinuity({
-        agentId: 'codex',
-        accountSettings: sharedCodexSettings(),
-      } as any)).resolves.toMatchObject({ mode: 'restart_rematerialize' });
-    });
-
     it('still fails closed when a session file is referenced without a resume id', async () => {
       // A referenced session file means a conversation does exist; only its id is unknown, which is
       // exactly the state loss this check exists to refuse to paper over.
@@ -114,6 +140,50 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
         mode: 'unsupported',
         errorCode: 'provider_session_state_unavailable_for_resume',
       });
+    });
+  });
+
+  it('refuses to bypass an existing Claude conversation after strict native return clears its hints', async () => {
+    let metadata: Record<string, unknown> = {
+      claudeSessionId: 'existing-claude-thread',
+      claudeTranscriptPath: '/tmp/existing-claude-thread.jsonl',
+    };
+    const strictResume = await prepareAgentNativeReturnStrictResume({
+      sessionId: 'existing-session',
+      targetAgentId: 'claude',
+      vendorResumeId: 'existing-claude-thread',
+      store: {
+        readAgentNativeResumeRecord: async () => ({
+          v: 1,
+          identity: { v: 1, vendorResumeId: 'existing-claude-thread' },
+          departureSeqInclusive: 14,
+        }),
+        writeAgentNativeResumeRecord: async () => {},
+      },
+      updateMetadata: (update) => { metadata = update(metadata); },
+    });
+    expect(strictResume.isTracked).toBe(true);
+    await strictResume.clearBeforeProviderOpen();
+    const context = resolveTrackedConnectedServiceSwitchContinuityContext({
+      agentId: 'claude',
+      baseDir: '/tmp/connected-services',
+      tracked: null,
+      persistedSessionMetadata: metadata,
+    });
+    expect(context).toMatchObject({ vendorResumeId: null, candidatePersistedSessionFile: null });
+
+    await expect(resolveSharedStateRequiredSwitchContinuity({
+      ...context,
+      agentId: 'claude',
+      accountSettings: accountSettingsParse({
+        connectedServicesProviderStateSharingSettingsV1: {
+          v: 1,
+          defaults: { configMode: 'linked', stateMode: 'shared' },
+        },
+      }),
+    })).resolves.toMatchObject({
+      mode: 'unsupported',
+      errorCode: 'provider_session_state_unavailable_for_resume',
     });
   });
 

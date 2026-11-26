@@ -116,24 +116,32 @@ export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
 
     const readRecordFile = async (
         key: LocalAgentNativeResumeRecordKey,
+        requireConclusiveAbsence: boolean,
     ): Promise<StoredLocalAgentResumeRecordV1 | null> => {
+        const unreadable = () => {
+            if (requireConclusiveAbsence) throw new Error('Cannot establish whether a native return record exists');
+            return null;
+        };
         const happierSessionId = key.happierSessionId.trim();
-        if (!happierSessionId) return null;
+        if (!happierSessionId) return unreadable();
 
         const raw = await readProtectedLocalStateFile(
             resolveAgentNativeResumeRecordPath(key),
-        ).catch(() => null);
-        if (!raw) return null;
+        ).catch((error: unknown) => {
+            if (typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'ENOENT') return null;
+            return unreadable();
+        });
+        if (raw === null) return null;
 
         let parsedJson: unknown;
         try {
             parsedJson = JSON.parse(raw);
         } catch {
-            return null;
+            return unreadable();
         }
 
         const parsed = StoredLocalAgentResumeRecordV1Schema.safeParse(parsedJson);
-        if (!parsed.success) return null;
+        if (!parsed.success) return unreadable();
 
         // The filename is a hash, so the plaintext keys are the only thing that
         // proves this record belongs to the requested Session and Agent. A
@@ -142,7 +150,7 @@ export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
             parsed.data.happierSessionId !== happierSessionId
             || parsed.data.agentId !== key.agentId
         ) {
-            return null;
+            return unreadable();
         }
 
         return parsed.data;
@@ -159,8 +167,9 @@ export function createLocalAgentNativeResumeRecordStoreAt(params: Readonly<{
          */
         async readAgentNativeResumeRecord(
             key: LocalAgentNativeResumeRecordKey,
+            options?: Readonly<{ requireConclusiveAbsence?: boolean }>,
         ): Promise<LocalAgentNativeResumeRecordV1 | null> {
-            const record = await readRecordFile(key);
+            const record = await readRecordFile(key, options?.requireConclusiveAbsence === true);
             if (!record) return null;
             return {
                 identity: { v: 1, vendorResumeId: record.vendorResumeId },

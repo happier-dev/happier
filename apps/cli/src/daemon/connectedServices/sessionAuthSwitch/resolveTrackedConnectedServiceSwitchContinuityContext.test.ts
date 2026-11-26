@@ -11,6 +11,17 @@ function resolveTestCandidatePersistedSessionFile(_agentId: string, metadata: un
 }
 
 describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
+  it('preserves a tracked Pi session file after the resume id is lost', () => {
+    const file = '/tmp/previous-pi-session.jsonl';
+    expect(resolveTrackedConnectedServiceSwitchContinuityContext({
+      agentId: 'pi',
+      baseDir: '/tmp/connected-services',
+      tracked: null,
+      persistedSessionMetadata: { piSessionFile: file },
+      resolveCandidatePersistedSessionFile: resolveTestCandidatePersistedSessionFile,
+    })).toMatchObject({ vendorResumeId: null, candidatePersistedSessionFile: file });
+  });
+
   it('derives materialized root/env and persisted session-file candidate from tracked resume options', () => {
     const baseDir = '/tmp/happier-connected-services';
     const piSessionFile = join(
