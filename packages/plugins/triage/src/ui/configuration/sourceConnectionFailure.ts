@@ -1,9 +1,7 @@
 import type { PluginTranslate } from '@happier-dev/plugin-ui';
+import { TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { TRIAGE_SOURCE_RETIRED_CODE } from '../../corpus/configuration/configuredSourceAuthority.js';
-
-// The source owns this code. Triage uses it only to present connection recovery.
-export const SCOPE_OUTSIDE_BINDING_CODE = 'scope-outside-binding';
 
 export function presentRetiredTriageSourceConnection(text: PluginTranslate): Readonly<{ title: string; description: string }> {
   return {
@@ -20,7 +18,7 @@ export function presentTriageSourceConnectionFailure(
   if (code === TRIAGE_SOURCE_RETIRED_CODE) {
     return presentRetiredTriageSourceConnection(text);
   }
-  if (code === SCOPE_OUTSIDE_BINDING_CODE) {
+  if (code === TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1) {
     return { title: text('plugins.triage.sourceFailure.scope-outside-binding', 'This entry’s source is no longer connected') };
   }
   return undefined;

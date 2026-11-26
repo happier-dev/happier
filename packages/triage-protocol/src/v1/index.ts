@@ -126,7 +126,7 @@ export {
 
 export { readTriageResponseHeaderV1 } from './httpHeaders.js';
 
-export { TriageSourceFailureV1Schema } from './diagnostics.js';
+export { TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1, TriageSourceFailureV1Schema } from './diagnostics.js';
 export type { TriageSourceFailureV1 } from './diagnostics.js';
 
 export {

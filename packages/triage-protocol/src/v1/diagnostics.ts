@@ -11,6 +11,10 @@ import { TriageIdentifierV1ProtocolSchema } from './identity.js';
 
 /** @internal Relative-only closed failure classification. */
 export const { TriageSourceFailureClassV1ProtocolSchema } = triageListSourceSchemasV1;
+
+/** The requested entry is outside the scope of its configured source binding. */
+export const TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1 = 'scope-outside-binding';
+
 /**
  * One bounded, non-secret source failure.
  *

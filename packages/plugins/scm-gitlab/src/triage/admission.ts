@@ -16,7 +16,7 @@
  * admission rule and every later request. This source adds no second timer.
  */
 
-import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1, type TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { authorizeGitlabConfiguredInstance } from './configuredInstance.js';
 import { readGitlabTriageKindId } from './contribution.js';
@@ -32,7 +32,7 @@ import type { GitlabKindId } from './types.js';
 
 export const GITLAB_SCOPE_OUTSIDE_BINDING_FAILURE: TriageSourceFailureV1 = Object.freeze({
   class: 'unsupportedContract',
-  code: 'scope-outside-binding',
+  code: TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1,
   detail: 'The requested entry was not keyed against this configured deployment.',
 });
 

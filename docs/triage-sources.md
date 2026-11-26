@@ -130,10 +130,11 @@ An exact entry link through a retired configured source returns
 connection and opens Manage sources from the detail failure. Refreshed
 aggregate lists scan active connections. Retained links and pins can still
 refer to the retired connection. A portable link can be tried on an active
-connection of the same source. If the source returns `scope-outside-binding`,
-detail preserves that code and its request ID in Details and offers Manage
-sources. Each code keeps one message: `scope-outside-binding` says the entry's
-source is no longer connected whatever the lifecycle roster holds, and only
+connection of the same source. Contributors use
+`TRIAGE_SOURCE_SCOPE_OUTSIDE_BINDING_CODE_V1` from `@happier-dev/triage-protocol/v1`
+to return `scope-outside-binding`. Detail preserves the code and its request ID
+in Details and offers Manage sources. `scope-outside-binding` says the entry's
+source is no longer connected regardless of the lifecycle roster.
 `triage_source_retired` uses the retired-connection wording.
 
 ## Universal Search (0.3 development source)
