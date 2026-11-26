@@ -17,8 +17,10 @@ describe('deployment journeys through CLI Actions, PostgreSQL Home and native da
   let fixture: TeamSetupFFixture | undefined;
   beforeEach(async context => {
     postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
+    const measure = process.env.HAPPIER_P03_JOURNEY_COST === '1';
     fixture = await startTeamSetupFFixture({ testDir: run.testDir(context.task.name),
-      dbProvider: 'postgres', serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } });
+      dbProvider: 'postgres', observeActionRequests: measure, advertiseRequestObservationEndpoint: measure,
+      serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } });
   });
   afterEach(async () => { try { await fixture?.stop(); } finally { await postgres?.stop(); fixture = undefined; postgres = undefined; } });
   it.each(['vercel', 'cloudflare'] as const)('%s Connect to deployment settlement, Domain Add/Verify and teardown proof', async provider => {

@@ -628,9 +628,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             return { inputBasis: OwnServerDeploymentInputBasisV1Schema.parse(result.inputBasis),
                 reviewedEffect: normalizeStrictJsonValue(result.reviewedEffect), runtimePlatform: result.runtimePlatform };
         },
-        async readMemberVersions(request): Promise<readonly DeploymentMachineResultV1[]> {
-            return readMemberVersions(request, await targetHostReaders.readEnvironment(request));
-        },
+        readMemberVersions,
         async writeTransition(request) {
             let issued = false;
             try {

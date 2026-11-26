@@ -189,7 +189,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                         selectedProjection.servicePlatforms?.find(value => value.service === service)?.platform ?? projection.platform)));
             })) throw createActionExecuteFailureError({ ok: false, errorCode: 'rollback_image_unavailable', error: 'rollback_image_unavailable' });
         }
-        return { link: { ...link, machines: initial.link.machines, members: initial.link.members }, selected, retainedSourceIntent };
+        return { environment, link: { ...link, machines: initial.link.machines, members: initial.link.members }, selected, retainedSourceIntent };
     };
     // Read the existing pointer, never persist a second rollback target. The
     // failure branch reads current U again, without re-admitting the failed
@@ -232,7 +232,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         return rejectBeforeEffects('unsupported_action');
     }
     const versions = await host.readMemberVersions?.({ environmentId: receipt.deployment.environmentId,
-        targetLinkId: initial.link.id, context });
+        targetLinkId: initial.link.id, context }, admitted.environment);
     if (receipt.content.onFailure === 'rollbackAll' && !admitted.selected
         && (versions ?? receipt.content.machineResults).some(row => row.currentDeploymentId !== undefined)) {
         return rejectBeforeEffects('rollback_image_unavailable');

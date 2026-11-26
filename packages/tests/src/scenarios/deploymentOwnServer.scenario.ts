@@ -36,9 +36,24 @@ export async function runOwnServerDeploymentJourney(fixture: TeamSetupFFixture, 
   }
   const input = await prepareAutomationsEverywhereDeployment({ serverId: fixture.serverId,
     projectSourceId: sourceId, machine, docker, invoke, volumeBackup: true });
+  const deployStartedAt = Date.now();
   const deployed = DeploymentReceiptResultV1Schema.parse(await invoke('deployments.deploy', input));
   expect(deployed).toMatchObject({ ok: true, state: 'succeeded' });
   if (!deployed.ok || !('deploymentId' in deployed)) throw new Error('Own-server deploy did not settle');
+  if (fixture.requestProxy) {
+    const environmentPath = `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}`;
+    const requests = fixture.requestProxy.entries()
+      .filter(request => request.startedAtMs >= deployStartedAt)
+      .map(request => ({ method: request.method, path: request.path.split('?')[0] }));
+    const admission = requests.findIndex(request => request.method === 'POST' && request.path === `${environmentPath}/deploy`);
+    const transition = requests.findIndex(request => request.method === 'POST'
+      && request.path === `${environmentPath}/deployments/${encodeURIComponent(deployed.deploymentId)}/transitions`);
+    expect(admission).toBeGreaterThanOrEqual(0);
+    expect(transition).toBeGreaterThan(admission);
+    const startup = requests.slice(admission + 1, transition);
+    expect(startup.filter(request => request.method === 'POST' && request.path === environmentPath),
+      'controller Environment reads between deployment admission and the running transition').toHaveLength(3);
+  }
   const receipt = DeploymentReceiptGetResultV1Schema.parse(await invoke('deployments.receipts.get', {
     serverId: fixture.serverId, environmentId: input.environmentId, deploymentId: deployed.deploymentId,
   }));

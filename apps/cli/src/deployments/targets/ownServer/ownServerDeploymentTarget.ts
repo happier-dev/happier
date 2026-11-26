@@ -236,7 +236,8 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
     dispatchRetention?(request: OwnServerDeploymentRetentionRequest): Promise<OwnServerDeploymentResult>;
     dispatchBuild?(request: OwnServerDeploymentRequest, receiptHeader: DeploymentReceiptHeaderV1): Promise<OwnServerDeploymentResult>;
     reviewMember?(request: OwnServerDeploymentMemberReviewRequest): Promise<OwnServerDeploymentReview>;
-    readMemberVersions?(request: OwnServerDeploymentReadContext & Readonly<{ targetLinkId: string }>): Promise<readonly DeploymentMachineResultV1[]>;
+    readMemberVersions?(request: OwnServerDeploymentReadContext & Readonly<{ targetLinkId: string }>,
+        environment: DeploymentEnvironmentDetailV1): Promise<readonly DeploymentMachineResultV1[]>;
     readStartFirstRoutes?(request: OwnServerDeploymentRequest, input: Readonly<{
         docker: ProjectNativeDockerPort; installationId: string; affectedServices: readonly string[];
         context: MachineNativeEffectContext; signal: AbortSignal;
