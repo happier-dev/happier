@@ -101,10 +101,21 @@ it('reads target placement once after admitting the Environment and checks curre
         expect(denied).not.toHaveProperty('secretScope');
         expect(selects.some(sql => targets.test(sql) || members.test(sql))).toBe(false);
 
-        await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+        const newInstallationId = randomUUID();
+        await db.machine.update({ where: { id: machine.id }, data: { installationId: newInstallationId } });
         expect(await read(owner.id)).toMatchObject({
             ok: true, secretScope: { reason: 'secret_scope_requirements_unavailable', requiredGrantCount: 0 },
+            runtimeReinstall: { machines: [{
+                machineId: machine.id, retiredInstallationId: machine.installationId, currentInstallationId: newInstallationId,
+            }] },
         });
+
+        await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+        const revoked = await read(owner.id);
+        expect(revoked).toMatchObject({
+            ok: true, secretScope: { reason: 'secret_scope_requirements_unavailable', requiredGrantCount: 0 },
+        });
+        expect(revoked).not.toHaveProperty('runtimeReinstall');
         expect(counts).toMatchObject({ targetLinks: 1, targetMembers: 1, currentMachines: 1 });
     } finally {
         await client.$disconnect();

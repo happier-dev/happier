@@ -1,6 +1,7 @@
 import { DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
 import type { Prisma } from '@prisma/client';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { getDbProviderFromEnv, resolveDbSqlDialect } from '@/config/databaseProvider';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { getActivePrismaRuntime } from '@/storage/prisma';
@@ -13,16 +14,45 @@ import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesIn
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
 import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
 
-/** Plugin daemon roles use the selected scalar installation; native workloads use their member rows. */
-export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
+type RuntimePlacement = Readonly<{
     sourceKind: string;
     machineId: string | null;
     installationId: string | null;
     machines: readonly Readonly<{ machineId: string; installationId: string }>[];
-}>): readonly Readonly<{ machineId: string; installationId: string }>[] {
+}>;
+type CurrentInstallations = ReadonlyMap<string, Readonly<{ installationId: string; canSeal: boolean }>>;
+
+/** Plugin daemon roles use the selected scalar installation; native workloads use their member rows. */
+export function readDeploymentTargetRuntimeInstallations(row: RuntimePlacement): RuntimePlacement['machines'] {
     return row.sourceKind === 'plugin'
         ? row.machineId && row.installationId ? [{ machineId: row.machineId, installationId: row.installationId }] : []
         : row.machines;
+}
+
+/** Reinstall and secret scope consume the same current placement. Sealing also needs a key and
+ * an active custodian; read those facts in the same statement without a second relation lookup. */
+export async function readDeploymentCurrentMachineInstallationsInTx(tx: Tx, link: RuntimePlacement | null | undefined,
+    buildMachineId?: string | null,
+): Promise<CurrentInstallations> {
+    const ids = [...new Set([...(link ? readDeploymentTargetRuntimeInstallations(link).map(member => member.machineId) : []),
+        ...(buildMachineId ? [buildMachineId] : [])])];
+    const current = new Map<string, Readonly<{ installationId: string; canSeal: boolean }>>();
+    if (!ids.length) return current;
+    const { sql, raw, join } = getActivePrismaRuntime();
+    const quote = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'sqlite')) === 'mysql' ? '`' : '"';
+    const identifier = (name: string) => raw(`${quote}${name}${quote}`);
+    for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1 })) {
+        const rows = await tx.$queryRaw<Array<{ id: string; installationId: string; sealingKey: number | bigint; accountStatus: string }>>(sql`
+            SELECT m.id, m.${identifier('installationId')}, a.status AS ${identifier('accountStatus')},
+                CASE WHEN m.${identifier('installationPublicKey')} IS NULL THEN 0 ELSE 1 END AS ${identifier('sealingKey')}
+            FROM ${identifier('Machine')} m JOIN ${identifier('Account')} a ON a.id = m.${identifier('accountId')}
+            WHERE m.id IN (${join([...chunk])}) AND m.${identifier('installationId')} IS NOT NULL
+                AND m.${identifier('revokedAt')} IS NULL AND m.${identifier('replacedByMachineId')} IS NULL
+        `);
+        for (const row of rows) current.set(row.id, { installationId: row.installationId,
+            canSeal: row.accountStatus === 'active' && Boolean(row.sealingKey) });
+    }
+    return current;
 }
 
 /**
@@ -30,21 +60,20 @@ export function readDeploymentTargetRuntimeInstallations(row: Readonly<{
  * is still current but now runs a different installation than the one recorded at link time. Only the
  * Machine's own Account can register that installation; the Link replacement onto it is the remedy.
  */
-export async function readDeploymentRuntimeReinstallMembersInTx(tx: Tx, link: Readonly<{
-    sourceKind: string; machines: readonly Readonly<{ machineId: string; installationId: string }>[];
-}> | null | undefined): Promise<readonly Readonly<{ machineId: string; retiredInstallationId: string; currentInstallationId: string }>[]> {
-    if (!link || link.sourceKind !== 'host' || !link.machines.length) return [];
-    const current = new Map<string, string>();
-    for (const ids of portableQueryChunks({ values: [...new Set(link.machines.map(member => member.machineId))], bindingsPerValue: 1 })) {
-        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] }, revokedAt: null, replacedByMachineId: null },
-            select: { id: true, installationId: true } });
-        for (const row of rows) if (row.installationId) current.set(row.id, row.installationId);
-    }
+export function projectDeploymentRuntimeReinstallMembers(link: RuntimePlacement | null | undefined,
+    current: ReadonlyMap<string, Readonly<{ installationId: string }>>,
+) {
+    if (link?.sourceKind !== 'host') return [];
     return link.machines.flatMap(member => {
-        const installationId = current.get(member.machineId);
+        const installationId = current.get(member.machineId)?.installationId;
         return installationId && installationId !== member.installationId
             ? [{ machineId: member.machineId, retiredInstallationId: member.installationId, currentInstallationId: installationId }] : [];
     });
+}
+
+export async function readDeploymentRuntimeReinstallMembersInTx(tx: Tx, link: RuntimePlacement | null | undefined) {
+    if (link?.sourceKind !== 'host') return [];
+    return projectDeploymentRuntimeReinstallMembers(link, await readDeploymentCurrentMachineInstallationsInTx(tx, link));
 }
 
 /** The server-readable relation that makes a target link a current managed data link, for every Account mode. */

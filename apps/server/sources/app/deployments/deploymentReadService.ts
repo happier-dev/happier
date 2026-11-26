@@ -15,7 +15,8 @@ import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader, read
     readDeploymentEnvironmentRequiredSecretUsesInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrantRepository';
 import { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1 } from '@happier-dev/deployments';
-import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader, readDeploymentRuntimeReinstallMembersInTx } from './deploymentTargetLinkService';
+import { loadDeploymentTargetRowsInTx, projectDeploymentRuntimeReinstallMembers, projectDeploymentTargetHeader,
+    readDeploymentCurrentMachineInstallationsInTx } from './deploymentTargetLinkService';
 import { DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
@@ -240,7 +241,10 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
         return revision === undefined ? [] : [{ resourceId: capture.resourceId, revision }];
     });
     // Deploy admission consumes this scope; operational purposes keep their own exact owners.
-    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row, DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1, targetRows);
+    const runtimeLink = targetRows.find(row => row.id === loaded.row.runtimeTargetLinkId);
+    const currentMachines = await readDeploymentCurrentMachineInstallationsInTx(tx, runtimeLink, loaded.row.buildMachineId);
+    const required = await readDeploymentEnvironmentRequiredSecretUsesInTx(tx, loaded.row, DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1,
+        targetRows, currentMachines);
     const coverage = await readEnvironmentSecretGrantCoverageInTx(tx, {
         environmentId: loaded.row.id, requiredSecretUses: required.requiredSecretUses,
     });
@@ -258,8 +262,7 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     };
     // The reinstall fact comes from the owner the Deploy root refusal uses; its availability is the
     // Link writer's own admission (Source manage plus Machine Manage at the current installation).
-    const reinstalled = await readDeploymentRuntimeReinstallMembersInTx(tx, loaded.row.runtimeTargetLinkId
-        ? targetRows.find(row => row.id === loaded.row.runtimeTargetLinkId) : null);
+    const reinstalled = projectDeploymentRuntimeReinstallMembers(runtimeLink, currentMachines);
     const runtimeReinstall = reinstalled.length ? {
         reason: DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1, machines: reinstalled,
         available: !loaded.row.deletedAt && loaded.admission.canManage && await admitDeploymentDefinitionMachinesInTx(tx, actorAccountId,
