@@ -2,7 +2,8 @@ import type { ReviewEngineInventory, ReviewEngineProfileSelection, ReviewEngineS
 import { ReviewWalkthroughResponseSchema, type ReviewFindingIdentity } from '@happier-dev/protocol/reviews/reviewNarration';
 import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { readReviewWorkflowStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -143,26 +144,32 @@ export async function startReviewOfComparison(params: Readonly<{
         plan: params.plan, instructions: params.instructions, comparisonId: captured.comparisonId,
         pending: params.comparison.kind === 'workingTree',
     });
-    const result = await params.start({
+    const input = {
         ...params.launchInput,
         ...walkthroughInput,
         reviewers: params.launchInput?.reviewers ?? walkthroughInput.reviewers,
-    });
+    };
+    const result = await params.start(input);
     if (!result.ok) return failure(result, 'review_start_failed');
+    const selection = ReviewStartInputSchema.safeParse(input);
+    const reviewStart = selection.success ? readReviewStartActionResultV1(result, selection.data) : null;
+    if (!reviewStart || reviewStart.kind === 'outcome_unknown') return failure(result, 'review_start_failed');
     // Workflow admission identifies the accepted Review; executable leaf outcomes arrive later.
-    if (readReviewWorkflowStartActionResultV1(result)) return { ok: true,
+    if (reviewStart.kind === 'workflow') return { ok: true,
         comparisonId: captured.comparisonId, reviewRunIds: [], notStartedEngineIds: [], narrationError: null };
     const output = (result.result ?? {}) as {
-        results?: readonly { key?: unknown; ok?: boolean; result?: { runId?: unknown } }[];
         narration?: { state?: unknown; error?: unknown } | null;
     };
-    const reviewRunIds = (output.results ?? []).flatMap((item) => (item.ok === true && typeof item.result?.runId === 'string' ? [item.result.runId] : []));
-    if (reviewRunIds.length === 0) return failure(result, 'review_start_failed');
+    const reviewRunIds = reviewStart.runs.map(run => run.runId);
+    // The canonical binding also identifies accepted human-only Reviews, which create no agent Runs.
+    if (reviewRunIds.length === 0 && (!reviewStart.reviewRound || reviewStart.failed.length > 0)) {
+        return failure(result, 'review_start_failed');
+    }
     return {
         ok: true,
         comparisonId: captured.comparisonId,
         reviewRunIds,
-        notStartedEngineIds: (output.results ?? []).flatMap((item) => (item.ok === true ? [] : [typeof item.key === 'string' ? item.key : ''])).filter(Boolean),
+        notStartedEngineIds: reviewStart.failed.map(reviewer => reviewer.key),
         narrationError: output.narration?.state === 'failed'
             ? (typeof output.narration.error === 'string' ? output.narration.error : 'review_narration_failed')
             : null,

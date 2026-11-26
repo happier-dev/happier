@@ -2184,6 +2184,42 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             }
         }
     });
+    it('opens the accepted person-only Review without starting an agent Run or retaining the draft', async () => {
+        const accepted = vi.fn();
+        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+            onStartAccepted: accepted, initialActionInput: { scope: 'repository', reviewers: [
+                { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
+            ] } });
+        await send();
+        const reviews = artifactStore.list().filter(artifact => artifact.kindHint === REVIEW_ARTIFACT_KIND_V1);
+        expect(reviews).toHaveLength(1);
+        expect(emittedHumanReviewerRequests).toMatchObject([{ reviewId: reviews[0]!.id,
+            reviewers: [{ principal: { kind: 'account', accountId: 'alice' }, required: true }] }]);
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(reviewRouterPush).toHaveBeenCalledWith(artifactViewRoute(reviews[0]!.id));
+        expect(accepted).toHaveBeenCalledOnce();
+        expect(input().props.value).toBe('');
+        expect(screen.findByTestId('execution-run-conversation-error')).toBeNull();
+    });
+    it('accepts a captured comparison person-only Review without requiring an agent Run', async () => {
+        await mount({ intent: 'review' });
+        const { startReviewOfComparison } = await import('@/sync/ops/reviews/reviewWalkthrough');
+        const { resolveReviewWalkthroughPlan } = await import('@/sync/domains/reviews/reviewWalkthroughPlan');
+        const reviewers = [{ kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'alice' }, required: true }];
+        const outcome = await startReviewOfComparison({ sessionId: 'session_1', serverId, cwd: '/repo',
+            comparison: { kind: 'branch', base: 'main', head: 'HEAD' }, comparisonId: capturedBranchComparisonId,
+            instructions: 'Human review only', launchInput: { reviewers },
+            plan: resolveReviewWalkthroughPlan({ engines: [], reviewers, walkthrough: false, narratorEngineId: null }),
+            start: input => createDefaultActionExecutor().execute('review.start', input,
+                { defaultSessionId: 'session_1', serverId, expectedAccountId: 'account_1' }),
+        });
+        expect(emittedHumanReviewerRequests).toHaveLength(1);
+        expect(emittedStarts).toEqual([]);
+        expect(emittedWorkflowStarts).toEqual([]);
+        expect(outcome).toEqual({ ok: true, comparisonId: capturedBranchComparisonId,
+            reviewRunIds: [], notStartedEngineIds: [], narrationError: null });
+    });
     it('keeps a single native reviewer refusal and opens its Review after choosing the Agent default', async () => {
         startResults.push(childChoiceRefusal('agent:claude'), started('review-retried'));
         await mount({ intent: 'review', initialActionInput: { scope: 'repository' } });

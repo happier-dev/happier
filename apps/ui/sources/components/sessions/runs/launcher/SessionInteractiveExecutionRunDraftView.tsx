@@ -569,7 +569,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 reviewers: readReviewLauncherReviewers(input), steps: [...readReviewLauncherSteps(input)],
             }) : null;
             if (reviewStart && reviewStart.kind !== 'outcome_unknown' && reviewStart.reviewRound
-                && (reviewStart.kind === 'workflow' || reviewStart.runs.length > 0)) {
+                && (reviewStart.kind === 'workflow' || reviewStart.runs.length > 0 || reviewStart.failed.length === 0)) {
                 launcherDraft.clearAcceptedSelection(selectionCapture, submission.onOutboundHandoff());
                 setPhase('idle');
                 props.onStartAccepted?.();
