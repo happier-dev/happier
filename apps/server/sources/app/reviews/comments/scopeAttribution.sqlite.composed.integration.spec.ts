@@ -391,6 +391,71 @@ it('shows authorized Hunt history counts without inheriting another Review human
 
 it('opens one persisted finding from PR, Inbox and Review across Sessions and rounds with one human decision', async () => {
     const { act } = await import('react-test-renderer');
+    const { definePlugin } = await import('@happier-dev/plugin-sdk');
+    const { Asset } = await import('expo-asset');
+    const { File } = await import('expo-file-system');
+    const { AppShellPluginUiProjectionProvider } = await import('../../../../../ui/sources/components/appShell/plugins/AppShellPluginUiProjection');
+    const { registerPluginAvailabilityRoutes } = await import('../../plugins/availability/routes');
+    const { PluginAvailabilityActionHttpPathsV1 } = await import('@happier-dev/protocol/plugins/availability');
+    const { setActivePluginAccountAvailabilityIntent } = await import('../../../../../ui/sources/sync/api/plugins/availability/setActivePluginAccountAvailabilityIntent');
+    const { prepareAuthenticationInventory } = await import('../../../../../ui/sources/dev/testkit/fixtures/connectedAccountAuthentication');
+    const { installBundledPluginUiArtifactsForTests } = await import('../../../../../ui/sources/dev/testkit/mocks/bundledPluginUiAssets');
+    const namespace = 'qa.review.evidence';
+    const evidence = 'Reload the connection after signing out.';
+    const artifactTarget = { artifactId: 'account-runtime', exportName: 'activateAccount' };
+    const { ReviewCommentGetRequestV1Schema } = await import('@happier-dev/protocol/reviews/comments/actions');
+    const extensionPlugin = definePlugin({ id: namespace, version: '1.0.0', displayName: 'Review evidence fixture',
+        actions: { 'inspect-evidence': { title: 'Inspect persisted evidence', readOnly: true, dangerLevel: 'safe',
+            surfaces: ['ui', 'plugin'], execution: { target: 'account', account: artifactTarget, invokingUi: true },
+            inputSchema: { type: 'object', properties: { reviewId: { type: 'string' }, commentId: { type: 'string' } },
+                required: ['reviewId', 'commentId'], additionalProperties: false },
+            resultSchema: { type: 'object', additionalProperties: true },
+            run: async (input, context) => context.services.actions.execute('reviews.comments.get', ReviewCommentGetRequestV1Schema.parse(input)) } },
+        ui: { views: [{ id: 'finding-evidence', container: 'reviewFinding', target: { kind: 'app' },
+            renderer: 'finding-evidence', title: 'Review evidence' },
+            { id: 'review-evidence', container: 'appPage', target: { kind: 'app', context: 'review' },
+                renderer: 'finding-evidence', title: 'Evidence overview' }],
+            renderers: [{ id: 'finding-evidence', kind: 'reactNative', artifact: 'finding-evidence',
+                requiredHostMethods: ['context', 'executeAction'] }] } });
+    const entryPath = join(harness.baseDir, 'finding-evidence.tsx');
+    await writeFile(entryPath, `import * as React from 'react';
+import { Pressable, Text } from 'react-native';
+export function activateAccount(api) {
+    api.actions.register('inspect-evidence', async (input, context) =>
+        context.services.actions.execute('reviews.comments.get', input, { signal: context.signal }));
+}
+function FindingEvidence(renderContext) {
+    const review = renderContext.surface.mount.review;
+    const [read, setRead] = React.useState(null);
+    if (review.kind === 'page') return React.createElement(Text,
+        { testID: 'plugin-evidence:page' }, 'Review evidence page ' + review.reviewId);
+    return React.createElement(React.Fragment, null,
+        React.createElement(Text, null, review.extension.reproduction),
+        React.createElement(Pressable, { testID: 'plugin-evidence:inspect',
+            onPress: async () => setRead(await renderContext.hostApi.executeAction('inspect-evidence',
+                { reviewId: review.reviewId, commentId: review.commentId })) },
+            React.createElement(Text, null, 'Inspect persisted evidence')),
+        read && React.createElement(Text, { testID: 'plugin-evidence:read' }, JSON.stringify(read)));
+}
+export function renderSurface(context) { return React.createElement(FindingEvidence, context); }
+`);
+    const packaged = { artifacts: [] as unknown[], declarations: [] as unknown[], files: new Map<number, Uint8Array>(), reads: 0 };
+    await prepareAuthenticationInventory(packaged, { manifest: extensionPlugin.manifest, target: artifactTarget,
+        entryPath, projectPath: harness.baseDir, packageName: '@qa/review-evidence',
+        additionalArtifacts: [{ target: { artifactId: 'finding-evidence', exportName: 'renderSurface' }, entryPath }] });
+    // Only physical package/Expo bytes are substituted; admission, projection,
+    // executable activation and contributed Action dispatch use their real owners.
+    const restoreArtifacts = installBundledPluginUiArtifactsForTests(packaged.artifacts as import('../../../../../ui/sources/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').BundledPluginUiAppArtifactInventory);
+    const originalAsset = Asset.fromModule;
+    const localFiles = [...packaged.files].map(([id, bytes]) => {
+        const file = new File(`file:///review-evidence-${id}.js`); file.write(bytes); return file;
+    });
+    const assetBoundary = vi.spyOn(Asset, 'fromModule').mockImplementation(asset => {
+        if (typeof asset !== 'number' || !packaged.files.has(asset)) return originalAsset(asset);
+        const uri = `file:///review-evidence-${asset}.js`;
+        const result = Asset.fromURI(uri); result.localUri = uri; result.downloaded = true; return result;
+    });
+    let extensionEnabled = true;
     const { materializeReviewFindings: publishFindings } = await import('../../../../../cli/src/agent/runtime/bridges/executionRun/materializeReviewFindings');
     const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
     const { Button } = await import('@happier-dev/plugin-ui/components');
@@ -422,8 +487,10 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
         await db.session.create({ data: { id: sessionId, accountId: account.id, tag: sessionId, metadata: '{}', encryptionMode: 'plain' } });
         return { machineId, installationId, sessionId, keyPair };
     }));
+    try {
     await withAuthenticatedTestApp(app => {
         registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app);
+        registerPluginAvailabilityRoutes(app);
     }, async app => {
         const origin = await app.listen({ host: '127.0.0.1', port: 0 });
         await runWithServerHttpBaseUrl(origin, async () => {
@@ -443,7 +510,7 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
                 const normalized = normalizeStrictJsonReviewOutput({ ...run, finishedAtMs: Date.now(), rawText: JSON.stringify({
                     summary: 'Reviewed.', reviewOutcome: 'complete', findings: [{ id: localId, title: 'Reconnect loses the subscription',
                         summary: 'The listener is removed before reconnect completes.', severity: 'high', category: 'correctness',
-                        filePath: 'connection.ts', startLine: 8 }],
+                        filePath: 'connection.ts', startLine: 8, extensions: { [namespace]: { reproduction: evidence } } }],
                 }) });
                 expect(normalized.status).toBe('succeeded');
                 const service = createReviewRunCommentService({ cwd: harness.baseDir,
@@ -460,6 +527,12 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
                 subjectKind: 'repository', sourceKind: 'direct', reviewerIds: ['reviewer'], startedAt: Date.now(), newRound });
             const first = await start(reviewId);
             const initial = await materialize(writers[0]!, first, 'first-local-id', false);
+            const readPersisted = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null } });
+            const persistedInitial = ReviewCommentGetResponseV1Schema.parse(await readPersisted('reviews.comments.get', {
+                reviewId, commentId: initial.id })).comment;
+            expect(persistedInitial?.extensions?.[namespace]).toEqual({ reproduction: evidence });
+            const initialFinding = persistedInitial?.finding;
+            if (!initialFinding) throw new Error('Missing persisted finding content');
             const otherSession = await materialize(writers[1]!, first, 'second-local-id');
             expect(otherSession.id).toBe(initial.id);
             const second = await start(reviewId, true);
@@ -480,17 +553,25 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
                 ].map(({ manifest, packageName }) => projectBundledPluginUiDeclaration({ packageName,
                     packageVersion: manifest.version, manifest, artifactGraphs: [] })));
                 if (declarations.some(declaration => !declaration)) throw new Error('Missing authored plugin declaration');
-                const restoreInventory = installBundledPluginUiDeclarationsForTests(declarations.filter(declaration => declaration !== undefined));
+                const restoreInventory = installBundledPluginUiDeclarationsForTests([
+                    ...declarations.filter(declaration => declaration !== undefined),
+                    ...(extensionEnabled ? packaged.declarations as readonly import('../../../../../ui/sources/sync/domains/plugins/availability/bundledPluginUiArtifactInventory').PluginHostBundledUiDeclaration[] : []),
+                ]);
                 const homeBoundary = createHomeHubArtifactHttpBoundary(account.id);
                 const mounted = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token },
+                    featureOverrides: { features: { plugins: { enabled: true, ui: { enabled: true,
+                        hostedWeb: { enabled: false }, reactNativeBundles: { enabled: true } } } } },
                     serverIdentityId, machine: null, request: async (url, init) => {
                     const path = new URL(String(url)).pathname;
-                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/account/encryption'))
+                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/account/encryption')
+                        || Object.values(PluginAvailabilityActionHttpPathsV1).some(candidate => candidate === path))
                         return fetch(url, init);
                     return homeBoundary.request(url, init);
                 } });
                 await getSyncSingleton().refreshPluginAccountAvailability();
-                return { ...mounted, async dispose() { try { await mounted.dispose(); } finally { restoreInventory(); } } };
+                return { ...mounted, render: (element: React.ReactElement) => mounted.render(
+                    React.createElement(AppShellPluginUiProjectionProvider, null, element)),
+                    async dispose() { try { await mounted.dispose(); } finally { restoreInventory(); } } };
             };
             const readArtifact = async (sourceServerId: string): Promise<DecryptedArtifact> => {
                 const row = await artifacts.read(reviewId);
@@ -538,16 +619,25 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
                 } finally { await screen.unmount(); unwatch(); native.dispose(); controller.dispose(); }
             };
             try {
-                await openEmbedded('PR');
                 const artifact = await readArtifact(fixture.scope.serverId);
                 const screen = await fixture.render(React.createElement(ArtifactView, { artifactId: reviewId, artifact,
                     presentation: 'page', focusThreadId: initial.id }));
                 try {
                     await vi.waitFor(() => expect(screen.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull());
+                    await vi.waitFor(() => expect(screen.getTextContent()).toContain(evidence));
+                    await screen.pressByTestIdAsync('plugin-evidence:inspect');
+                    await vi.waitFor(() => expect(screen.findHostByTestId('plugin-evidence:read')).not.toBeNull());
                     await screen.pressByTestIdAsync(`review-finding-triage:${initial.id}:reject`);
                     await vi.waitFor(async () => expect(await db.reviewComment.findUnique({ where: { id: initial.id } }))
                         .toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject' }));
                 } finally { await screen.unmount(); }
+                const page = await fixture.render(React.createElement(ArtifactView, { artifactId: reviewId, artifact,
+                    presentation: 'page', pluginPageSelection: { pluginId: namespace, localId: 'review-evidence', subPath: '', view: null } }));
+                try {
+                    await vi.waitFor(() => expect(page.findHostByTestId('plugin-evidence:page'), page.getTextContent()).not.toBeNull());
+                    expect(page.getTextContent()).toContain(reviewId);
+                } finally { await page.unmount(); }
+                await openEmbedded('PR');
                 const saved = await db.reviewComment.findUniqueOrThrow({ where: { id: initial.id } });
                 const transitions = JSON.parse(saved.transitionsJson);
                 expect(transitions.filter((event: { reviewTriageStatus?: string }) => event.reviewTriageStatus === 'reject'))
@@ -573,9 +663,29 @@ it('opens one persisted finding from PR, Inbox and Review across Sessions and ro
                 } finally { await reopened.unmount(); }
                 expect((await db.reviewComment.findUniqueOrThrow({ where: { id: initial.id } })).transitionsJson).toBe(saved.transitionsJson);
                 expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
+                expect(await setActivePluginAccountAvailabilityIntent({ pluginId: namespace, desiredVersion: null,
+                    enabled: false, offlineUiHosting: 'disabled', writableCollections: [], expectedRevision: null }))
+                    .toMatchObject({ kind: 'updated', intent: { enabled: false } });
+                extensionEnabled = false;
+                await fixture.dispose(); standardCleanup(); resetReviewRunCommentsForTests();
+                fixture = await openFixture();
+                const fallback = await fixture.render(React.createElement(ArtifactView, { artifactId: reviewId,
+                    artifact: await readArtifact(fixture.scope.serverId), presentation: 'page', focusThreadId: initial.id }));
+                try {
+                    await vi.waitFor(() => expect(fallback.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull());
+                    expect(fallback.getTextContent()).toContain(initialFinding.title);
+                    expect(fallback.findHostByTestId('plugin-evidence:inspect')).toBeNull();
+                    await fallback.pressByTestIdAsync(`review-finding-triage:${initial.id}:accept`);
+                    await vi.waitFor(async () => expect(await db.reviewComment.findUnique({ where: { id: initial.id } }))
+                        .toMatchObject({ reviewTriageStatus: 'accept' }));
+                    const retained = ReviewCommentGetResponseV1Schema.parse(await createCliReviewCommentActionExecutorFromCredentials({
+                        credentials: { token, encryption: null } })('reviews.comments.get', { reviewId, commentId: initial.id }));
+                    expect(retained.comment?.extensions?.[namespace]).toEqual({ reproduction: evidence });
+                } finally { await fallback.unmount(); }
             } finally { standardCleanup(); await fixture.dispose(); }
         });
     }, { authentication: 'real' });
+    } finally { assetBoundary.mockRestore(); restoreArtifacts(); for (const file of localFiles) file.delete(); }
 });
 
 it('retains reviewer omission explanations, partial coverage and question states from publication through detail and an unavailable refresh', async () => {

@@ -48,12 +48,13 @@ type ReviewPageProps = Readonly<{
 export function ReviewPagePluginContent(props: ReviewPageProps) {
   const projection = useAppShellPluginUiProjection();
   const localize = useProjectedPluginLocalizedTextResolver();
+  const serverId = projection.accountLifetime?.scope.serverId;
   const target = React.useMemo(() => ({ kind: 'app' as const,
     context: { kind: 'review' as const, reviewId: props.reviewId } }), [props.reviewId]);
-  const placements = React.useMemo(() => projection.serverId && props.serverId
-    && areServerProfileIdentifiersEquivalent(projection.serverId, props.serverId)
+  const placements = React.useMemo(() => serverId && props.serverId
+    && areServerProfileIdentifiersEquivalent(serverId, props.serverId)
     ? selectPluginPagePlacements(projection.pluginUiProjection, { container: 'appPage', targetKind: 'app' }, 'review')
-    : [], [projection.pluginUiProjection, projection.serverId, props.serverId]);
+    : [], [projection.pluginUiProjection, serverId, props.serverId]);
   const pages = usePluginPages({ target, placements, localize });
   return <PluginPageLaunchInputScope pluginUiProjection={projection.pluginUiProjection} target={target} pages={pages}>
     <ReviewPageNavigation {...props} target={target} pages={pages} projection={projection} />
@@ -98,9 +99,10 @@ function ReviewPluginSurfaceBinding(props: Readonly<{
   const { runtime, review } = props;
   const isHostCurrent = React.useCallback(() => runtime.interactionEnabled
     && runtime.accountLifetime?.isCurrent() === true, [runtime.accountLifetime, runtime.interactionEnabled]);
-  if (!runtime.pluginUiProjection || !runtime.serverId
-    || !areServerProfileIdentifiersEquivalent(runtime.serverId, props.serverId)) return null;
-  const host = { serverId: runtime.serverId, machineId: runtime.machineId, platform: runtime.platform,
+  const serverId = runtime.accountLifetime?.scope.serverId;
+  if (!runtime.pluginUiProjection || !serverId
+    || !areServerProfileIdentifiersEquivalent(serverId, props.serverId)) return null;
+  const host = { serverId, machineId: runtime.machineId, platform: runtime.platform,
     pluginUiProjection: runtime.pluginUiProjection, projectionInteractionEnabled: runtime.interactionEnabled,
     isHostCurrent, reviewContext: review };
   const role = review.kind === 'finding' ? 'reviewFinding' : 'reviewEngineOptions';
