@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentMessage } from '@/agent/core';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import { createDeferred } from '@/testkit/async/deferred';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
@@ -296,6 +297,15 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     expect(fake.commands[1]!.map((command) => command.type)).toContain('prompt');
   });
 
+  it('reuses one recovery channel when multiple callers discover the previous channel is gone', async () => {
+    const fake = createFakeAttachedPi('pi-terminal-session');
+    const { backend } = createAttachedBackend(fake);
+    const { sessionId } = await backend.startSession();
+    fake.detach(false);
+    await Promise.all([backend.cancel(sessionId), backend.cancel(sessionId)]);
+    expect(fake.opens).toHaveLength(2);
+  });
+
   it('re-attaches on its own after a same-session reload so terminal turns keep reaching Happier', async () => {
     const fake = createFakeAttachedPi('pi-terminal-session');
     const { backend, messages } = createAttachedBackend(fake);
@@ -534,6 +544,60 @@ describe('PiRpcBackend over an attached shared-terminal channel', () => {
     expect(admission.status !== 'accepted' && admission.error).toMatchObject({ reason: 'provider_unavailable_before_acceptance' });
     expect(promptCommands(fake)).toHaveLength(1);
     expect(fake.commands.flat().map((command) => command.type)).toContain('abort');
+  });
+
+  it('withdraws a held web prompt when Stop arrives during reattachment', async () => {
+    let reattach = Promise.resolve();
+    const fake = createFakeAttachedPi('pi-terminal-session', () => reattach);
+    const { backend } = createAttachedBackend(fake);
+    const { sessionId } = await backend.startSession();
+    fake.setPromptScript([{ respond: { success: false, error: PI_SHARED_CONTROL_BUSY_ERROR } }], RPC_ORDER_PROMPT);
+    const submission = backend.sendPromptWithAdmission(sessionId, 'withdraw during reload');
+    void submission.completion.catch(() => undefined);
+    await vi.waitFor(() => expect(promptCommands(fake)).toHaveLength(1));
+    await flushIo();
+
+    const gate = createDeferred();
+    reattach = gate.promise;
+    fake.detach();
+    await vi.waitFor(() => expect(fake.commands[1]?.some(({ type }) => type === 'get_state')).toBe(true));
+    const stop = backend.cancel(sessionId);
+    gate.resolve();
+    await stop;
+
+    expect(await submission.admission).toMatchObject({
+      status: 'rejected_before_effect', error: { reason: 'provider_unavailable_before_acceptance' },
+    });
+    expect(promptCommands(fake)).toHaveLength(1);
+  });
+
+  it('settles a held web prompt before effect when the terminal stops answering', async () => {
+    let stateReply = Promise.resolve();
+    const fake = createFakeAttachedPi('pi-terminal-session', () => stateReply);
+    const { backend } = createAttachedBackend(fake, {
+      HAPPIER_PI_RPC_MAX_SILENT_PROBES: '2',
+      HAPPIER_PI_RPC_LIVENESS_PROBE_TIMEOUT_MS: '10',
+    });
+    const { sessionId } = await backend.startSession();
+    fake.setPromptScript([{ respond: { success: false, error: PI_SHARED_CONTROL_BUSY_ERROR } }]);
+    stateReply = new Promise(() => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const submission = backend.sendPromptWithAdmission(sessionId, 'held while terminal is unreachable');
+      void submission.completion.catch(() => undefined);
+      let admission: unknown;
+      void submission.admission.then((result) => { admission = result; });
+      await flushIo();
+      await vi.advanceTimersByTimeAsync(TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS + 10);
+      expect(admission).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(TERMINAL_INPUT_BUSY_TURN_FALLBACK_WAKE_MS + 10);
+      expect(admission).toMatchObject({
+        status: 'rejected_before_effect', error: { reason: 'provider_unavailable_before_acceptance' },
+      });
+      expect(promptCommands(fake)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // Pi swallows a failed prompt preflight (no model or auth, an input handler took it) without a

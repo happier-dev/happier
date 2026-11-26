@@ -1328,6 +1328,7 @@ export class PiRpcBackend implements AgentBackend {
             await this.waitForSharedTerminalIdle(idleEpochBeforeSend, cancelGenerationAtStart);
             await this.ensureProcess();
             await this.ensureConnectedBrokerReadyForProviderCommand();
+            this.assertSharedPromptNotWithdrawn(cancelGenerationAtStart);
             continue;
           }
           const rejectedBeforeEffect = promptError instanceof PiRpcPromptRejectedBeforeEffectError;
@@ -1478,6 +1479,7 @@ export class PiRpcBackend implements AgentBackend {
     if (!settled()) {
       logger.infoFile('[pi] Holding a web prompt until the Pi terminal finishes its run');
       this.sharedPromptHeld = true;
+      let consecutiveSilentProbes = 0;
       try {
         while (!settled() && !probedIdle) {
           const woken = await new Promise<boolean>((resolve) => {
@@ -1495,14 +1497,27 @@ export class PiRpcBackend implements AgentBackend {
             this.providerIdleWaiters.add(wake);
           });
           if (woken || settled()) continue;
-          const state = await this.getState(this.getLivenessProbeTimeoutMs()).catch(() => null);
-          probedIdle = state !== null && state.isStreaming !== true && state.isCompacting !== true;
+          const state = await this.getState(this.getLivenessProbeTimeoutMs(), { processAlreadyEnsured: true }).catch(() => null);
+          if (settled()) break;
+          if (state === null) {
+            consecutiveSilentProbes += 1;
+            if (consecutiveSilentProbes >= this.getMaxSilentProbes()) {
+              throw new PiSharedTerminalUnavailableError('Pi stopped responding while the message was waiting for the terminal');
+            }
+          } else {
+            consecutiveSilentProbes = 0;
+            probedIdle = state.isStreaming !== true && state.isCompacting !== true;
+          }
         }
       } finally {
         this.sharedPromptHeld = false;
       }
     }
     if (this.disposed) throw new Error('Pi backend is disposed');
+    this.assertSharedPromptNotWithdrawn(cancelGenerationAtStart);
+  }
+
+  private assertSharedPromptNotWithdrawn(cancelGenerationAtStart: number): void {
     if (this.cancelGeneration !== cancelGenerationAtStart) {
       throw new PiSharedTerminalUnavailableError('Stopped before the Pi terminal was free to take this message');
     }
@@ -1647,11 +1662,7 @@ export class PiRpcBackend implements AgentBackend {
       // Best-effort recovery: if we have an established session id but the process is gone, attempt to
       // restart and reattach to the same session via `--session`. Join a transition already in flight
       // (e.g. a shared-terminal re-attach) first: replacing its fresh channel again would only churn.
-      const restart = (async () => {
-        while (this.processTransitionInFlight) await this.processTransitionInFlight;
-        if (this.channel) return;
-        await this.restartAndContinue({ lifecycle });
-      })();
+      const restart = this.restartAndContinue({ lifecycle, reuseLiveChannel: true });
       if (lifecycle) {
         await this.waitForSessionOpenPhase(restart, lifecycle, 'process startup');
       } else {
@@ -2010,31 +2021,31 @@ export class PiRpcBackend implements AgentBackend {
     options: Readonly<{
       requireDurableSessionFile?: boolean;
       lifecycle?: PiRpcSessionOpenLifecycle;
+      reuseLiveChannel?: boolean;
     }> = {},
   ): Promise<boolean> {
-    const expectedSessionId = this.sessionId;
-    if (!expectedSessionId) return false;
-    if (this.pendingTurn) {
-      throw new Error('Cannot restart Pi while a turn is in-flight');
-    }
+    return await this.runProcessTransition(async () => {
+      if (this.disposed) throw new Error('Pi backend is disposed');
+      if (options.reuseLiveChannel && this.channel) return true;
+      const expectedSessionId = this.sessionId;
+      if (!expectedSessionId) return false;
+      if (this.pendingTurn) throw new Error('Cannot restart Pi while a turn is in-flight');
 
-    const sessionFile = await this.resolveSessionFileForSessionId(
-      expectedSessionId,
-      this.sessionFile,
-      options.requireDurableSessionFile === true,
-    );
-    if (options.requireDurableSessionFile === true && !sessionFile) {
-      return false;
-    }
-    const sessionArg = sessionFile ?? expectedSessionId;
-    const state = await this.runProcessTransition(async () => await this.replaceRpcProcessForSession({
-      expectedSessionId,
-      sessionArg,
-      lifecycle: options.lifecycle,
-    }));
-    this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
-    this.publishRuntimeState(state);
-    return true;
+      const sessionFile = await this.resolveSessionFileForSessionId(
+        expectedSessionId,
+        this.sessionFile,
+        options.requireDurableSessionFile === true,
+      );
+      if (options.requireDurableSessionFile === true && !sessionFile) return false;
+      const state = await this.replaceRpcProcessForSession({
+        expectedSessionId,
+        sessionArg: sessionFile ?? expectedSessionId,
+        lifecycle: options.lifecycle,
+      });
+      this.sessionFile = asNonEmptyString(state.sessionFile) ?? sessionFile;
+      this.publishRuntimeState(state);
+      return true;
+    });
   }
 
   private async runProcessTransition<T>(operation: () => Promise<T>): Promise<T> {
