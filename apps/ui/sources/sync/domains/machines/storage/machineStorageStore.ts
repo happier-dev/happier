@@ -5,6 +5,7 @@ import type { MachineStorageClients, MachineStorageKey, MachineStorageCategoryIn
 import type { MachineStorageScanInput, MachineStorageScanStartInput, MachineStorageScanCancelInput, MachineStorageScanSkipInput,
     MachineStorageItemsInput, MachineStorageCheckInput, MachineStorageApplyInput, MachineStorageTrashEmptyInput, MachineStorageTrashRestoreInput, MachineStorageTrashMoveInput, MachineStorageReadInput } from './machineRpc';
 import { createSharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { toStorageItemRef } from './pileRef';
 import { storageVerdictStartsTicked } from './storageVerdictSelection';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -204,6 +205,7 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
         normalizeInput: input => ({ ...input, serverId: input.serverId ?? null, expectedAccountId: input.expectedAccountId ?? null }),
         storeKey: machineKey, defaultSnapshotClient: clients.summaryClient, defaultWatchClient: clients.watchClient,
         retainState: true, watchAfterRefresh: true, shouldWatch: state => state.status === 'ready',
+        subscribeRecovery: subscribeMachineRpcRecovery,
         refresh: async ({ input, state, snapshotClient, signal }): Promise<MachineStorageState> => {
             const result = await snapshotClient({ ...input, signal });
             if (signal?.aborted) return state;

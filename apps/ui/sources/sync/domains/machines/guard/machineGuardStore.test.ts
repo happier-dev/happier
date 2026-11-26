@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDeferred } from '@/dev/testkit';
 import { createMachineGuardViewFixture } from './guardViewFixtures';
 import { createMachineGuardStore } from './machineGuardStore';
@@ -9,6 +10,34 @@ async function settle() { for (let i = 0; i < 20; i++) await Promise.resolve(); 
 const idleActivityWatch: MachineGuardClients['activityWatchClient'] = async () => new Promise(() => {});
 
 describe('Guard last-good freshness', () => {
+    it('recovers held Guard and Activity watches on Home reconnect', async () => {
+        const interrupted = createDeferred<{ ok: false; reason: 'request_failed' }>();
+        let asOf = 1;
+        let viewWatches = 0;
+        let activityWatches = 0;
+        const store = createMachineGuardStore({
+            viewClient: async () => ({ ok: true, value: createMachineGuardViewFixture() }),
+            watchClient: () => ++viewWatches === 1 ? interrupted.promise : new Promise(() => {}),
+            activityClient: async () => ({ ok: true, value: { entries: [], counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf } }),
+            activityWatchClient: () => ++activityWatches === 1 ? interrupted.promise : new Promise(() => {}),
+        });
+        const key = { machineId: 'machine', serverId: 'home', expectedAccountId: 'owner', range: '7d' as const, filter: 'all' as const };
+        const releases = [store.demandView(key), store.demandActivity(key)];
+        try {
+            await settle();
+            interrupted.resolve({ ok: false, reason: 'request_failed' });
+            await settle();
+            expect(store.getView(key).status).toBe('error');
+            expect(store.getActivity(key).status).toBe('error');
+            asOf = 2;
+            publishHomeAccountChange(key.serverId, undefined, { source: 'connected' });
+            await settle();
+            expect(store.getView(key).status).toBe('ready');
+            expect(store.getActivity(key)).toMatchObject({ status: 'ready', list: { asOf: 2 } });
+            expect([viewWatches, activityWatches]).toEqual([2, 2]);
+        } finally { releases.forEach(release => release()); store.reset(); }
+    });
+
     it('publishes a changed Guard view only to its own Machine', async () => {
         const watches = new Map<string, ReturnType<typeof createDeferred<MachineGuardResult<MachineGuardWatchResultV1>>>>();
         const store = createMachineGuardStore({

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDeferred } from '@/dev/testkit';
 import { MACHINE_PROCESS_HISTORY_WINDOW_MS, type MachineProcessesAnswerV1, type MachineProcessesWatchResultV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { createMachineProcessesStore } from './machineProcessesStore';
@@ -17,6 +18,31 @@ function answer(at = 1000): MachineProcessesAnswerV1 {
 }
 async function settle() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
 describe('machine process subscription and cleanup selection', () => {
+    it('recovers a held Process watch on Home reconnect', async () => {
+        const interrupted = createDeferred<MachineProcessesRpcResult<MachineProcessesWatchResultV1>>();
+        let capturedAt = 1000;
+        const watches: MachineProcessesWatchInput[] = [];
+        const store = createMachineProcessesStore({
+            snapshotClient: async () => ({ ok: true, value: answer(capturedAt) }),
+            watchClient: input => {
+                watches.push(input);
+                return watches.length === 1 ? interrupted.promise : new Promise(() => {});
+            },
+        });
+        const release = store.demand(key);
+        try {
+            await settle();
+            interrupted.resolve({ ok: false, reason: 'request_failed' });
+            await settle();
+            expect(store.getState(key)).toMatchObject({ status: 'error', answer: { capturedAtMs: 1000 } });
+            capturedAt = 2000;
+            publishHomeAccountChange(key.serverId, undefined, { source: 'connected' });
+            await settle();
+            expect(store.getState(key)).toMatchObject({ status: 'ready', answer: { capturedAtMs: 2000 } });
+            expect(watches.map(watch => watch.since)).toEqual([1000, 2000]);
+        } finally { release(); store.reset(); }
+    });
+
     it('retains unchanged All-process groups and members through one changed group and reordering', async () => {
         let value: MachineProcessesAnswerV1 = { ...answer(), notHappier: [
             { appGroup: 'first', members: [{ name: 'first', appGroup: 'first', pid: 30, ref: 'first-30', memoryBytes: 10 }] },

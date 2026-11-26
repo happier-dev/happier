@@ -2,6 +2,7 @@ import type { MachineGuardActivityListV1 } from '@happier-dev/protocol/machines/
 import type { MachineGuardViewV1 } from '@happier-dev/protocol/machines/guard/guardRpcV1';
 
 import { createSharedSubscriptionStore, type SharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 
 import type { MachineDaemonReadKey } from '../useMachineDaemonReadTarget';
 import type { MachineGuardActivityQuery, MachineGuardClients } from './machineGuardRpc';
@@ -84,6 +85,7 @@ export function createMachineGuardStore(clients: MachineGuardClients) {
         emptyState: EMPTY_VIEW, createState: () => EMPTY_VIEW, normalizeInput: normalize, storeKey: machineKey,
         defaultSnapshotClient: clients.viewClient, defaultWatchClient: clients.watchClient,
         retainState: true, watchAfterRefresh: true, shouldWatch: state => state.status === 'ready',
+        subscribeRecovery: subscribeMachineRpcRecovery,
         beginRefresh: state => ({ ...state, status: state.view ? state.status : 'loading', pending: true }),
         refresh: async ({ input, state, snapshotClient, signal, nowMs }): Promise<MachineGuardViewState> => {
             const answer = await snapshotClient({ ...input, signal });
@@ -110,6 +112,7 @@ export function createMachineGuardStore(clients: MachineGuardClients) {
         emptyState: EMPTY_ACTIVITY, createState: () => EMPTY_ACTIVITY, normalizeInput: normalize, storeKey: activityKey,
         defaultSnapshotClient: clients.activityClient, defaultWatchClient: clients.activityWatchClient, retainState: true,
         watchAfterRefresh: true, shouldWatch: state => state.status === 'ready',
+        subscribeRecovery: subscribeMachineRpcRecovery,
         beginRefresh: state => ({ ...state, status: 'loading' }),
         refresh: async ({ input, state, snapshotClient, signal }): Promise<MachineGuardActivityState> => {
             const answer = await snapshotClient({ ...input, signal });

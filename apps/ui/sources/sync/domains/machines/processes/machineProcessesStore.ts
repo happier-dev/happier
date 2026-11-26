@@ -1,5 +1,6 @@
 import { MACHINE_PROCESS_HISTORY_WINDOW_MS, type MachineProcessesAnswerV1, type MachineProcessesWatchResultV1, type OwnerRowV1, type ProcessRowV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { createSharedSubscriptionStore, type SharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import type { MachineProcessesKey, MachineProcessesReadInput, MachineProcessesWatchInput, MachineProcessesRpcResult } from './machineProcessesRpc';
 import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import type { MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
@@ -89,6 +90,7 @@ export function createMachineProcessesStore(clients: MachineProcessesClients) {
         normalizeInput: input => ({ ...input, serverId: input.serverId ?? null }),
         storeKey,
         defaultSnapshotClient: clients.snapshotClient, defaultWatchClient: clients.watchClient, retainState: true, watchAfterRefresh: true,
+        subscribeRecovery: subscribeMachineRpcRecovery,
         beginRefresh: (state, input): MachineProcessesState => state.answer || !input.detailToken ? state : store.getState({ ...input, detailToken: undefined }),
         shouldWatch: state => state.status === 'ready',
         refresh: async ({ input, state, snapshotClient, signal }) => {

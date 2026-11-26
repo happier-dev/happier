@@ -3,6 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { MACHINE_STORAGE_ACTION_IDS } from '@happier-dev/protocol/actions/specs/storage';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { HappierStorageSummaryV1Schema, MachineStorageCategoryListResultV1Schema, MachineStorageScanGetResultV1Schema, DiskScanStateV1Schema, PileItemRefV1Schema, StorageItemV1Schema,
     type HappierStorageSummaryV1, type MachineStorageCategoryListResultV1, type MachineStorageWatchResultV1 } from '@happier-dev/protocol/storage/storageV1';
@@ -86,6 +87,22 @@ function harness() {
 }
 
 describe('machine storage subscription owner', () => {
+    it('recovers a held Storage watch on Home reconnect', async () => {
+        const h = harness();
+        const release = h.store.demand(key);
+        try {
+            await vi.waitFor(() => expect(h.watches).toHaveLength(1));
+            h.watches[0]!.answer.reject(new RpcError('Machine disconnected', 'request_failed'));
+            await vi.waitFor(() => expect(h.store.getState(key).status).toBe('error'));
+            h.responses.summary.mockResolvedValue(success(summary(2)));
+            publishHomeAccountChange(key.serverId, undefined, { source: 'connected' });
+            await vi.waitFor(() => {
+                expect(h.store.getState(key)).toMatchObject({ status: 'ready', summary: { revision: 2 } });
+                expect(h.watches).toHaveLength(2);
+            });
+        } finally { release(); }
+    });
+
     it('reads no unchanged pile or category for six scan pushes and reads each changed fact once', async () => {
         type WatchAnswer = Awaited<ReturnType<MachineStorageClients['watchClient']>>;
         const watches: Array<ReturnType<typeof createDeferred<WatchAnswer>>> = [];
