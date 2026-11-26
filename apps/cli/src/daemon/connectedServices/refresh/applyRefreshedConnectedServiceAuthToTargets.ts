@@ -90,6 +90,10 @@ export async function applyRefreshedConnectedServiceAuthToTargets(params: Readon
       }
       throw new Error(`connected_service_refreshed_auth_application_failed:${result.errorCode ?? 'unknown'}`);
     }
+    if (result.action === 'metadata_updated') {
+      restartTargets.push({ target, reason: 'lifecycle_policy' });
+      continue;
+    }
     if (result.action !== 'hot_applied') continue;
     for (const affectedTarget of event.affectedTargets) {
       if (

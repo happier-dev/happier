@@ -72,6 +72,21 @@ describe('applyRefreshedConnectedServiceAuthToTargets', () => {
     expect([...result.appliedRuntimeIdentityKeys]).toEqual(['runtime-hot-applies']);
   });
 
+  it('hands metadata-only application to the restart policy and skips unchanged targets', async () => {
+    const metadataOnly = target('metadata-only', 1);
+    const applyAuth = vi.fn()
+      .mockResolvedValueOnce({ ok: true, action: 'metadata_updated' })
+      .mockResolvedValueOnce({ ok: true, action: 'unchanged' });
+
+    await expect(applyRefreshedConnectedServiceAuthToTargets({
+      event: event([metadataOnly, target('unchanged', 2)]),
+      applyAuth,
+    })).resolves.toEqual({
+      appliedRuntimeIdentityKeys: new Set(),
+      restartTargets: [{ target: metadataOnly, reason: 'lifecycle_policy' }],
+    });
+  });
+
   it('keeps tolerating a restart that execution policy disallows', async () => {
     const applyAuth = vi.fn().mockResolvedValue({ ok: false, errorCode: 'restart_disallowed_by_execution_policy' });
 
