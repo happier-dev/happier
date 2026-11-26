@@ -34,7 +34,7 @@ it('authors a required person without changing the other reviewers or step Focus
             current = input;
             return <ReviewStartBody input={input} onChange={onChange}
                 source={{ enabled: true, sections: [], selectedIds: new Set(),
-                    where: { accountLifetime, target: null, machineName: null } }}
+                    where: { accountLifetime, target: null, machineName: null, testIDPrefix: 'review-start' } }}
                 choices={[]} transcriptAvailable={false} walkthrough={false} disabled={false} />;
         }
         const screen = await renderScreen(<Draft />);

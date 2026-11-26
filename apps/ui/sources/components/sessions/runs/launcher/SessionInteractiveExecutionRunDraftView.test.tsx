@@ -2781,7 +2781,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const [{ join }, { createTempDir, removeTempDir }, { writeExecutableShim },
             { createAdmittedPluginRuntimeFixture }, { pluginReloadController },
             { detectCliSnapshotOnDaemonPath }, { buildCliCapabilityData },
-            { buildReviewEngineInventory }, { buildExecutionRunProfileCatalog },
+            { buildReviewEngineInventory }, { resolveCliEngineRegistry },
             { buildPluginProjectionV2 }, { projectMachineAgentsDetectResponse },
             { readAgentTargetReadinessV1 }, { parseBackendTargetKeyV2 },
             { resolveSpawnConnectedServicesDefaultDisposition }] = await Promise.all([
@@ -2793,7 +2793,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             import('../../../../../../cli/src/capabilities/snapshots/cliSnapshot'),
             import('../../../../../../cli/src/capabilities/probes/cliBase'),
             import('../../../../../../cli/src/session/actions/inventory/buildReviewEngineInventoryItems'),
-            import('../../../../../../cli/src/agent/executionRuns/profiles/intentRegistry'),
+            import('../../../../../../cli/src/agent/runtime/registry/engineRegistry'),
             import('../../../../../../cli/src/plugins/projection/registry/projection/v2'),
             import('@happier-dev/protocol/capabilities/machineAgentInventory'),
             import('@happier-dev/protocol/actions/executor/agents/agentBackendReadiness'),
@@ -2838,7 +2838,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             expect(JSON.stringify(machineInventory)).not.toContain(custodianSentinel);
             const inventory = await buildReviewEngineInventory({ includeDisabled: true, engineIds: [agent.id],
                 registrySnapshot: runtime.registry.contributes,
-                profileCatalog: buildExecutionRunProfileCatalog(runtime.registry.contributes.executionRunProfiles),
+                profileCatalog: await (await resolveCliEngineRegistry({ runtimeRegistry: runtime.registry })).resolveExecutionRunProfileCatalog(),
                 acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
                 readReadiness: targets => readAgentTargetReadinessV1({ machinesAgentsList: async () => machineInventory,
                     agentsConnectedDefaultRoutesRead: async ({ agentIds }) => Object.fromEntries(agentIds.map(agentId => [agentId,
