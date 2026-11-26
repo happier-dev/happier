@@ -297,8 +297,8 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     const projects = compilerProjects(args).map(project => ({ ...project, authoredProject: project.project, authoredArgs: project.args }));
     // Finite batches and direct UI/CLI partitions share generated inputs.
     // A CLI check can also regenerate UI projects and foreign memberships.
-    const sharesFiniteInputs = projects.length > 1 || projects.some(({ project }) =>
-      ['cli', 'ui'].includes(basename(project ? dirname(resolve(cwd, project)) : cwd)));
+    const sharesFiniteInputs = projects.some(({ project }) => project
+      && ['cli', 'ui'].includes(basename(dirname(resolve(cwd, project)))));
     if (sharesFiniteInputs) {
       failureStep = 'project-input-admission';
       await withFiniteTypecheckProjectInputs(cwd, () => {
@@ -309,7 +309,9 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       await checkProjects(projects);
     }
   } catch (error) {
-    if (!cancelledSignal) {
+    if (cancelledSignal && failureStep === 'project-input-admission') {
+      result = { status: null, signal: cancelledSignal };
+    } else {
       process.stderr.write(`[typecheck-failure] ${typecheckDiagnosticFailureIdentifier(error, failureStep)}\n`);
       process.stderr.write(`[typecheck-failure-detail] ${JSON.stringify(typecheckFailureDetail(error))}\n`);
       if (Array.isArray(error?.cycle)) process.stderr.write(`[typecheck-reference-cycle] ${error.cycle.join(' -> ')}\n`);
@@ -318,5 +320,5 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
   } finally {
     for (const [signal, handler] of cancellationHandlers) process.off(signal, handler);
   }
-  exitWithCommandResult(cancelledSignal ? { status: null, signal: cancelledSignal } : result);
+  exitWithCommandResult(result);
 }

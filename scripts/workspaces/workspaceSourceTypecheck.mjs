@@ -18,7 +18,8 @@ export function resolveTypecheckCacheDirectory(packageDir, cacheSuffix = '', pur
 }
 
 export function withFiniteTypecheckProjectInputs(directory, check, { signal } = {}) {
-  const root = coerceHappyMonorepoRootFromPath(directory) ?? resolve(directory);
+  const root = coerceHappyMonorepoRootFromPath(directory);
+  if (!root) return check();
   const lockPath = resolve(resolveTypecheckCacheDirectory(root, '', 'finite'), 'projects.lock');
   let reportedWait = false;
   return withWorkspaceBundleLock(async ({ assertOwned }) => {
