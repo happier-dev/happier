@@ -101,8 +101,9 @@ function writeSteerableAcpAgentScript(params: { dir: string }): string {
  * first prompt with end_turn at once, the agent keeps working on the combined turn, and the second
  * prompt resolves when that work ends.
  */
-function writeSupersedingSteerAcpAgentScript(params: { dir: string }): string {
+function writeSupersedingSteerAcpAgentScript(params: { dir: string; rejectSteer?: boolean }): string {
   const scriptPath = join(params.dir, 'fake-acp-agent-superseding-steer.mjs');
+  const rejectSteer = params.rejectSteer === true;
   const src = `
     let buf = '';
     let primaryId = null;
@@ -123,6 +124,11 @@ function writeSupersedingSteerAcpAgentScript(params: { dir: string }): string {
         if (req.method === 'session/prompt') {
           const text = req.params?.prompt?.[0]?.text ?? '';
           if (primaryId === null) { primaryId = req.id; primary = text; continue; }
+          if (${JSON.stringify(rejectSteer)}) {
+            send({ jsonrpc: '2.0', id: req.id, error: { code: -32603, message: 'steer refused' } });
+            setTimeout(() => send({ jsonrpc: '2.0', id: primaryId, result: { stopReason: 'end_turn' } }), 50);
+            continue;
+          }
           send({ jsonrpc: '2.0', id: primaryId, result: { stopReason: 'end_turn' } });
           const steerId = req.id;
           setTimeout(() => {
@@ -256,13 +262,75 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
       await (runtime as any).startOrLoad({});
       const primaryPromise = (runtime as any).sendPrompt('hello');
       await new Promise((r) => setTimeout(r, 10));
-      await (runtime as any).steerPrompt('steer-now', { localId: 'local-steer-2', userMessageSeq: 42 });
+      const events: string[] = [];
+      const hasPublishedMessage = () => sent.some((m) => m.type === 'message');
+      await (runtime as any).steerPrompt('steer-now', {
+        localId: 'local-steer-2',
+        userMessageSeq: 42,
+        onProviderPromptAccepted: () => events.push(hasPublishedMessage() ? 'accepted-after-message' : 'accepted'),
+      });
+      // The superseded primary prompt answering is the provider's acknowledgement of the steer;
+      // acceptance must not wait for the steer prompt's own response at the end of the combined turn.
+      await expect.poll(() => events, { timeout: 300 }).toContain('accepted');
       await primaryPromise;
       await runtime.flushTurn();
       await expect.poll(
         () => sent.find((m) => m.type === 'message' && typeof (m as any).message === 'string')?.message,
         { timeout: 3_000 },
       ).toContain('primary=hello; steer=steer-now');
+      expect(events).toEqual(['accepted']);
+    } finally {
+      await backend.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+  it('does not accept a steer the provider rejected even when the primary prompt then answers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-reject-'));
+    const backend = new AcpBackend({
+      agentName: 'test',
+      cwd: dir,
+      command: process.execPath,
+      args: [writeSupersedingSteerAcpAgentScript({ dir, rejectSteer: true })],
+      transportHandler: {
+        agentName: 'test',
+        getInitTimeout: () => 1_000,
+        getToolPatterns: () => [] as ToolPattern[],
+        getIdleTimeout: () => 250,
+      } satisfies TransportHandler,
+    });
+    const session = {
+      keepAlive: () => {},
+      sendAgentMessage: () => {},
+      sendAgentMessageCommitted: async () => {},
+      sendUserTextMessageCommitted: async () => {},
+      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
+      updateMetadata: () => {},
+    } as any;
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'codex',
+        directory: dir,
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend as any,
+        inFlightSteer: { enabled: true },
+      } as any);
+      runtime.beginTurn();
+      await (runtime as any).startOrLoad({});
+      const primaryPromise = (runtime as any).sendPrompt('hello').catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 10));
+      const onProviderPromptAccepted = vi.fn();
+      await (runtime as any).steerPrompt('steer-now', {
+        localId: 'local-steer-3',
+        userMessageSeq: 43,
+        onProviderPromptAccepted,
+      }).catch(() => undefined);
+      await primaryPromise;
+      await new Promise((r) => setTimeout(r, 200));
+      expect(onProviderPromptAccepted).not.toHaveBeenCalled();
     } finally {
       await backend.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

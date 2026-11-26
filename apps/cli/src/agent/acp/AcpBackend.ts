@@ -179,6 +179,12 @@ export class AcpPromptSubmissionPhaseError extends Error {
   }
 }
 
+type OutstandingAcpSteerPrompt = {
+  written: boolean;
+  acknowledged: boolean;
+  acknowledge: () => void;
+};
+
 type AcpPromptExactFinalResponseEvidence = Readonly<{
   kind: 'exact_final_response';
   response: PromptResponse;
@@ -3336,8 +3342,10 @@ export class AcpBackend implements AgentBackend {
    * Steering prompts sent with session/prompt that have not answered yet, for one turn generation.
    * Agents that steer by superseding (agy acp) answer the earlier prompt with a stop reason as soon
    * as the steer arrives and keep working; the turn ends when the newest outstanding prompt answers.
+   * That earlier stop reason is also the provider's acknowledgement of the oldest written,
+   * unacknowledged steer, so its input is accepted before its own response ends the combined turn.
    */
-  private outstandingSteerPrompts: Readonly<{ generation: number; count: number }> | null = null;
+  private outstandingSteerPrompts: Readonly<{ generation: number; steers: OutstandingAcpSteerPrompt[] }> | null = null;
   private idleStatusDeferredUntilPromptResponse = false;
 
   private observeAcpTransportMessageWritten(message: unknown): void {
@@ -3479,6 +3487,7 @@ export class AcpBackend implements AgentBackend {
     const stopReason = readPromptStopReason(promptResponse);
     if (stopReason && this.countOutstandingSteerPrompts(turnGeneration) > 0) {
       // A newer steering prompt superseded this one; the turn continues until that prompt answers.
+      this.acknowledgeSupersedingSteerPrompt(turnGeneration);
       return true;
     }
     if (!stopReason) {
@@ -3498,12 +3507,26 @@ export class AcpBackend implements AgentBackend {
   }
 
   private countOutstandingSteerPrompts(turnGeneration: number): number {
-    return this.outstandingSteerPrompts?.generation === turnGeneration ? this.outstandingSteerPrompts.count : 0;
+    return this.outstandingSteerPrompts?.generation === turnGeneration ? this.outstandingSteerPrompts.steers.length : 0;
   }
 
-  private adjustOutstandingSteerPrompts(turnGeneration: number, delta: 1 | -1): void {
-    const count = Math.max(0, this.countOutstandingSteerPrompts(turnGeneration) + delta);
-    this.outstandingSteerPrompts = count > 0 ? { generation: turnGeneration, count } : null;
+  private addOutstandingSteerPrompt(turnGeneration: number, steer: OutstandingAcpSteerPrompt): void {
+    const current = this.outstandingSteerPrompts?.generation === turnGeneration ? this.outstandingSteerPrompts.steers : [];
+    this.outstandingSteerPrompts = { generation: turnGeneration, steers: [...current, steer] };
+  }
+
+  private removeOutstandingSteerPrompt(turnGeneration: number, steer: OutstandingAcpSteerPrompt): void {
+    if (this.outstandingSteerPrompts?.generation !== turnGeneration) return;
+    const steers = this.outstandingSteerPrompts.steers.filter((candidate) => candidate !== steer);
+    this.outstandingSteerPrompts = steers.length > 0 ? { generation: turnGeneration, steers } : null;
+  }
+
+  private acknowledgeSupersedingSteerPrompt(turnGeneration: number): void {
+    if (this.outstandingSteerPrompts?.generation !== turnGeneration) return;
+    const steer = this.outstandingSteerPrompts.steers.find((candidate) => candidate.written && !candidate.acknowledged);
+    if (!steer) return;
+    steer.acknowledged = true;
+    steer.acknowledge();
   }
 
   private abortPendingPermissionsForCurrentTurn(reason: string): void {
@@ -4079,10 +4102,20 @@ export class AcpBackend implements AgentBackend {
     // This method is used for in-flight steering while a primary prompt is already running.
     const transportWriteReceipt = this.createAcpPromptTransportWriteReceipt(this.acpSessionId);
     const transportWriteSentinel = Symbol('acp-steer-transport-write');
-    this.adjustOutstandingSteerPrompts(turnGeneration, 1);
+    let acknowledgeSteer!: () => void;
+    const supersedeAcknowledgement = new Promise<AcpPromptFinalResponseEvidence>((resolve) => {
+      acknowledgeSteer = () => resolve({ kind: 'accepted_without_exact_final_response' });
+    });
+    const outstandingSteer: OutstandingAcpSteerPrompt = {
+      written: false,
+      acknowledged: false,
+      acknowledge: () => acknowledgeSteer(),
+    };
+    void transportWriteReceipt.written.then(() => { outstandingSteer.written = true; }, () => undefined);
+    this.addOutstandingSteerPrompt(turnGeneration, outstandingSteer);
     const promptPromise = connection.peer.prompt(promptRequest)
-      .finally(() => this.adjustOutstandingSteerPrompts(turnGeneration, -1));
-    const finalResponseEvidence: Promise<AcpPromptExactFinalResponseEvidence> = promptPromise
+      .finally(() => this.removeOutstandingSteerPrompt(turnGeneration, outstandingSteer));
+    const exactResponseEvidence: Promise<AcpPromptExactFinalResponseEvidence> = promptPromise
       .then((response): AcpPromptExactFinalResponseEvidence => {
         // An open provider continuation owns its turn's completion; a steer answered while it is
         // active must not close that generation behind the continuation source.
@@ -4101,11 +4134,15 @@ export class AcpBackend implements AgentBackend {
       });
     // The compatibility method intentionally returns after transport custody. Keep the exact
     // response evidence safe until an evidence-aware runtime elects to observe it.
+    void exactResponseEvidence.catch(() => {});
+    // A superseding agent acknowledges the steer by answering the turn's earlier prompt; that is
+    // provider acceptance, while the exact response (or its rejection) still owns turn bookkeeping.
+    const finalResponseEvidence = Promise.race([exactResponseEvidence, supersedeAcknowledgement]);
     void finalResponseEvidence.catch(() => {});
     let outcome: AcpPromptExactFinalResponseEvidence | typeof transportWriteSentinel;
     try {
       outcome = await Promise.race([
-        finalResponseEvidence,
+        exactResponseEvidence,
         transportWriteReceipt.written.then(
           (): typeof transportWriteSentinel => transportWriteSentinel,
         ),
