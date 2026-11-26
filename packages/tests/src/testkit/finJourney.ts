@@ -54,6 +54,7 @@ export async function startFinJourneyFixture(params: Readonly<{ testDir: string;
     async function enrollDaemon(account: Awaited<ReturnType<typeof createAccount>>, options: Readonly<{
       env?: NodeJS.ProcessEnv;
       prepareHome?: (homeDir: string) => Promise<void>;
+      credentialMode?: Parameters<typeof seedCliAuthForTestAccount>[0]['mode'];
     }> = {}) {
       const directory = join(params.testDir, account.name);
       const homeDir = join(directory, 'home');
@@ -61,7 +62,8 @@ export async function startFinJourneyFixture(params: Readonly<{ testDir: string;
       const claudeConfigDir = join(homeDir, '.claude');
       await Promise.all([mkdir(workspaceDir, { recursive: true }), mkdir(claudeConfigDir, { recursive: true })]);
       await options.prepareHome?.(homeDir);
-      const seeded = await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth: account.auth, mode: 'dataKey' });
+      const seeded = await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth: account.auth,
+        mode: options.credentialMode ?? 'dataKey' });
       const daemon = await startTestDaemon({ testDir: directory, happyHomeDir: homeDir,
         requireMachineControlReady: true, env: {
         ...process.env, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',

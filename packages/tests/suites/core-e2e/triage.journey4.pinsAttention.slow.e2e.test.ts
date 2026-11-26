@@ -13,13 +13,18 @@ import { connectUiPersonActionClient, connectUiTriageActionClient, mountUiInboxJ
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol';
+import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { ReviewCommentCreateResponseV1Schema, ReviewCommentTransitionResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
+import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
+import { createCliActionExecutorFromCredentials } from '../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { startFinJourneyFixture } from '../../src/testkit/finJourney';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
+import { fetchJson } from '../../src/testkit/http';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../../plugins/triage/src/actions/listEntriesProtocol';
 import {
   TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -120,28 +125,62 @@ it('keeps pins across fresh clients and daemon restart, and reads them with the 
   }
 }, 0);
 
-it('publishes daemon Review attention into the person Inbox and resolves the same entry after the final shared decision', async () => {
+it.each(['plain', 'e2ee'] as const)('publishes daemon Review attention into the %s person Inbox after another Account decides the shared findings', async mode => {
   const postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
   const fixture = await startFinJourneyFixture({ testDir: run.testDir(`review-attention-${randomUUID()}`), dbProvider: 'postgres',
-    serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } }).catch(async error => { await postgres.stop(); throw error; });
+    serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl, HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+      HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1' } }).catch(async error => { await postgres.stop(); throw error; });
   let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
   let inbox: Awaited<ReturnType<typeof mountUiInboxJourney>> | undefined;
   try {
     const actor = await fixture.createAccount('review-attention-owner');
+    const credentialsFor = async (account: typeof actor) => {
+      if (mode === 'e2ee') return account.credentials;
+      // The existing plain-Account fixture uses the public mode-change owner;
+      // actual CLI/UI/daemon clients then receive no Account encryption material.
+      const changed = await fetchJson<unknown>(`${fixture.server.baseUrl}/v1/account/encryption`, { method: 'PATCH',
+        headers: { Authorization: `Bearer ${account.credentials.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'plain' }) });
+      expect(changed.status).toBe(200);
+      expect(AccountEncryptionModeResponseSchema.parse(changed.data).mode).toBe('plain');
+      return { ...account.credentials, encryption: null };
+    };
+    const ownerCredentials = await credentialsFor(actor);
+    const actionsFor = (credentials: typeof ownerCredentials) => createCliActionExecutorFromCredentials({ credentials,
+      readCredentials: async () => credentials, serverId: fixture.serverId,
+      serverIdentityId: fixture.serverId, serverApiUrl: fixture.server.baseUrl });
+    const ownerActions = actionsFor(ownerCredentials);
+    const cliContext = () => ({ surface: 'cli' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const }, serverId: fixture.serverId, serverIdentityId: fixture.serverId,
+      actionRequestId: randomUUID() });
     // Real stored terminal sign-in, daemon activation and ApiMachine changes
     // ingress own this producer. Do not start a second attention lifecycle here.
-    const machine = await fixture.enrollDaemon(actor);
-    ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl, accountSecret: actor.auth.accountSigningSeed });
+    const machine = await fixture.enrollDaemon(actor, { credentialMode: mode === 'plain' ? 'tokenOnly' : 'dataKey' });
+    ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl,
+      accountSecret: actor.auth.accountSigningSeed, accountEncryptionMode: mode });
     await waitFor(() => ui!.isMachineActive(machine.target.machineId), { context: 'Review attention daemon is visible to the person' });
     inbox = await mountUiInboxJourney();
     const reviewId = randomUUID();
     const title = `Private Review attention ${randomUUID()}`;
-    const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(actor.credentials)));
+    const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(ownerCredentials)));
     await runWithServerHttpBaseUrl(fixture.server.baseUrl, async () => {
       const round = await records.start({ reviewId, title, subjectKind: 'repository', sourceKind: 'direct', reviewerIds: [], startedAt: Date.now() });
       await records.settle({ ...round, outcome: 'completed', finishedAt: Date.now(), runs: [] });
     });
     const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const }, serverId: ui.serverId };
+    const peer = await fixture.createAccount('shared-review-editor');
+    const peerActions = actionsFor(await credentialsFor(peer));
+    await fixture.claimHomeOwner(actor);
+    const team = await ui.executeConfirmed('teams.create', { v: 1, name: 'Review editors', requestKey: randomUUID(),
+      initialOwnerAccountId: readAccountIdFromToken(actor.credentials.token) }, context);
+    if (!team.ok) throw new Error(`Review editor Team refused (${team.errorCode})`);
+    const teamId = TeamSummaryV1Schema.parse(team.result).id;
+    const member = await ui.executeConfirmed('teams.members.add', { v: 1, teamId,
+      accountId: readAccountIdFromToken(peer.credentials.token), role: 'member', historyAccess: 'from_membership' }, context);
+    if (!member.ok) throw new Error(`Review editor membership refused (${member.errorCode})`);
+    const granted = await ui.executeConfirmed('artifact.access.grants.set', { artifactId: reviewId,
+      principal: { kind: 'account', accountId: readAccountIdFromToken(peer.credentials.token) }, accessLevel: 'edit' }, context);
+    expect(granted).toMatchObject({ ok: true });
     const createFinding = async (findingTitle: string) => {
       const path = `${findingTitle}.ts`;
       const fingerprint = { normalizedMessageHash: createReviewFindingMessageHashV1(findingTitle) };
@@ -166,23 +205,23 @@ it('publishes daemon Review attention into the person Inbox and resolves the sam
     if (!outside.ok) throw new Error(`Unshared Account inventory refused (${outside.errorCode})`);
     expect(ArtifactActionOutputSchemasV1['artifact.list'].parse(outside.result).items).toEqual([]);
     const transition = async (comment: typeof first) => {
-      // A second device writes through the ordinary credentialed CLI Action
-      // owner. The mounted UI must consume its pushed change, never refresh.
-      const result = await actor.execute('reviews.comments.transition', buildReviewTriageTransitionRequestV1({ comment,
-        decision: 'reject', clientMutationId: randomUUID() }));
+      // A distinct Account writes through its own ordinary credentialed CLI
+      // Action owner while the owner's Inbox remains mounted, never refreshed.
+      const result = await peerActions.execute('reviews.comments.transition', buildReviewTriageTransitionRequestV1({ comment,
+        decision: 'reject', clientMutationId: randomUUID() }), cliContext());
       if (!result.ok) throw new Error(`Review finding decision refused (${result.errorCode})`);
       return ReviewCommentTransitionResponseV1Schema.parse(result.result);
     };
     await transition(first);
     await waitFor(async () => {
-      const current = await actor.execute('review.get', { reviewId });
+      const current = await ownerActions.execute('review.get', { reviewId }, cliContext());
       if (!current.ok) throw new Error(current.errorCode);
       return ReviewGetResponseV1Schema.parse(current.result).review.counts.needsDecision === 1;
     }, { context: 'One decision remains authoritative after the first transition' });
     expect(notices().map(entry => entry.artifact.id)).toEqual([noticeId]);
     await transition(second);
     await waitFor(() => notices().length === 0, { context: 'Final decision resolves the daemon-produced Inbox entry without a manual refresh' });
-    const retained = await actor.execute('artifact.get', { artifactId: noticeId });
+    const retained = await ownerActions.execute('artifact.get', { artifactId: noticeId }, cliContext());
     expect(retained).toMatchObject({ ok: true, result: { artifact: { header: { title, resolved: true } } } });
     expect(inbox.getCurrent()!.items).not.toEqual(expect.arrayContaining([expect.objectContaining({ title })]));
   } finally {
