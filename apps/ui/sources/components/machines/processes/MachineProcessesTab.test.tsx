@@ -241,7 +241,7 @@ it('displays native ceiling utilization and the unverifiable count without inven
   answer.unverifiableCount = 2;
   answer.owners[0].ceiling = { limitBytes: 4 * GB, usedBytes: 3 * GB, observedAtMs: answer.capturedAtMs, throttleCount5m: 7 };
   const { screen } = await mount({ answer });
-  expect(screen.getTextContent()).toContain('3 GB of 4 GB');
+  expect(screen.getTextContent()).toContain('3 GiB of 4 GiB');
   expect(screen.findByTestId('machine-processes-unverifiable')).not.toBeNull();
   expect(screen.root.findAll(node => String(node.props.testID ?? '').startsWith('machine-processes-row-unknown'))).toHaveLength(0);
   const phone = await mount({ answer, params: { id: 'processes', page: 'owner', owner: answer.owners[0].rowId }, waitForRows: false });
@@ -273,7 +273,7 @@ it('lists the one process of a single-process owner on its phone page, so it can
     expect(found).not.toBeNull();
     return found;
   });
-  expect(textOf(row)).toContain('1.2 GB');
+  expect(textOf(row)).toContain('1.2 GiB');
   expect(screen.getTextContent()).toContain(t('machineProcesses.phone.cpuOfCores', { cores: 1.26 }));
 });
 type Screen = Awaited<ReturnType<typeof mount>>['screen'];
@@ -581,7 +581,7 @@ describe('MachineProcessesTab', () => {
       textOf(
         screen.findByTestId('machine-processes-memory-o:session:refactor'),
       ),
-    ).toBe('3.75 GB');
+    ).toBe('3.75 GiB');
     expect(screen.findByTestId('machine-processes-row-p:tsgo')).toBeNull();
     await act(async () => {
       screen.pressByTestId('machine-processes-row-o:session:refactor');
@@ -598,15 +598,15 @@ describe('MachineProcessesTab', () => {
     expect(screen.getTextContent()).toContain('Happier in total');
     expect(
       textOf(screen.findByTestId('machine-processes-total-happier-memory')),
-    ).toBe('5.13 GB');
+    ).toBe('5.13 GiB');
   });
 
   it('keeps the totals figures on a phone, where the rows say memory beside their name', async () => {
     device.type = 'phone';
     try {
       const { screen } = await mount();
-      expect(textOf(screen.findByTestId('machine-processes-memory-o:session:refactor'))).toBe('3.75 GB');
-      expect(textOf(screen.findByTestId('machine-processes-total-happier-memory'))).toBe('5.13 GB');
+      expect(textOf(screen.findByTestId('machine-processes-memory-o:session:refactor'))).toBe('3.75 GiB');
+      expect(textOf(screen.findByTestId('machine-processes-total-happier-memory'))).toBe('5.13 GiB');
     } finally {
       device.type = null;
     }
@@ -670,13 +670,13 @@ describe('MachineProcessesTab', () => {
         };
       },
     });
-    expect(screen.getTextContent()).toContain('Clean up 3 · 1.37 GB');
+    expect(screen.getTextContent()).toContain('Clean up 3 · 1.37 GiB');
     await act(async () => {
       screen.changeTextByTestId('machine-processes-search', 'postgres');
     });
     await act(async () => {
       await vi.waitFor(() =>
-        expect(screen.getTextContent()).toContain('Clean up 1 · 150 MB'),
+        expect(screen.getTextContent()).toContain('Clean up 1 · 150 MiB'),
       );
     });
     expect(screen.findByTestId('machine-processes-row-l:left-next')).toBeNull();
@@ -978,7 +978,7 @@ describe('MachineProcessesTab', () => {
       await vi.waitFor(() =>
         expect(
           textOf(screen.findByTestId('machine-processes-freed')),
-        ).toContain('1.2 GB freed'),
+        ).toContain('1.2 GiB freed'),
       );
     });
     expect(screen.findByTestId('machine-processes-start-again') !== null).toBe(canStartAgain === true);
@@ -1352,7 +1352,7 @@ describe('MachineProcessesTab port chips', () => {
     expect(items.map((item) => item.title)).toEqual(['Open in browser', 'Copy address', 'Stop server on :4000']);
     expect(items[0]!.disabled).toBe(false);
     expect(items[1]!.subtitle).toBe('127.0.0.1:4000');
-    expect(items[2]!.subtitle).toBe('Frees about 200 MB');
+    expect(items[2]!.subtitle).toBe('Frees about 200 MiB');
     await act(async () => {
       menu.props.onSelect('copy');
     });
