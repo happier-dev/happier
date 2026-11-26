@@ -959,10 +959,15 @@ happier auth approve '<device-code-link>'
 ```
 
 Review the joining device, Home, and selected Account, then confirm at the prompt.
-For an encrypted Account, the approving CLI must hold the current Account encryption key.
-When running without an interactive terminal, review the device and Account before
-explicitly passing `--confirm`. Add `--json` for machine-readable output. Keep the
-short-lived pairing link private.
+You can also approve in a signed-in Happier app. For an encrypted Account, the
+approving device needs the current Account encryption keys and releases them to
+the joining device. The device approval Action is unavailable to Agents and MCP.
+
+For scripted enrollment, `auth approve --confirm` confirms a device code without
+a prompt. The `auth approve --json --public-key` form supports scripted terminal
+enrollment such as `home create --ssh`. Any process with shell access on a machine
+where the CLI is signed in can run these commands. Keep the short-lived pairing
+link private.
 
 ### Pairing protocol primitives (advanced tooling)
 

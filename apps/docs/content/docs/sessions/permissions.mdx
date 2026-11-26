@@ -38,6 +38,11 @@ Legacy note:
 - in current Happier builds, **Plan** is treated as a **session mode**, not a normal permission choice
 - when Happier sees legacy `permissionMode=plan`, it maps that to **Mode = Plan** for compatible providers
 
+In 0.3 development, when a Session still has an effective `plan` permission,
+Happier refuses write-like Actions presented through the Agent's native tool
+approval flow. Switching the Session mode and managing its native goal remain
+available through that flow, subject to the Action's own rules.
+
 ## Session modes
 
 Some providers expose **session modes** (for example, `plan` vs `build` or `default` vs `plan`).

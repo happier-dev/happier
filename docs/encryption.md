@@ -3135,11 +3135,18 @@ device retains historical keys. E2EE provisioning requires genuine material whos
 fingerprint matches authenticated currentness from that exact Home; missing or stale
 material refuses before sealing.
 
-In 0.3 development source, a signed-in app or CLI can approve a requester-displayed
-Home QR invite. The approver shows the joining device, Home, and selected Account
-before confirmation. A CLI approving for an E2EE Account needs its current content
-key. Both clients use the shared Home QR lifecycle to verify the requester proof
-before sealing and sending completion to the bound Home.
+In 0.3 development source, a person approves a requester-displayed Home QR invite
+in the signed-in app or at an interactive CLI. The approver shows the joining
+device, Home, and selected Account. For an E2EE Account, approval releases the
+current Account keys to the joining device. Both clients use the shared Home QR
+lifecycle to verify the requester proof before sealing and sending completion to
+the bound Home. The `account.devices.approve` Action is unavailable to Agents
+and MCP.
+
+The CLI supports unattended approval with `auth approve --confirm` for device
+codes and `auth approve --json --public-key` for scripted terminal enrollment such
+as `home create --ssh`. Any process with shell access on a machine where the CLI
+is signed in can run these commands.
 
 The confirmed Forget operation remains an exact credential replacement.
 A retained template opens only after its explicit predecessor Session binding is
