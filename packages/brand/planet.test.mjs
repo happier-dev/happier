@@ -257,6 +257,46 @@ test('a mark frame draws the exact microphone at rest, the exact planet when gat
   assert.ok(warm >= frame(1, 1, -1).filter((dot) => dot.r > dot.b).length);
 });
 
+test('real speech levels (RMS 0.02–0.06) breathe the composer mark like the lab voice; silence stays exact', () => {
+  // FUNC-3 §2: a real Local/realtime reply measures 0.04–0.064 RMS on the 0–1 full-scale meter.
+  for (const theme of ['light', 'dark']) {
+    const geometry = planet.createPlanetMarkGeometry({ size: 26, theme, pose: 'ready' });
+    const frame = (energy) => {
+      const dots = [];
+      planet.drawPlanetMarkFrame(geometry, geometry, 1, 1, energy, 1, (x, y, radius, r, g, b, a) => dots.push({ x, y, radius, r, g, b, a }));
+      return dots;
+    };
+    const opacity = (dots) => dots.reduce((sum, dot) => sum + dot.a, 0);
+    const silent = frame(0);
+    // An ordinary reply throws visible atmosphere: lab speaking spreads the halo to ~85 % of the bleeding canvas.
+    const speech = frame(0.04);
+    assert.ok(speech.length - silent.length >= 25, `${theme}: 0.04 RMS adds ${speech.length - silent.length} dots`);
+    assert.ok(opacity(speech) - opacity(silent) >= 20, `${theme}: 0.04 RMS adds ${(opacity(speech) - opacity(silent)).toFixed(1)} opacity`);
+    const reach = Math.max(...speech.map((dot) => Math.hypot(dot.x - 13, dot.y - 13) + dot.radius));
+    assert.ok(reach >= 26 * 1.6 * 0.85 / 2 - 1e-9, `${theme}: 0.04 RMS reaches ${reach.toFixed(1)} px`);
+    // Syllables move it: quiet and loud speech inside the measured band draw visibly different frames.
+    assert.ok(opacity(frame(0.06)) - opacity(frame(0.02)) >= 8);
+    // Silence and a sub-floor envelope tail draw the exact still planet.
+    assert.deepEqual(frame(0.002), silent);
+  }
+});
+
+test('the tap morph into a waiting planet lands on the dots that planet lights, never a full-disc flash', () => {
+  for (const theme of ['light', 'dark']) {
+    const geometry = planet.createPlanetMarkGeometry({ size: 26, theme, pose: 'shadow' });
+    const lit = (morph) => {
+      let count = 0;
+      planet.drawPlanetMarkFrame(geometry, geometry, morph, 1, 0, 0, (x, y, radius, r, g, b, a) => { if (a > 0.5) count += 1; });
+      return count;
+    };
+    const settled = lit(1);
+    // Past the stream, the dots on screen are the crescent's: the morph never shows more planet than it lands on.
+    for (const morph of [0.7, 0.8, 0.9]) {
+      assert.ok(lit(morph) <= settled, `${theme} ${morph}: ${lit(morph)} dots lit vs ${settled} the waiting planet shows`);
+    }
+  }
+});
+
 test('a voice throws visible atmosphere: dots a level lights carry the halo colour, never the background', () => {
   for (const theme of ['light', 'dark']) {
     const geometry = planet.createPlanetMarkGeometry({ size: 48, theme, pose: 'ready' });

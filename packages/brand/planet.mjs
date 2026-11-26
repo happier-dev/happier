@@ -537,6 +537,22 @@ const MARK_LEAVE_FADE_TO = 0.7;
 const MARK_LEAVE_MIC_FROM = 0.5;
 /** The app's rest glyph has handed over to the streaming dots by 30 % of the tap morph. */
 const MARK_REST_HANDOFF = 0.3;
+/**
+ * How the mark hears a real level (0–1 full-scale RMS, the meters' scale). Speech is quiet on that
+ * scale: a measured reply sits at 0.04–0.064 RMS with peaks near 0.22 (FUNC-3 §2, RUN88 A7), where a
+ * linear reading barely reaches the first atmosphere sample. The mark reads it in decibels, the way
+ * loudness is heard: -48 dBFS (a quiet room's residue) is still and -14 dBFS (a speech peak) is full,
+ * so ordinary speech lands in the lab voice's speaking range (0.45–1) and silence stays exactly still.
+ */
+const MARK_LEVEL_FLOOR_DB = -48;
+const MARK_LEVEL_CEILING_DB = -14;
+
+function planetMarkLevel(energy) {
+  'worklet';
+  if (!(energy > 0)) return 0;
+  const k = (20 * Math.log10(energy) - MARK_LEVEL_FLOOR_DB) / (MARK_LEVEL_CEILING_DB - MARK_LEVEL_FLOOR_DB);
+  return k <= 0 ? 0 : k >= 1 ? 1 : k;
+}
 
 /**
  * How visible an app's rest glyph (the line waveform, VE-02 2026-10-10) is over the mark's dots: it
@@ -568,6 +584,7 @@ export function createPlanetMarkGeometry({ size = 24, theme = 'dark', pose = 're
   const pairs = createPlanetDotCorrespondence({ ...options, energy: 0 });
   const pitch = liveMarkPitch(size, light);
   const palette = PLANET_PALETTES[theme === 'light' ? 'light' : 'dark'];
+  const fullyLit = pose === 'ready';
   const geometry = {
     size, count: pairs.length, minX: 0, minY: 0, maxX: size, maxY: size,
     micX: [], micY: [], micR: [], micA: [], micRgb: [],
@@ -579,8 +596,10 @@ export function createPlanetMarkGeometry({ size = 24, theme = 'dark', pose = 're
     geometry.micX.push(mic.x); geometry.micY.push(mic.y); geometry.micR.push(mic.radius); geometry.micA.push(mic.opacity);
     geometry.micRgb.push(mic.rgb[0] / 255, mic.rgb[1] / 255, mic.rgb[2] / 255);
     geometry.planetX.push(planet.x); geometry.planetY.push(planet.y); geometry.planetR.push(planet.radius);
-    // The disc the tap lands on: every cell inside the box's circle, coloured down the body ramp like the microphone.
-    geometry.discA.push(Math.hypot(planet.x - size / 2, planet.y - size / 2) <= size / 2 - pitch * 0.15 ? 1 : 0);
+    // The disc the tap lands on: every cell inside the box's circle, coloured down the body ramp like the
+    // microphone. A planet in shadow or shade (waiting, failed) is landed on as it will show: the tap streams onto its lit cells, so the morph never flashes a whole planet first.
+    const insideDisc = Math.hypot(planet.x - size / 2, planet.y - size / 2) <= size / 2 - pitch * 0.15;
+    geometry.discA.push(insideDisc && (fullyLit || planet.opacity > 0) ? 1 : 0);
     const disc = inkDot(gradient(palette.body, 0.04 + 0.86 * clamp(planet.y / size)), theme);
     geometry.discRgb.push(disc[0] / 255, disc[1] / 255, disc[2] / 255);
     for (const dot of [mic, planet]) {
@@ -611,6 +630,7 @@ export function interpolatePlanetMarkGeometry(to, from, progress) {
   return Object.freeze({
     ...to,
     planetA: to.planetA.map((value, i) => mix(from.planetA[i], value, k)),
+    discA: to.discA.map((value, i) => mix(from.discA[i], value, k)),
     planetRgb: to.planetRgb.map((value, i) => mix(from.planetRgb[i], value, k)),
   });
 }
@@ -620,7 +640,7 @@ export function interpolatePlanetMarkGeometry(to, from, progress) {
  * planet: the microphone's dots (and the extra dots streaming out of it) travel, eased, onto an
  * unlit disc, and the light resolves over the last part of the tap (a reversal from mid-way stays
  * smooth); `pose` blends `from` → `to` (same lattice, colour and visibility only); `energy` is the
- * real level and `flow` its direction (< 0 the person, > 0 the assistant). Pure: no time, no
+ * real level (heard in decibels, see `planetMarkLevel`) and `flow` its direction (< 0 the person, > 0 the assistant). Pure: no time, no
  * allocation per dot. The directive lets the app run it on its UI thread; elsewhere it is an
  * ordinary function.
  *
@@ -636,7 +656,7 @@ export function drawPlanetMarkFrame(to, from, morph, pose, energy, flow, draw, g
   const settle = settleRaw * settleRaw * (3 - 2 * settleRaw);
   const emerge = morph <= 0 ? 0 : morph >= MARK_STREAM_EMERGE ? 1 : morph / MARK_STREAM_EMERGE;
   const k = pose <= 0 ? 0 : pose >= 1 ? 1 : pose;
-  const level = energy <= 0 ? 0 : energy >= 1 ? 1 : energy;
+  const level = planetMarkLevel(energy);
   const steps = 4;
   const scaled = level * steps;
   const lower = Math.min(steps - 1, Math.floor(scaled));
@@ -664,7 +684,8 @@ export function drawPlanetMarkFrame(to, from, morph, pose, energy, flow, draw, g
       const toA = to.planetA[lowerBase + i] + (to.planetA[upperBase + i] - to.planetA[lowerBase + i]) * fraction;
       const fromA = from.planetA[lowerBase + i] + (from.planetA[upperBase + i] - from.planetA[lowerBase + i]) * fraction;
       const planetA = fromA + (toA - fromA) * k;
-      const targetA = to.discA[i] + (planetA - to.discA[i]) * settle;
+      const discA = from.discA[i] + (to.discA[i] - from.discA[i]) * k;
+      const targetA = discA + (planetA - discA) * settle;
       // Microphone dots travel; the disc's extra dots stream out of the microphone with them.
       a = (to.micA[i] > 0 ? to.micA[i] + (targetA - to.micA[i]) * m : targetA * emerge) * planetKeep;
     }
