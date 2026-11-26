@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DatabaseColumnV1, DatabaseEditV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
-import { Button, Field, Popover, Row, Select, Stack, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Button, Field, Popover, Row, Select, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { readConsoleParameter } from '../consoleParameters.js';
 import { useWorkbenchInstance } from '../hooks.js';
 
@@ -11,6 +11,7 @@ const EMPTY_FIELD: Field = { mode: 'default', text: '' };
 
 function NewRowFields(props: Readonly<{
   columns: readonly DatabaseColumnV1[];
+  title: string;
   onStage: (values: Insert['values']) => void;
 }>) {
   const translate = usePluginTranslation();
@@ -41,6 +42,8 @@ function NewRowFields(props: Readonly<{
 
   return (
     <Stack gap="small">
+      {/* The surface names itself, anchored on a wide page and as the phone sheet's header (sheet header 'none'). */}
+      <Text variant="heading" value={props.title} />
       {writable.map(column => {
         const field = fields.get(column.name) ?? EMPTY_FIELD;
         const options = column.nullable ? nullableModes : modes;
@@ -93,8 +96,8 @@ export function NewRow(props: Readonly<{
   const label = translate('plugins.database.row.new', 'New row');
   return (
     <Popover open={open} onOpenChange={setOpen} trigger={label} triggerAccessibilityLabel={label}
-      triggerAppearance="control" triggerSize="small" sheet={{ title: label }}>
-      {open ? <NewRowFields columns={props.columns} onStage={values => {
+      triggerAppearance="control" triggerSize="small" sheet={{ title: label, header: 'none' }}>
+      {open ? <NewRowFields columns={props.columns} title={label} onStage={values => {
         const proposal = {
           targetKey: props.targetKey,
           relation: props.relation,

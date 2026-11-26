@@ -31,7 +31,7 @@ import { sameRelation } from '../location.js';
 import { workbenchTargetKey } from '../workbench.js';
 import { approxRowsLabel } from './sizes.js';
 import { CatalogueReadFailure } from './CatalogueReadFailure.js';
-import { databaseEngineName, databaseOriginName } from './engines.js';
+import { databaseFacts } from './engines.js';
 import { CataloguePagination } from './CataloguePagination.js';
 import { NavigationList } from '@happier-dev/plugin-ui/components';
 
@@ -180,13 +180,6 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
       : notice?.error ? <ErrorState layout="line" title={notice.text} />
       : notice ? <Text tone="secondary" variant="meta" value={notice.text} /> : null}
   </Stack>;
-}
-
-/** One fact line under the name: engine and where it lives, the same facts the Dev servers row and read setup show. */
-export function databaseFacts(descriptor: Readonly<Pick<DatabaseDescriptorV1, 'engine' | 'origin'>>): string {
-  return [databaseEngineName(descriptor.engine), databaseOriginName(descriptor.origin)]
-    .filter(Boolean)
-    .join(' · ');
 }
 
 /** The database identity the page leads with; the Session rail uses the same header as its picker trigger. */

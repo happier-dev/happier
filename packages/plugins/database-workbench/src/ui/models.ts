@@ -45,6 +45,8 @@ export type WorkbenchLocation = Readonly<{
 export type WorkbenchAccess = DatabaseAccessReadResultV1;
 export type WorkbenchTarget = Readonly<{
     targetKey: string; target: DatabaseTargetV1; name: string; engineLabel: string;
+    /** The one facts line under the name (engines.ts `databaseFacts`): the rail tab's picker says what the page header says. */
+    facts: string;
     origin: Readonly<{ variable: string; serviceName: string }> | Readonly<{ connectedBy: string }>;
     endpointLabel: string | null; relationCount: string | null; machineLabel: string | null;
 }>;

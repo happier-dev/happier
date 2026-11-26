@@ -7,7 +7,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { DatabaseDescriptorV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { Action, Button, SelectionTiles, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Action, Button, Form, SelectionTiles, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList } from '@happier-dev/plugin-ui/components';
 import {
   projectPluginActionControlExecutionV1, projectPluginActionRejectionV1, usePluginHostApi, type PluginActionExecution,
@@ -41,16 +41,25 @@ export function DatabaseConnection({ scope, onConnected, onFileOpened, onCancel 
           subtitle: t('plugins.database.connect.sourceFileDetail', 'A file in this checkout') },
       ]} />
     {source === 'file'
-      ? <SQLiteFileConnection scope={scope} onOpened={onFileOpened} />
-      : <SavedSecretConnection scope={scope} onConnected={onConnected} onForgot={onCancel} />}
-    <Button title={t('plugins.database.cancel', 'Cancel')} variant="plain" onPress={onCancel} />
+      ? <SQLiteFileConnection scope={scope} onOpened={onFileOpened} onCancel={onCancel} />
+      : <SavedSecretConnection scope={scope} onConnected={onConnected} onForgot={onCancel} onCancel={onCancel} />}
   </Stack>;
 }
 
-function SavedSecretConnection({ scope, onConnected, onForgot }: Readonly<{
+/** The form's own action row: its one operation, then Cancel (Form.Actions), with what the row will do beneath. */
+function ConnectActions(props: Readonly<{ children: React.ReactNode; onCancel(): void; footnote?: string }>) {
+  const t = usePluginTranslation();
+  return <Form.Actions {...(props.footnote ? { footnote: props.footnote } : {})}>
+    {props.children}
+    <Button title={t('plugins.database.cancel', 'Cancel')} variant="secondary" onPress={props.onCancel} />
+  </Form.Actions>;
+}
+
+function SavedSecretConnection({ scope, onConnected, onForgot, onCancel }: Readonly<{
   scope: WorktreeScope;
   onConnected(descriptor: DatabaseDescriptorV1): void;
   onForgot(): void;
+  onCancel(): void;
 }>) {
   const t = usePluginTranslation();
   const [ref, setRef] = React.useState<string | null>(null);
@@ -65,6 +74,7 @@ function SavedSecretConnection({ scope, onConnected, onForgot }: Readonly<{
     {ref ? <TextField label={t('plugins.database.connect.name', 'Connection name')} value={name} onChange={setName} /> : null}
     <Action.Failure execution={execution} />
     {awaitingApproval ? <Text tone="secondary" value={t('plugins.database.connect.pending', 'Waiting for approval.')} /> : null}
+    <ConnectActions onCancel={onCancel} footnote={t('plugins.database.connect.footnote', 'The address stays in your Saved Secrets.')}>
     <Action.Control action={connectAction}
       title={failed ? t('plugins.database.retry', 'Try again') : t('plugins.database.connect.test', 'Test and connect')}
       disabled={!ref || awaitingApproval}
@@ -80,12 +90,13 @@ function SavedSecretConnection({ scope, onConnected, onForgot }: Readonly<{
           if (accepted.success) onConnected(accepted.data);
         },
       }} />
+    </ConnectActions>
     {failed && ref ? <DatabaseForget target={{ kind: 'manual', accountId: scope.accountId, installationId: scope.installationId,
       projectKey: scope.projectKey, workspace: scope.workspace, savedSecretId: ref }} onForgot={onForgot} /> : null}
   </>;
 }
 
-function SQLiteFileConnection({ scope, onOpened }: Readonly<{ scope: WorktreeScope; onOpened(): void }>) {
+function SQLiteFileConnection({ scope, onOpened, onCancel }: Readonly<{ scope: WorktreeScope; onOpened(): void; onCancel(): void }>) {
   const t = usePluginTranslation();
   const host = usePluginHostApi();
   const [path, setPath] = React.useState('');
@@ -99,6 +110,7 @@ function SQLiteFileConnection({ scope, onOpened }: Readonly<{ scope: WorktreeSco
       onChange={setPath}
     />
     <Action.Failure execution={execution} />
+    <ConnectActions onCancel={onCancel}>
     <Action.Control
       action={describeAction}
       title={t('plugins.database.connect.openFile', 'Open SQLite file')}
@@ -132,6 +144,7 @@ function SQLiteFileConnection({ scope, onOpened }: Readonly<{ scope: WorktreeSco
         },
       }}
     />
+    </ConnectActions>
   </>;
 }
 

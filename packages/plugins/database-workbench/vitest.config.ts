@@ -62,8 +62,12 @@ function sqliteWorkerFixture(): Plugin {
 export default defineConfig({
     root,
     resolve: { alias: reactNativeWebAliases, dedupe: ['react', 'react-dom'] },
-    plugins: [sqliteWorkerFixture(), createWorkspacePackageSourcesPlugin(['databases', 'database-protocol', 'protocol', 'plugin-sdk', 'plugin-ui'].map(name => ({
-        packageName: `@happier-dev/${name}`, packageSourceRoot: resolve(root, '../..', name, 'src'),
-    })))],
+    plugins: [sqliteWorkerFixture(), createWorkspacePackageSourcesPlugin([
+        ...['databases', 'database-protocol', 'protocol', 'plugin-sdk', 'plugin-ui'].map(name => ({
+            packageName: `@happier-dev/${name}`, packageSourceRoot: resolve(root, '../..', name, 'src'),
+        })),
+        // Insights renders captured statements through Telemetry's capture views, from source like the packages above.
+        { packageName: '@happier-dev/plugins-telemetry', packageSourceRoot: resolve(root, '../telemetry/src') },
+    ])],
     test: { ...resolveVitestWorkers(), environment: 'node', include: ['src/**/*.test.ts', 'src/**/*.test.tsx'] },
 });

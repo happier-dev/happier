@@ -95,11 +95,11 @@ export type DatabaseWorkbenchSpecimenState = Readonly<{
 }>;
 
 /**
- * `?review=`: a writable database's staged review (`unverified`), or a Railway database that needs a read-only login:
+ * `?review=`: a writable database's staged review (`unverified`; `mysql` for MySQL's write guarantee), or a Railway database that needs a read-only login:
  * its PostgreSQL or MySQL review, editing off, a login created but not yet in use, or a refusal with details.
  */
 export const DATABASE_WORKBENCH_REVIEW_STATES = [
-  'unverified', 'read-setup', 'read-setup-mysql', 'read-setup-refused', 'read-setup-binding', 'read-setup-failed',
+  'unverified', 'mysql', 'read-setup', 'read-setup-mysql', 'read-setup-refused', 'read-setup-binding', 'read-setup-failed',
 ] as const;
 type DatabaseWorkbenchReadSetupState = typeof DATABASE_WORKBENCH_REVIEW_STATES[number];
 
@@ -110,6 +110,9 @@ const UNVERIFIED_BILLING: DatabaseDescriptorV1 = {
   access: { canRead: true, canWrite: true },
   endpointTrust: 'encrypted_unverified',
 };
+
+/** The same writable database on MySQL, whose staged review states MySQL's write guarantee. */
+const MYSQL_BILLING: DatabaseDescriptorV1 = { ...UNVERIFIED_BILLING, engine: 'mysql', label: 'Billing staging (MySQL)' };
 
 // Railway names every database `railway`; the engine is the contribution that links it.
 function railwayTarget(engine: 'postgresql' | 'mysql'): DatabaseManagedDeploymentTargetV1 {
@@ -393,7 +396,7 @@ export function DatabaseWorkbenchSpecimen(
   const { rows: rowsState, console: consoleState, stats: statsState, review } = props.state;
   const needsReadSetup = review?.startsWith('read-setup') === true;
   const subPath = needsReadSetup ? railwayPath(review === 'read-setup-mysql' ? 'mysql' : 'postgresql') : props.subPath;
-  const descriptor = props.state.review === 'unverified' ? UNVERIFIED_BILLING : BILLING_DEV;
+  const descriptor = props.state.review === 'unverified' ? UNVERIFIED_BILLING : props.state.review === 'mysql' ? MYSQL_BILLING : BILLING_DEV;
   const environment = usePluginSurfaceEnvironment(
     resolveLocalServicePreviewPlatform(),
   );

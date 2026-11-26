@@ -20,9 +20,9 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
-import { Button, EmptyState, ErrorState, Item, ItemGroup, Stack, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Button, ErrorState, Item, ItemGroup, Stack, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { CaptureQueries } from '@happier-dev/plugins-telemetry/capture-views';
 import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
-import { formatDuration, formatMoment } from './format.js';
 
 const limit = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
 
@@ -91,45 +91,41 @@ function CaptureReadStatus({ state, retry }: Readonly<{
 
 export function WorktreeCaptureQueries({ target }: Readonly<{ target: DatabaseWorktreeTargetV1 }>) {
   const selection = React.useMemo(() => selectedWorktree(target), [target]);
-  const [query, setQuery] = React.useState<DatabaseCaptureSummaryV1 | null>(null);
-  return <Stack gap="medium" grow>
-    <CaptureQueryPage selection={selection} selectedId={query?.id} onSelect={setQuery} />
-    {query ? <CaptureQueryDetail key={query.id} selection={selection} query={query} /> : null}
-  </Stack>;
+  // Another database starts its own list at the newest page.
+  return <CaptureQueryList key={JSON.stringify(selection.source)} selection={selection} />;
 }
 
-function CaptureQueryPage({ selection, selectedId, onSelect, before }: Readonly<{
-  selection: Selection;
-  selectedId?: string | undefined;
-  onSelect: (query: DatabaseCaptureSummaryV1) => void;
-  before?: DatabaseCaptureCursorV1;
-}>) {
-  const t = usePluginTranslation();
+/**
+ * The statements the app ran, through the capture owner's Queries list: a row opens its statement beside the list
+ * (pushed in its place where both do not fit), and "Show older" adds the next page below the rows already read.
+ */
+function CaptureQueryList({ selection }: Readonly<{ selection: Selection }>) {
+  const { locale } = useSurfaceContext();
+  const [before, setBefore] = React.useState<DatabaseCaptureCursorV1 | undefined>();
+  const [earlier, setEarlier] = React.useState<readonly DatabaseCaptureSummaryV1[]>([]);
+  const [openId, setOpenId] = React.useState<string | null>(null);
   const input = React.useMemo(() => ({
     ...selection, page: { limit, ...(before ? { before } : {}) },
   }), [selection, before]);
   const { state, retry } = useCaptureRead<Extract<DatabaseCaptureQueriesListResultV1, { ok: true }>>(
     DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, input, DatabaseCaptureQueriesListResultV1Schema.parse);
-  const [older, showOlder] = React.useState(false);
-  if (state.kind !== 'ready') return <CaptureReadStatus state={state} retry={retry} />;
-  const { items, nextCursor } = state.value;
-  if (items.length === 0 && !before) return <EmptyState
-    title={t('plugins.database.capture.noQueries', 'No captured queries for this database')} />;
-  return <>
-    {items.length ? <ItemGroup>
-      {items.map(query => {
-        const title = query.shape ?? t('plugins.database.capture.statement', 'Statement');
-        return <Item key={query.id} title={title} identifier accessibilityLabel={title}
-          subtitle={[formatMoment(query.at), formatDuration(query.durationMs)].filter(Boolean).join(' · ')}
-          selected={query.id === selectedId} onPress={() => onSelect(query)} />;
-      })}
-    </ItemGroup> : null}
-    {nextCursor ? older
-      ? <CaptureQueryPage selection={selection} selectedId={selectedId} onSelect={onSelect} before={nextCursor} />
-      : <Button size="small" variant="secondary"
-        title={t('plugins.database.capture.older', 'Show older')} onPress={() => showOlder(true)} />
-      : null}
-  </>;
+  const page = state.kind === 'ready' ? state.value : null;
+  const items = React.useMemo(() => page ? [...earlier, ...page.items] : earlier, [earlier, page]);
+  const detail = React.useMemo(() => ({
+    openId,
+    onOpenChange: setOpenId,
+    render: (query: DatabaseCaptureSummaryV1) => <CaptureQueryDetail key={query.id} selection={selection} query={query} />,
+  }), [openId, selection]);
+  const next = page?.nextCursor;
+  const more = next
+    ? { onPress: () => { setEarlier(items); setBefore(next); }, busy: false }
+    : state.kind === 'pending' && earlier.length ? { onPress: () => undefined, busy: true } : null;
+  if (state.kind === 'failed' && !earlier.length) return <CaptureReadStatus state={state} retry={retry} />;
+  return <Stack gap="medium" grow>
+    <CaptureQueries items={items} loading={state.kind === 'pending' && !earlier.length} locale={locale}
+      detail={detail} more={more} />
+    {state.kind === 'failed' ? <CaptureReadStatus state={state} retry={retry} /> : null}
+  </Stack>;
 }
 
 function CaptureQueryDetail({ selection, query }: Readonly<{

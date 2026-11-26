@@ -206,8 +206,12 @@ function DatabasesPanel(context: RenderContext) {
   ) : undefined;
   return (
     <ItemGroup
-      title={translate('plugins.database.section.title', 'Databases')}
-      description={translate(
+      // While connecting, the section's header names the form (lab dbFind-connect), so the form needs no title of its own.
+      title={connecting ? translate('plugins.database.connect.open', 'Connect a database')
+        : translate('plugins.database.section.title', 'Databases')}
+      description={connecting ? translate('plugins.database.connect.description',
+        'Choose a database server’s Saved Secret or a SQLite file in this checkout. Happier tests it, then opens it.')
+        : translate(
         'plugins.database.section.description',
         'Databases this checkout’s services use. Open one to browse tables, run SQL and see how it performs.',
       )}

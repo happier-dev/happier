@@ -15,7 +15,7 @@ import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
 import type { WorkbenchTargetDisplay } from './subPath.js';
-import { databaseFacts } from './WorkbenchRail.js';
+import { databaseFacts } from './engines.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
 const createAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);

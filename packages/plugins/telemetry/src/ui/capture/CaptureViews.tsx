@@ -151,6 +151,8 @@ function CaptureList<Item>(
      */
     tableMinWidth?: number;
     detail?: CaptureListDetail<Item>;
+    /** The list's section heading, where it shares a page with other sections (LLM calls under its cards). */
+    title?: string;
   }>,
 ) {
   const { items, keyOf, onOpen, detail } = props;
@@ -192,6 +194,9 @@ function CaptureList<Item>(
       <Collection
         testID={props.testID}
         accessibilityLabel={props.label}
+        {...(props.title
+          ? { title: props.title, titleKind: 'section' as const, header: (slots: { title: React.ReactNode }) => slots.title }
+          : {})}
         model={model}
         anatomy={props.anatomy}
         presentation={props.presentation ?? 'list'}
@@ -491,9 +496,14 @@ export function CaptureAppLlmCalls(
   const anatomy = React.useMemo<CollectionAnatomy<CaptureAppLlmCallV1>>(() => {
     const model = (item: CaptureAppLlmCallV1) =>
       item.genAi?.modelId ?? item.genAi?.requestedModel ?? requestLabelOf(item);
+    const time = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    // Line 2 says which request made the call and when, so two calls to one model read as two calls.
     const facts = (item: CaptureAppLlmCallV1) => {
       const tokens = item.genAi?.tokens.total ?? null;
+      const route = item.endpointMethod && item.endpointRoute ? `${item.endpointMethod} ${item.endpointRoute}` : null;
       return [
+        route,
+        time.format(item.at),
         item.serviceName || null,
         item.serviceVersion ?? null,
         item.genAi?.provider ?? null,
@@ -527,6 +537,7 @@ export function CaptureAppLlmCalls(
     <CaptureList
       testID="telemetry.capture.llmCalls"
       label={text('plugins.telemetry.capture.llmCalls', 'LLM calls')}
+      title={text('plugins.telemetry.capture.calls', 'Calls')}
       items={props.items}
       loading={props.loading}
       keyOf={summaryKey}
@@ -577,13 +588,17 @@ export function CaptureLogs(
   );
 }
 
-/** Queries: each statement the app ran, its shape, where and when, its time at the row's end. */
+/**
+ * Queries: each statement the app ran, its shape, where and when, its time at the row's end. A host that shows one
+ * statement's detail (Workbench Insights) opens it beside the list through `detail`, as Traces does.
+ */
 export function CaptureQueries(
   props: Readonly<{
     items: readonly DatabaseCaptureSummaryV1[];
     loading: boolean;
     locale: string;
     more?: CapturePageMore | null;
+    detail?: CaptureListDetail<DatabaseCaptureSummaryV1>;
   }>,
 ) {
   const text = usePluginTranslation();
@@ -635,6 +650,7 @@ export function CaptureQueries(
         'plugins.telemetry.capture.noQueries',
         'No queries in this window',
       )}
+      {...(props.detail ? { detail: props.detail } : {})}
       more={props.more ?? null}
     />
   );

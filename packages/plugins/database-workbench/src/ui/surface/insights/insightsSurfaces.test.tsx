@@ -250,18 +250,26 @@ describe('Database Insights surfaces', () => {
     try {
       await settle();
       expect(capture).not.toHaveBeenCalled();
+      const reads = (id: Parameters<typeof databaseActionLocalIdV1>[0]) => capture.mock.calls.filter(([request]) =>
+        typeof request.action !== 'string' && request.action.localId === databaseActionLocalIdV1(id)).length;
       await page.press(await page.getByRole('tab', { name: 'Queries' }));
       await settle();
-      expect(capture).toHaveBeenCalledTimes(1);
-      await page.press(await page.getByRole('button', { name: LINES }));
+      expect(reads(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1)).toBe(1);
+      expect(reads(DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1)).toBe(0);
+      // The row leads its name with the statement, then where and when.
+      const row = (await page.getAllByRole('button')).find(target => target.name?.startsWith(`${LINES}, `));
+      if (!row) throw new Error('Expected the captured statement row');
+      await page.press(row);
       await settle();
       expect(await page.queryByText('Masked statement detail')).toBeTruthy();
-      expect(capture).toHaveBeenCalledTimes(2);
+      expect(reads(DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1)).toBe(1);
+      expect(reads(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1)).toBe(0);
       await page.press(await page.getByRole('button', { name: 'Inspect request' }));
       await settle();
       expect(await page.queryByText('Likely N+1')).toBeTruthy();
       expect(await page.queryByText('Different parameter values within one request')).toBeTruthy();
-      expect(capture).toHaveBeenCalledTimes(3);
+      expect(reads(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1)).toBe(1);
+      expect(reads(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1)).toBe(1);
     } finally {
       await page.dispose();
     }

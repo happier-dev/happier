@@ -6,6 +6,7 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
+  ItemGroup,
   Menu,
   ScrollArea,
   Stack,
@@ -103,7 +104,7 @@ function DatabasePicker(
         // Each database carries its mark, as the identity it switches to does (lab dbRail-picker).
         icon: 'database' as const,
         label: target.name,
-        subtitle: databaseFactsOf(target),
+        subtitle: target.facts,
       })),
     [props.targets],
   );
@@ -142,17 +143,6 @@ function DatabasePicker(
     />
   );
 }
-function databaseFactsOf(target: WorkbenchTarget): string {
-  return [
-    target.engineLabel,
-    'variable' in target.origin
-      ? target.origin.serviceName
-      : target.origin.connectedBy,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-}
-
 function RailTab(
   props: Readonly<{ context: RenderContext; launch: WorkbenchLaunchInput }>,
 ) {
@@ -191,13 +181,18 @@ function RailTab(
     [current, instance, props.context, props.launch.scope],
   );
   if (connecting && scope.kind === 'worktree') {
-    return <DatabaseConnection scope={scope} onFileOpened={() => setConnecting(false)}
-      onCancel={() => { setConnecting(false); picker.refresh(); }} onConnected={descriptor => {
-      picker.select(databaseTargetKey(descriptor));
-      setOpenedKey(null);
-      setConnecting(false);
-      picker.refresh();
-    }} />;
+    // The rail has no section header of its own: the form stands under the same title the Services panel gives it.
+    return <ItemGroup surface="none" title={translate('plugins.database.connect.open', 'Connect a database')}
+      description={translate('plugins.database.connect.description',
+        'Choose a database server’s Saved Secret or a SQLite file in this checkout. Happier tests it, then opens it.')}>
+      <DatabaseConnection scope={scope} onFileOpened={() => setConnecting(false)}
+        onCancel={() => { setConnecting(false); picker.refresh(); }} onConnected={descriptor => {
+        picker.select(databaseTargetKey(descriptor));
+        setOpenedKey(null);
+        setConnecting(false);
+        picker.refresh();
+      }} />
+    </ItemGroup>;
   }
   if (picker.status === 'loading' && picker.targets.length === 0)
     return <LoadingState layout="line" rows={6} rowShape="compact" />;

@@ -17,7 +17,7 @@ import { createConsoleState } from './consoleState.js';
 import { createConsole, type WorkbenchConsole } from './console.js';
 import { createStagedEdits } from './drafts.js';
 import { projectRelationPage } from './projections.js';
-import { databaseEngineName } from './surface/engines.js';
+import { databaseEngineName, databaseFacts } from './surface/engines.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
 import { createApplyControl, projectStagedApplyInput } from './apply.js';
@@ -177,6 +177,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                     }
                     const machine = await machineReads.get(machineKey);
                     return { targetKey, target: descriptor.target, name: descriptor.label, engineLabel: databaseEngineName(descriptor.engine),
+                        facts: databaseFacts(descriptor),
                         origin: source?.kind === 'service' ? { variable: source.variable, serviceName: source.serviceId } : { connectedBy: descriptor.origin.label },
                         endpointLabel: descriptor.endpointLabel ?? null, relationCount: null,
                         machineLabel: machine?.status === 'ready' ? machine.displayName : null };
