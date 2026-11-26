@@ -22,6 +22,7 @@ import { usePreferredLanguage, t } from '@/text';
 import { credentialFailureMessage } from './credentials/teamCredentialPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
 import { teamReadFailureLabel } from './teamMutationPresentation';
+import { TeamReadFailureRows } from './TeamReadFailureRows';
 import { useTeamReadFailureAction } from './useTeamReadFailureAction';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import { teamCredentialsPath, teamSessionsPath, teamSharedCollectionPath, teamSharedKindPath } from './teamsRoutes';
@@ -127,11 +128,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
       [props.summary.kinds],
     );
     const hasAnswer = props.summary.status === 'ready' || props.summary.status === 'refreshing';
-    const readFailure = props.summary.status === 'error' ? props.summary.error : null;
     const failurePrefix = 'team-overview-shared-failed';
-    const recovery = readFailure && failureAction(readFailure, { onPress: props.summary.reload, testIDPrefix: failurePrefix });
-    const failureMessage = readFailure?.code === 'invalid_team_input' ? t('homeGovernance.invalidRead')
-      : readFailure ? teamReadFailureLabel(readFailure) : t('teams.overview.shared.failed');
     const loadingWithNothing = isTeamSharedResourcesSummaryPending(props.summary);
     // Last-known kinds stay in place while a refresh runs, including "nothing shared yet".
     const empty = (hasAnswer || props.summary.kinds.length > 0) && rows.length === 0;
@@ -157,12 +154,12 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
           </ReservedShape>
         ) : null}
         {props.summary.status === 'error' ? (
-          recovery?.onPress === props.summary.reload ? (
-            <ItemLoadStateRows testID={failurePrefix}
-              state={{ kind: 'failed', reason: failureMessage, onRetry: props.summary.reload, homeServerIds: [props.serverId] }} />
+          props.summary.error ? (
+            <TeamReadFailureRows testID={failurePrefix} failure={props.summary.error} onRetry={props.summary.reload}
+              address={props.address} serverId={props.serverId} />
           ) : (
-            <SurfaceStateCard testID={failurePrefix} kind="error" size="line" title={failureMessage}
-              accessibilitySemantics="alert" action={recovery ?? undefined} />
+            <SurfaceStateCard testID={failurePrefix} kind="error" size="line" title={t('teams.overview.shared.failed')}
+              accessibilitySemantics="alert" />
           )
         ) : null}
         {empty ? (

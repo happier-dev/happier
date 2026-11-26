@@ -8,6 +8,7 @@ import { TeamSetupTile } from '@/components/hub/setup/useTeamSetupItems';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell';
 import { WelcomeActionList, type WelcomeActionAdmission } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { TeamSectionPageHeader } from '@/components/settings/teams/TeamSection';
+import { TeamReadFailureRows } from '@/components/settings/teams/TeamReadFailureRows';
 import { TeamNewMembersSourcesView } from '@/components/settings/teams/newMembers/TeamNewMembersSources';
 import { TeamInvitationJoinActions, TeamInvitationOffer } from '@/components/teams/entry/TeamInvitationOffer';
 import { TeamSetupHeader, TeamSetupPageView } from '@/components/teams/setup/TeamSetupScreen';
@@ -34,6 +35,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
  * or written). `?frame=joined` (default): the Joined page with what the Team shares. `?frame=tile`: Home's
  * Get set up with a "Set up for {team}" block. `?frame=disclosure`: the confirmation before sharing a
  * vault reference with a Team. `?frame=invitation`: the open invitation a signed-in invitee sees.
+ * `?frame=joinedUnavailable`: the same Joined page when the Home could not answer what the Team shares.
  * `?frame=setup`: "Set up for {team}" with a preset review, three repositories and two shared keys.
  * `?frame=setupDone`: the same page once set up, offering the Team's first task.
  * `?frame=newMembers`: an administrator's "What new members get" Sources and first task (the
@@ -64,7 +66,10 @@ const VAULT_REFERENCE = {
   metadata: { vault: { id: 'dev', name: 'Dev' }, item: { id: 'mapbox', title: 'Mapbox' }, field: { id: 'token', title: 'token' } },
 } as unknown as SavedSecretExternalSourceV1;
 
-function JoinedFrame() {
+/** A summary read the Home could not answer; asking again could help. */
+const SUMMARY_FAILURE = { kind: 'unknown', retryable: true, code: null, httpStatus: 503 } as const;
+
+function JoinedFrame(props: Readonly<{ unavailable?: boolean }>) {
   return (
     <UnauthenticatedRouteShell testID="team-setup-specimen-joined" stepId="admission-complete" onBack={noop}>
       <TeamJoinedContent
@@ -73,7 +78,12 @@ function JoinedFrame() {
         accountScope={null}
         onOpenTeam={noop}
         setupContinuation={{ label: t('teams.join.setUpForTeam', { team: TEAM.name }), onContinue: noop }}
-        summary={<TeamJoinedSummaryView testID="team-setup-specimen-summary" rows={SUMMARY_ROWS} />}
+        summary={props.unavailable ? (
+          <TeamJoinedSummaryView testID="team-setup-specimen-summary" rows={[]} condition={
+            <TeamReadFailureRows testID="team-setup-specimen-summary-failed" failure={SUMMARY_FAILURE} onRetry={noop}
+              serverId="specimen-home" />
+          } />
+        ) : <TeamJoinedSummaryView testID="team-setup-specimen-summary" rows={SUMMARY_ROWS} />}
       />
     </UnauthenticatedRouteShell>
   );
@@ -251,6 +261,7 @@ function DisclosureFrame() {
 
 export function TeamSetupSpecimen(props: Readonly<{ frame?: string }>) {
   switch (props.frame) {
+    case 'joinedUnavailable': return <JoinedFrame unavailable />;
     case 'tile': return <TileFrame />;
     case 'disclosure': return <DisclosureFrame />;
     case 'invitation': return <InvitationFrame />;

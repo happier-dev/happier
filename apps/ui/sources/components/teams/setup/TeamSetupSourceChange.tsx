@@ -8,6 +8,7 @@ import {
   workspaceAddressFromRefV1,
 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildProjectRouteHref } from '@/components/projects/detail/projectRouteState';
 import { describePendingSharedSetupSummary } from '@/components/projects/projectSetup/PendingSharedSetupRow';
@@ -53,15 +54,28 @@ export function TeamSetupSourceChangeNotice(
   props: Readonly<{
     sourceId: string;
     teamName: string;
+    /** The repository as the row names it, so an agent can tell which checkout's review it opens. */
+    repositoryName: string;
     pending: ProjectPendingSharedSetupV1;
     onReview: () => void;
+    /** The page's mounted command context; without one (specimens) nothing is published. */
+    navigationContextKey?: string;
   }>,
 ) {
   const adds = describePendingSharedSetupSummary(props.pending.summary);
+  const reviewLabel = t('machinePresets.setup.tab.reviewChanges');
+  const changed = t('teams.join.setupPage.sourceChanged', { team: props.teamName });
+  // An agent opens the same review the button does, while the notice offers one (USER-REQUIREMENTS 16).
+  useCurrentUiContextLocalCommands(props.navigationContextKey ? [{
+    key: `team-setup-source-changed:${props.sourceId}`,
+    title: reviewLabel,
+    description: `${changed} · ${props.repositoryName}`,
+    invoke: props.onReview,
+  }] : [], { contextKey: props.navigationContextKey });
   return (
     <Item
       testID={`team-setup-source-changed:${props.sourceId}`}
-      title={t('teams.join.setupPage.sourceChanged', { team: props.teamName })}
+      title={changed}
       subtitle={adds || undefined}
       showChevron={false}
       rightElement={
@@ -69,7 +83,7 @@ export function TeamSetupSourceChangeNotice(
           testID={`team-setup-source-changed-review:${props.sourceId}`}
           size="small"
           display="secondary"
-          title={t('machinePresets.setup.tab.reviewChanges')}
+          title={reviewLabel}
           onPress={props.onReview}
         />
       }

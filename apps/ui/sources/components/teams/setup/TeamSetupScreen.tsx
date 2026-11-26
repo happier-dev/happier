@@ -75,6 +75,7 @@ import { buildTeamSetupPlan, type TeamSetupPlan, type TeamSetupSessionTarget } f
 import { buildTeamSetupRepository } from './teamSetupRepositories';
 import { useTeamSetupExistingClones, type TeamSetupExistingClones } from './useTeamSetupExistingClones';
 import { useTeamSetupFirstTask } from './useTeamSetupFirstTask';
+import { TeamSetupOtherAccountNotice } from './TeamSetupOtherAccountNotice';
 import { findTeamSetupSourceCheckout, TeamSetupSourceChangeNotice, useTeamSetupCheckoutSetup } from './TeamSetupSourceChange';
 import { useRetainedTeamSetupPlan } from './TeamSetupPlanProvider';
 import type { TeamSetupBatch } from './useTeamSetupPlan';
@@ -203,12 +204,7 @@ function TeamSetupBody(props: Readonly<{ context: TeamSectionContext; conditions
       <>
       <TeamSetupHeader context={props.context} lead={false} />
       {props.conditions}
-      <SurfaceStateCard
-        testID="team-setup-other-account"
-        kind="error"
-        size="line"
-        title={t('teams.join.setupPage.otherAccount')}
-      />
+      <TeamSetupOtherAccountNotice testID="team-setup-other-account" />
       </>
     );
   }
@@ -668,6 +664,13 @@ export function TeamSetupPageView(
       invoke: operationAction.onPress,
     }] : []),
     ...sourceLinks,
+    // The changed-preset review, exactly while its row offers it (USER-REQUIREMENTS 16).
+    ...(!arriving && props.hasPreset && props.presetChange && !toolsOperation ? [{
+      key: `team-setup-preset-changed:${props.machineId ?? ''}`,
+      title: t('machinePresets.setup.tab.reviewChanges'),
+      description: t('teams.join.setupPage.presetChanged', { team: teamName }),
+      invoke: props.presetChange.onReview,
+    }] : []),
   ] : [], { contextKey: props.navigationContextKey });
   // The selector draws its own card, so the heading stands alone above it, as the plan review's do below.
   const aside = props.preview ? (
@@ -1206,8 +1209,10 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
       />
     ) : null}
     {checkoutSetup.pending ? (
-      <TeamSetupSourceChangeNotice sourceId={props.source.id} teamName={props.teamName}
-        pending={checkoutSetup.pending} onReview={checkoutSetup.onReview} />
+      <TeamSetupSourceChangeNotice sourceId={props.source.id} teamName={props.teamName} repositoryName={nameWithOwner}
+        pending={checkoutSetup.pending} onReview={checkoutSetup.onReview}
+        navigationContextKey={props.navigationContextKey && checkout
+          ? JSON.stringify([props.navigationContextKey, checkout.id]) : undefined} />
     ) : null}
     </>
   );
