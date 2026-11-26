@@ -126,6 +126,25 @@ export type PluginUiCallerHostedHtmlHostMethodV1 =
   z.infer<typeof PluginUiCallerHostedHtmlHostMethodV1Schema>;
 
 /**
+ * What a caller-hosted HTML mount needs before it can serve each ceiling method. Keyed by the ceiling, so a
+ * method added there without a classification (or a stale extra key) does not compile.
+ */
+export const PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHOD_NEEDS_V1 = Object.freeze({
+  context: 'always',
+  watchContext: 'always',
+  readResource: 'plugin_target',
+  watchResource: 'plugin_target',
+  executeAction: 'always',
+  notify: 'always',
+} as const satisfies Readonly<Record<PluginUiCallerHostedHtmlHostMethodV1, 'always' | 'plugin_target'>>);
+
+/** The ceiling methods a mount can serve, in ceiling order; Resources need a current plugin target. */
+export function resolvePluginUiCallerHostedHtmlMountMethodsV1(input: Readonly<{ pluginTargetAvailable: boolean }>): readonly PluginUiCallerHostedHtmlHostMethodV1[] {
+  return PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1.filter(method =>
+    PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHOD_NEEDS_V1[method] === 'always' || input.pluginTargetAvailable);
+}
+
+/**
  * Transport operations are not host API methods. `disposeHostResource` retires
  * an established context, Resource, Composer observation, or input-lock lease;
  * it is never declarable, advertised, or a public SDK member.

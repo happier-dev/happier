@@ -19,6 +19,8 @@ import {
 import { PluginUiHostApiWireEnvelopeV1Schema } from './hostApiWire.js';
 import {
   PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1,
+  PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHOD_NEEDS_V1,
+  resolvePluginUiCallerHostedHtmlMountMethodsV1,
   PLUGIN_UI_HOST_API_VERSION_V1,
   PLUGIN_UI_HOST_API_COMPATIBLE_RANGE_V1,
   PLUGIN_UI_HOST_METHODS_V1,
@@ -268,6 +270,17 @@ describe('caller-authored hosted HTML host-method ceiling', () => {
       'notify',
     ]);
     expect(PluginUiCallerHostedHtmlHostMethodV1Schema.options)
+      .toEqual([...PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1]);
+  });
+
+  it('classifies every ceiling method once, and mounts exactly the methods its host can serve', () => {
+    // A method added to the ceiling without a classification (or a stale extra one) fails here and at compile time.
+    expect(Object.keys(PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHOD_NEEDS_V1).sort())
+      .toEqual([...PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1].sort());
+    // Resources need a current plugin target; everything else is always served. Ceiling order is kept.
+    expect(resolvePluginUiCallerHostedHtmlMountMethodsV1({ pluginTargetAvailable: false }))
+      .toEqual(['context', 'watchContext', 'executeAction', 'notify']);
+    expect(resolvePluginUiCallerHostedHtmlMountMethodsV1({ pluginTargetAvailable: true }))
       .toEqual([...PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1]);
   });
 

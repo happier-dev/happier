@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1 } from '@happier-dev/protocol/plugins/ui';
+import { resolvePluginUiCallerHostedHtmlMountMethodsV1 } from '@happier-dev/protocol/plugins/ui';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -105,11 +105,7 @@ export function useSessionCallerHostedHtmlRuntime(
             accountId: binding.accountId,
             accountEncryptionMode: accountMode.mode,
             hostOrigin,
-            admittedHostMethods: PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1.filter(
-                (method) => method === 'context' || method === 'watchContext'
-                    || method === 'executeAction' || method === 'notify'
-                    || (pluginTarget !== null && (method === 'readResource' || method === 'watchResource')),
-            ),
+            admittedHostMethods: resolvePluginUiCallerHostedHtmlMountMethodsV1({ pluginTargetAvailable: pluginTarget !== null }),
             createRequestController: (publishResourceEvent, mount) => createSessionCallerHostedHtmlRequestController({
                 sessionId,
                 serverId: binding.serverId,
