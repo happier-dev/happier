@@ -1,6 +1,47 @@
+import { createHash } from "node:crypto";
+
+import { AccountStatus, TeamMembershipStatus } from "@/storage/enums.generated";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
 import { publishTeamChangedInTx, readTeamChangePublicationAudienceInTx } from "../teamChanges";
+
+export type TeamCredentialBrokerPoolReferenceSummary = Readonly<{
+    assignmentCount: number;
+    visibleTeamNames: readonly string[];
+    witness: string;
+}>;
+
+/** Counts the custodian's retained assignments and discloses names through current membership. */
+export async function readTeamCredentialBrokerPoolReferenceSummaryInTx(
+    tx: Tx,
+    input: Readonly<{ custodianAccountId: string; poolId: string }>,
+): Promise<TeamCredentialBrokerPoolReferenceSummary> {
+    const resources = await tx.teamCredentialResource.findMany({
+        where: { custodianAccountId: input.custodianAccountId, brokerPoolId: input.poolId },
+        orderBy: { id: "asc" },
+        select: { id: true, teamId: true, revision: true },
+    });
+    const assignmentCount = resources.length;
+    const witness = createHash("sha256")
+        .update("team-credential-broker-pool-refs-v1")
+        .update(JSON.stringify(resources.map(({ id, revision }) => [id, revision])))
+        .digest("hex");
+    if (assignmentCount === 0) return { assignmentCount, visibleTeamNames: [], witness };
+
+    const custodian = await tx.account.findUnique({
+        where: { id: input.custodianAccountId, status: AccountStatus.active },
+        select: { id: true },
+    });
+    if (!custodian) return { assignmentCount, visibleTeamNames: [], witness };
+
+    const teamIds = [...new Set(resources.map(({ teamId }) => teamId))];
+    const memberships = await tx.teamMembership.findMany({
+        where: { accountId: custodian.id, teamId: { in: teamIds }, status: TeamMembershipStatus.active },
+        select: { team: { select: { name: true } } },
+    });
+    const visibleTeamNames = [...new Set(memberships.map(({ team }) => team.name.trim()).filter(Boolean))].sort();
+    return { assignmentCount, visibleTeamNames, witness };
+}
 
 async function readBrokerPoolTeamIdsInTx(tx: Tx, input: Readonly<{ custodianAccountId: string; poolId: string }>): Promise<readonly string[]> {
     const resources = await tx.teamCredentialResource.findMany({
