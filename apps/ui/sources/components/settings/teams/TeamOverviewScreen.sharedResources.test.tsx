@@ -212,9 +212,9 @@ describe('Team overview: Shared with this Team', () => {
   });
 
   it.each([
-    ['team_authentication_required', 'teams.credentials.errors.teamAuthenticationRequired'],
-    ['team_authentication_policy_unavailable', 'teams.credentials.errors.teamAuthenticationPolicyUnavailable'],
-  ] as const)('shows the credential summary refusal %s, and Retry asks again', async (reason, message) => {
+    ['team_authentication_required', 'teams.credentials.errors.teamAuthenticationRequired', true],
+    ['team_authentication_policy_unavailable', 'teams.credentials.errors.teamAuthenticationPolicyUnavailable', false],
+  ] as const)('shows the credential summary refusal %s with its sign-in recovery', async (reason, message, signIn) => {
     const serverId = await addHome([
       {
         kind: 'credentials',
@@ -227,17 +227,20 @@ describe('Team overview: Shared with this Team', () => {
     const screen = await renderScreen(
       <InPanes serverId={serverId} teamId="team-1" />,
     );
-    await vi.waitFor(() =>
-      expect(ids(screen)).toContain('team-overview-shared-retry:credentials'),
-    );
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(t(message)));
     expect(ids(screen)).not.toContain('team-overview-shared-empty');
-    expect(screen.getTextContent()).toContain(t(message));
     expect(screen.findByTestId('team-overview-shared:credentials')?.props.accessibilityLabel).toContain(t(message));
-
-    screen.pressByTestId('team-overview-shared-retry:credentials');
-    await vi.waitFor(() =>
-      expect(harness.requestsFor(SUMMARY.path)).toHaveLength(2),
-    );
+    expect(ids(screen)).not.toContain('team-overview-shared-retry:credentials');
+    expect(ids(screen)).not.toContain('team-overview-shared:credentials-retry');
+    const action = 'team-overview-shared:credentials-sign-in';
+    expect(ids(screen).includes(action)).toBe(signIn);
+    if (signIn) {
+      await screen.pressByTestIdAsync(action);
+      const destination = new URL(String(routerPush.mock.lastCall?.[0]), 'https://happier.test');
+      expect(destination.pathname).toBe('/teams/team-1/sign-in');
+      expect(destination.searchParams.get('serverId')).toBe(serverId);
+    }
+    expect(harness.requestsFor(SUMMARY.path)).toHaveLength(1);
   });
 
   it('invites sharing when nothing has been shared with the Team', async () => {
