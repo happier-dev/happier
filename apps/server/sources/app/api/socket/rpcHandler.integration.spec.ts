@@ -331,6 +331,13 @@ describe("rpcHandler", () => {
     });
 
     it("waits briefly for a late session-scoped room member before forwarding the RPC", async () => {
+        const installationId = randomUUID();
+        await db.machine.update({ where: { id: machineId }, data: { active: true, installationId } });
+        const homeId = await getOrCreateServerIdentityId();
+        await db.session.update({ where: { id: sessionId }, data: {
+            runtimeMachineTarget: { homeId, accountId, sessionId, machineId, installationId },
+        } });
+        await db.accessKey.create({ data: { accountId, sessionId, machineId, data: '{}' } });
         resetRpcAvailabilityEnv({
             HAPPIER_RPC_METHOD_AVAILABILITY_GRACE_MS: "30",
             HAPPIER_RPC_METHOD_AVAILABILITY_POLL_MS: "10",
@@ -367,7 +374,7 @@ describe("rpcHandler", () => {
                 method: `${sessionId}:execution.run.stream.start`,
                 params: { runId: "run-1" },
                 callerAuthority: "present_user",
-                authorization: { kind: "session.write", sessionId },
+                authorization: { kind: "session.write", sessionId, authority: "sessionOwner" },
                 timeoutMs: 30000,
             });
             expect(callback).toHaveBeenCalledWith({
@@ -380,6 +387,13 @@ describe("rpcHandler", () => {
     });
 
     it("preserves released-server opaque session RPC forwarding for Agent-realtime control without audio", async () => {
+        const installationId = randomUUID();
+        await db.machine.update({ where: { id: machineId }, data: { active: true, installationId } });
+        const homeId = await getOrCreateServerIdentityId();
+        await db.session.update({ where: { id: sessionId }, data: {
+            runtimeMachineTarget: { homeId, accountId, sessionId, machineId, installationId },
+        } });
+        await db.accessKey.create({ data: { accountId, sessionId, machineId, data: '{}' } });
         // server-v0.2.0 rpcHandler.ts at the pinned commit forwards normalized
         // arbitrary method strings and opaque params without parsing Agent realtime.
         expect(RELEASED_SERVER_V0_2_0_PROVENANCE).toEqual({
