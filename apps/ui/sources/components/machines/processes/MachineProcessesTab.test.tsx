@@ -10,13 +10,17 @@ import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { t } from '@/text';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { parseLocalServiceDomainActionRpcRequest, readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import {
   createHomeGovernanceHarness,
+  createAccountTokenForTests,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { publishMachineActivityForTest, publishMachineInventoryForTest as publishTruthMachineInventory } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 
 import { buildLocalServiceInventoryRow } from '@/dev/testkit/fixtures/localServices';
@@ -133,8 +137,11 @@ async function mount(
 ) {
   const serverId = await home.addHome({
     name: 'Processes Home',
+    serverIdentityId: 'srv_processes_tab',
     serverUrl: `https://processes-tab-${Math.random().toString(36).slice(2)}.test`,
     accountId: 'owner',
+    currentAccount: true,
+    localServicesEnabled: true,
   });
   // The person waived confirmation for these Actions on this device (their own approval setting, R41).
   home.answer(serverId, '/v2/account/settings', {
@@ -171,6 +178,28 @@ async function mount(
     if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_LIST) return answer;
     return new Promise(() => {});
   });
+  if (options.reply) {
+    // The receiving Machine is an HTTP boundary; admission and private carrier binding stay real.
+    for (const actionId of ['localServices.preview.openOrCreate', 'localServices.actions.copyUrl', 'localServices.actions.terminateDetected'] as const) {
+      await answerExternalActionAccountForHome(home, serverId, {
+        machineId: 'machine', installationId: 'processes-machine-installation', actionId, tokenEpoch: 0,
+        execute: input => {
+          const domainRequest = parseLocalServiceDomainActionRpcRequest(actionId, input);
+          const request = actionId === 'localServices.preview.openOrCreate'
+            ? domainRequest?.success ? domainRequest.data : null
+            : readLocalServiceControlActionRequest(actionId, input);
+          if (!request) throw new Error('Invalid Local services HTTP fixture input');
+          const method = actionId === 'localServices.preview.openOrCreate'
+            ? RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE
+            : RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE;
+          const response = options.reply?.({ method, payload: request });
+          if (response === undefined) throw new Error('Missing Local services HTTP fixture response');
+          return actionId === 'localServices.preview.openOrCreate' || actionId === 'localServices.actions.copyUrl'
+            ? response : DaemonLocalServiceActionExecuteResponseV1Schema.parse(response).result;
+        },
+      });
+    }
+  }
   const pageState = {
     target: {
       machineId: 'machine',
@@ -190,7 +219,7 @@ async function mount(
   } as unknown as React.ContextType<typeof MachinePageStateContext>;
   const setParams = vi.fn();
   const screen = await renderScreen(
-    <AuthProvider initialCredentials={{ token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` }}>
+    <AuthProvider initialCredentials={{ token: createAccountTokenForTests('owner', { currentAccount: true }) }}>
 <ModalProvider>
       <MachinePageStateContext.Provider value={pageState}>
         {options.sharedPort === undefined ? (
@@ -373,7 +402,7 @@ describe('MachineProcessesTab', () => {
           disk: { reported: true, volumes: [] }, network: { reported: true, rxBps: 0, txBps: 0 } },
         series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] }, attention: { level: 'calm', reasons: [] },
       } : undefined });
-      const key = { serverId, expectedAccountId: 'owner', machineId: 'machine', view: 'summary' as const };
+      const key = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), expectedAccountId: 'owner', machineId: 'machine', view: 'summary' as const };
       await vi.waitFor(() => expect(machineResourceStore.getState(key).status).toBe('ready'));
       await vi.waitFor(() => expect(textOf(screen.findByTestId('machine-processes-tile-cpu'))).toContain('39'));
       expect(textOf(screen.findByTestId('machine-processes-tile-memory'))).toContain('71');
@@ -1292,7 +1321,7 @@ describe('MachineProcessesTab port chips', () => {
     await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('shared-port-open')).not.toBeNull()); });
     await act(async () => { screen.pressByTestId('shared-port-open'); });
     await act(async () => { await vi.waitFor(() => expect(openURL).toHaveBeenCalledWith(ACCESS_URL_4000)); });
-    expect(transport.rpc.mock.calls.filter(([rpc]) => rpc.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE))
+    expect(home.requestsFor('/v1/actions/localServices.preview.openOrCreate').filter(request => request.method === 'POST'))
       .toHaveLength(1);
     openURL.mockRestore();
   });
