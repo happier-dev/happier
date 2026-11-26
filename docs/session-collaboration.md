@@ -350,9 +350,12 @@ record retains the suppressed full-publication clock. The scoped ordering reader
 witness for inventory/hydration currentness, lifecycle replay, thinking resurrection and
 fallback pending/transcript ordering, without changing content sorting or display clocks.
 Session-list grouping and Activity recency use meaningful activity (or creation), not the raw
-receipt clock. The opened "Put under…" chooser deliberately snapshots last-receipt recency:
-its ranking and relative-time label read that exact-Home witness directly, without replacing
-the retained row. A receipt alone seeds only compact runtime facts and cannot invent presence.
+receipt clock. The opened “Report to…” chooser snapshots last-receipt recency for ranking
+within each section and for relative-time labels. It reads that exact-Home witness directly
+without replacing the retained row. Top level appears first, followed by Bots, Sessions
+that already lead work, other Sessions, and ineligible Sessions with their refusal reason.
+After the relation is saved, an optional note is sent to the new lead through the existing
+Session message Action. If sending the note fails, the saved relation still stands. A receipt alone seeds only compact runtime facts and cannot invent presence.
 Activity and Work inventory presentation consume the admitted compact row with exact-Home,
 tuple-current held facets; they do not reconstruct a full Session on every projection pass.
 The same lifecycle, metadata and pending owners serve those facets and an explicitly presented

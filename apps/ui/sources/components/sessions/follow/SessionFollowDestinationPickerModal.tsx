@@ -5,9 +5,8 @@ import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
-import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
-import { SELECTION_LIST_SKELETON_ROW_SHAPE } from '@/components/ui/selectionList/_constants';
+import { SessionSelectionList } from '@/components/sessions/selection/SessionSelectionList';
+import { projectSessionSelectionRows } from '@/components/sessions/selection/projectSessionSelectionRows';
 import { Text } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
 import type { CustomModalInjectedProps } from '@/modal';
@@ -25,7 +24,7 @@ import {
 } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
-import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
 
@@ -176,20 +175,8 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
         void loadNext();
     }, [loadNext, queryPresentation]);
 
-    const options = React.useMemo<ReadonlyArray<SelectionListOption>>(() => destinations.map((session) => ({
-        id: session.id,
-        testID: `session-follow-destination-option-${session.id}`,
-        label: getSessionName(session),
-        subtitle: getSessionSubtitle(session),
-        disabled: saving || committedRelation !== null || !pickerPresentation.canSelect,
-    })), [committedRelation, destinations, pickerPresentation.canSelect, saving]);
-    const rootStep = React.useMemo<SelectionListStep>(() => ({
-        id: 'session-follow-destination-root',
-        title: contextTitle,
-        inputPlaceholder: t('transcript.selection.sendTo.searchPlaceholder'),
-        emptyStateLabel: t('transcript.selection.sendTo.noResults'),
-        sections: [{ kind: 'static', id: 'sessions', options, virtualization: 'auto' }],
-    }), [contextTitle, options]);
+    const rows = React.useMemo(() => projectSessionSelectionRows(destinations)
+        .map(row => ({ ...row, id: row.address.sessionId })), [destinations]);
 
     const prepareCommittedRelation = React.useCallback(async (relation: NonNullable<typeof committedRelation>) => {
         preparationRequestRef.current?.abort();
@@ -229,7 +216,6 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
     }, [committedRelation, online, preparation, prepareCommittedRelation, retryReadinessSignature]);
 
     return <View testID="session-follow-destination-picker" style={{ flex: 1, minHeight: 0 }}>
-        {failed ? <Text accessibilityLiveRegion="polite">{t('errors.unknownError')}</Text> : null}
         {preparation === 'queued' || preparation === 'preparing' ? <Text
             testID="session-follow-source-key-preparing"
             accessibilityLiveRegion="polite"
@@ -254,25 +240,22 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
                 onPress: () => { if (committedRelation) void prepareCommittedRelation(committedRelation); },
             })}
         /> : null}
-        {statusKey && pickerPresentation.canRetryQuery ? <Item
-            testID="session-follow-picker-currentness"
-            title={t(statusKey)}
-            titleLines={0}
-            // Discovery only advances itself while the query is ready, so a failed or partial
-            // corpus is retried through the shared query owner — the search input and any
-            // retained choice stay exactly as they are.
-            detail={t('common.retry')}
-            disabled={saving}
-            onPress={() => { void querySource.retry(); }}
-            accessibilityLiveRegion="polite"
-        /> : statusKey ? <Text
-            testID="session-follow-picker-currentness"
-            accessibilityLiveRegion="polite"
-        >{t(statusKey)}</Text> : null}
-        <SelectionList
-            testID="session-follow-destination-list"
-            rootStep={rootStep}
-            onSelect={(destinationSessionId) => {
+        <SessionSelectionList
+            testID="session-follow-destination"
+            title={contextTitle}
+            searchPlaceholder={t('transcript.selection.sendTo.searchPlaceholder')}
+            emptyStateLabel={t('transcript.selection.sendTo.noResults')}
+            rows={rows}
+            layout="content"
+            disabled={saving || committedRelation !== null || !pickerPresentation.canSelect}
+            queryStatus={statusKey ? {
+                testID: 'session-follow-picker-currentness',
+                label: t(statusKey),
+                retryDisabled: saving,
+                onRetry: pickerPresentation.canRetryQuery ? () => { void querySource.retry(); } : undefined,
+            } : undefined}
+            error={failed ? { testID: 'session-follow-destination-error', label: t('errors.unknownError') } : undefined}
+            onSelectSession={({ sessionId: destinationSessionId }) => {
                 if (!isServerReachabilityNetworkAllowed() || saving || committedRelation !== null
                     || !pickerPresentation.canSelect || !destinations.some((candidate) => candidate.id === destinationSessionId)) return;
                 setSaving(true);
@@ -306,19 +289,11 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
                 });
             }}
             onRequestClose={props.onClose}
-            contentState={firstPageLoading ? (
-                <View
-                    testID="session-follow-destination-loading"
-                    accessibilityRole="progressbar"
-                    accessibilityLabel={t('sessionsList.queryInitialLoadingTitle')}
-                >
-                    <SkeletonRows rows={4} {...SELECTION_LIST_SKELETON_ROW_SHAPE} />
-                </View>
-            ) : undefined}
-            autoFocusInputOnWeb
-            keyboardHintsEnabled
-            heightBehavior="content"
-            showsVerticalScrollIndicator
+            loading={firstPageLoading ? {
+                presentation: 'skeleton',
+                testID: 'session-follow-destination-loading',
+                label: t('sessionsList.queryInitialLoadingTitle'),
+            } : undefined}
         />
     </View>;
 });

@@ -32,7 +32,7 @@ describe('Happier core outcome vocabulary (lab SYS verbs)', () => {
             ['copy', 'Copy to Project', 'Can’t copy to Project'],
             ['above', 'Move above Project', 'Can’t move above Project'],
             ['below', 'Move below Project', 'Can’t move below Project'],
-            ['nest', 'Put under Project', 'Can’t put under Project'],
+            ['nest', 'Report to Project', 'Can’t report to Project'],
             ['add', 'Add to Project', 'Can’t add to Project'],
             ['open', 'Open Project', 'Can’t open Project'],
             ['tab', 'Open Project as a tab', 'Can’t open Project'],
@@ -90,7 +90,7 @@ describe('Happier core outcome vocabulary (lab SYS verbs)', () => {
     it('names a late relation refusal by item and lead, and any other one by its verb', () => {
         const refused = { status: 'refused' as const, reason: { code: 'changed', message: 'This session was just moved. Try again' } };
         expect(describeEntityDropSettled({ phase: 'settled', admission: allowed('session.manager.set', 'nest'), outcome: refused }, 'Review #2481'))
-            .toMatchObject({ kind: 'refused', title: 'Couldn’t put Review #2481 under Target', detail: 'This session was just moved. Try again' });
+            .toMatchObject({ kind: 'refused', title: 'Review #2481 couldn’t report to Target', detail: 'This session was just moved. Try again' });
         expect(describeEntityDropSettled({ phase: 'settled', admission: allowed('tasks.internal.reorder', 'above', 'Move above Buy milk'), outcome: refused }))
             .toMatchObject({ kind: 'refused', title: 'Move above Buy milk didn’t go through' });
     });

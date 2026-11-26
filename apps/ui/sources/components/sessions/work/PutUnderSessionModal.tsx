@@ -1,18 +1,21 @@
 import * as React from 'react';
-import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
+import { readSessionManagerSessionIdV1, SessionManagerSetResultV1Schema } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { SelectionList } from '@/components/ui/selectionList/SelectionList';
-import type { SelectionListStep } from '@/components/ui/selectionList/_types';
+import { SessionSelectionList } from '@/components/sessions/selection/SessionSelectionList';
+import { projectSessionSelectionRows } from '@/components/sessions/selection/projectSessionSelectionRows';
+import type { SelectionListOption } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { getStorage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { setSessionManager } from '@/sync/ops/relations/setSessionManager';
 import { t } from '@/text';
 import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
@@ -21,7 +24,7 @@ import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { loadSessionManagerEligibility, type SessionManagerEligibilitySnapshot } from '@/sync/ops/relations/sessionManagerEligibility';
 
 import { describeManagerRefusal } from './putSessionUnderLead';
-import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID, type PutUnderChooserSection } from './putUnderChooser';
+import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
 import type { PutUnderCandidatePresentation } from './putUnderPresentation';
 import { resolvePutUnderEligibility } from './putUnderCandidates';
 import { describeSessionListDropReason } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
@@ -30,27 +33,19 @@ import { readSessionPresentationRecord, readSessionPresentationServerId, readSes
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 /**
- * "Put under…" (ORC §3.8, R-03; DnD lab K1c): the keyboard, phone and screen-reader equivalent of
+ * "Report to…" (ORC §3.8, R-03; DnD lab K1c): the keyboard, phone and screen-reader equivalent of
  * dragging a Session under a lead. It asks the Home once for the relation facts, lists the Sessions
  * that can lead this one and, under "Can't take reports", the ones that cannot with the owner's
  * reason, and asks the one `session.manager.set` Action with the lead it saw as the expected
  * current lead. The server's fence and compare-and-set decide; a refusal is said in words.
  */
 
-const stylesheet = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create({
     body: {
         minHeight: 320,
         maxHeight: 520,
     },
-    // The refusal sits under the list, so nothing above it moves when it appears.
-    status: {
-        paddingHorizontal: theme.space.s16,
-        paddingBottom: theme.space.s12,
-    },
-}));
-
-/** The mark column's size: the Work map's node mark, so a session reads the same wherever it is chosen. */
-const CANDIDATE_MARK_SIZE = 28;
+});
 
 /**
  * The quiet line under a candidate (lab K1c): what it is and what it is doing ("Orchestrator · 1 still
@@ -64,28 +59,18 @@ function describeCandidateFacts(session: PutUnderCandidatePresentation): string 
     return joinHappierFacts(session.roleName, activity ?? formatRelativeTime(session.updatedAt));
 }
 
-/** Sessions that already lead come first within their section; recency otherwise keeps its order. */
-function orderLeadsFirst(options: PutUnderChooserSection['options']): PutUnderChooserSection['options'] {
-    // "Top level" carries no session and keeps the first place.
-    const leads = (option: PutUnderChooserSection['options'][number]) => !option.session ? -1
-        : (option.session.leadsCount ?? 0) > 0 || option.session.roleId === 'orchestrator' ? 0 : 1;
-    return options.map((option, index) => ({ option, index }))
-        .sort((a, b) => leads(a.option) - leads(b.option) || a.index - b.index)
-        .map(({ option }) => option);
-}
-
 type PutUnderSessionModalProps = CustomModalInjectedProps & Readonly<{
     sessionId: string;
     serverId: string | null;
 }>;
 
 export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
-    const styles = stylesheet;
     const { theme } = useUnistyles();
     const { onClose } = props;
     const onCloseRef = React.useRef(onClose);
     onCloseRef.current = onClose;
     const close = React.useCallback(() => onCloseRef.current(), []);
+    const [note, setNote] = React.useState('');
     const [error, setError] = React.useState<string | null>(null);
     // The lead being asked for, shown pending on its own row until the Home answers.
     const [pendingId, setPendingId] = React.useState<string | null>(null);
@@ -144,33 +129,42 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
         };
     }, [close, props.serverId, props.sessionId, snapshot]);
 
-    const step = React.useMemo<SelectionListStep>(() => {
-        const sections = facts === undefined ? [] : buildPutUnderChooserSections({
+    const chooser = React.useMemo(() => {
+        const ownerSections = facts === undefined ? [] : buildPutUnderChooserSections({
             sessions: snapshot.sessions,
             sessionId: props.sessionId,
             facts,
         });
-        return {
-            id: 'leads',
-            inputPlaceholder: t('sessionWork.putUnder.search'),
-            sections: sections.map((section) => ({
-                kind: 'static' as const,
-                id: section.id,
-                ...(section.title ? { title: section.title } : {}),
-                options: (section.id === 'available' ? orderLeadsFirst(section.options) : section.options).map((option) => ({
+        const leadingOptions: SelectionListOption[] = [];
+        const sections = ownerSections.flatMap(section => {
+            const rows = section.options.flatMap(option => {
+                if (option.id === PUT_UNDER_TOP_LEVEL_OPTION_ID) {
+                    leadingOptions.push({
+                        id: option.id, label: option.label,
+                        icon: <Icon name="list" size={20} color={theme.colors.text.secondary} />,
+                    });
+                    return [];
+                }
+                const source = snapshot.sessions[option.id];
+                const serverId = readSessionPresentationServerId(source);
+                if (!serverId) return [];
+                return projectSessionSelectionRows([{
+                    ...readSessionPresentationRecord(source),
+                    ...readSessionPresentationInputDisplay(source),
+                    serverId,
+                }]).map(row => ({
+                    ...row,
                     id: option.id,
                     label: option.label,
-                    labelEllipsizeMode: 'tail' as const,
-                    ...(option.detail || option.session ? { subtitle: option.detail ?? describeCandidateFacts(option.session!) } : {}),
-                    icon: option.session
-                        ? <ExecutionRunAgentMark agentId={option.session.agentId} size={CANDIDATE_MARK_SIZE} />
-                        : option.id === PUT_UNDER_TOP_LEVEL_OPTION_ID ? <Icon name="list" size={20} color={theme.colors.text.secondary} /> : undefined,
-                    ...(option.disabled || (pendingId !== null && pendingId !== option.id) ? { disabled: true } : {}),
-                    ...(pendingId === option.id ? { loading: true } : {}),
-                })),
-            })),
-        };
-    }, [facts, pendingId, props.sessionId, snapshot.sessions, theme.colors.text.secondary]);
+                    subtitle: option.session ? describeCandidateFacts(option.session) : row.subtitle,
+                    disabledReason: option.disabled ? option.detail : undefined,
+                    botFace: option.botFace,
+                }));
+            });
+            return rows.length > 0 ? [{ id: section.id, title: section.title, rows }] : [];
+        });
+        return { leadingOptions, sections };
+    }, [facts, props.sessionId, snapshot.sessions, theme.colors.text.secondary]);
 
     const onSelect = React.useCallback((optionId: string) => {
         if (busy) return;
@@ -207,6 +201,8 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
             onClose();
             return;
         }
+        const noteForLead = note.trim() ? note : null;
+        const accountId = snapshot.lifetime.scope.accountId;
         setPendingId(optionId);
         setError(null);
         void setSessionManager({
@@ -214,21 +210,51 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
             managerSessionId,
             expectedManagerSessionId: snapshot.currentLeadId,
             serverId: props.serverId,
-            expectedAccountId: snapshot.lifetime.scope.accountId,
-        }).then((result) => {
-            if (result.ok) {
-                onClose();
+            expectedAccountId: accountId,
+        }).then(async (result) => {
+            if (!result.ok) {
+                setPendingId(null);
+                setError(describeManagerRefusal(result.errorCode));
                 return;
             }
-            setPendingId(null);
-            setError(describeManagerRefusal(result.errorCode));
+            const lifetime = snapshot.lifetime;
+            if (!lifetime?.isCurrent()) return;
+            // An Action may create an approval request without committing a relation.
+            const relation = noteForLead ? SessionManagerSetResultV1Schema.safeParse(result.result) : null;
+            if (noteForLead && relation?.success && relation.data.ok && relation.data.managerSessionId) {
+                const failureTitle = t('sessionWork.putUnder.noteDeliveryUnconfirmed');
+                let failureMessage: string | null = null;
+                try {
+                    const execute = createFrontDoorActionExecute();
+                    const sent = await execute('session.message.send', { sessionId: relation.data.managerSessionId, message: noteForLead, reply: 'none' }, {
+                        surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: accountId,
+                    });
+                    if (!sent.ok) {
+                        failureMessage = resolveActionExecutionFailureMessage(sent, t('transcript.selection.sendTo.sendFailed'));
+                    } else if (!ActionApprovalRequestCreatedResultSchema.safeParse(sent.result).success) {
+                        const receipt = SessionMessageSendResultV1Schema.safeParse(sent.result);
+                        if (!receipt.success || receipt.data.status === 'rejected' || receipt.data.status === 'failed'
+                            || receipt.data.status === 'cancelled' || receipt.data.status === 'outcomeUnknown') {
+                            failureMessage = receipt.success && 'code' in receipt.data
+                                ? resolveActionExecutionFailureMessage({ ok: false, errorCode: receipt.data.code }, failureTitle)
+                                : failureTitle;
+                        }
+                    }
+                } catch {
+                    failureMessage = failureTitle;
+                }
+                if (!lifetime.isCurrent()) return;
+                onClose();
+                if (failureMessage) Modal.alert(failureTitle, failureMessage === failureTitle ? undefined : failureMessage);
+                return;
+            }
+            onClose();
         }, () => {
             setPendingId(null);
             setError(describeManagerRefusal(undefined));
         });
-    }, [busy, facts, onClose, props.serverId, props.sessionId, snapshot]);
+    }, [busy, facts, note, onClose, props.serverId, props.sessionId, snapshot]);
 
-    // Lab K1c: the sheet names what it moves ("Put Review #2481 under…").
     const title = React.useMemo(() => {
         const self = snapshot.sessions[props.sessionId];
         return self ? t('entityDragDrop.chooser.putUnderTitle', { item: sessionDisplayTitle(readSessionPresentationInputDisplay(self), readSessionPresentationServerId(self)) }) : t('sessionWork.putUnder.title');
@@ -245,24 +271,27 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
 
     return (
         <View style={styles.body}>
-            <SelectionList
-                rootStep={step}
-                selectedOptionId={snapshot.currentLeadId}
+            <SessionSelectionList
+                {...chooser}
+                title={title}
                 listAccessibilityLabel={title}
-                fillAvailableSpace
-                onSelect={onSelect}
+                searchPlaceholder={t('sessionWork.putUnder.search')}
+                emptyStateLabel={t('transcript.selection.sendTo.noResults')}
+                selectedOptionId={snapshot.currentLeadId ?? undefined}
+                layout="fill"
+                pendingOptionId={pendingId}
+                onSelectSession={({ sessionId }) => onSelect(sessionId)}
+                onSelectOption={onSelect}
                 onRequestClose={onClose}
-                testID="session-put-under-list"
-                // While the Home is asked for the relation facts, say so instead of an empty list.
-                {...(facts === undefined ? { contentState: (
-                    <SurfaceStateCard testID="session-put-under-loading" kind="loading" size="line" title={t('entityDragDrop.chooser.checking')} />
-                ) } : {})}
+                testID="session-put-under"
+                note={{ label: t('transcript.selection.sendTo.addNote'), value: note, onChangeText: setNote }}
+                loading={facts === undefined ? {
+                    presentation: 'line',
+                    testID: 'session-put-under-loading',
+                    label: t('entityDragDrop.chooser.checking'),
+                } : undefined}
+                error={error ? { testID: 'session-put-under-error', label: error } : undefined}
             />
-            {error ? (
-                <View style={styles.status}>
-                    <SurfaceStateCard testID="session-put-under-error" kind="error" size="line" title={error} accessibilitySemantics="alert" />
-                </View>
-            ) : null}
         </View>
     );
 }

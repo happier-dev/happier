@@ -19,7 +19,7 @@ describe('Session-list verdicts through the one outcome presenter', () => {
         expect(outcome).toEqual({
             tone: 'allowed',
             glyph: 'nest',
-            title: 'Put under Fix settings modal remount',
+            title: 'Report to Fix settings modal remount',
             detail: 'Reports to it · both keep running',
         });
     });
@@ -38,7 +38,7 @@ describe('Session-list verdicts through the one outcome presenter', () => {
                 preview: describeSessionListRefusedPutUnder('Docs search index') },
         });
         expect(outcome?.tone).toBe('refused');
-        expect(outcome?.title).toBe('Can’t put under Docs search index');
+        expect(outcome?.title).toBe('Can’t report to Docs search index');
         expect(outcome?.detail).toBe(describeSessionListDropReason('read').message);
     });
 
@@ -48,11 +48,11 @@ describe('Session-list verdicts through the one outcome presenter', () => {
             admission: { status: 'allowed', effect: {
                 actionId: 'session.manager.set',
                 input: {},
-                preview: { verb: 'Put under Lead', target: 'Lead', consequence: 'Reports to it · both keep running' },
+                preview: { verb: 'Report to Lead', target: 'Lead', consequence: 'Reports to it · both keep running' },
             } },
         });
         expect(outcome?.tone).toBe('pending');
-        expect(outcome?.title).not.toBe('Put under Lead');
+        expect(outcome?.title).not.toBe('Report to Lead');
     });
 
     it('draws the order or folder mark for organization moves', () => {

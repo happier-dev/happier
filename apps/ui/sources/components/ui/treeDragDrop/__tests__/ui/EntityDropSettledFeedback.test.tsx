@@ -37,7 +37,7 @@ async function lateSettlement(outcome: EntityDropOutcomeV1, options: Readonly<{ 
         isCurrent: () => true, describe: () => ({ title: 'Review #2481' }) };
     const retireSource = runtime.registerSource(source);
     const admission: EntityDropAdmissionV1 = { status: 'allowed', effect: { actionId: 'session.manager.set', input: {},
-        preview: { verb: 'Put under Fix settings', target: 'Fix settings', consequence: 'Reports to it · both keep running' } } };
+        preview: { verb: 'Report to Fix settings', target: 'Fix settings', consequence: 'Reports to it · both keep running' } } };
     let finish = (_outcome: EntityDropOutcomeV1) => {};
     runtime.registerTarget({ id: 'lead', scope, acceptedKinds: ['session'], getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
         resolve: () => admission, execute: () => new Promise<EntityDropOutcomeV1>(resolve => { finish = resolve; }) });
@@ -69,7 +69,7 @@ describe('EntityDropSettledFeedback (lab ST4 late refusal)', () => {
         const execute = vi.fn(async (): Promise<EntityDropOutcomeV1> => ({ status: 'applied' }));
         runtime.registerTarget({ id: 'lead', scope, acceptedKinds: ['session'], getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
             resolve: () => ({ status: 'refused', reason: { code: 'unavailable', message: 'Couldn’t check this session just now' },
-                preview: { glyph: 'refused', verb: 'Can’t put under Fix settings', target: 'Fix settings' } }), execute });
+                preview: { glyph: 'refused', verb: 'Can’t report to Fix settings', target: 'Fix settings' } }), execute });
         const screen = await renderScreen(<EntityDropSettledFeedback runtime={runtime}
             match={{ item: item => item.kind === 'session' && item.address.sessionId === 'review' }} testID="row"><Text>Review #2481</Text></EntityDropSettledFeedback>);
         await act(async () => {
@@ -81,7 +81,7 @@ describe('EntityDropSettledFeedback (lab ST4 late refusal)', () => {
         });
         expect(execute).not.toHaveBeenCalled();
         expect(screen.findHostByTestId('row-settled')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('Can’t put under Fix settings');
+        expect(screen.getTextContent()).toContain('Can’t report to Fix settings');
         expect(screen.getTextContent()).toContain('Couldn’t check this session just now');
         await screen.unmount();
     });
@@ -89,7 +89,7 @@ describe('EntityDropSettledFeedback (lab ST4 late refusal)', () => {
         const { runtime, screen } = await lateSettlement({ status: 'refused', reason: { code: 'changed', message: 'This session was just moved. Try again' } });
         expect(runtime.getSnapshot().phase).toBe('idle');
         const text = screen.getTextContent();
-        expect(text).toContain('Couldn’t put Review #2481 under Fix settings');
+        expect(text).toContain('Review #2481 couldn’t report to Fix settings');
         expect(text).toContain('This session was just moved. Try again');
         await screen.unmount();
     });
@@ -97,7 +97,7 @@ describe('EntityDropSettledFeedback (lab ST4 late refusal)', () => {
     it('says an unknown result in the same quiet line instead of a blocking alert', async () => {
         const { screen } = await lateSettlement({ status: 'unknown', reason: { code: 'effect-outcome-unknown', message: 'x' } });
         expect(screen.findHostByTestId('row-settled')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('Not sure “Put under Fix settings” went through');
+        expect(screen.getTextContent()).toContain('Not sure “Report to Fix settings” went through');
         await screen.unmount();
     });
 

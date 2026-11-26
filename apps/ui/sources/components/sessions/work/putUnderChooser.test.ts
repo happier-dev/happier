@@ -37,7 +37,26 @@ describe('buildPutUnderChooserSections (K1c)', () => {
         ]);
         const available = sections.flatMap((section) => section.options).filter((option) => !option.disabled).map((option) => option.id);
         expect(available).toEqual([PUT_UNDER_TOP_LEVEL_OPTION_ID, 'lead', 'peer']);
-        expect(sections[0]!.options.find((option) => option.id === 'lead')?.current).toBe(true);
+        expect(sections.flatMap(section => section.options).find(option => option.id === 'lead')?.current).toBe(true);
+    });
+
+    it('groups current and active leads without treating a role as a reporting relationship', () => {
+        const records = { ...sessions,
+            activeLead: session('activeLead', { updatedAt: 8,
+                managedSessions: { total: 1, working: 1, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null } }),
+            roleOnly: session('roleOnly', { updatedAt: 1,
+                metadata: { path: '/repo', host: 'work', work: { sessionRolesV1: {
+                    roleId: 'orchestrator', sessionRoles: {}, overrides: {}, notes: '',
+                } } } }),
+        };
+        const eligible = createSessionManagerEligibilitySnapshot({
+            serverId: 'home', accountId: 'account', sessionId: 'self', currentManagerSessionId: 'lead',
+            candidates: ['lead', 'peer', 'activeLead', 'roleOnly'].map(sessionId => ({ sessionId, allowed: true })),
+            isCurrent: () => true, dispose: () => {},
+        });
+        const groups = buildPutUnderChooserSections({ sessions: records, sessionId: 'self', facts: eligible });
+        expect(groups.slice(0, 3).map(group => group.options.map(option => option.id)))
+            .toEqual([[PUT_UNDER_TOP_LEVEL_OPTION_ID], ['activeLead', 'lead'], ['roleOnly', 'peer']]);
     });
 
     it('refuses every lead with a reason when the Home could not be asked, instead of pretending they are ready', () => {
