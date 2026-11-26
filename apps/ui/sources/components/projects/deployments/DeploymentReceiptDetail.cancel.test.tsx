@@ -70,6 +70,7 @@ async function renderRunning(
     | 'may-leave-service-down-until-rollback'
     | null,
   state: 'running' | 'outcome_unknown' = 'running',
+  receiptRead: 'answers' | 'pending' = 'answers',
 ) {
   const receipt = {
     ...createDeploymentReceiptDetailV1({
@@ -94,7 +95,7 @@ async function renderRunning(
         ok: true,
         value: { ok: true, items: [], nextCursor: null },
       }),
-      readReceipt: async () => ({ ok: true, value: receipt }),
+      readReceipt: receiptRead === 'pending' ? () => new Promise(() => {}) : async () => ({ ok: true, value: receipt }),
     },
   });
   // The Action owner's Cancel is the boundary this page calls.
@@ -125,7 +126,7 @@ async function renderRunning(
     await Promise.race([
       waitForTestEvent(
         screen.subscribe,
-        () => screen.findByTestId('project-deployments.receipt.header'),
+        () => screen.findByTestId(receiptRead === 'pending' ? 'project-deployments.receipt.state' : 'project-deployments.receipt.header'),
         (node) => node !== null,
       ),
       new Promise((resolve) => setTimeout(resolve, 5_000)),
@@ -207,5 +208,16 @@ describe('Receipt → Cancel is the primary only while the work runs (PAGE-ACCEP
       // The menu closes before it runs its choice; the press then reaches the Action owner.
       await act(async () => { await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1)); });
     } finally { await screen.unmount(); controller.retire(); vi.unstubAllGlobals(); }
+  });
+});
+
+// PAGE-ACCEPT-176 R18-D7: opening another receipt (the one a rollback starts) passed through "Loading environments…",
+// a different page's words. While a receipt reads, its page holds a receipt's own shape: the header's placeholder.
+describe('Receipt while it reads', () => {
+  it('holds the receipt header in place, not another page\'s loading words', async () => {
+    const { screen, controller } = await renderRunning(null, 'running', 'pending');
+    try {
+      expect(screen.findByTestId('project-deployments.receipt.state.header')).not.toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
   });
 });

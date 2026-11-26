@@ -7,7 +7,7 @@ import { isSameDeploymentName } from './DeploymentEnvironmentCollection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { View } from 'react-native';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
-import { DEPLOYMENT_DATABASE_CATALOG_FILTER, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
+import { buildServiceCheckHref, DEPLOYMENT_DATABASE_CATALOG_FILTER, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   DeploymentEnvironmentDestinationV1,
@@ -172,7 +172,6 @@ import { useEnvironmentNavigation, selectEnvironmentNavigationItem } from './env
 import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { deploymentOverviewArrival } from './deploymentOverviewArrival';
-import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { MachineServiceStateWord, machineServiceColumnFields, machineServiceStateField } from '@/components/machines/services/machineServiceColumns';
@@ -1087,12 +1086,22 @@ export const DeploymentEnvironmentDetail = React.memo(
         }
         case 'unhealthy': {
           const health = deploymentHealthFact(detail.healthAggregate);
+          // A failing saved check is the next step itself (R18-D1): one opens its page, several their Settings section.
+          const failingChecks = detail.healthAggregate?.failingSavedChecks ?? [];
+          const onlyCheck = failingChecks.length === 1 ? failingChecks[0]! : null;
           return (
             <AttentionBanner
               testID="project-deployments.environment.attention.unhealthy"
               tone={health.tone === 'danger' ? 'danger' : 'warning'}
               title={health.value}
-              description={services.length > 0 ? t('projects.deployments.overviewStatus.unhealthyBody') : undefined}
+              description={failingChecks.length > 0 ? t('projects.deployments.overviewStatus.savedCheckFailingBody')
+                : services.length > 0 ? t('projects.deployments.overviewStatus.unhealthyBody') : undefined}
+              {...(failingChecks.length > 0 ? { action: {
+                label: t(onlyCheck ? 'projects.deployments.overviewStatus.openCheck' : 'projects.deployments.overviewStatus.openChecks'),
+                onPress: onlyCheck
+                  ? () => router.push(buildServiceCheckHref({ automationId: onlyCheck.automationId, triggerId: onlyCheck.triggerId }) as never)
+                  : () => openTab('settings', 'checks-alerts'),
+              } } : {})}
             />
           );
         }
@@ -1211,11 +1220,14 @@ export const DeploymentEnvironmentDetail = React.memo(
                       {...(props.onOpenRecoveryDestination ? { onOpenRecovery: props.onOpenRecoveryDestination } : {})} />}
               </ItemGroup> : null}
               {/* Serving now (lab `envOv` hero, owner 22:35Z): the address, the serving version's labelled cells and the
-                  last deploy's steps in one card; then the headline facts; then the Environment's agent actions. */}
-              {activeReceipt ? (
+                  last deploy's steps in one card; then the headline facts; then the Environment's agent actions.
+                  While the serving receipt reads, the same card holds its place with its cells pending, and what the
+                  Environment read already knows (health, rollout) holds the facts strip's, so nothing is inserted or
+                  moves when the receipt answers (PAGE-ACCEPT-176 R12-D3, R18-D7). */}
+              {activeReceipt || (activeId && active.snapshot.status !== 'unavailable') ? (
                 <>
                   <ItemGroup testID="project-deployments.environment.serving">
-                    <DeploymentServingReceipt receipt={activeReceipt}
+                    <DeploymentServingReceipt receipt={activeReceipt ?? null}
                       still={attention?.kind === 'latestFailed'}
                       address={liveUrl ? {
                         text: formatDeploymentLiveAddress(liveUrl),
@@ -1223,7 +1235,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                         attention: liveAddress?.attention ? <DomainStateLine state={liveAddress.attention} route={null} /> : null,
                         actions: liveActions(liveUrl),
                       } : null}
-                      byYou={deploymentActorIsViewer(activeReceipt.facts.actor, props.accountId)}
+                      byYou={activeReceipt ? deploymentActorIsViewer(activeReceipt.facts.actor, props.accountId) : false}
                       phone={props.phone}
                       onOpenReceipt={openServingReceipt} />
                   </ItemGroup>
@@ -1232,7 +1244,9 @@ export const DeploymentEnvironmentDetail = React.memo(
                     <FactStrip
                       testID="project-deployments.environment.facts"
                       layout="columns" narrow={props.phone}
-                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, latest?.state)}
+                      facts={activeReceipt
+                        ? overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, latest?.state)
+                        : overviewPendingFacts(detail, latest?.state)}
                     />
                   </ItemGroup>
                 </>
@@ -1252,10 +1266,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                         onPress: () => active.refresh(),
                       }}
                     />
-                  ) : activeId ? (
-                    // The serving version's own shape while its receipt reads (R5).
-                    <SkeletonRows testID="project-deployments.environment.serving.loading" rows={2}
-                      accessibilityLabel={t('common.loading')} />
                   ) : (
                     <Item
                       testID="project-deployments.environment.serving.none"
@@ -1272,14 +1282,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </ItemGroup>
                 </ItemGroupDefaultSurfaceProvider>
               )}
-              {/* While the serving receipt reads, what the Environment read already knows (health, rollout) holds the
-                  facts strip's place, so nothing moves when the receipt answers (PAGE-ACCEPT-176 R12-D3). */}
-              {!activeReceipt && activeId && active.snapshot.status !== 'unavailable' ? (
-                <ItemGroup header="none" surface="none" style={styles.factsGroup}>
-                  <FactStrip testID="project-deployments.environment.facts" layout="columns" narrow={props.phone}
-                    facts={overviewPendingFacts(detail, latest?.state)} />
-                </ItemGroup>
-              ) : null}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
               {arrival.agentActions === 'primary' ? environmentAgentActions : null}
               {arrival.body === 'held' ? <PageLoadingRows testID="project-deployments.environment.body.loading" /> : <>

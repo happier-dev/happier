@@ -16,6 +16,7 @@ import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import {
   PageHeader,
+  PageHeaderPlaceholder,
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -238,10 +239,9 @@ export const DeploymentReceiptDetail = React.memo(
               }}
             />
           ) : (
-            <SurfaceStateCard
-              kind="loading"
-              title={t('projects.deployments.loading')}
-            />
+            // A receipt still reading holds its own header's place (R18-D7), so opening the one a rollback starts
+            // never passes through another page's words.
+            <PageHeaderPlaceholder testID="project-deployments.receipt.state.header" alwaysShowTitle />
           )}
         </ItemList>
       );

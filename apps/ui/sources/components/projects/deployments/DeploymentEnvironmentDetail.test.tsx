@@ -2397,8 +2397,13 @@ describe('Project deployments page', () => {
       const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
         environmentId={detail.environment.id} demand={shown} accountId="account-owner" serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} />);
-      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.serving.loading')).not.toBeNull());
+      // R18-D7: the Serving now card itself holds its place (its frame, label and cells), so it is not inserted above
+      // the facts when the receipt answers.
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.serving.card')).not.toBeNull());
       expect(screen.findByTestId('project-deployments.environment.facts.health')).not.toBeNull();
+      expect(screen.getTextContent()).toContain('Serving now');
+      expect(screen.findByTestId('project-deployments.environment.serving.cells.version')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.serving.cells.deployed')).not.toBeNull();
     } finally { controller.retire(); }
   });
 
@@ -3880,6 +3885,28 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     v: 1 as const, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
     protection: base.environment.protection, status, n: 1, down: status === 'down' ? 1 : 0, degraded: status === 'degraded' ? 1 : 0,
     unknown: 0, members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false,
+  });
+
+  // PAGE-ACCEPT-176 R18-D1: a failing saved check made the banner say "Open a service's logs…", the wrong next step.
+  // The banner opens the failing check itself.
+  it('opens the failing saved check from the unhealthy banner', async () => {
+    const base = environmentDetailForHome();
+    const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
+    const { controller, detail } = controllerFor({ receipt: serving, history: [serving],
+      detail: { ...base, healthAggregate: { ...healthOf(base, 'degraded'), degraded: 0, failingSavedChecks: [{
+        sourceInstanceId: 'source-1', automationId: 'automation-http', triggerId: 'trigger-http', checkId: 'check-http',
+        name: 'HTTP · Staging', status: 'down' as const }] } } });
+    try {
+      const screen = await render(controller, detail);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.attention.unhealthy')).not.toBeNull());
+      routerMock.spies.push.mockClear();
+      await screen.pressByTestIdAsync('project-deployments.environment.attention.unhealthy.action');
+      expect(routerMock.spies.push).toHaveBeenCalledTimes(1);
+      const href = JSON.stringify(routerMock.spies.push.mock.calls[0]![0]);
+      expect(href).toContain('automation-http');
+      expect(href).toContain('trigger-http');
+    } finally { controller.retire(); }
   });
 
   it('shows one notice when several things are wrong: the failed latest deploy, which opens its receipt', async () => {

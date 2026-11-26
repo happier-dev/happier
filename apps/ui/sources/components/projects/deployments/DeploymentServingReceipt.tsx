@@ -33,7 +33,8 @@ export type DeploymentServingReceiptValue = NonNullable<
 export const DeploymentServingReceipt = React.memo(
   function DeploymentServingReceipt(
     props: Readonly<{
-      receipt: DeploymentServingReceiptValue;
+      /** Null while the serving receipt still reads: the same card with its cells pending, so it is never inserted later. */
+      receipt: DeploymentServingReceiptValue | null;
       /** A newer deploy failed and this one still serves (lab `envFail`): its own word, and no step strip. */
       still: boolean;
       address: Readonly<{
@@ -47,10 +48,9 @@ export const DeploymentServingReceipt = React.memo(
     }>,
   ) {
     const { receipt } = props;
-    const header = receipt.deployment;
-    const settledAt = deploymentReceiptAtMs(header);
-    const facts = servingCells(receipt, props.byYou, settledAt);
-    const steps: readonly DeploymentStepV1[] = props.still
+    const settledAt = receipt ? deploymentReceiptAtMs(receipt.deployment) : null;
+    const facts = receipt && settledAt !== null ? servingCells(receipt, props.byYou, settledAt) : pendingServingCells();
+    const steps: readonly DeploymentStepV1[] = props.still || !receipt
       ? []
       : receipt.content.steps;
     return (
@@ -74,7 +74,7 @@ export const DeploymentServingReceipt = React.memo(
                 >
                   {props.address.text}
                 </Text>
-                {props.address.attention ?? (
+                {props.address.attention ?? (settledAt === null ? null :
                   <Text variant="meta" style={styles.secondary}>
                     {t('projects.deployments.overviewStatus.liveSince', {
                       when: formatAsOfTime(settledAt),
@@ -95,6 +95,7 @@ export const DeploymentServingReceipt = React.memo(
             'projects.deployments.overviewStatus.openReceipt',
           )}
           testID="project-deployments.environment.serving.receipt"
+          disabled={!receipt}
           onPress={props.onOpenReceipt}
           // Without an address (a database) the facts are what serves: they follow the label directly, never a rule
           // under an empty heading (PAGE-ACCEPT-176 R3-D9).
@@ -137,6 +138,16 @@ export const DeploymentServingReceipt = React.memo(
   },
 );
 
+/** The cells every serving receipt has (Version, Deployed), pending as the facts strip's pending cells are. */
+function pendingServingCells(): FactStripFact[] {
+  return [
+    { key: 'version', testID: 'project-deployments.environment.serving.cells.version',
+      label: t('projects.deployments.overviewStatus.cellVersion'), value: '—' },
+    { key: 'deployed', testID: 'project-deployments.environment.serving.cells.deployed',
+      label: t('projects.deployments.overviewStatus.cellDeployed'), value: '—' },
+  ];
+}
+
 function servingCells(
   receipt: DeploymentServingReceiptValue,
   byYou: boolean,
@@ -149,6 +160,7 @@ function servingCells(
   if (revision)
     cells.push({
       key: 'version',
+      testID: 'project-deployments.environment.serving.cells.version',
       label: t('projects.deployments.overviewStatus.cellVersion'),
       value: revision,
       ...(kept
@@ -180,6 +192,7 @@ function servingCells(
   const duration = deploymentDurationMs(deployment);
   cells.push({
     key: 'deployed',
+    testID: 'project-deployments.environment.serving.cells.deployed',
     label: t('projects.deployments.overviewStatus.cellDeployed'),
     value: formatRelativeTime(settledAt),
     ...(duration !== null
