@@ -3038,7 +3038,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     expect(readsAtAcquisition!.inventory - inventoryBeforeMaterialization).toBe(1);
     expect({ inventory: qualifiedApi.listAccounts.mock.calls.length,
       bindings: readBindings.mock.calls.length, origins: resolveConnectedAccountEndpoints.mock.calls.length }).toEqual(readsAtAcquisition);
-    expect(resolveConnectedAccountEndpoints).toHaveBeenCalledOnce();
+    expect(resolveConnectedAccountEndpoints).not.toHaveBeenCalled();
   });
 
   it('records the admitted listed group member when its generation changes after acquisition', async () => {
@@ -3421,44 +3421,6 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       code: 'plugin_connected_account_binding_out_of_scope',
     } satisfies Partial<PluginError>);
     expect(invokeWithReceipt).not.toHaveBeenCalled();
-  });
-
-  it('admits an httpHeaders origin only from the exact account current configured origins', async () => {
-    const { runtime, invokeWithReceipt } = createInventoryRuntime({
-      accounts: [testQualifiedProfile({ accountId: 'standard-openai' })],
-      originsByAccountId: { 'standard-openai': ['https://eu.example.test'] },
-      invokeWithReceipt: async () => ({
-        result: { kind: 'httpHeaders' as const, headers: { authorization: 'Bearer listed' } },
-        basis: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' },
-      }),
-    });
-    const listedAccount = {
-      purpose,
-      serviceRefs: [openAiService],
-      account: { service: openAiService, accountId: 'standard-openai' },
-      signal: new AbortController().signal,
-    } as const;
-
-    await expect(runtime.owner.materializeListedAccount({
-      ...listedAccount,
-      request: {
-        kind: 'httpHeaders',
-        origin: 'https://us.example.test',
-        headerNames: ['authorization'],
-      },
-    })).rejects.toMatchObject({
-      code: 'plugin_connected_account_binding_out_of_scope',
-    } satisfies Partial<PluginError>);
-    expect(invokeWithReceipt).not.toHaveBeenCalled();
-
-    await expect(runtime.owner.materializeListedAccount({
-      ...listedAccount,
-      request: {
-        kind: 'httpHeaders',
-        origin: 'https://eu.example.test',
-        headerNames: ['authorization'],
-      },
-    })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });
   });
 
   it.each([false, true])('retains admitted listed materialization while membership changes, with local cancellation=%s', async cancelled => {

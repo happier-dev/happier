@@ -2,7 +2,7 @@ import type { ConnectedAccountMaterializationRequest, QualifiedConnectedAccountG
   QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { PluginError } from '../plugins/errors.js';
-import type { ConnectedAccountConfiguredEndpoint } from './configuredOrigins.js';
+import type { ConnectedAccountConfiguredEndpoint, ConnectedAccountConfiguredOriginAssertion } from './configuredOrigins.js';
 import type { ConnectedAccountPurposeInventoryEntry } from './purposeInventory.js';
 import { projectConnectedAccountPurposeInventory } from './purposeInventory.js';
 import type { ConnectedAccountPurposeTargetObservation } from './purposeBinding.js';
@@ -106,14 +106,19 @@ export function createConnectedAccountPurposeTargetAccountListing(source: Readon
     },
     async assertTargetAccountMaterializable(input: TargetRead & Readonly<{
       account: QualifiedConnectedAccountRef; request: ConnectedAccountMaterializationRequest;
-    }>): Promise<void> {
+    }>): Promise<void | ConnectedAccountConfiguredOriginAssertion> {
       const inventory = await source.readTargetAccountInventory(input);
       const entry = inventory.entries.find(candidate => sameQualifiedConnectedAccountRef(candidate.account, input.account));
       if (!entry || entry.state !== 'connected') throw connectedAccountListedAccountOutOfScope();
       if (input.request.kind !== 'httpHeaders') return;
-      const origins = new Set((await readEndpoints(entry, input.signal)).map(endpoint => endpoint.origin));
-      // An unconfigured Account uses its service's materialization contract.
-      if (origins.size > 0 && !origins.has(input.request.origin)) throw connectedAccountListedAccountOutOfScope();
+      if (!source.resolveConnectedAccountEndpoints) throw configuredOriginsUnavailable();
+      const { origin } = input.request;
+      return endpoints => {
+        // An unconfigured Account uses its service's materialization contract.
+        if (endpoints.length > 0 && !endpoints.some(endpoint => endpoint.origin === origin)) {
+          throw connectedAccountListedAccountOutOfScope();
+        }
+      };
     },
   });
 }

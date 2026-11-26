@@ -15,6 +15,8 @@ export type ConnectedAccountConfiguredEndpoint = Readonly<{
     base: string;
 }>;
 
+export type ConnectedAccountConfiguredOriginAssertion = (endpoints: readonly ConnectedAccountConfiguredEndpoint[]) => void;
+
 /**
  * Normalizes a configured service base. A base may live beneath a path segment
  * — an Azure DevOps organization or collection, a path-prefixed self-hosted

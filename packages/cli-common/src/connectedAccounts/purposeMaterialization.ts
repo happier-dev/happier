@@ -1,6 +1,7 @@
 import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedAccountMaterializationRequest } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { ConnectedAccountConfiguredOriginAssertion } from './configuredOrigins.js';
 
 export type ConnectedAccountPurposeMaterializationInput = Readonly<{
   account: QualifiedConnectedAccountRef;
@@ -10,6 +11,8 @@ export type ConnectedAccountPurposeMaterializationInput = Readonly<{
     captureCredentialRevision(revision: ConnectedServiceCredentialRevisionV1): void;
   }>;
   request: ConnectedAccountMaterializationRequest;
+  /** Listed-account authority applied to the same snapshot as credential acquisition. */
+  assertConfiguredOrigin?: ConnectedAccountConfiguredOriginAssertion;
   /** Host-private redaction classification, never a plugin materialization option. */
   observeMaterializationPublicValues?: (values: readonly string[]) => void;
   /** Host-private: the secret values this materialization could write, for Session transcript redaction. */
@@ -22,6 +25,7 @@ export type ConnectedAccountPurposeMaterializationInput = Readonly<{
 export type ConnectedAccountPurposeMaterializationOwner<TMaterial> = Readonly<{
   invokeWithReceipt(input: Readonly<{
     account: QualifiedConnectedAccountRef;
+    assertConfiguredOrigin?: ConnectedAccountConfiguredOriginAssertion;
     expectedConfigurationRevision?: string | null;
     expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
     operation: Readonly<{ kind: 'materialize'; request: ConnectedAccountMaterializationRequest;
@@ -40,6 +44,7 @@ export function createConnectedAccountPurposeMaterializer<TMaterial>(owner: Conn
     input.signal.throwIfAborted();
     const receipt = await owner.invokeWithReceipt({
       account: input.account,
+      ...(input.assertConfiguredOrigin ? { assertConfiguredOrigin: input.assertConfiguredOrigin } : {}),
       ...(input.expectedConfigurationRevision !== undefined ? { expectedConfigurationRevision: input.expectedConfigurationRevision } : {}),
       operation: Object.freeze({ kind: 'materialize', request: input.request,
         ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}) }),

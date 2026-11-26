@@ -2,7 +2,7 @@ import type { TeamCredentialDirectMaterialClient } from '../directMaterial/teamC
 import type { TeamCredentialDirectMaterialConsumerV1 } from '@happier-dev/protocol/teams';
 import { isDeepStrictEqual } from 'node:util';
 import { readConnectedAccountPurposeProfileLabel, type ConnectedAccountPurposeResolvedTarget,
-  type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
+  type ConnectedAccountInvocationPurposeBinding, type ConnectedAccountConfiguredOriginAssertion } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError, PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol';
@@ -132,6 +132,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
   /** Producer-owned materializer boundary for the exact resolved current account. */
   materializeAccount(input: Readonly<{
     account: QualifiedConnectedAccountRef;
+    assertConfiguredOrigin?: ConnectedAccountConfiguredOriginAssertion;
     expectedConfigurationRevision?: string | null;
     credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
     observeMaterializationPublicValues?: (values: readonly string[]) => void;
@@ -169,8 +170,8 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMetadataList>;
   /**
-   * Checks that one exact account is admitted by the same exact binding
-   * target and its configured-origin projection before credential disclosure.
+   * Admits the exact binding target and supplies its configured-origin check
+   * for the materializer's credential/configuration snapshot.
    */
   assertTargetAccountMaterializable(input: Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
@@ -178,7 +179,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     account: QualifiedConnectedAccountRef;
     request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
-  }>): Promise<void>;
+  }>): Promise<void | ConnectedAccountConfiguredOriginAssertion>;
   /** Host-private revision reader used by the daemon request-auth broker. */
   resolveCredentialRevision?: (
     account: QualifiedConnectedAccountRef,
@@ -1629,7 +1630,7 @@ export function createConnectedAccountPurposeBindingOwner(
     });
     const before = await readAuthorizedResolved(authorizationInput);
     if (!before) throw bindingOutOfScope();
-    await dependencies.assertTargetAccountMaterializable({
+    const assertConfiguredOrigin = await dependencies.assertTargetAccountMaterializable({
       target: before.target,
       observation: before.resolved.observation,
       account: input.account,
@@ -1638,6 +1639,7 @@ export function createConnectedAccountPurposeBindingOwner(
     });
     const materialization = await dependencies.materializeAccount({
       account: input.account,
+      ...(assertConfiguredOrigin ? { assertConfiguredOrigin } : {}),
       ...readAdmittedConfigurationBasis(input.exactPurposeBindingSubjectId, input.account),
       ...(input.observeMaterializationPublicValues ? { observeMaterializationPublicValues: input.observeMaterializationPublicValues } : {}),
       request: input.request,

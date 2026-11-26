@@ -141,7 +141,7 @@ describe('Account purpose selection through the shared Credentials owner', () =>
     expect(postreadMetadata).toBe(0);
     expect(postreadConfiguration).toBe(0);
     expect(metadataReads).toBe(1);
-    expect(configurationReads).toBe(1);
+    expect(configurationReads).toBe(0);
   });
 
   it('distinguishes an absent selection from an unavailable selected target without acquiring material', async () => {

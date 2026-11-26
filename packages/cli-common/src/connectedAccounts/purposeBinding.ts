@@ -17,6 +17,7 @@ export type { ConnectedAccountPurposeTargetSource } from './purposeInventory.js'
 import { createConnectedAccountPurposeTargetAccountListing, projectConnectedAccountPurposeTargetInventory,
   type ConnectedAccountPurposeMetadataList } from './purposeAccountListing.js';
 import type { ConnectedAccountConfiguredEndpoint } from './configuredOrigins.js';
+import type { ConnectedAccountPurposeMaterializationInput } from './purposeMaterialization.js';
 export { readConnectedAccountPurposeProfileLabel } from './purposeInventory.js';
 import type { PluginConnectedAccountAuthenticationV2, QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4,
   QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -178,8 +179,7 @@ export function assertConnectedAccountPurposeResolvedTargetMatchesIntent(
 /** Account and daemon adapters supply the same admitted selection and materializer. */
 export function createConnectedAccountPurposePort<TMaterial>(source: ConnectedAccountPurposeTargetSource & Readonly<{
   resolveConnectedAccountEndpoints?(input: Readonly<{ account: QualifiedConnectedAccountRef; signal: AbortSignal }>): Promise<readonly ConnectedAccountConfiguredEndpoint[]>;
-  materializeAccount(input: Readonly<{ account: QualifiedConnectedAccountRef; request: ConnectedAccountMaterializationRequest;
-    signal: AbortSignal }>): Promise<TMaterial>;
+  materializeAccount(input: ConnectedAccountPurposeMaterializationInput): Promise<TMaterial>;
 }>) {
   const resolveTarget = createPurposeTargetResolver(source);
   return Object.freeze({
@@ -213,8 +213,10 @@ export function createConnectedAccountPurposePort<TMaterial>(source: ConnectedAc
         listAccounts: (options: Readonly<{ limit?: number }> = {}) => listing.projectTargetAccounts({ target, signal: input.signal, ...options }),
         async materializeListedAccount(account: QualifiedConnectedAccountRef, request: ConnectedAccountMaterializationRequest) {
           const selection = { target, account, request, signal: input.signal };
-          await listing.assertTargetAccountMaterializable(selection);
-          const result = await source.materializeAccount({ account, request, signal: input.signal });
+          const assertConfiguredOrigin = await listing.assertTargetAccountMaterializable(selection);
+          const result = await source.materializeAccount({ account, request, signal: input.signal,
+            ...(assertConfiguredOrigin ? { assertConfiguredOrigin } : {}),
+          });
           input.signal.throwIfAborted();
           return result;
         },

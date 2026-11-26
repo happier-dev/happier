@@ -3718,7 +3718,9 @@ Omitting the observation option preserves the ordinary binding read's cost.
 Listing exposes only the selected direct Account or
 enabled members of its selected Pool, with host-normalized configured endpoints;
 listed materialization refuses a different target or configured origin at
-credential acquisition. Finite listing and materialization retain their admitted
+credential acquisition. The purpose owner checks the origin against the same
+exact configuration snapshot the established materializer uses for the plugin
+call. Finite listing and materialization retain their admitted
 selection and reuse that resolution's profile/Pool observation rather than
 reading the same inventory again. They do not perform fresh metadata or
 authorization reads after the effect. Local cancellation and the established

@@ -12,7 +12,8 @@ import type { TeamCredentialDirectMaterialPayloadV1 } from '@happier-dev/protoco
 import type { ConnectedAccountRuntimeConfiguration as PluginConnectedAccountRuntimeConfiguration } from './authenticationTypes.js';
 import { createConnectedAccountConfigurationOwner, parseConnectedAccountConfigurationRecordContent, type ConnectedAccountConfigurationOwner, type ConnectedAccountConfigurationRecord, type ConnectedAccountConfigurationTarget } from './configurationOwner.js';
 import { resolveQualifiedConnectedAccountCredentialSecrets as resolveCredentialSecrets } from './credentialMaterial.js';
-import { projectConnectedAccountConfiguredEndpoints, type ConnectedAccountConfiguredEndpoint } from './configuredOrigins.js';
+import { projectConnectedAccountConfiguredEndpoints, type ConnectedAccountConfiguredEndpoint,
+  type ConnectedAccountConfiguredOriginAssertion } from './configuredOrigins.js';
 import type { ConnectedAccountRuntimeEstablishedInvocation, ConnectedAccountRuntimeEstablishedOperation, ConnectedAccountRuntimeEstablishedResult, ConnectedAccountRuntimeQuotaBase, ConnectedAccountEstablishedRuntimeInvoker } from './establishedRuntimeTypes.js';
 import { QualifiedConnectedAccountMaterialError } from './materialError.js';
 import { assertNotAborted, type ConnectedAccountEstablishedReadScope, type ConnectedAccountEstablishedPhaseObserver } from './establishedReadScope.js';
@@ -176,6 +177,7 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota extends Conn
     input: Readonly<{
       account: QualifiedConnectedAccountRef;
       operation: TOperation;
+      assertConfiguredOrigin?: ConnectedAccountConfiguredOriginAssertion;
       /** Host-private callback fence; never a public plugin capability field. */
       expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
       expectedConfigurationRevision?: string | null;
@@ -788,6 +790,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
       expectedConfigurationRevision?: string | null;
       assertEffectfulOperationAllowed?: () => void;
       assertProviderCallAllowed?: () => void;
+      assertConfiguredOrigin?: ConnectedAccountConfiguredOriginAssertion;
       beforeInvoke?: QualifiedConnectedAccountScheduledOperationOptions['beforeInvoke'];
       signal?: AbortSignal;
     }>,
@@ -824,17 +827,6 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           'Connected-account authentication mode is unavailable in the current descriptor',
         );
       }
-      const credentialPayload =
-        parseQualifiedConnectedAccountCredentialPlaintextV1({
-        ref: input.account,
-        authenticationModeId,
-        metadata: initial.credential.metadata,
-        plaintext: params.openContent({
-          kind: 'credential',
-          accountMode,
-          envelope: initial.credential.content,
-        }),
-      });
       const lease = await observeMaterializationPhase('established_registry', () => params.reloadController.acquireRuntimeRegistry());
       try {
         if (!params.reloadController.isRuntimeRegistryCurrent(lease.registry)) {
@@ -857,9 +849,6 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         if (!mode) {
           throw new Error('Connected-account authentication mode is unavailable in the current descriptor');
         }
-        const exportProjection = declarationExportProjection(initial.credential,
-          resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind), connectedAccountContributionContractVersion(runtimeLease));
-        await publishExportProjection(initial.credential, exportProjection, input.signal);
         const descriptorConfiguration =
           'configuration' in mode ? mode.configuration : undefined;
         if (
@@ -903,6 +892,26 @@ export function createConnectedAccountEstablishedRuntimeOwner<
             : descriptorConfiguration
               ? await params.configuration.read(exactConfigurationTarget)
               : null);
+        if (input.assertConfiguredOrigin) {
+          input.assertConfiguredOrigin(initialConfigurationRecord
+            ? projectConnectedAccountConfiguredEndpoints({
+                configuration: descriptorConfiguration, values: initialConfigurationRecord.values,
+              })
+            : []);
+        }
+        const credentialPayload = parseQualifiedConnectedAccountCredentialPlaintextV1({
+          ref: input.account,
+          authenticationModeId,
+          metadata: initial.credential.metadata,
+          plaintext: params.openContent({
+            kind: 'credential',
+            accountMode,
+            envelope: initial.credential.content,
+          }),
+        });
+        const exportProjection = declarationExportProjection(initial.credential,
+          resolveConnectedAccountDirectExportContractV1(mode, initial.credential.metadata.kind), connectedAccountContributionContractVersion(runtimeLease));
+        await publishExportProjection(initial.credential, exportProjection, input.signal);
         const configurationOwner: ConnectedAccountConfigurationOwner =
           params.configurationOwner ?? createConnectedAccountConfigurationOwner({
             read: params.configuration.read,

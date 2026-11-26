@@ -2113,7 +2113,9 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     } finally { bindingLease.dispose(); }
   });
 
-  it('projects only host-normalized credential-free configured origins for one exact account', async () => {
+  it.each(['listing', 'listed materialization'] as const)('uses one exact origin snapshot for %s', async (operation) => {
+    let configurationRevision = 'configuration-1';
+    let configuredOrigin = 'https://eu.example.test';
     const credentialSnapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: account,
       authenticationModeId: 'oauth',
@@ -2138,9 +2140,19 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         secretValues: { clientSecret: 'secret-value' },
       }),
     };
-    const invokeEstablished = vi.fn(async () => {
-      throw new Error('configured-origin projection must not invoke a plugin runtime');
-    });
+    const invokeEstablished = vi.fn(async () => ({
+      kind: 'httpHeaders' as const, headers: { authorization: 'Bearer listed' },
+    }));
+    const readCredential = vi.fn(async () => ({ ...credentialSnapshot, configurationRevision }));
+    const readConfiguration = vi.fn(async () => ({
+      ...configurationSnapshot,
+      configurationRevision,
+      configurationContent: plainEnvelope('configuration', {
+        values: { endpoint: configuredOrigin, label: 'Europe' },
+        secretRefs: {},
+        secretValues: { clientSecret: 'secret-value' },
+      }),
+    }));
     const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
       reloadController: {
         acquireRuntimeRegistry: vi.fn(async () => ({
@@ -2172,8 +2184,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       >,
       credentials: { token: 'token-1', encryption: null },
       getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => credentialSnapshot),
-      readConfiguration: vi.fn(async () => configurationSnapshot),
+      readCredential,
+      readConfiguration,
       configuration: {
         read: vi.fn(async () => null),
         secrets: {
@@ -2184,12 +2196,60 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       },
     });
 
-    await expect(owner.readConfiguredEndpoints({ account }))
-      .resolves.toEqual([{
-        origin: 'https://eu.example.test',
-        base: 'https://eu.example.test',
+    if (operation === 'listing') {
+      await expect(owner.readConfiguredEndpoints({ account })).resolves.toEqual([{
+        origin: 'https://eu.example.test', base: 'https://eu.example.test',
       }]);
-    expect(invokeEstablished).not.toHaveBeenCalled();
+      expect(invokeEstablished).not.toHaveBeenCalled();
+    } else {
+      const purpose = { consumer: { pluginId: 'acme.compute', localId: 'vm' }, purpose: 'coordinator' };
+      const selection = { v: 1 as const, bindings: [{ purpose, target: { kind: 'account' as const, account } }] };
+      const profile: QualifiedConnectedAccountProfileV4 = { ref: account, status: 'connected',
+        authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision: requestAuthCredentialRevision,
+        configurationReady: true, configurationRevision: 'configuration-1', kind: 'token', expiresAt: null,
+        providerIdentity: { accountId: 'listed' }, displayName: 'Listed account', scopes: [] };
+      const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
+        establishedRuntimeOwner: owner, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+        resolveConnectedAccountEndpoints: owner.readConfiguredEndpoints,
+        store: { read: async () => selection, update: async mutate => mutate(selection),
+          subscribe: () => ({ dispose() {} }) },
+        qualifiedApi: {
+          listAccountsForServices: async services => ({ services, accounts: [profile] }),
+          listAccounts: async () => ({ service, accounts: [profile] }),
+          listGroups: async () => ({ groups: [] }), readGroup: async () => null,
+        },
+        runtimeRegistry: { subscribe: () => () => undefined, acquire: async () => ({
+          isCurrent: () => true, resolveService: () => ({ service, availability: 'available', authentication: originDescriptor.authentication }),
+          release: async () => undefined,
+        }) },
+      });
+      const materialize = (origin: string) => runtime.owner.materializeListedAccount({
+        purpose, serviceRefs: [service], account, signal: new AbortController().signal,
+        request: { kind: 'httpHeaders', origin, headerNames: ['authorization'] },
+      });
+      await expect(materialize('https://us.example.test')).rejects.toMatchObject({
+        code: 'plugin_connected_account_binding_out_of_scope',
+      });
+      expect(invokeEstablished).not.toHaveBeenCalled();
+      readCredential.mockClear();
+      readConfiguration.mockClear();
+      await expect(materialize('https://eu.example.test')).resolves.toEqual({
+        kind: 'httpHeaders', headers: { authorization: 'Bearer listed' },
+      });
+      expect(invokeEstablished).toHaveBeenCalledOnce();
+      expect.soft(readCredential).toHaveBeenCalledOnce();
+      expect.soft(readConfiguration).toHaveBeenCalledOnce();
+      readCredential.mockClear();
+      readConfiguration.mockClear();
+      configurationRevision = 'configuration-2';
+      configuredOrigin = 'https://us.example.test';
+      await expect(materialize('https://eu.example.test')).rejects.toMatchObject({
+        code: 'plugin_connected_account_binding_out_of_scope',
+      });
+      expect(invokeEstablished).toHaveBeenCalledOnce();
+    }
+    expect.soft(readCredential).toHaveBeenCalledOnce();
+    expect.soft(readConfiguration).toHaveBeenCalledOnce();
   });
 
   it('fails a configured-origin projection closed when the stored origin is not credential-free', async () => {
