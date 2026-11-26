@@ -117,7 +117,7 @@ import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sess
 import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
-import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { StrictJsonValueSchema, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { AGENT_IDS, DEFAULT_AGENT_ID, resolvePermissionIntentFromSessionMetadata, resolveCanonicalAgentIdFromFlavor, AgentId } from '@happier-dev/agents';
 import type { resolveCurrentAccountMachineTarget } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import type { fetchSessionsQueryPage } from '@/session/transport/http/sessionsHttp';
@@ -1330,11 +1330,13 @@ export function createCliActionDeps(params: CliActionDepsParams,
             } })
         : await params.prepareHostReviewedChildren?.(request) ?? null;
       if (prepared && 'ok' in prepared) return prepared;
-      if (request.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1) {
+      if (request.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && params.sessionSpawnBirthContext) {
         const input = request.input as SessionSpawnNewInputV2;
+        const declared = sessionProjectFilesOpenChildrenV1(input);
         const children = sessionProjectFilesOpenChildrenV1({ executionTarget: input.executionTarget,
-          sessionPlacement: params.sessionSpawnBirthContext?.sessionPlacement ?? input.sessionPlacement,
-          projectFiles: params.sessionSpawnBirthContext?.projectFiles });
+          sessionPlacement: params.sessionSpawnBirthContext.sessionPlacement ?? input.sessionPlacement,
+          projectFiles: params.sessionSpawnBirthContext.projectFiles })
+          .filter(child => !declared.some(existing => sameStrictJsonValue(existing, child)));
         if (children.length) prepared = { ...prepared, children: [...(prepared?.children ?? []), ...children] };
       }
       return prepareDeploymentTargetEnablementRetention(request, { homeId: actionHomeId,
