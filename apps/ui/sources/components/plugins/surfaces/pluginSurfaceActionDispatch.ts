@@ -1018,6 +1018,8 @@ function createClientActionUi(
                 // supplies the target for the subsequent selection and execution.
                 if (accountContext && selected.data.kind === 'sessionPlacement') {
                     authority = { machineId: selected.data.candidate.machineId, serverId: selected.data.candidate.serverId };
+                } else if (accountContext && selected.data.kind === 'serverStartDraft') {
+                    authority = selected.data.draft.executionTarget;
                 }
                 if (selected.data.kind === 'submitted' && operation && requestedOperation) {
                     selectedInputs.retain(operation, selected.data, options?.signal, requestedOperation);

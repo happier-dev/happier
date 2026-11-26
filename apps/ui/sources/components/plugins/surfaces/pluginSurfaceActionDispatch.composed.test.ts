@@ -7273,7 +7273,7 @@ describe('plugin-surface action branch selection', () => {
         } finally { nestedActionConfirmation.onShow = null; await activation.composition.unload(); }
     });
 
-    it.each(['invalid draft', 'prepared execution'] as const)('selects a daemon review operation on the checkout chosen by an Account Action (%s)', async mode => {
+    it.each(['invalid draft', 'prepared execution', 'server draft'] as const)('selects a daemon review operation on the checkout chosen by an Account Action (%s)', async mode => {
         const { DaemonPluginUiTargetedContributionsReadResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
         const { PLUGIN_MANIFEST: triage } = await import('../../../../../../packages/plugins/triage/src/manifest');
         const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
@@ -7320,6 +7320,15 @@ describe('plugin-surface action branch selection', () => {
         const candidate = { projectKey: { id: 'review-project' }, serverId, machineId: 'chosen-review-machine',
             rootPath: '/review', reachable: true, worktrees: [] };
         vi.spyOn(Modal, 'show').mockImplementation(config => {
+            if (config.props && 'onResolve' in config.props && typeof config.props.onResolve === 'function') {
+                const resolve = config.props.onResolve;
+                queueMicrotask(() => resolve({
+                    executionTarget: { serverId, machineId: candidate.machineId },
+                    directory: { kind: 'path', path: candidate.rootPath },
+                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                }));
+                return 'review-server-draft';
+            }
             if (config.props && 'form' in config.props) {
                 const form = config.props.form as import('@/components/plugins/actions/pluginContributedActionController').PluginContributedActionSelectionForm;
                 queueMicrotask(() => { form.replaceInput(validDraft); void form.submit(); });
@@ -7367,7 +7376,7 @@ describe('plugin-surface action branch selection', () => {
             scopes: githubDeclaration.scopes, surfaces: githubDeclaration.surfaces,
             dangerLevel: githubDeclaration.dangerLevel, confirmation: githubDeclaration.confirmation,
             readOnly: githubDeclaration.readOnly, sessionTarget: githubDeclaration.sessionTarget,
-            ...(mode === 'prepared execution' ? { inputHints: githubDeclaration.inputHints } : {}),
+            ...(mode !== 'invalid draft' ? { inputHints: githubDeclaration.inputHints } : {}),
             confirmationWhen: githubDeclaration.confirmationWhen,
             occurrenceId: reviewOccurrenceId });
         let chosenProjectionReads = 0;
@@ -7412,7 +7421,12 @@ describe('plugin-surface action branch selection', () => {
                     .find(operation => operation.role === 'prepareReviewWorkspace' && operation.action.pluginId === github.id);
                 if (!operation) throw new Error('Expected real GitHub review operation');
                 expect(operation.contributor.occurrenceId).not.toBe(reviewOccurrenceId);
-                await context.ui!.selectActionInput({ hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' }, candidates: [candidate] });
+                if (mode === 'server draft') {
+                    await context.ui!.selectActionInput({ hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
+                        draft: { executionTarget: { serverId, machineId: candidate.machineId }, directory: candidate.rootPath } });
+                } else {
+                    await context.ui!.selectActionInput({ hostAction: { action: 'session.spawn_new', projection: 'sessionPlacement' }, candidates: [candidate] });
+                }
                 try {
                     const result = await context.ui!.selectActionInput({ operation, draft: mode === 'invalid draft' ? {} : validDraft });
                     if (mode === 'invalid draft' || result.kind !== 'submitted') return result;
@@ -7439,7 +7453,7 @@ describe('plugin-surface action branch selection', () => {
                     ? { code: 'invalid_payload', data: { diagnostics: [expect.objectContaining({ code: 'invalid_draft' })] } }
                     : { code: 'unavailable' }),
             } });
-            if (mode === 'prepared execution') {
+            if (mode !== 'invalid draft') {
                 expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE), JSON.stringify(outcome))
                     .toEqual([expect.objectContaining({ targetId: candidate.machineId, payload: expect.objectContaining({
                         expectedContributorOccurrenceId: reviewOccurrenceId, input: validDraft,
