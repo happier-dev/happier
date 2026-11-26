@@ -532,10 +532,11 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // room is reserved from the first frame: the composer's first top is its settled top, and the bar lands in it.
     const reservedBarHeight = presenter !== 'system' && !pageBarFolds
         && ((model.kind === 'detailPending' && isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience }))
-            || (contentHidden && resolvedChrome !== null)) ? knownBarHeight : 0;
+            || resolvedChrome !== null) ? knownBarHeight : 0;
     React.useLayoutEffect(() => {
-        // A bar resolved but not yet drawn is measured in the commit that draws it, below.
-        if (contentHidden || presenter === 'system' || (!renderedChrome.current && !resolvedChrome)) {
+        // Publish owner geometry even when registration arrived before this host mounted.
+        // DOM measurement may not exist yet; it refines this reservation below.
+        if (reservedBarHeight > 0 || contentHidden || presenter === 'system' || (!renderedChrome.current && !resolvedChrome)) {
             setBottomChromeHeight(reservedBarHeight);
         }
     }, [contentHidden, presenter, renderedChrome.current, resolvedChrome, reservedBarHeight, setBottomChromeHeight]);

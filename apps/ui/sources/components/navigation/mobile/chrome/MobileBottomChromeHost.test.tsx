@@ -94,12 +94,12 @@ function MountedSession(props: Readonly<{ surface: SessionMobileSurface; termina
 function MeasurementReader() {
     return <Text testID="chrome-height">{useSessionCockpitBottomChromeHeight()}</Text>;
 }
-type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean; portal?: boolean }>;
-function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false, portal = false }: HarnessProps) {
+type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean; portal?: boolean; host?: boolean }>;
+function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false, portal = false, host = true }: HarnessProps) {
     return <runtime.Wrapper><MainAppTabStateProvider><SessionCockpitChromeRegistryProvider><InboxSummaryProvider>
         {mounted ? <MountedSession surface={surface} terminalAvailable={terminalAvailable} detailsCount={detailsCount} /> : null}
         {pageBar ? <PagePinnedBar testID="page-bar"><Text>bar</Text></PagePinnedBar> : null}
-        <PresentedSessionChromeFixture /><MeasurementReader />{portal ? <MobileBottomChromePortal /> : <MobileBottomChromeHost />}
+        <PresentedSessionChromeFixture /><MeasurementReader />{host ? portal ? <MobileBottomChromePortal /> : <MobileBottomChromeHost /> : null}
     </InboxSummaryProvider></SessionCockpitChromeRegistryProvider></MainAppTabStateProvider></runtime.Wrapper>;
 }
 function enableCockpit() {
@@ -198,6 +198,17 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         expect(screen.findByType(MainAppTabBar).props.activeTab).toBe('sessions');
         expect(route.navigate).not.toHaveBeenCalled();
         expect(route.replace).not.toHaveBeenCalled();
+    });
+    it('reserves a cold mounted Session before the web bar has any measurable node', async () => {
+        route.pathname = '/session/session-1'; enableCockpit();
+        // Registration can precede the shell's first commit: there is no detailPending frame,
+        // and RNW has not delivered onLayout or exposed a measurable DOM node yet.
+        const screen = await renderScreen(<Harness mounted host={false} />);
+        await screen.update(<Harness mounted />);
+        expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(1);
+        expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
+        await finishAnimations();
+        expect(screen.findHostByTestId('chrome-height')?.props.children).toBe(56);
     });
     it('publishes the measured chrome height through the real registry', async () => {
         const screen = await renderScreen(<Harness />);

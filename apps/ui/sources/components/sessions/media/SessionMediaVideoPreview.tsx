@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 
 import { SessionMediaTileState } from '@/components/sessions/media/SessionMediaTileState';
@@ -23,12 +24,22 @@ export const SessionMediaVideoPreview = React.memo(function SessionMediaVideoPre
         instance.timeUpdateEventInterval = 0;
     });
 
+    const view = React.useRef<VideoView>(null);
     const [failedPlayer, setFailedPlayer] = React.useState<VideoPlayer | null>(null);
     React.useEffect(() => {
         const subscription = player.addListener('statusChange', (event) => {
             if (event.status === 'error') setFailedPlayer(player);
         });
-        return () => subscription.remove();
+        // On web src is attached before the adapter installs its error handler. A failed
+        // decode can therefore live only on the element, with no statusChange/loadeddata.
+        const video = Platform.OS === 'web' ? view.current?.nativeRef.current as HTMLVideoElement | null : null;
+        const reject = () => setFailedPlayer(player);
+        video?.addEventListener('error', reject);
+        if (video?.error || player.status === 'error') reject();
+        return () => {
+            subscription.remove();
+            video?.removeEventListener('error', reject);
+        };
     }, [player]);
 
     React.useEffect(() => {
@@ -56,6 +67,7 @@ export const SessionMediaVideoPreview = React.memo(function SessionMediaVideoPre
 
     return (
         <VideoView
+            ref={view}
             player={player}
             style={{ width: '100%', height: '100%' }}
             contentFit="contain"
