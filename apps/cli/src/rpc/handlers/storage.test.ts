@@ -1,11 +1,15 @@
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { buildAgentIsolationProvisioningSteps } from '@/daemon/agentIsolation/provisioning';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createProcessCustodyFixture } from '@/testkit/processCustodyFixture';
 import { HappierStorageSummaryV1Schema, MachineStorageCategoryListResultV1Schema, MachineStoragePileResultV1Schema,
-    MachineStorageWatchResultV1Schema, PileReviewV1Schema, PileApplyResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
+    MachineStorageItemsListResultV1Schema, MachineStorageWatchResultV1Schema, PileReviewV1Schema, PileApplyResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { createActivityLog } from '@/daemon/guard/activityLog';
 import { createMachineResourceSummary } from '@/daemon/resources/machineResourceSummary';
 import { createMachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
@@ -78,6 +82,135 @@ function setup(input: Readonly<{
     return { handlers, routes, constructions: () => constructions };
 }
 describe('lazy storage Machine RPC', () => {
+    it.skipIf(process.platform !== 'linux')('labels only exactly bound former Session folders with one Home read per list', async () => {
+        const home = join(lazyFixtureDirectory, 'former-access');
+        await mkdir(home);
+        const memberUid = process.getuid!();
+        const workspace = (accountId: string) => {
+            const steps = buildAgentIsolationProvisioningSteps({ daemonUsername: 'daemon', daemonPrimaryGroup: 'daemon',
+                binaryPath: '/opt/happier/bin/happier', retainedMemberUid: memberUid,
+                requesterIdentity: { kind: 'isolated', requester: { ...identity, accountId }, homeServerIdentityId: identity.serverId, separationRequired: true } });
+            const step = steps.find(value => value.id === 'member-workspace');
+            if (step?.kind !== 'directory') throw new Error('Missing member workspace step');
+            // The native mount is redirected into the fixture.
+            return join(home, basename(step.path));
+        };
+        const formerRoot = workspace('former'), currentRoot = workspace('current');
+        const directories = (root: string) =>
+            createManagedSessionDirectories({ activeServerDir: home, payloadPlacement: { root, agentUid: memberUid } });
+        const allocate = async (root: string, sessionId: string) => {
+            await mkdir(root, { recursive: true });
+            const owner = directories(root);
+            const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: sessionId });
+            await owner.bind({ allocationId: allocation.allocationId, sessionId });
+            return allocation.directory;
+        };
+        const former = await allocate(formerRoot, 'former-session');
+        const current = await allocate(currentRoot, 'current-session');
+        const unattributed = await allocate(join(home, 'other-workspace'), 'unattributed-session');
+        const shared = join(home, 'daemon', 'connected-services', 'materialized', 'requester-accounts');
+        await mkdir(shared, { recursive: true });
+        const checkout = join(formerRoot, 'checkout');
+        await mkdir(checkout);
+        const payload = join(former, 'kept.txt');
+        await writeFile(payload, 'kept after withdrawal');
+        let activeAccounts = ['owner', 'current'];
+        let rosterReported = true;
+        let reads = 0;
+        const custodian = { accountId: 'owner', displayName: 'Owner' };
+        const retention = {
+            readMemberWorkspaces: async () => [
+                { workspaceRoot: formerRoot, agentUid: memberUid, accountId: 'former' },
+                { workspaceRoot: currentRoot, agentUid: memberUid, accountId: 'current' },
+            ],
+            readMachineAccess: async () => {
+                reads += 1;
+                return { machineId: identity.machineId, custodian, access: { custodian, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+                    canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
+                    ...(rosterReported ? { currentRequesterDisplayIdentities: activeAccounts.map(accountId => ({ accountId, displayName: accountId })) } : {}) };
+            },
+        };
+        const activityLog = await createActivityLog({ activeServerDir: home, resourceSummary: { reportAutomaticAction() {} } });
+        const { handlers, routes } = setup({
+            readOwnSessionIds: accountId => new Set([accountId + '-session']),
+            deps: async () => ({ resourcesPolicy: await createStoragePolicyFixture(), ...identity, homeDir: home, activityLog, formerAccess: retention,
+                catalog: { happyHomeDir: home, activeServerDir: home, tempRoot: join(home, 'absent'),
+                    managedSessionDirectories: createManagedSessionDirectories({ activeServerDir: home }),
+                    readWorktrees: () => [{ path: checkout, repositoryRoot: checkout, isMain: true }],
+                    readProjects: () => ({ status: 'ready', projects: [] }),
+                    readTrackedSessions: () => [{ sessionId: 'former-session', cwd: former, running: false, stoppedAt: 0 }],
+                    readInUsePaths: () => ({ reliable: true, paths: [] }) },
+                readVolumes: () => [{ id: 'main', label: 'Main', mount: home, totalBytes: 1000, availableBytes: 800 }],
+            }),
+        });
+        const target = { machineId: identity.machineId };
+        let ingress = context();
+        const executor = createActionExecutor({
+            machineStorageAction: async ({ actionId, input }) => handlers.get(getActionSpec(actionId).bindings!.rpcMethod!)!(input, ingress),
+        });
+        const list = async (categoryId: string) => {
+            const result = await executor.execute('machines.storage.category.list', { ...target, categoryId }, { surface: 'cli', authority: 'present_user' });
+            if (!result.ok) throw new Error(JSON.stringify(result));
+            return MachineStorageCategoryListResultV1Schema.parse(result.result).items;
+        };
+        try {
+            expect(reads).toBe(0);
+            const initial = await list('sessionFolders');
+            expect(initial.map(item => item.path)).toEqual(expect.arrayContaining([former, current, unattributed]));
+            expect(initial.filter(item => 'retainedFor' in item)).toEqual([expect.objectContaining({ path: former, retainedFor: 'former_access' })]);
+            expect(reads).toBe(1);
+            for (const [category, path] of [['agentHomes', shared], ['worktrees', checkout]] as const) {
+                const rows = await list(category);
+                expect(rows.find(row => row.path === path)).toBeDefined();
+                expect(rows.some(row => 'retainedFor' in row)).toBe(false);
+            }
+            expect(reads).toBe(1);
+            const suggestions = await executor.execute('machines.storage.suggestions.list', target, { surface: 'agent' });
+            if (!suggestions.ok) throw new Error(JSON.stringify(suggestions));
+            expect(MachineStorageItemsListResultV1Schema.parse(suggestions.result).items)
+                .toContainEqual(expect.objectContaining({ path: former, retainedFor: 'former_access' }));
+            expect(reads).toBe(2);
+            const served = initial.find(item => item.path === former)!;
+            const checked = await executor.execute('machines.storage.items.check', { ...target,
+                refs: [{ itemId: served.itemId, path: served.path }] }, { surface: 'cli', authority: 'present_user' });
+            if (!checked.ok) throw new Error(JSON.stringify(checked));
+            const review = PileReviewV1Schema.parse(checked.result);
+            expect(review.items).toHaveLength(1);
+            const reviewed = review.items[0]!;
+            ingress = context('current', 'use');
+            expect(await list('sessionFolders')).toEqual([expect.objectContaining({ path: current })]);
+            expect(reads).toBe(2);
+            // Allow this reviewed agent request to reach the real Machine effect admission.
+            const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+                'machines.storage.trash.move': ['agent'], 'machines.storage.deleteNow': ['agent'],
+            } });
+            for (const actionId of ['machines.storage.trash.move', 'machines.storage.deleteNow'] as const) {
+                const result = await executor.execute(actionId, { ...target, items: [{ ref: reviewed.ref, expect: reviewed.expect,
+                    ...(actionId === 'machines.storage.trash.move' ? { claimedVerdict: reviewed.verdict } : {}) }] },
+                    { surface: 'agent', authority: 'present_user', actionsSettings });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { outcomes: [{ status: 'skipped', reason: { code: 'unauthorized' } }] } });
+            }
+            expect(reads).toBe(2);
+            ingress = context();
+            rosterReported = false;
+            expect((await list('sessionFolders')).some(item => 'retainedFor' in item)).toBe(false);
+            expect(reads).toBe(3);
+            rosterReported = true;
+            activeAccounts = [...activeAccounts, 'former'];
+            expect(workspace('former')).toBe(formerRoot);
+            const resumed = await directories(workspace('former')).resolveForSession({
+                sessionId: 'former-session', path: former,
+            });
+            expect(resumed).toMatchObject({ ok: true, directory: former });
+            expect(await readFile(payload, 'utf8')).toBe('kept after withdrawal');
+            await allocate(formerRoot, 'another-former-session');
+            (await routes.getService(identity)).invalidate();
+            const regranted = await list('sessionFolders');
+            expect(regranted).toHaveLength(initial.length + 1);
+            expect(regranted.some(item => 'retainedFor' in item)).toBe(false);
+            expect(reads).toBe(4);
+        } finally { routes.dispose(); }
+    });
     it('preserves settled Project cleanup details when a removal RPC rejoins its admitted operation', async () => {
         const { routes } = setup();
         const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner' });

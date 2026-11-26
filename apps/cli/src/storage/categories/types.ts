@@ -1,7 +1,7 @@
 import type { DaemonPublicVoiceModelPackEntry, DaemonPublicVoiceModelPackRuntime } from '@/daemon/voiceInference/publicModelPacks/runtime';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { BrowserRecordingDaemonService } from '../../daemon/recording/service';
-import type { createManagedSessionDirectories, ManagedSessionDirectoryEntry } from '@/session/creation/managedSessionDirectories';
+import type { createManagedSessionDirectories, ManagedSessionDirectoryEntry, ManagedSessionDirectoryPayloadPlacement } from '@/session/creation/managedSessionDirectories';
 import type { HappierStorageCategoryIdV1, StorageItemV1, StorageReasonV1, StorageCategoryGroupV1, MachineStoragePolicyV1, StorageReadIssueV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { ScmWorktreeEnrichmentEntry } from '@happier-dev/protocol/scm';
 import type { SessionDraftPresence } from '@/session/drafts/readSessionDraftPresence';
@@ -19,6 +19,8 @@ export type StorageCleanupItem = Omit<StorageItemV1, 'size'> & Readonly<{
     canonicalItemId?: string;
     /** Private owner binding for recipient filtering; never projected into the public item. */
     sessionId?: string;
+    /** Protected allocation placement, used only by the explicit Storage presentation. */
+    allocationPlacement?: ManagedSessionDirectoryPayloadPlacement;
     /** Accepted current Project anchors, scoped by the catalog's admitted Home and machine. */
     projectIds?: readonly string[];
     /** Canonical SCM common-directory authority; never an outward storage field. */

@@ -86,7 +86,7 @@ export const sessionFolders: StorageCategoryDefinition = {
             if (record?.inTrash) continue;
             result.push({ ...item('sessionFolders', path, record ? sessionFolderCanGo(record.sessionId, context) : check,
                 { title: opaqueItemTitle(path, 'Session folder'), evidence: record ? ['managed_session_directory_record'] : ['managed_session_directory_record_unavailable'] }),
-                ...(record?.sessionId ? { sessionId: record.sessionId } : {}) });
+                ...(record?.sessionId ? { sessionId: record.sessionId, allocationPlacement: record.payloadPlacement } : {}) });
         }
         // The ownership record may name an allocation omitted by a transient directory relist.
         for (const record of context.allocations) if (!record.inTrash
@@ -94,7 +94,7 @@ export const sessionFolders: StorageCategoryDefinition = {
             && !result.some(value => value.path === record.directory) && await exists(record.directory, unavailableDirectory(context, 'sessionFolders'))) {
             result.push({ ...item('sessionFolders', record.directory, sessionFolderCanGo(record.sessionId, context),
                 { title: opaqueItemTitle(record.directory, 'Session folder'), evidence: ['managed_session_directory_record'] }),
-                ...(record.sessionId ? { sessionId: record.sessionId } : {}) });
+                ...(record.sessionId ? { sessionId: record.sessionId, allocationPlacement: record.payloadPlacement } : {}) });
         }
         for (const root of uploadRoots(context)) for (const category of await entries(root, unavailableDirectory(context, 'sessionFolders'), context.discoveryPaths)) {
             for (const path of await directoriesAtDepth(category, 1, unavailableDirectory(context, 'sessionFolders'), context.discoveryPaths)) {

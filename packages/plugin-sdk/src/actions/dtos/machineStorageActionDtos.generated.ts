@@ -78,6 +78,7 @@ export type MachineStorageActionInputById = {
             categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
+            retainedFor?: 'former_access' | undefined;
             loses?: undefined | {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
@@ -512,6 +513,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         incomplete?: undefined | {
             categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
@@ -550,6 +552,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         incomplete?: undefined | {
             categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
@@ -1246,6 +1249,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         pile: {
             count: number;
@@ -1407,6 +1411,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         suggestionsSafeTotalCount?: number | undefined;
         suggestionsSafeFreesBytes?: number | undefined;
@@ -1458,6 +1463,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         incomplete?: undefined | {
             categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
@@ -1566,6 +1572,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         pile: {
             count: number;
@@ -1727,6 +1734,7 @@ export type MachineStorageActionResultById = {
                 code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
                 detail?: Record<string, boolean | null | number | string> | undefined;
             }[];
+            retainedFor?: 'former_access' | undefined;
         }[];
         suggestionsSafeTotalCount?: number | undefined;
         suggestionsSafeFreesBytes?: number | undefined;

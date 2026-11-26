@@ -20,6 +20,7 @@ import type { MachineStorageScanStartInputV1, MachineStorageScanGetInputV1,
     MachineStorageScanCancelInputV1, MachineStorageScanSkipInputV1, StorageItemRefV1, StorageCategoryGroupV1 } from '@happier-dev/protocol/storage/storageV1';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { createStorageMaintenance, type StorageMaintenanceDeps } from './maintenance/storageMaintenance';
+import { createFormerAccessProjection, withFormerAccess, type FormerAccessSources } from './formerAccess';
 import { storagePathContains } from './storagePath';
 import type { SizedStorageCategoryItem, StoragePathUse } from './categories/types';
 import { logger } from '@/ui/logger';
@@ -73,6 +74,7 @@ export type StorageServiceDeps = Readonly<{
     readLowPower?: () => boolean;
     readIndexedStorageItem?: (ref: StorageItemRefV1) => Promise<TrustedDiskNode | null>;
     maintenance?: Omit<StorageMaintenanceDeps, 'readPolicy' | 'subscribePolicy' | 'getTrashStore' | 'runScheduledScan'>;
+    formerAccess?: FormerAccessSources;
     attributionFor?: (accountId: string) => MachineGuardActivityEntryV1['attribution'];
     /** Existing OS/browser owners supply facts; this service performs no environment discovery. */
     readStorageProtectionFacts?: () => StorageEnvironmentProtectionFacts | Promise<StorageEnvironmentProtectionFacts>;
@@ -100,6 +102,7 @@ export function createStorageService(deps: StorageServiceDeps) {
     };
     const catalog = createStorageCategoryCatalog({ ...deps.catalog, readPolicy: requirePolicy, scmRegistry: deps.scmRegistry ?? deps.catalog.scmRegistry,
         trashRoots: () => currentTrashRoots ?? deps.catalog.trashRoots?.() ?? [] });
+    const formerAccess = createFormerAccessProjection(deps);
     const now = deps.nowMs ?? Date.now;
     const listeners = new Set<() => void>();
     const controllers = new Set<AbortController>();
@@ -500,6 +503,10 @@ export function createStorageService(deps: StorageServiceDeps) {
     }) : undefined;
     return {
         ...operations,
+        async suggestionsList(request: Parameters<typeof operations.suggestionsList>[0], options: Parameters<typeof operations.suggestionsList>[1]) {
+            const result = await operations.suggestionsList(request, options);
+            return { ...result, items: withFormerAccess(result.items, await formerAccess(result.items, items, options.actor, options.signal)) };
+        },
         capacityForPath: (path: string) => readStoragePathCapacity(path, { ...deps, allowMissingPath: true }),
         protectedAdd: protectedFolders.add,
         protectedRemove: protectedFolders.remove,
@@ -613,7 +620,7 @@ export function createStorageService(deps: StorageServiceDeps) {
             const incomplete = current.incomplete?.filter(issue => issue.categoryId === categoryId);
             return { categoryId, revision: current.revision, sizedAt: current.sizedAt,
                 ...(incomplete?.length ? { incomplete } : {}),
-                items: visible.map(publicStorageItem),
+                items: withFormerAccess(visible.map(publicStorageItem), await formerAccess(visible, visible, options.actor, options.signal)),
                 ...(groups.size ? { groups: [...groups.values()].sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id)) } : {}) };
         },
         async refresh(options: Readonly<{ categoryId?: HappierStorageCategoryIdV1; signal?: AbortSignal; actor?: StorageOperationActor; context?: ActionExecutorContext }> = {}) {
@@ -624,7 +631,11 @@ export function createStorageService(deps: StorageServiceDeps) {
             // Rebuild the native union: a changed category can share inodes with any other category.
             await join(begin(), options.signal);
             requirePolicy();
-            return summary(options);
+            const result = await summary(options);
+            const retained = await formerAccess([...result.suggestionsTop, ...result.suggestionsSafeTop ?? []], items, options.actor, options.signal);
+            if (!retained.size) return result;
+            return { ...result, suggestionsTop: withFormerAccess(result.suggestionsTop, retained),
+                ...(result.suggestionsSafeTop ? { suggestionsSafeTop: withFormerAccess(result.suggestionsSafeTop, retained) } : {}) };
         },
         revision: () => revision,
         async dockerPrune(request: MachineStorageDockerPruneInputV1, options: Readonly<{

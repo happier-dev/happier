@@ -148,6 +148,7 @@ export const StorageItemV1Schema = lazyZodSchema(() => z.strictObject({
   path: z.string().check(z.minLength(1)), size: StorageSizeV1Schema, lastChangedAt: z.optional(time()), lastUsedAt: z.optional(time()),
   verdict: z.enum(['safe', 'caution', 'keep', 'forbidden', 'check']), reason: StorageReasonV1Schema,
   collectable: z.boolean(), loses: z.optional(z.array(StorageReasonV1Schema)),
+  retainedFor: z.optional(z.literal('former_access')),
 }));
 export type StorageItemV1 = z.infer<typeof StorageItemV1Schema>;
 export const PileSummaryV1Schema = lazyZodSchema(() => z.object({

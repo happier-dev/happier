@@ -3410,6 +3410,25 @@ export async function startDaemon(
             },
           }),
           homeDir: homedir(), activityLog: currentGuard.activityLog,
+          formerAccess: {
+            async readMemberWorkspaces() {
+              const homeServerIdentityId = resolveBoundHomeServerIdentityId();
+              if (!homeServerIdentityId) return [];
+              const { readAgentIsolationMemberBindings, projectAgentIsolationMemberBinding } = await import('./agentIsolation/memberBindings');
+              const { bindings } = await readAgentIsolationMemberBindings({ activeServerDir,
+                homeServerIdentityId, machineId: target.machineId, installationId: target.installationId });
+              return bindings.map(binding => ({ accountId: binding.accountId, agentUid: binding.uid,
+                workspaceRoot: projectAgentIsolationMemberBinding(binding).workspaceRoot }));
+            },
+            async readMachineAccess(requestSignal) {
+              if (externalActionAccountId !== target.custodianAccountId || credentials !== capturedCredentials
+                || homeTransportCancellation.signal.aborted) return undefined;
+              const signal = requestSignal ? AbortSignal.any([requestSignal, homeTransportCancellation.signal]) : homeTransportCancellation.signal;
+              return createDaemonAccountServerActions().machineAccessAction?.({ actionId: 'machines.access.grants.list',
+                input: { serverId: target.serverId, machineId: target.machineId },
+                context: { surface: 'cli', serverId: target.serverId }, signal });
+            },
+          },
           attributionFor: accountId => ({ serverId: target.serverId, accountId,
             machineId: target.machineId, installationId: target.installationId }),
           resourcesPolicy,
