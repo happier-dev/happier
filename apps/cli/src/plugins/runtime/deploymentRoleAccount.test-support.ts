@@ -1,11 +1,13 @@
-import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
+import { definePlugin, deploymentTargetRoleWithNativeSelectorV1, PluginError } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { defineProtocolObject, defineProtocolString, defineProtocolLiteral, ScmHostingRepositoryIdentityV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 
 // The package-owned fixture consumes the canonical role parser rather than
 // reconstructing its cross-owner fields. Handler and registration use the SDK.
-const roleInput = DeploymentTargetRoleInputProtocolSchemasV1.deploy;
+const nativeSelectorSchema = defineProtocolObject({ kind: defineProtocolLiteral('production') }, { policy: 'closed' }).jsonSchema;
+const roleInput = (role: keyof typeof DeploymentTargetRoleInputProtocolSchemasV1) => deploymentTargetRoleWithNativeSelectorV1(
+    DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, nativeSelectorSchema);
 const execution = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } as const;
 const custody = { hostAccess: ['provider-api', 'deploy-manage'],
     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy-manage' }] } as const;
@@ -33,6 +35,7 @@ const plugin = definePlugin({
         scope: { serviceRefs: ['platform'],
             operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
     deploymentTargets: { runtime: { title: 'Deployment fixture', icon: 'server-outline', targetKind: 'platform', role: 'runtime',
+        nativeSelectorSchema,
         targetSchema: { type: 'object', additionalProperties: false }, linkSchema: { type: 'object', additionalProperties: false },
         actions: { inspect: 'inspect', link: 'link', deploy: 'deploy', observe: 'observe' },
     } },
@@ -68,7 +71,7 @@ const plugin = definePlugin({
         },
     },
     'purpose-control': { title: 'Read with the recorded Account purpose', surfaces: ['cli'], placementBindings: [], execution,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.inspect, resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+        inputSchema: roleInput('inspect'), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
         dangerLevel: 'safe', readOnly: true, ...custody,
         run: async (_input, context) => {
             if (!context.services.http) throw new PluginError({ code: 'controller_services_unavailable' });
@@ -81,24 +84,24 @@ const plugin = definePlugin({
         },
     },
     inspect: { title: 'Inspect the recorded target', surfaces: ['plugin', 'cli', 'agent'], placementBindings: [], execution,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.inspect, resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+        inputSchema: roleInput('inspect'), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
         dangerLevel: 'safe', readOnly: true, ...custody,
         run: async () => ({ v: 1 as const, state: 'queued' as const, observedAtMs: 1 }),
     },
     link: { title: 'Link the recorded target', surfaces: ['plugin', 'cli'], placementBindings: [], execution,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.link, resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+        inputSchema: roleInput('link'), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
         dangerLevel: 'writesRemote', confirmation: { title: 'Link the recorded target?' }, ...custody,
         run: async () => ({ v: 1 as const, state: 'queued' as const, observedAtMs: 1 }),
     },
     observe: { title: 'Observe the recorded deployment', surfaces: ['plugin', 'cli'], placementBindings: [], execution,
-        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.observe, resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+        inputSchema: roleInput('observe'), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
         dangerLevel: 'safe', readOnly: true, ...custody,
         run: async input => ({ v: 1 as const, state: 'succeeded' as const,
             providerDeploymentId: `provider-${DeploymentTargetRoleInputSchemasV1.observe.parse(input).deploymentId}`, observedAtMs: 1 }),
     },
     deploy: {
         title: 'Deploy the recorded role', surfaces: ['plugin', 'cli'], placementBindings: [],
-        execution, inputSchema: roleInput, resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+        execution, inputSchema: roleInput('deploy'), resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
         dangerLevel: 'writesRemote', confirmation: { title: 'Deploy the recorded role?' },
         ...custody,
         run: async rawInput => {
