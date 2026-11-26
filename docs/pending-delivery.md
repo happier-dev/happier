@@ -742,6 +742,10 @@ the canonical Pending owner returns it to ordinary delivery admission, including
 `after_runtime_idle`. Explicit steering does not require the foreground or
 background activity summary to become idle first.
 
+The reviewed Session input handoff used by the Database Workbench brief and
+deployment telemetry submits its Send with the existing `enqueue` intent.
+Pending holds that input until the Session is idle.
+
 In 0.3 development source, the Claude plugin's transcript lifecycle mapper treats
 the exact main-chain `[Request interrupted by user]` and
 `[Request interrupted by user for tool use]` markers as foreground aborts on both

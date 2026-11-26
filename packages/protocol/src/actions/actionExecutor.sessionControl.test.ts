@@ -1216,6 +1216,25 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
+  it('admits an existing Session handoff as idle-queued input at the Pending transport', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'handoff-input' }));
+    const executor = createExecutor({ sessionSendMessage });
+
+    const result = await executor.execute('session.input.handoff', {
+      v: 1,
+      sessionChoice: { kind: 'existing', session: 's1' },
+      delivery: 'send',
+      input: { text: 'Review the selected finding' },
+      idempotencyKey: 'brief-1',
+    }, { surface: 'cli', authority: 'present_user', serverId: 'server-1', actionCaller: { kind: 'host' } });
+
+    expect(result).toMatchObject({ ok: true, result: { kind: 'sendResult',
+      result: { status: 'accepted', localId: 'handoff-input' } } });
+    expect(sessionSendMessage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      sessionId: 's1', requestedAction: { v: 1, kind: 'enqueue' },
+    }));
+  });
+
   it('turns plugin subagent-launch intent into the canonical structured send and stamps immediate delivery', async () => {
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted', localId: 'plugin-input-v1:launch' }));
     const executor = createExecutor({ sessionSendMessage });

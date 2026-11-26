@@ -7,6 +7,7 @@ import { projectSessionReferenceFailure } from '../sessionScope.js';
 import { runSessionInputHandoffV1, resolveSessionInputHandoffSelectionV1,
   type SessionInputHandoffEffectV1 } from '../../../sessions/messages/runSessionInputHandoffV1.js';
 import type { SessionInputHandoffInputV1 } from '../../../sessions/messages/sessionInputHandoffV1.js';
+import { DEFAULT_PENDING_REQUESTED_ACTION_V1 } from '../../../sessions/pending/pendingRequestedActionV1.js';
 import type { ActionSessionAddressV1 } from '../../sessionAddressV1.js';
 
 /** The Session owner orchestrates ordinary child Actions; it never inherits their consent. */
@@ -46,6 +47,7 @@ export async function executeSessionInputHandoffV1(args: Readonly<{
   return completeActionResult(await runSessionInputHandoffV1(input, {
     send: ({ session, input: content, idempotencyKey }) => child('session.message.send', {
       sessionId: session.sessionId, message: content.text,
+      requestedAction: DEFAULT_PENDING_REQUESTED_ACTION_V1,
       ...(context.actionCaller?.kind === 'plugin' ? { idempotencyKey } : {}),
       ...(content.attachments?.length ? { attachments: content.attachments } : {}),
       ...(content.forgeEvidence ? { forgeEvidence: content.forgeEvidence } : {}),
