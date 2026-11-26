@@ -3,6 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppState, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_STATE_SIZE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isTeamLegacyCredentialRefusalV1, type TeamDirectorySourceSetupOptionV1, type TeamDirectorySourceSetupOptionsV1 } from '@happier-dev/protocol/teams';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -16,6 +17,8 @@ import { identityAdministrationFailure, identityAdministrationFailureMessage } f
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { t } from '@/text';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { serverAccountScopedTeamKey } from '@/sync/domains/teams/teamAddress';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
@@ -24,7 +27,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { TeamSection } from '../TeamSection';
 import { teamDirectorySourcePath } from '../teamsRoutes';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
-import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
+import { teamSignInFailureAction, useTeamReadFailureAction } from '../useTeamReadFailureAction';
 import { directorySourcePresentationState, directorySourceStateLabel } from './directoryAdministrationPresentation';
 import { createIdentityAdministrationClient, executeIdentityAdministrationRead } from './identityAdministrationClient';
 import { useDirectoryAdministration } from './useDirectoryAdministration';
@@ -88,7 +91,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
         items: readonly TeamDirectorySourceSetupOptionV1[];
         nextCursor: string | null;
         complete: boolean;
-        failure: string | null;
+        failure: Readonly<{ code: string; message: string; domainFailure: HomeDomainFailure }> | null;
         recovery: Readonly<{ label: 'common.refresh' | 'common.retry'; cursor: string | null }> | null;
     }>>({ kind: 'hidden', items: [], nextCursor: null, complete: false, failure: null, recovery: null });
     const [pendingSetup, setPendingSetup] = React.useState<string | null>(null);
@@ -100,13 +103,18 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
     // control's reading order, and announce the same sentence as it is stored.
     // WorkOS Directory Sync refused because WorkOS is not set up on the Home: the recovery line
     // leads a Home owner to the WorkOS row and names, for anyone else, who can set it up.
-    const [workosPlatformMissing, setWorkosPlatformMissing] = React.useState(false);
     const recoveryViewer = useEligibleProviderRecoveryViewer(props.scope);
-    const reportSetupFailure = React.useCallback((code: string) => {
-        setWorkosPlatformMissing(code.trim().toLowerCase() === 'workos_platform_unavailable');
-        const message = code === 'invalid_team_cursor' ? t('teams.errors.listCursorExpired') : identityAdministrationFailureMessage(code);
+    const reportSetupFailure = React.useCallback((
+        code: string,
+        domainFailure: HomeDomainFailure = homeDomainFailureFromActionFailure({ errorCode: code }),
+    ) => {
+        const message = isTeamLegacyCredentialRefusalV1(domainFailure.code, domainFailure.details)
+            ? teamReadFailureLabel(domainFailure)
+            : code === 'invalid_team_cursor'
+                ? t('teams.errors.listCursorExpired')
+                : identityAdministrationFailureMessage(code);
         announceAccessibilityMessage(message);
-        return message;
+        return { code, message, domainFailure };
     }, []);
     const portalReturnController = React.useRef(createWorkosPortalReturnController()).current;
 
@@ -132,6 +140,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
         setupRequestControllerRef.current?.abort();
         const controller = new AbortController();
         setupRequestControllerRef.current = controller;
+        const wasVisible = setupVisibleRef.current;
         setupVisibleRef.current = true;
         setSetup((current) => ({ ...current, kind: 'loading', failure: null, recovery: null }));
         const result = await executeIdentityAdministrationRead<TeamDirectorySourceSetupOptionsV1>(
@@ -143,14 +152,19 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
             controller.signal,
         );
         if (controller.signal.aborted || setupRequestGenerationRef.current !== requestGeneration) return;
-        const failureMessage = result.ok ? null : reportSetupFailure(result.failure.code);
+        if (!result.ok && isActionApprovalDeclinedErrorCode(result.failure.code)) {
+            setupVisibleRef.current = wasVisible;
+            setSetup((current) => ({ ...current, kind: wasVisible ? 'ready' : 'hidden' }));
+            return;
+        }
+        const failure = result.ok ? null : reportSetupFailure(result.failure.code, result.failure.domainFailure);
         setSetup((current) => {
             if (!result.ok) {
                 const { code, retryable } = result.failure;
                 return {
                     ...current,
                     kind: 'unavailable',
-                    failure: failureMessage,
+                    failure,
                     recovery: code === 'invalid_team_cursor'
                         ? { label: 'common.refresh', cursor: null }
                         : retryable && identityAdministrationFailure(code).kind !== 'policy_unavailable'
@@ -236,21 +250,22 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                     githubAppInstallationId: option.githubAppInstallationId,
                 }, {
                 onApprovalSucceeded: finishCreation,
-                onApprovalFailed: (code) => setSetup((current) => ({
+                onApprovalFailed: (code, failure) => setSetup((current) => ({
                     ...current,
-                    failure: reportSetupFailure(code),
+                    failure: reportSetupFailure(code, failure ? homeDomainFailureFromActionFailure(failure) : undefined),
+                    recovery: null,
                 })),
             });
             if (!result.ok) {
                 if ('approvalPending' in result) return;
-                setSetup((current) => ({ ...current, failure: reportSetupFailure(result.failure.code) }));
+                setSetup((current) => ({ ...current, failure: reportSetupFailure(result.failure.code, result.failure.domainFailure), recovery: null }));
                 return;
             }
             await finishCreation(result.value);
         } finally {
             setPendingSetup(null);
         }
-    }, [client, projectionCurrent, props.address, props.mutationsAvailable, refresh, router]);
+    }, [client, projectionCurrent, props.address, props.mutationsAvailable, refresh, reportSetupFailure, router]);
 
     const startWorkosSetup = React.useCallback(async () => {
         if (!props.mutationsAvailable || !projectionCurrent) return;
@@ -278,14 +293,15 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                     intent: 'dsync',
                 }, {
                     onApprovalSucceeded: openPortal,
-                    onApprovalFailed: (code) => setSetup((current) => ({
+                    onApprovalFailed: (code, failure) => setSetup((current) => ({
                         ...current,
-                        failure: reportSetupFailure(code),
+                        failure: reportSetupFailure(code, failure ? homeDomainFailureFromActionFailure(failure) : undefined),
+                        recovery: null,
                     })),
                 });
                 if (!linkResult.ok) {
                     if ('approvalPending' in linkResult) return;
-                    setSetup((current) => ({ ...current, failure: reportSetupFailure(linkResult.failure.code) }));
+                    setSetup((current) => ({ ...current, failure: reportSetupFailure(linkResult.failure.code, linkResult.failure.domainFailure), recovery: null }));
                     return;
                 }
                 await openPortal(linkResult.value);
@@ -295,14 +311,15 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                 teamId: props.address.teamId,
             }, {
                 onApprovalSucceeded: async (value) => await createPortalLink(value.connection.id),
-                onApprovalFailed: (code) => setSetup((current) => ({
+                onApprovalFailed: (code, failure) => setSetup((current) => ({
                     ...current,
-                    failure: reportSetupFailure(code),
+                    failure: reportSetupFailure(code, failure ? homeDomainFailureFromActionFailure(failure) : undefined),
+                    recovery: null,
                 })),
             });
             if (!connectionResult.ok) {
                 if ('approvalPending' in connectionResult) return;
-                setSetup((current) => ({ ...current, failure: reportSetupFailure(connectionResult.failure.code) }));
+                setSetup((current) => ({ ...current, failure: reportSetupFailure(connectionResult.failure.code, connectionResult.failure.domainFailure), recovery: null }));
                 return;
             }
             await createPortalLink(connectionResult.value.connection.id);
@@ -310,6 +327,10 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
             setPendingSetup(null);
         }
     }, [client, portalReturnController, projectionCurrent, props.address.teamId, props.mutationsAvailable, reportSetupFailure]);
+
+    const setupSignInAction = setup.failure
+        ? teamSignInFailureAction(setup.failure.domainFailure, props.address, (href) => router.push(href), 'team-directory-setup')
+        : undefined;
 
     if (state.kind === 'loading') {
         return <ItemGroup><SurfaceStateCard testID="team-directory-sources-loading" kind="loading" size="line" title={t('common.loading')} accessibilitySemantics="status" /></ItemGroup>;
@@ -471,12 +492,12 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                             title={t('teams.authentication.directory.setup.loadMore')}
                         />
                     ) : null}
-                    {setup.failure && workosPlatformMissing ? (
+                    {setup.failure?.code === 'workos_platform_unavailable' ? (
                         <SurfaceStateCard
                             testID="team-directory-setup-workos-unavailable"
                             kind="unavailable"
                             size="line"
-                            title={setup.failure}
+                            title={setup.failure.message}
                             reason={recoveryViewer.viewerHomeRole === 'owner' ? undefined : askAdministratorsText(recoveryViewer.administratorNames ?? [])}
                             action={recoveryViewer.viewerHomeRole === 'owner'
                                 ? { testID: 'team-directory-setup-workos-fix', label: t('teams.authentication.add.fixInSignInProviders'), onPress: () => router.push(homeSignInPlatformHref(props.scope.serverId, 'workos')) }
@@ -486,14 +507,14 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
                         <SurfaceStateCard
                             kind="error"
                             size="line"
-                            title={setup.failure ?? t('identityAdministration.error')}
-                            action={setup.recovery
+                            title={setup.failure?.message ?? t('identityAdministration.error')}
+                            action={setupSignInAction ?? (setup.recovery
                                 ? {
                                     testID: 'team-directory-setup-retry',
                                     label: t(setup.recovery.label),
                                     onPress: () => void loadSetup(setup.recovery?.cursor),
                                 }
-                                : undefined}
+                                : undefined)}
                         />
                     ) : null}
                 </ItemGroup>

@@ -62,7 +62,7 @@ describe('Directory setup read approval', () => {
         expect(harness.requests.filter((request) => request.path.includes('/workos/'))).toHaveLength(0);
     });
 
-    it('confirms Ask list and setup pages locally and retries a declined continuation without refetching prior pages', async () => {
+    it('keeps Load more after declined consent without refetching prior pages', async () => {
         const serverId = await harness.addHome({
             name: 'Directory Home', serverUrl: 'https://directory-setup-approval.example',
             accountId: 'directory-admin', teamsEnabled: true,
@@ -88,9 +88,10 @@ describe('Directory setup read approval', () => {
         vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         await screen.pressByTestIdAsync('team-directory-setup-load-more');
         expect(screen.findByTestId('team-directory-setup-option:github_organization:install-1')).not.toBeNull();
-        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-retry')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-load-more')).not.toBeNull());
+        expect(screen.findByTestId('team-directory-setup-retry')).toBeNull();
         expect(harness.requestsFor(`${SETUP_PATH}?cursor=setup-next`)).toHaveLength(0);
-        await screen.pressByTestIdAsync('team-directory-setup-retry');
+        await screen.pressByTestIdAsync('team-directory-setup-load-more');
         await waitForHomeGovernance(() => expect(screen.findByTestId('team-directory-setup-option:github_organization:install-2')).not.toBeNull());
         expect(screen.findByTestId('team-directory-setup-option:github_organization:install-1')).not.toBeNull();
         expect(screen.findByTestId('team-directory-setup-load-more')).toBeNull();

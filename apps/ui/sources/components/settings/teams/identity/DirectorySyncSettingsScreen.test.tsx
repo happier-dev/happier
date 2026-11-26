@@ -196,6 +196,29 @@ describe('DirectorySyncSettingsScreen through real Home governance', () => {
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
         expect(screen.findByTestId('team-directory-setup-retry')).toBeNull();
     });
+    it.each([
+        { stage: 'discovery', code: 'team_authentication_required', details: undefined, message: 'identityAdministration.errorAuthenticationRequired', destination: '/teams/team-1/sign-in' },
+        { stage: 'creation', code: 'team_authentication_required', details: undefined, message: 'identityAdministration.errorAuthenticationRequired', destination: '/teams/team-1/sign-in' },
+        { stage: 'discovery', code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, message: 'teams.errors.signInOutdated', destination: '/settings/account' },
+        { stage: 'creation', code: 'team_forbidden', details: { reason: 'legacy_home_credential' }, message: 'teams.errors.signInOutdated', destination: '/settings/account' },
+    ])('recovers $code from source setup $stage without resubmission', async ({ stage, code, details, message, destination }) => {
+        const refusal = { status: 403, body: { error: code, ...(details ? { details } : {}) } };
+        if (stage === 'discovery') harness.answer(serverId, setupPath, refusal);
+        const screen = await renderDirectory();
+        await openSetup(screen);
+        if (stage === 'creation') {
+            harness.answer(serverId, `POST ${createPath}`, refusal);
+            await screen.pressByTestIdAsync('team-directory-setup-option:github_organization:installation-1');
+        }
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(message));
+        expect(screen.getTextContent().split(message)).toHaveLength(2);
+        expect(screen.findByTestId('team-directory-setup-retry')).toBeNull();
+        await screen.pressByTestIdAsync('team-directory-setup-sign-in');
+        const destinationValue = new URL(routerPush.mock.lastCall?.[0] ?? '', 'https://app.example');
+        expect(destinationValue.pathname).toBe(destination);
+        if (code === 'team_authentication_required') expect(destinationValue.searchParams.get('serverId')).toBe(serverId);
+    });
+
     it('refreshes visible setup candidates only for the matching Home Team change', async () => {
         const screen = await renderDirectory();
         await openSetup(screen);
