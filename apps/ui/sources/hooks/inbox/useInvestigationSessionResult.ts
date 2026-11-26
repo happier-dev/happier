@@ -9,7 +9,8 @@ import { readTranscriptOperationsProducedResults } from '@/components/sessions/t
 import { EMPTY_OPERATIONS_RUN_PRODUCED_RESULTS } from '@/sync/domains/workflows/operationsRunOutcome';
 import { storage } from '@/sync/domains/state/storageStore';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { failureInvestigationSubjectKey, type createAccountNoticeInvestigation } from './accountNoticeInvestigation';
+import { failureInvestigationSubjectKey, type createAccountNoticeInvestigation,
+    type FailureInvestigationExecutionOptions } from './accountNoticeInvestigation';
 import { useInboxReadySessionResult } from './useInboxReadySessionResult';
 
 type Owner = ReturnType<typeof createAccountNoticeInvestigation>;
@@ -22,21 +23,23 @@ export function useInvestigationSessionResult(
     owner: Owner,
     subject: TriageFailureSubjectV1 | null,
     acquisition: unknown,
+    options?: Pick<FailureInvestigationExecutionOptions, 'externalActionTarget'>,
 ) {
     const key = subject ? failureInvestigationSubjectKey(subject) : null;
+    const externalActionTarget = options?.externalActionTarget;
     const [read, setRead] = React.useState<Readonly<{
         owner: Owner; key: string | null; session: ActionSessionAddressV1 | null;
     }> | null>(null);
     React.useEffect(() => {
         if (!subject) return;
         const cancellation = new AbortController();
-        void owner.readLinkedSession(subject, { signal: cancellation.signal }).then(session => {
+        void owner.readLinkedSession(subject, { signal: cancellation.signal, externalActionTarget }).then(session => {
             if (!cancellation.signal.aborted) setRead({ owner, key, session });
         }).catch(() => {
             if (!cancellation.signal.aborted) setRead({ owner, key, session: null });
         });
         return () => cancellation.abort();
-    }, [owner, key, acquisition]);
+    }, [owner, key, acquisition, externalActionTarget]);
     const address = read?.owner === owner && read.key === key ? read.session : null;
     const sessionId = address?.sessionId ?? '';
     const session = storage(state => {

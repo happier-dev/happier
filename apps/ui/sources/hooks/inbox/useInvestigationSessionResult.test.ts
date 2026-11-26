@@ -171,14 +171,19 @@ it('composes one exact failed receipt through the public Action, chosen Agent an
     } finally { await hook?.unmount(); owner.dispose(); storage.setState(before); }
 });
 
-it('reopens the receipt Finding from its durable linked Session, follows completion, and keeps unverified recovery unknown', async () => {
+it('reopens the receipt Finding through its controller, follows completion, and keeps unverified recovery unknown', async () => {
     const before = storage.getState();
     const scope = { serverId: 'home', accountId: 'account' };
     const subject = { kind: 'deploymentReceipt', serverId: scope.serverId, environmentId: 'env', deploymentId: 'receipt' } as const;
+    const options = { externalActionTarget: { kind: 'machine', machineId: 'receipt-controller' } } as const;
     const calls: Array<{ action: unknown; input: unknown }> = [];
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ invokeContributedAction: async request => {
         calls.push({ action: request.action, input: request.input });
         // Contributed Action transport is the genuine persistence boundary.
+        if (request.context.externalActionTarget?.kind !== 'machine'
+            || request.context.externalActionTarget.machineId !== options.externalActionTarget.machineId) {
+            return { ok: false, errorCode: 'machine_unavailable', error: 'Receipt controller was not addressed' };
+        }
         const input = request.input as Readonly<{ entryRef: unknown }>;
         return { ok: true, result: { kind: 'complete', lanes: [], links: [{ entryRef: input.entryRef,
             sessionId: 'investigation', linkedAtMs: 1, displayPath: 'Deployment' }] } };
@@ -199,11 +204,11 @@ it('reopens the receipt Finding from its durable linked Session, follows complet
     const fetch = vi.spyOn(globalThis, 'fetch');
     try {
         const firstOwner = makeOwner();
-        const first = await renderHook(() => useInvestigationSessionResult(firstOwner, subject, null));
+        const first = await renderHook(() => useInvestigationSessionResult(firstOwner, subject, null, options));
         expect(first.getCurrent()?.result.preview).toEqual({ state: 'available', text: message.text });
         await first.unmount(); firstOwner.dispose(); calls.length = 0;
         const owner = makeOwner();
-        const reopened = await renderHook(() => useInvestigationSessionResult(owner, subject, null));
+        const reopened = await renderHook(() => useInvestigationSessionResult(owner, subject, null, options));
         const finding = reopened.getCurrent();
         expect(finding?.result.preview).toEqual({ state: 'available', text: message.text });
         expect(finding?.messageRef).toEqual({ kind: 'session', session: { serverId: scope.serverId,
