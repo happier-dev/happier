@@ -12,6 +12,7 @@ export function buildHappierToolsPromptAppendix(params: Readonly<{
   sessionMetadata?: unknown;
   sessionTitled?: boolean;
   createdAsBot?: boolean;
+  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean }>;
   memoryRecallGuidance?: Readonly<{
     enabled?: boolean;
     machineId?: string | null;
@@ -25,6 +26,13 @@ export function buildHappierToolsPromptAppendix(params: Readonly<{
     params.directory,
     '--json',
   ]);
+  const codeModeGuidance = params.codeMode?.bootstrap ? [
+    'Use `list --query <text>` to find tools by intent and `describe --source <source> --tool <tool>` to read the input schema.',
+    ...(params.codeMode.scriptRunner ? [
+      'For several dependent calls, use `tools run` with the Session CLI binary from `HAPPIER_CLI_BIN`. Tool calls keep their individual approval rules.',
+      `For example, run \`${buildHappierToolsShellBridgeCommand(['run', '--code', 'return await tools.search({query: "session"})'])}\`.`,
+    ] : []),
+  ].join('\n') : '';
   const renameCommand = buildHappierToolsShellBridgeCommand([
     'call',
     '--session-id',
@@ -150,7 +158,7 @@ Do not use provider-native memory files or ad-hoc workspace search as a substitu
 ${titleGuidance}
 
 Use \`${listCommand}\` when you need to discover the available built-in Happier tools and custom configured tools.
-${renameCommandGuidance}
+${codeModeGuidance ? `\n${codeModeGuidance}\n` : ''}${renameCommandGuidance}
 
 When you know a plugin's qualified Action ID (\`<plugin-id>/actions/<local-id>\`), use \`${explicitPluginActionExecuteCommand}\` with that exact ID. A Tool ID is not an Action ID; call a named Tool using its published Tool name. The current runtime must admit the Action: editing plugin source alone does not refresh the loaded catalog.
 

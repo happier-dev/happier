@@ -6,6 +6,7 @@ import { findActionSpec, getActionSpec, listActionSpecMcpToolBindings } from '@h
 import { memoizeActionSpecValue } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId, ActionSurfaceAvailability, ActionSurfaces, ActionsSettingsV1 } from '@happier-dev/protocol';
+import { SESSION_TOOLS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
@@ -22,6 +23,11 @@ import {
 import type { HappierBuiltInToolDefinition } from './types';
 
 type ActionEnabledPredicate = (id: ActionId) => boolean;
+const sessionToolsBootstrapActionIds: ReadonlySet<string> = new Set(SESSION_TOOLS_ACTION_IDS_V1);
+export function isSessionToolsBootstrapAction(id: string): boolean {
+  return sessionToolsBootstrapActionIds.has(id);
+}
+
 export type HappierBuiltInToolSurface = 'mcp' | 'cli' | 'agent' | 'voice';
 
 type ActionToolEntry = Readonly<{

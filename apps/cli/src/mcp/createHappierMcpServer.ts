@@ -24,6 +24,7 @@ import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRun
 import { registerHappierMcpBuiltInTools, formatHappierMcpToolFailure, type HappierMcpToolInventory } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { cacheMcpToolList } from '@/mcp/server/cacheMcpToolList';
 import type { SessionMcpCustomToolsBridge } from '@/mcp/runtime/sessionMcpToolsBridge';
+import { SESSION_MCP_CODE_MODE_CAPABILITY } from '@/mcp/runtime/sessionMcpLocalContext';
 import type { McpWatchSession } from '@/mcp/resources/watchSubscriptions';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
@@ -193,6 +194,10 @@ export function createHappierMcpServer(
   const toolSurface = actionInvocation?.surface === 'voice' ? 'voice' as const : 'agent' as const;
   const credentials = opts?.authorityScope === 'session' ? null : opts?.credentials ?? null;
   const sessionCredentials = opts?.sessionCredentials ?? opts?.credentials ?? null;
+  const sessionToolsBridge = opts?.sessionToolsBridge;
+  const sessionMetadataSnapshot = client.getMetadataSnapshot?.() ?? null;
+  const happierToolsEnabled = opts?.happierToolsEnabled ?? isSessionHappierToolsEnabled(sessionMetadataSnapshot);
+  const sessionToolsBootstrap = happierToolsEnabled && sessionToolsBridge?.codeMode?.bootstrap === true;
   const { serverId, serverUrl: serverHttpBaseUrl } = client.getServerBinding();
   const toolExecutionSignal = opts?.toolExecutionSignal ?? client.getHostTurnAbortSignal?.() ?? undefined;
   const isCredentialCurrent = async () => credentials !== null && !toolExecutionSignal?.aborted
@@ -220,6 +225,7 @@ export function createHappierMcpServer(
     surface: toolSurface,
     hasAuthenticatedRuntime: sessionCredentials !== null,
     authorityScope: opts?.authorityScope,
+    sessionToolsBootstrap,
     readSessionMemoryEnabled: () => readSessionMemoryEnabledV1(client.getMetadataSnapshot?.()),
     readServerFeaturesSnapshot: () => client.getServerFeaturesSnapshot?.(),
   });
@@ -251,7 +257,12 @@ export function createHappierMcpServer(
   const mcp = new McpServer({
     name: 'Happier MCP',
     version: '1.0.0',
-  }, { capabilities: { resources: { subscribe: true } } });
+  }, { capabilities: {
+    resources: { subscribe: true },
+    ...(sessionToolsBootstrap ? { experimental: { [SESSION_MCP_CODE_MODE_CAPABILITY]: {
+      scriptRunner: sessionToolsBridge?.codeMode?.scriptRunner === true,
+    } } } : {}),
+  } });
   cacheMcpToolList(mcp, { sessionToolsBridge: opts?.sessionToolsBridge,
     getRegisteredToolNames: () => registeredToolNames,
     executionSignal: toolExecutionSignal, toolCallIdMetaKey: opts?.mcpToolCallIdMetaKey });
@@ -271,8 +282,6 @@ export function createHappierMcpServer(
       metadata: client.getMetadataSnapshot?.() ?? null,
     })?.intent
     ?? null;
-  const sessionMetadataSnapshot = client.getMetadataSnapshot?.() ?? null;
-  const happierToolsEnabled = opts?.happierToolsEnabled ?? isSessionHappierToolsEnabled(sessionMetadataSnapshot);
   const sessionLocation = resolveLiveClientLocation(client);
   const rawSession = sessionMetadataSnapshot || sessionLocation
     ? {
@@ -369,6 +378,11 @@ export function createHappierMcpServer(
           : {}),
       })
     : {};
+  // These Action ports invoke the same ingress that handles direct Session tools.
+  const sessionToolActions = sessionToolsBootstrap && sessionToolsBridge
+    ? async () => (await import('./runtime/sessionToolActions')).bindSessionToolActions({
+      bridge: sessionToolsBridge, sessionId, execute: (...args) => actionToolBridge.executeActionByToolName(...args),
+    }) : undefined;
   const createHarness = (connectedAccountAuthenticationHost?: CredentialedConnectedAccountAuthenticationHost): ReturnType<typeof createCliActionExecutorHarness> => createCliActionExecutorHarness(
     {
       actionsSettingsProvider: actionSettingsProvider,
@@ -602,6 +616,11 @@ export function createHappierMcpServer(
 
       resetGlobalVoiceAgent: async () => {},
       isActionEnabled,
+      ...(sessionToolActions ? {
+        sessionToolsSearch: async (input, context) => (await sessionToolActions()).sessionToolsSearch(input, context),
+        sessionToolsDescribe: async (input, context) => (await sessionToolActions()).sessionToolsDescribe(input, context),
+        sessionToolsCall: async (input, context) => (await sessionToolActions()).sessionToolsCall(input, context),
+      } : {}),
     },
   );
 
@@ -812,6 +831,7 @@ export function createHappierMcpServer(
     requiredDirectActionIds: opts?.requiredDirectActionIds,
     toolInventory: opts?.toolInventory,
     happierToolsEnabled,
+    sessionToolsBootstrap,
     deps: toolDeps,
   });
 

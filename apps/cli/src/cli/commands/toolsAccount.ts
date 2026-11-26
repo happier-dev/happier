@@ -21,6 +21,11 @@ import { readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionToolsSearchInputV1Schema, SessionToolsDescribeInputV1Schema,
+  SessionToolsCallInputV1Schema, SessionToolsCallOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionTools';
+import type { ScriptToolConnection } from './toolsRun';
 
 type BuiltInToolEntry = Awaited<ReturnType<typeof listBuiltInHappierTools>>[number];
 type CustomToolEntry = Awaited<ReturnType<typeof listResolvedCustomHappierTools>>['tools'][number];
@@ -88,11 +93,15 @@ async function resolveToolsBaseContext(
 }
 
 async function resolveCustomToolsRuntimeContext(request: ToolsRequestContext, deps: ToolsCommandDeps,
-  options?: Readonly<{ requireSessionId?: boolean }>): Promise<{
+  options?: Readonly<{ requireSessionId?: boolean; signal?: AbortSignal;
+    readCodeMode?: (features: CliServerFeaturesSnapshot | undefined) => void }>): Promise<{
   credentials: StoredCredentials;
   sessionId: string | null;
   directory: string;
   mcpServers: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['mcpServers'];
+  sessionConnections?: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['sessionConnections'];
+  settingsByName?: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['settingsByName'];
+  prepareTransport?: Awaited<ReturnType<typeof resolveCustomHappierToolsContext>>['prepareTransport'];
   accountSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'];
   operationContext: SavedSecretOperationContextV1;
   cleanup: () => void;
@@ -114,12 +123,28 @@ async function resolveCustomToolsRuntimeContext(request: ToolsRequestContext, de
     machineMetadata: initialMachineMetadata,
     ...(request.json ? { suppressMachineRegistrationRecoveryLogs: true } : {}),
   }));
-  const apiSource = accountAutomation ? await withHeldHome(async () => readMcpExecutionSource({
-    credentials, catalogCredentials: credentials, machineId, serverHttpBaseUrl, localWorkflow,
-    accountAutomation: { homeServerIdentityId: readServerIdentityIdFromFeaturesSnapshot(
-      await api.getServerFeaturesSnapshot({ refresh: true })), isCurrent: isHomeCurrent },
-  })) : null;
-  const accountSettingsContext = await withHeldHome(() => loadFreshMcpAccountSettingsContext(credentials, deps));
+  let serverFeatures: CliServerFeaturesSnapshot | undefined;
+  let apiSource: Awaited<ReturnType<typeof readMcpExecutionSource>> | null = null;
+  let accountSettingsContext: Awaited<ReturnType<typeof loadFreshMcpAccountSettingsContext>>;
+  if (accountAutomation) {
+    serverFeatures = await withHeldHome(() => api.getServerFeaturesSnapshot({ refresh: true, signal: options?.signal }));
+    options?.readCodeMode?.(serverFeatures);
+    [apiSource, accountSettingsContext] = await Promise.all([
+      withHeldHome(async () => readMcpExecutionSource({
+        credentials, catalogCredentials: credentials, machineId, serverHttpBaseUrl, localWorkflow,
+        accountAutomation: { homeServerIdentityId: readServerIdentityIdFromFeaturesSnapshot(serverFeatures), isCurrent: isHomeCurrent },
+      })),
+      withHeldHome(() => loadFreshMcpAccountSettingsContext(credentials, deps)),
+    ]);
+  } else if (options?.readCodeMode) {
+    [serverFeatures, accountSettingsContext] = await Promise.all([
+      withHeldHome(() => api.getServerFeaturesSnapshot({ refresh: true, signal: options?.signal })),
+      withHeldHome(() => loadFreshMcpAccountSettingsContext(credentials, deps)),
+    ]);
+    options.readCodeMode(serverFeatures);
+  } else {
+    accountSettingsContext = await withHeldHome(() => loadFreshMcpAccountSettingsContext(credentials, deps));
+  }
   const customContext = await withHeldHome(() => deps.resolveCustomHappierToolsContext({
     credentials,
     accountSettingsSnapshot: accountSettingsContext,
@@ -127,6 +152,7 @@ async function resolveCustomToolsRuntimeContext(request: ToolsRequestContext, de
     machineId,
     directory,
     localWorkflow,
+    signal: options?.signal,
     ...(apiSource ? { readExecutionSource: async (signal?: AbortSignal) => {
       signal?.throwIfAborted();
       if (!isHomeCurrent() || !await accountSettingsContext.operationContext.isCurrent()) {
@@ -143,11 +169,74 @@ async function resolveCustomToolsRuntimeContext(request: ToolsRequestContext, de
     sessionId,
     directory,
     mcpServers: customContext.mcpServers,
+    sessionConnections: customContext.sessionConnections,
+    settingsByName: customContext.settingsByName,
+    prepareTransport: customContext.prepareTransport,
     accountSettings: accountSettingsContext.settings,
     operationContext: accountSettingsContext.operationContext,
     cleanup: customContext.cleanup,
     ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
   };
+}
+
+/** The human CLI keeps its Account authority and reuses the existing CLI Action harness. */
+export async function connectAccountToolScript(request: Omit<ToolsRequestContext, 'surface'>, signal: AbortSignal,
+  overrides?: Partial<ToolsCommandDeps>): Promise<ScriptToolConnection> {
+  const deps = resolveToolsCommandDeps(overrides);
+  const [
+    { refuseToolsScript }, { openCliHappierToolActionHarness }, { resolveSessionTransportContext },
+    { createSessionCustomMcpClientPool }, { createSessionMcpCustomToolsBridge }, { bindSessionToolActions }, { SESSION_TOOL_OPERATION_IDS },
+  ] = await Promise.all([
+    import('./toolsRun'), import('@/agent/tools/happierTools/callBuiltInHappierTool'), import('@/session/services/resolveSessionTransportContext'),
+    import('@/agent/tools/happierTools/customMcp/sessionCustomMcpClientPool'), import('@/mcp/runtime/sessionMcpToolsBridge'),
+    import('@/mcp/runtime/sessionToolActions'), import('./toolsSessionMcp'),
+  ]);
+  if (!request.sessionId) return refuseToolsScript('invalid_arguments', 'Pass --session-id to select a Session.');
+  const context = await resolveCustomToolsRuntimeContext({ ...request, surface: 'cli' }, deps, { signal, readCodeMode(snapshot) {
+    if (snapshot?.status !== 'ready' || readServerEnabledBit(snapshot.features, 'sessions.codeMode') !== true) {
+      refuseToolsScript('feature_disabled', 'Script runner is disabled for this Home.');
+    }
+  } });
+  const pool = createSessionCustomMcpClientPool({ processEnv: process.env, prepareTransport: context.prepareTransport,
+    isCurrent: context.operationContext.isCurrent, signal });
+  const close = async () => { try { await pool.dispose(); } finally { context.cleanup(); } };
+  try {
+    const target = await resolveSessionTransportContext({ reason: 'session-action', credentials: context.credentials,
+      idOrPrefix: request.sessionId, signal });
+    if (!target.ok) return refuseToolsScript(target.code, target.code);
+    const harness = await openCliHappierToolActionHarness({ credentials: context.credentials, rawSession: target.rawSession,
+      readCredentials: deps.readCredentials });
+    if (!harness.ok) return refuseToolsScript(harness.errorCode, harness.error);
+    const servers = new Map(Object.entries(context.mcpServers).filter(([source]) => source !== 'happier')
+      .map(([source, config]) => [source, {
+        id: source, source,
+        connection: context.sessionConnections?.[source] ?? { kind: 'stdio' as const, config },
+        settings: context.settingsByName?.[source],
+      }]));
+    const actions = bindSessionToolActions({ sessionId: target.sessionId, execute: harness.actionToolBridge.executeActionByToolName,
+      bridge: createSessionMcpCustomToolsBridge({ pool, readServers: () => servers,
+        isConfined: () => false, authorize: async () => ({ ok: true }) }),
+    });
+    return { close, execute: async (operation, input, activeSignal) => {
+      if (!harness.actionToolBridge.isActionEnabled(SESSION_TOOL_OPERATION_IDS[operation])) {
+        return { ok: false, errorCode: 'action_disabled', error: 'Action is disabled.' };
+      }
+      try {
+        const ctx = { signal: activeSignal, surface: 'cli' as const };
+        if (operation === 'search') return { ok: true, result: await actions.sessionToolsSearch(SessionToolsSearchInputV1Schema.parse(input), ctx) };
+        if (operation === 'describe') return { ok: true, result: await actions.sessionToolsDescribe(SessionToolsDescribeInputV1Schema.parse(input), ctx) };
+        const result = SessionToolsCallOutputV1Schema.parse(await actions.sessionToolsCall(SessionToolsCallInputV1Schema.parse(input), ctx));
+        return result.ok ? result : { ok: false, error: result.errorCode, errorCode: result.errorCode, failureCause: result.refusalCause };
+      } catch (error) {
+        const failure = ActionExecuteFailureSchema.safeParse(error);
+        if (failure.success) return failure.data;
+        return { ok: false, errorCode: 'tool_failed', error: error instanceof Error ? error.message : 'Tool failed.' };
+      }
+    } };
+  } catch (error) {
+    await close().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function listAccountTools(request: ToolsRequestContext, overrides?: Partial<ToolsCommandDeps>): Promise<Readonly<{
@@ -169,7 +258,10 @@ export async function listAccountTools(request: ToolsRequestContext, overrides?:
       actionsSettings,
       isActionEnabled: (id) => isActionEnabledByActionsSettings(id, actionsSettings, { surface: request.surface }),
     });
-    const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers });
+    const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers,
+      ...(context.settingsByName ? { settingsByName: context.settingsByName } : {}),
+      ...(context.prepareTransport ? { prepareTransport: context.prepareTransport } : {}),
+    });
     if (!await context.operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
     return { builtInTools, customTools, warnings };
   } finally {
@@ -208,6 +300,8 @@ export async function callAccountTool(request: ToolsRequestContext & Readonly<{
       args: request.args,
       mcpServers: context.mcpServers,
       operationContext: context.operationContext,
+      ...(context.settingsByName?.[request.source]?.tools ? { policy: context.settingsByName[request.source].tools } : {}),
+      ...(context.prepareTransport ? { prepareTransport: context.prepareTransport } : {}),
     });
   } finally {
     context.cleanup();

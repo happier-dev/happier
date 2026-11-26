@@ -10,6 +10,8 @@ import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSe
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { RequestMeta } from '@modelcontextprotocol/sdk/types.js';
+import type { McpServerToolPolicyV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { isExposedCustomMcpTool } from './listResolvedCustomHappierTools';
 
 export async function callResolvedCustomHappierTool(params: Readonly<{
   source: string;
@@ -22,10 +24,14 @@ export async function callResolvedCustomHappierTool(params: Readonly<{
   prepareTransport?: PrepareMcpStdioTransport;
   requestMetadata?: RequestMeta;
   onprogress?: RequestOptions['onprogress'];
+  policy?: McpServerToolPolicyV1;
 }>): Promise<{ ok: true; result: unknown } | { ok: false; errorCode: string; error: string }> {
   const config = Object.hasOwn(params.mcpServers, params.source) ? params.mcpServers[params.source] : undefined;
   if (!config) {
     return { ok: false, errorCode: 'server_not_found', error: `Unknown MCP server source: ${params.source}` };
+  }
+  if (!isExposedCustomMcpTool(params.policy, params.toolName)) {
+    return { ok: false, errorCode: 'permission_denied', error: 'Tool execution was not approved.' };
   }
 
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');

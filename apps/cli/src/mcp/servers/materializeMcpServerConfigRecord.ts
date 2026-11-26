@@ -45,6 +45,8 @@ import type { McpRequestAuthCapability, McpRequestAuthFailureCode } from '@/mcp/
 import { canonicalMcpOAuthResourceUrlV1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthResourceV1';
 import { createProviderRedactionLease, type ProviderStreamingSanitizer } from '@/providers/spawn/redaction';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import type { SessionCustomMcpConnection } from '@/agent/tools/happierTools/customMcp/sessionCustomMcpClientPool';
+import type { RemoteBridgeConfig } from '@/mcp/bridges/connectRemoteMcpClient';
 
 export function listSelectedMcpSharedSecretReferences(
   serversByName: McpServerMaterializationV1['serversByName'],
@@ -75,6 +77,7 @@ export type MaterializeMcpServerConfigRecordResult = Readonly<{
   sanitizeDiagnosticText: (value: string) => string;
   createDiagnosticStreamingSanitizer: () => ProviderStreamingSanitizer;
   selectedMaterials?: readonly AgentLaunchSelectedMaterial[];
+  sessionConnections?: Readonly<Record<string, SessionCustomMcpConnection>>;
 }>;
 
 type Deps = Readonly<{
@@ -202,20 +205,14 @@ async function materializeStdioServer(params: Readonly<{
 }
 
 async function materializeRemoteServer(params: Readonly<{
-  server: McpServerCatalogEntryV1;
-  resolvedUrl: string;
-  urlRedactionValues: readonly string[];
+  remote: RemoteBridgeConfig;
   resolvedEnv: Record<string, string>;
-  resolvedHeaders: Record<string, string>;
   tmpDir: string | null;
   deps: Deps;
   writtenPaths: string[];
   assertCurrent?: () => Promise<void>;
-  requestAuth?: McpRequestAuthCapability;
   agentLaunchMaterials?: PrivateConfigMaterialization;
-}>): Promise<McpServerConfig | null> {
-  if (params.server.transport === 'stdio' || !params.server.remote) return null;
-
+}>): Promise<McpServerConfig> {
   const bridgeCommand = await (params.deps.resolveRemoteBridgeCommand?.() ?? resolveDefaultRemoteBridgeCommand());
 
   const configPath = await materializePrivateRuntimeConfig({
@@ -224,13 +221,7 @@ async function materializeRemoteServer(params: Readonly<{
     writtenPaths: params.writtenPaths,
     agentLaunchMaterials: params.agentLaunchMaterials,
     assertCurrent: params.assertCurrent,
-    payload: {
-      transport: params.server.transport,
-      url: params.resolvedUrl,
-      ...(params.urlRedactionValues.length > 0 ? { redactionValues: params.urlRedactionValues } : {}),
-      headers: params.resolvedHeaders,
-      ...(params.requestAuth ? { auth: params.requestAuth } : {}),
-    },
+    payload: params.remote,
   });
 
   const env = {
@@ -270,6 +261,8 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
   requestAuthByServerId?: Readonly<Record<string, McpRequestAuthCapability>>;
   requestAuthFailuresByServerId?: Readonly<Record<string, McpRequestAuthFailureCode>>;
   agentLaunchTarget?: AgentLaunchMaterializationTarget;
+  /** Host-only capture. Named servers have no native launch configuration. */
+  sessionConnections?: Readonly<{ hostOnlyNames: ReadonlySet<string> }>;
 }>): Promise<MaterializeMcpServerConfigRecordResult> {
   const strictMode = params.strictMode ?? params.resolved.strictMode;
   const processEnv = params.processEnv ?? process.env;
@@ -281,6 +274,8 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
   };
 
   const mcpServers: Record<string, McpServerConfig> = {};
+  const sessionConnections = params.sessionConnections
+    ? Object.create(null) as Record<string, SessionCustomMcpConnection> : undefined;
   const warnings: MaterializeMcpServerConfigRecordWarning[] = [];
   const writtenPaths: string[] = [];
   const agentLaunchMaterials: PrivateConfigMaterialization | undefined = params.agentLaunchTarget
@@ -372,7 +367,8 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
           warnings.push(warning);
           continue;
         }
-        mcpServers[serverName] = cfg.config;
+        if (sessionConnections) sessionConnections[serverName] = { kind: 'stdio', config: cfg.config };
+        if (!params.sessionConnections?.hostOnlyNames.has(serverName)) mcpServers[serverName] = cfg.config;
         continue;
       }
 
@@ -468,6 +464,15 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         warnings.push(warning);
         continue;
       }
+      const hostRemote: RemoteBridgeConfig = {
+        transport: server.transport,
+        url: resolvedUrl,
+        headers: resolvedHeaders,
+        redactionValues: urlRedactionValues,
+        ...(requestAuth ? { auth: requestAuth } : {}),
+      };
+      if (sessionConnections) sessionConnections[serverName] = { kind: 'remote', config: hostRemote };
+      if (params.sessionConnections?.hostOnlyNames.has(serverName)) continue;
       if (requestAuth && agentLaunchMaterials) {
         await assertCurrent();
         let document: ReturnType<typeof parseConnectedAccountRequestAuthCapabilityDocument> = null;
@@ -486,35 +491,21 @@ export async function materializeMcpServerConfigRecord(params: Readonly<{
         requestAuth = { ...requestAuth, capabilityFile };
       }
       const remoteCfg = await materializeRemoteServer({
-        server,
-        resolvedUrl,
-        urlRedactionValues,
+        remote: { ...hostRemote, ...(requestAuth ? { auth: requestAuth } : {}) },
         resolvedEnv,
-        resolvedHeaders,
         tmpDir: params.tmpDir,
         deps,
         writtenPaths,
-        requestAuth,
         assertCurrent,
         agentLaunchMaterials,
       });
-
-      if (!remoteCfg) {
-        const warning: MaterializeMcpServerConfigRecordWarning = {
-          serverName,
-          code: 'invalid_server',
-          detail: 'remote bridge unavailable',
-        };
-        if (strictMode) throw new Error(`Failed to materialize MCP server ${serverName}: ${warning.detail}`);
-        warnings.push(warning);
-        continue;
-      }
 
       mcpServers[serverName] = remoteCfg;
     }
 
     await assertCurrent();
     return { mcpServers, warnings, cleanup, sanitizeDiagnosticText: diagnosticRedaction.redact,
+      ...(sessionConnections ? { sessionConnections } : {}),
       ...(agentLaunchMaterials ? { selectedMaterials: Object.freeze([...agentLaunchMaterials.selectedMaterials]) } : {}),
       createDiagnosticStreamingSanitizer: diagnosticRedaction.createStreamingSanitizer };
   } catch (error) {

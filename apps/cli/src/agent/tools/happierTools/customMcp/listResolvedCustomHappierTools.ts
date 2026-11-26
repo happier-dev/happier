@@ -1,6 +1,8 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
+import type { McpServerToolPolicyV1, McpServerToolsSnapshotV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
 
 import type { McpServerConfig } from '@/agent';
 import { createCustomMcpClientTransport } from './createCustomMcpClientTransport';
@@ -16,6 +18,28 @@ export type ResolvedCustomHappierToolWarning = Readonly<{
   source: string;
   error: string;
 }>;
+
+export type CustomMcpDiscoverySettings = Readonly<{
+  tools?: McpServerToolPolicyV1;
+  toolsSnapshot?: McpServerToolsSnapshotV1;
+}>;
+
+export function isExposedCustomMcpTool(policy: McpServerToolPolicyV1 | undefined, toolName: string): boolean {
+  return resolveMcpToolDecisionV1({ policy, toolName, permissionMode: 'default' }).exposed;
+}
+
+export function projectDiscoveredCustomMcpTools(
+  source: string,
+  tools: readonly Omit<ResolvedCustomHappierTool, 'source'>[],
+  policy: McpServerToolPolicyV1 | undefined,
+): ResolvedCustomHappierTool[] {
+  return tools.filter(tool => isExposedCustomMcpTool(policy, tool.name)).map(tool => ({
+    source,
+    name: tool.name,
+    ...(tool.description === undefined ? {} : { description: tool.description }),
+    ...(tool.inputSchema === undefined ? {} : { inputSchema: tool.inputSchema }),
+  }));
+}
 
 async function listServerTools(serverName: string, config: McpServerConfig, baseEnv: NodeJS.ProcessEnv, signal?: AbortSignal,
   prepareTransport?: PrepareMcpStdioTransport): Promise<ResolvedCustomHappierTool[]> {
@@ -42,6 +66,7 @@ export async function listResolvedCustomHappierTools(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   prepareTransport?: PrepareMcpStdioTransport;
+  settingsByName?: Readonly<Record<string, CustomMcpDiscoverySettings>>;
 }>): Promise<Readonly<{
   tools: ReadonlyArray<ResolvedCustomHappierTool>;
   warnings: ReadonlyArray<ResolvedCustomHappierToolWarning>;
@@ -52,7 +77,10 @@ export async function listResolvedCustomHappierTools(params: Readonly<{
     if (serverName === 'happier') continue;
     params.signal?.throwIfAborted();
     try {
-      tools.push(...await listServerTools(serverName, config, params.processEnv ?? sessionProcessEnvironment(), params.signal, params.prepareTransport));
+      const settings = params.settingsByName?.[serverName];
+      const listed = settings?.toolsSnapshot?.tools ?? await listServerTools(serverName, config,
+        params.processEnv ?? sessionProcessEnvironment(), params.signal, params.prepareTransport);
+      tools.push(...projectDiscoveredCustomMcpTools(serverName, listed, settings?.tools));
     } catch (error) {
       params.signal?.throwIfAborted();
       if (error instanceof PluginError) throw error;

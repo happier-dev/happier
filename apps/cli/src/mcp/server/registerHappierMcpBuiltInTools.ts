@@ -235,6 +235,7 @@ export function registerHappierMcpBuiltInTools(
         mcpToolCallIdMetaKey?: string;
         surface: BuiltInHappierToolsSurface;
         happierToolsEnabled?: boolean;
+        sessionToolsBootstrap?: boolean;
         actionsSettings?: ActionsSettingsV1 | null;
         getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
         pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -256,6 +257,7 @@ export function registerHappierMcpBuiltInTools(
         inventory: createHappierToolInventory({
             surface: params.surface,
             happierToolsEnabled: params.happierToolsEnabled,
+            sessionToolsBootstrap: params.sessionToolsBootstrap,
             isActionEnabled,
             actionsSettings,
             pluginToolCatalog: params.pluginToolCatalog,

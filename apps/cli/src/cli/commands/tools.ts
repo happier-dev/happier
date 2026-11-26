@@ -7,14 +7,18 @@ import { wantsJson, printJsonEnvelope, writeJsonStdout } from '@/cli/output/json
 import type { ToolsCommandDeps, AccountToolCallResult, listAccountTools } from './toolsAccount';
 import { fail } from '@happier-dev/cli-common/output';
 import { resolveShellBridgeActionSurfaceV1 as resolveToolsCommandSurface } from '@/cli/actions/shellBridgeActionSurface';
-import { callSessionMcpTool, listSessionMcpTools } from './toolsSessionMcp';
+import { callSessionMcpToolByTarget, callSessionToolOperation, connectSessionToolScript, hasSessionMcpContext,
+  listSessionMcpTools } from './toolsSessionMcp';
 import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalContext';
+import { logger } from '@/ui/logger';
 import { projectActionFailureForAgentV1, readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 export type { ToolsCommandDeps } from './toolsAccount';
 
 type AccountToolsListing = Awaited<ReturnType<typeof listAccountTools>>;
 type CustomToolEntry = AccountToolsListing['customTools'][number];
-type ToolCallResult = AccountToolCallResult | Awaited<ReturnType<typeof callSessionMcpTool>>;
+type ToolCallResult = AccountToolCallResult | Awaited<ReturnType<typeof callSessionMcpToolByTarget>>;
 
 function getFlagValue(args: readonly string[], flag: string): string | null {
   const index = args.indexOf(flag);
@@ -76,6 +80,61 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
   const useSessionMcp = surface === 'agent' && supportsSessionMcpLocalTransport();
 
   try {
+    if (subcommand === 'run') {
+      if (surface === 'agent' && !useSessionMcp) {
+        process.exitCode = Math.max(process.exitCode ?? 0, 1);
+        await writeJsonStdout({ ok: false, error: { code: 'session_requester_unavailable',
+          message: 'Session tool transport is unavailable.' }, calls: [] });
+        return;
+      }
+      const { runToolsScript, refuseToolsScript } = await import('./toolsRun');
+      await runToolsScript({ argv: args.slice(1), signal, connect: async scriptSignal => {
+        if (surface === 'cli') {
+          const { connectAccountToolScript } = await import('./toolsAccount');
+          return connectAccountToolScript({ sessionId: getFlagValue(args, '--session-id'),
+            directory: getFlagValue(args, '--directory') ?? process.cwd(), json }, scriptSignal, overrides);
+        }
+        const connection = await connectSessionToolScript(scriptSignal);
+        if (!connection.ok) return refuseToolsScript(connection.errorCode, connection.error,
+          'failureCause' in connection ? connection.failureCause : undefined);
+        if (!connection.supported) {
+          await connection.close().catch(() => logger.debug('[tools] Session connection cleanup failed'));
+          return refuseToolsScript('feature_disabled', 'Script runner is disabled for this Session.');
+        }
+        return connection;
+      } });
+      return;
+    }
+
+    if (subcommand === 'search' || subcommand === 'describe' || (subcommand === 'list' && args.includes('--query'))) {
+      const operation = subcommand === 'describe' ? 'describe' : 'search';
+      const query = getFlagValue(args, '--query') ?? (args[1] && !args[1].startsWith('-') ? args[1] : null);
+      const input = operation === 'search' ? (query ? { query } : {})
+        : { source: requireFlagValue(args, '--source'), tool: requireFlagValue(args, '--tool') };
+      const activeSignal = signal ?? new AbortController().signal;
+      const result = await (async () => {
+        if (useSessionMcp || (surface === 'agent' && hasSessionMcpContext())) return callSessionToolOperation(operation, input, signal);
+        if (surface === 'agent') return { ok: false, errorCode: 'session_requester_unavailable', error: 'Session tool transport is unavailable.' } as const;
+        const { connectAccountToolScript } = await import('./toolsAccount');
+        const connection = await connectAccountToolScript({ sessionId: getFlagValue(args, '--session-id'),
+          directory: getFlagValue(args, '--directory') ?? process.cwd(), json }, activeSignal, overrides);
+        try { return await connection.execute(operation, input, activeSignal); }
+        finally {
+          try { await connection.close(); }
+          catch { logger.debug('[tools] Account connection cleanup failed'); }
+        }
+      })();
+      if (result.ok) {
+        if (json) await printJsonEnvelope({ ok: true, kind, data: result.result });
+        else await writeJsonStdout(result.result, { pretty: true });
+      } else if (json) await printJsonEnvelope({ ok: false, kind, error: {
+        code: result.errorCode, message: result.error,
+        ...('failureCause' in result && result.failureCause ? { failureCause: result.failureCause } : {}),
+      } }, { exitCode: 1 });
+      else throw new Error(result.error);
+      return;
+    }
+
     if (subcommand === 'list') {
       if (useSessionMcp) {
         const listed = await listSessionMcpTools(signal);
@@ -143,14 +202,17 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       const toolName = requireFlagValue(args, '--tool');
       const argsJson = requireFlagValue(args, '--args-json');
       const parsedArgs = JSON.parse(argsJson);
+      const qualifiedAction = source === 'happier'
+        && (ActionIdSchema.safeParse(toolName).success || Boolean(parseQualifiedPluginActionId(toolName)));
 
       let result: ToolCallResult;
       if (useSessionMcp) {
         const toolCallId = getFlagValue(args, '--tool-call-id');
-        result = await callSessionMcpTool({ source, toolName, args: parsedArgs,
-          ...(toolCallId ? { toolCallId } : {}),
-          ...(signal ? { signal } : {}),
-        });
+        // Legacy exact shell commands use the stable named-tool binding.
+        // Qualified Action IDs and configured MCP sources use Session dispatch.
+        result = await callSessionMcpToolByTarget({ source, toolName, args: parsedArgs,
+          ...(toolCallId ? { toolCallId } : {}), signal,
+        }, source !== 'happier' || qualifiedAction);
       } else {
         const { callAccountTool } = await import('./toolsAccount');
         result = await callAccountTool({
@@ -159,14 +221,16 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           surface,
           json,
           source,
-          toolName,
-          args: parsedArgs,
+          toolName: surface === 'cli' && qualifiedAction ? 'action_execute' : toolName,
+          args: surface === 'cli' && qualifiedAction ? { actionId: toolName, input: parsedArgs } : parsedArgs,
           toolCallId: getFlagValue(args, '--tool-call-id'),
           ...(signal ? { signal } : {}),
         }, overrides);
       }
 
-      if (source === 'happier' && !result.ok) result = { ...result, ...projectActionFailureForAgentV1(result) };
+      if (source === 'happier' && surface === 'agent' && !result.ok) {
+        result = { ...result, ...projectActionFailureForAgentV1(result) };
+      }
 
       if (json) {
         if (result.ok) {

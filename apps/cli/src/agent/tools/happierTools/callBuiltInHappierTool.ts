@@ -15,6 +15,7 @@ import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveMcpToolCallRequestTimeoutMs } from '@/mcp/mcpToolCallRequestOptions';
 import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { sessionActionTransportUnavailable } from '@/mcp/runtime/sessionMcpLocalContext';
 
 function normalizeNativeAgentToolResponse(value: unknown): Awaited<ReturnType<typeof dispatchBuiltInHappierTool>> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -45,9 +46,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
   readCredentials?: () => Promise<StoredCredentials | null>;
 }>): Promise<Awaited<ReturnType<typeof dispatchBuiltInHappierTool>>> {
   params.signal?.throwIfAborted();
-  if (params.surface === 'agent' && supportsSessionMcpLocalTransport()) {
-    return { ok: false, errorCode: 'not_authenticated', error: 'Authenticated Session MCP context is required.' };
-  }
+  if (params.surface === 'agent' && supportsSessionMcpLocalTransport()) return sessionActionTransportUnavailable();
   const credentialSnapshot = params.readCredentials
     ? await params.readCredentials().catch(() => null)
     : params.credentials;
@@ -110,32 +109,66 @@ export async function callBuiltInHappierTool(params: Readonly<{
     return normalizeNativeAgentToolResponse(response);
   }
   const surface = 'cli';
+  const harness = await openCliHappierToolActionHarness({ credentials: credentialSnapshot, rawSession,
+    readCredentials: params.readCredentials });
+  if (!harness.ok) return harness;
+  const { executor, actionToolBridge, actionsSettingsProvider, pluginToolCatalog, sessionMachineId, callerPermissionMode } = harness;
+  return await dispatchBuiltInHappierTool({
+    toolName: params.toolName,
+    args: params.args,
+    sessionId,
+    sessionMachineId,
+    surface,
+    ...(params.signal ? { signal: params.signal } : {}),
+    getActionsSettings: actionsSettingsProvider.getActionsSettings,
+    pluginToolCatalog,
+    deps: {
+      changeTitle: createChangeTitleToolHandler({
+        executor,
+        surface,
+        resolveCallerPermissionMode: () => callerPermissionMode,
+      }),
+      executeActionByToolName: actionToolBridge.executeActionByToolName,
+      resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, sessionId),
+      isActionEnabled: actionToolBridge.isActionEnabled,
+    },
+  });
+}
+
+export async function openCliHappierToolActionHarness(params: Readonly<{
+  credentials: StoredCredentials;
+  rawSession: { machineId?: string | null };
+  readCredentials?: () => Promise<StoredCredentials | null>;
+  readFeatures?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['resolveServerFeaturesSnapshot'];
+}>) {
+  const surface = 'cli';
   const callerPermissionMode = null;
-  const sessionMachineId = typeof rawSession.machineId === 'string' && rawSession.machineId.trim().length > 0
-    ? rawSession.machineId.trim()
+  const sessionMachineId = typeof params.rawSession.machineId === 'string' && params.rawSession.machineId.trim().length > 0
+    ? params.rawSession.machineId.trim()
     : null;
-  await ensureCliActionPolicySettings(credentialSnapshot);
+  await ensureCliActionPolicySettings(params.credentials);
   if (params.readCredentials) {
     const currentCredentials = await params.readCredentials().catch(() => null);
-    if (!sameStoredCredentials(credentialSnapshot, currentCredentials)) {
-      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+    if (!sameStoredCredentials(params.credentials, currentCredentials)) {
+      return { ok: false as const, errorCode: 'not_authenticated', error: 'not_authenticated' };
     }
   }
   const actionsSettingsProvider = createActionSettingsProvider({
-    scopeKey: resolveAccountSettingsScopeKeyForToken(credentialSnapshot.token),
+    scopeKey: resolveAccountSettingsScopeKeyForToken(params.credentials.token),
   });
   const isActionEnabled = (id: Parameters<typeof isActionEnabledByActionsSettings>[0]) =>
     isActionEnabledByActionsSettings(id, actionsSettingsProvider.getActionsSettings(), { surface });
   const executor = createCliActionExecutorFromCredentials({
-    credentials: credentialSnapshot,
+    credentials: params.credentials,
     actionsSettingsProvider,
     serverId: configuration.activeServerId,
     serverApiUrl: resolveServerHttpBaseUrl(),
+    ...(params.readFeatures ? { resolveServerFeaturesSnapshot: params.readFeatures } : {}),
     ...(params.readCredentials
       ? {
           readCredentials: async () => {
             const currentCredentials = await params.readCredentials!().catch(() => null);
-            return sameStoredCredentials(credentialSnapshot, currentCredentials)
+            return sameStoredCredentials(params.credentials, currentCredentials)
               ? currentCredentials
               : null;
           },
@@ -160,24 +193,5 @@ export async function callBuiltInHappierTool(params: Readonly<{
     defaultSessionMachineId: sessionMachineId,
   });
 
-  return await dispatchBuiltInHappierTool({
-    toolName: params.toolName,
-    args: params.args,
-    sessionId,
-    sessionMachineId,
-    surface,
-    ...(params.signal ? { signal: params.signal } : {}),
-    getActionsSettings: actionsSettingsProvider.getActionsSettings,
-    pluginToolCatalog,
-    deps: {
-      changeTitle: createChangeTitleToolHandler({
-        executor,
-        surface,
-        resolveCallerPermissionMode: () => callerPermissionMode,
-      }),
-      executeActionByToolName: actionToolBridge.executeActionByToolName,
-      resolveActionOptions: (args) => actionToolBridge.resolveActionOptions(args, sessionId),
-      isActionEnabled: actionToolBridge.isActionEnabled,
-    },
-  });
+  return { ok: true as const, executor, actionToolBridge, actionsSettingsProvider, pluginToolCatalog, sessionMachineId, callerPermissionMode };
 }

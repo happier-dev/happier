@@ -26,7 +26,7 @@ const inputSchemas = new WeakMap<object, Map<string, z.ZodMiniType>>();
 export function toMcpToolInputSchema(params: Readonly<{
     actionId: string | null | undefined;
     inputSchema: unknown;
-    sessionId: string;
+    sessionId?: string;
     sessionMachineId?: string | null;
     sessionRootPath?: string | null;
     contextualDefaults: HappierBuiltInToolDefinition['contextualDefaults'];

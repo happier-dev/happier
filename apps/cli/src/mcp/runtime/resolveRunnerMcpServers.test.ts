@@ -515,7 +515,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
           await expect(stat(calledPath)).rejects.toMatchObject({ code: 'ENOENT' });
         }
         const listed = await connection.client.listTools({ _meta: { 'happier/tool-sources': true } });
-        expect(listed.tools.filter(tool => tool._meta?.['happier/tool-source'] === 'selected').map(tool => tool.name)).toEqual(['echo']);
+        expect(listed.tools.filter(tool => tool._meta?.['happier/tool-source'] === 'selected').map(tool => tool.name)).toEqual([]);
         clearActiveAccountSettingsSnapshot();
         await expect(connection.client.listTools({ _meta: { 'happier/tool-sources': true } }))
           .rejects.toMatchObject({ data: { errorCode: 'mcp_catalog_unavailable' } });

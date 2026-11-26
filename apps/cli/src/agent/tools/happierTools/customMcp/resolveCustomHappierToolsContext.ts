@@ -12,6 +12,8 @@ import { materializeMcpServerConfigRecord } from '@/mcp/servers/materializeMcpSe
 import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/savedSecretCatalogRead";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { assertMcpStdioExecutionSupported, readMcpExecutionSource, type McpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
+import { isMcpPluginItemIdV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import type { CustomMcpDiscoverySettings } from './listResolvedCustomHappierTools';
 
 export async function resolveCustomHappierToolsContext(params: Readonly<{
   credentials: StoredCredentials;
@@ -25,7 +27,10 @@ export async function resolveCustomHappierToolsContext(params: Readonly<{
   localWorkflow?: boolean;
   readExecutionSource?: (signal?: AbortSignal) => Promise<McpExecutionSource>;
   admittedStdio?: AdmittedMcpStdioRuntime;
-}>): Promise<Awaited<ReturnType<typeof materializeMcpServerConfigRecord>> & Readonly<{ prepareTransport?: PrepareMcpStdioTransport }>> {
+}>): Promise<Awaited<ReturnType<typeof materializeMcpServerConfigRecord>> & Readonly<{
+  prepareTransport?: PrepareMcpStdioTransport;
+  settingsByName?: Readonly<Record<string, CustomMcpDiscoverySettings>>;
+}>> {
   const snapshot = params.accountSettingsSnapshot ?? null;
   const context = params.operationContext;
   const executionSource = params.readExecutionSource ? await params.readExecutionSource(params.signal)
@@ -64,12 +69,18 @@ export async function resolveCustomHappierToolsContext(params: Readonly<{
     signal: params.signal,
     agentLaunchTarget: params.admittedStdio?.target,
     strictMode: resolved.strictMode,
+    sessionConnections: { hostOnlyNames: new Set() },
   });
   if (!await context.isCurrent()) {
     materialized.cleanup();
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
-  return { ...materialized,
+  const settingsByName = Object.fromEntries(Object.entries(resolved.serversByName).flatMap(([name, server]) => {
+    if (!server.enabled) return [];
+    const configured = isMcpPluginItemIdV1(server.config.id) ? settings.pluginServers?.[server.config.id] : server.config;
+    return configured ? [[name, configured]] : [];
+  }));
+  return { ...materialized, settingsByName,
     ...(params.admittedStdio ? { prepareTransport: ((config, signal) => params.admittedStdio!.prepareTransport({
       config, selectedMaterials: materialized.selectedMaterials ?? [], signal,
     })) satisfies PrepareMcpStdioTransport } : {}),

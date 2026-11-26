@@ -220,6 +220,7 @@ export function registerHappierSessionAgentToolRpc(
         client, actionSettingsProvider,
         happierToolsEnabled: opts?.happierToolsEnabled,
         hasAuthenticatedRuntime: (opts?.sessionCredentials ?? opts?.credentials ?? null) !== null,
+        readSessionToolsBootstrap: () => opts?.sessionToolsBridge?.codeMode?.bootstrap === true,
         authorityScope: opts?.authorityScope, requiredDirectActionIds: opts?.requiredDirectActionIds,
         pluginRuntimeRegistryLease: opts?.pluginRuntimeRegistryLease,
     });
@@ -303,6 +304,7 @@ export async function startHappyServer(
         client, actionSettingsProvider,
         happierToolsEnabled: opts?.happierToolsEnabled,
         hasAuthenticatedRuntime: (opts?.sessionCredentials ?? opts?.credentials ?? null) !== null,
+        readSessionToolsBootstrap: () => opts?.sessionToolsBridge?.codeMode?.bootstrap === true,
         authorityScope: opts?.authorityScope,
         requiredDirectActionIds: opts?.requiredDirectActionIds,
         pluginRuntimeRegistryLease: opts?.pluginRuntimeRegistryLease,

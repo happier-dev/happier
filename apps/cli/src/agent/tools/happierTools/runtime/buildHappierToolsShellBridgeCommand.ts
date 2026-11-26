@@ -72,7 +72,8 @@ export function parseTrustedHappierToolsShellBridgeCommand(
   command: string,
 ): HappierToolsShellBridgeCommand | null {
   const parsed = parseHappierToolsShellBridgeCommand(command);
-  if (!parsed) return null;
+  // Only exact list and call commands can inherit shell bridge trust.
+  if (!parsed || (parsed.kind !== 'list' && parsed.kind !== 'call')) return null;
   const expected = buildHappierToolsShellBridgeCommand(buildCanonicalBridgeArgs(parsed));
   return parsed.rawCommand === expected ? parsed : null;
 }

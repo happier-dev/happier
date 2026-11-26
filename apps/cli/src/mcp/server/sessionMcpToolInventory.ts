@@ -26,6 +26,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
     hasAuthenticatedRuntime: boolean;
     authorityScope?: 'account' | 'session';
     requiredDirectActionIds?: readonly ActionId[];
+    readSessionToolsBootstrap?: () => boolean;
     pluginRuntimeRegistryLease?: PluginRuntimeRegistryLease;
     /** Containing bridge lifetime, independent of replaceable native incarnations. */
     lifetimeSignal?: AbortSignal;
@@ -128,6 +129,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
             serverFeatures: params.client.getServerFeaturesSnapshot?.(),
             sessionMemoryEnabled: surface === 'voice' ? undefined : readSessionMemoryEnabledV1(params.client.getMetadataSnapshot?.()),
             happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()),
+            sessionToolsBootstrap: params.readSessionToolsBootstrap?.(),
             sessionMachineId: location?.machineId ?? null,
             sessionRootPath: location?.path ?? null,
             buildPolicy: readCliFeatureBuildPolicyInputs(env),
@@ -149,6 +151,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
                 surface,
                 hasAuthenticatedRuntime: params.hasAuthenticatedRuntime,
                 authorityScope: params.authorityScope,
+                sessionToolsBootstrap: inputs.sessionToolsBootstrap,
                 readSessionMemoryEnabled: () => inputs.sessionMemoryEnabled,
                 readServerFeaturesSnapshot: () => inputs.serverFeatures,
                 env,
@@ -159,6 +162,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
                 sessionRootPath: inputs.sessionRootPath,
                 inventory: createHappierToolInventory({
                     surface, isActionEnabled, actionsSettings: inputs.actionsSettings,
+                    sessionToolsBootstrap: inputs.sessionToolsBootstrap,
                     happierToolsEnabled: inputs.happierToolsEnabled,
                     pluginToolCatalog, requiredDirectActionIds: params.requiredDirectActionIds,
                 }),

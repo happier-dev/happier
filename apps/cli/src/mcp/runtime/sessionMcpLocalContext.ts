@@ -13,6 +13,7 @@ export const SESSION_MCP_TOOL_SOURCES_META_KEY = 'happier/tool-sources';
 export const SESSION_MCP_TOOL_SOURCE_META_KEY = 'happier/tool-source';
 export const SESSION_MCP_TOOL_WARNINGS_META_KEY = 'happier/tool-warnings';
 export const SESSION_MCP_ACTION_REQUEST_ID_META_KEY = 'happier/action-request-id';
+export const SESSION_MCP_CODE_MODE_CAPABILITY = 'happier/code-mode';
 
 /** Unix-socket transport (and Agent isolation); Windows uses the credentialed route. */
 export function supportsSessionMcpLocalTransport(): boolean {

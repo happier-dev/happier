@@ -1,9 +1,16 @@
 import type { ResolvedCustomHappierTool, ResolvedCustomHappierToolWarning } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
 import type { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/customMcp/callResolvedCustomHappierTool';
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, ListToolsResultSchema, McpError, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, CallToolResultSchema, ErrorCode, ListToolsRequestSchema, ListToolsResultSchema, McpError, ProgressSchema, ToolSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { RequestMeta } from '@modelcontextprotocol/sdk/types.js';
 import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
+import { RemoteMcpAuthenticationRequiredError } from '@/mcp/bridges/remoteMcpAuthenticationFailure';
+import { createSessionCustomMcpClientPool, type SessionCustomMcpConnection } from '@/agent/tools/happierTools/customMcp/sessionCustomMcpClientPool';
+import { isExposedCustomMcpTool, projectDiscoveredCustomMcpTools, type CustomMcpDiscoverySettings } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
+import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency';
 import { SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY,
   SESSION_MCP_TOOL_WARNINGS_META_KEY } from './sessionMcpLocalContext';
 
@@ -19,13 +26,139 @@ export function readSessionMcpToolCallId(metadata: Readonly<Record<string, unkno
 
 /** Host-owned selected MCP profile. Agent clients never receive its credentials. */
 export type SessionMcpCustomToolsBridge = Readonly<{
+  /** Computed once by the Session profile owner. */
+  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean }>;
   list: (signal?: AbortSignal) => Promise<Readonly<{
     tools: readonly ResolvedCustomHappierTool[];
     warnings: readonly ResolvedCustomHappierToolWarning[];
   }>>;
+  describe?: (source: string, name: string, signal?: AbortSignal) => Promise<ResolvedCustomHappierTool | undefined>;
   call: (input: Readonly<{ source: string; toolName: string; args: unknown; toolCallId?: string;
     requestMetadata?: RequestMeta; onprogress?: RequestOptions['onprogress'] }>, signal?: AbortSignal) => ReturnType<typeof callResolvedCustomHappierTool>;
 }>;
+
+export type SessionCustomMcpServer = Readonly<{
+  id: string;
+  source: string;
+  connection: SessionCustomMcpConnection;
+  settings?: CustomMcpDiscoverySettings;
+}>;
+
+type CustomCallInput = Parameters<SessionMcpCustomToolsBridge['call']>[0];
+type CustomCallResult = Awaited<ReturnType<SessionMcpCustomToolsBridge['call']>>;
+const permissionDenied = { ok: false, errorCode: 'permission_denied', error: 'Tool execution was not approved.' } as const;
+type CustomCallAdmission = Extract<CustomCallResult, { ok: false }> | Readonly<{
+  ok: true;
+  recordUsage?: (startMs: number, endMs: number) => void;
+}>;
+// Each unsnapshotted probe can open an external process. Bound the number
+// opened concurrently by one discovery request.
+const MCP_DISCOVERY_PROBE_CONCURRENCY = 4;
+
+export function createSessionMcpCustomToolsBridge(input: Readonly<{
+  pool: ReturnType<typeof createSessionCustomMcpClientPool>;
+  readServers: () => ReadonlyMap<string, SessionCustomMcpServer>;
+  authorize: (request: CustomCallInput, signal: AbortSignal) => Promise<CustomCallAdmission>;
+  isConfined: () => boolean;
+}>): SessionMcpCustomToolsBridge {
+  const probes = new Map<string, Promise<readonly ResolvedCustomHappierTool[]>>();
+  function raceSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(
+        value => { signal.removeEventListener("abort", onAbort); resolve(value); },
+        error => { signal.removeEventListener("abort", onAbort); reject(error); },
+      );
+    });
+  }
+  function probe(server: SessionCustomMcpServer, signal: AbortSignal): Promise<readonly ResolvedCustomHappierTool[]> {
+    let pending = probes.get(server.id);
+    if (!pending) {
+      const poolSignal = input.pool.signal;
+      pending = (async () => {
+        const entry = await input.pool.get(server.id, server.connection);
+        const tools: ResolvedCustomHappierTool[] = [];
+        let cursor: string | undefined;
+        try {
+          do {
+            const result = await entry.client.listTools(cursor ? { cursor } : undefined, { signal: poolSignal });
+            const exposed = result.tools.filter(tool => isExposedCustomMcpTool(server.settings?.tools, tool.name));
+            const page = ListToolsResultSchema.parse(entry.redactOutput({ tools: exposed }, ListToolsResultSchema));
+            tools.push(...page.tools.map(tool => ({ ...tool, source: server.source })));
+            cursor = result.nextCursor;
+          } while (cursor);
+        } catch (error) {
+          throw entry.redactError(error);
+        }
+        return tools;
+      })();
+      probes.set(server.id, pending);
+      void pending.catch(() => { if (probes.get(server.id) === pending) probes.delete(server.id); });
+    }
+    return raceSignal(pending, signal);
+  }
+  return {
+    async list(signal) {
+      const active = await input.pool.admit(signal);
+      if (input.isConfined()) return { tools: [], warnings: [] };
+      const entries = await mapWithConcurrency([...input.readServers().values()], MCP_DISCOVERY_PROBE_CONCURRENCY, async server => {
+        try {
+          const tools = server.settings?.toolsSnapshot
+            ? projectDiscoveredCustomMcpTools(server.source, server.settings.toolsSnapshot.tools, server.settings.tools)
+            : await probe(server, active);
+          return { tools };
+        } catch (error) {
+          active.throwIfAborted();
+          if (error instanceof PluginError) throw error;
+          return { warning: { source: server.source, error: error instanceof Error ? error.message : String(error) } };
+        }
+      });
+      active.throwIfAborted();
+      return {
+        tools: entries.flatMap(entry => entry.tools ?? []),
+        warnings: entries.flatMap(entry => entry.warning ? [entry.warning] : []),
+      };
+    },
+    async describe(source, name, signal) {
+      const active = await input.pool.admit(signal);
+      const server = input.readServers().get(source);
+      if (!server || input.isConfined() || !isExposedCustomMcpTool(server.settings?.tools, name)) return undefined;
+      return (await probe(server, active)).find(tool => tool.name === name);
+    },
+    async call(request, signal) {
+      const active = await input.pool.admit(signal);
+      const server = input.readServers().get(request.source);
+      if (!server) return { ok: false, errorCode: 'server_not_found', error: 'Unknown MCP server source.' };
+      if (input.isConfined() || !isExposedCustomMcpTool(server.settings?.tools, request.toolName)) return permissionDenied;
+      const admission = await input.authorize(request, active);
+      if (!admission.ok) return admission;
+      active.throwIfAborted();
+      let entry: Awaited<ReturnType<typeof input.pool.get>> | undefined;
+      try {
+        entry = await input.pool.get(server.id, server.connection);
+        const startMs = admission.recordUsage ? Date.now() : 0;
+        const result = await callMcpToolWithResolvedTimeout({
+          client: entry.client, toolName: request.toolName, args: request.args,
+          signal: active, requestMetadata: request.requestMetadata,
+          onprogress: request.onprogress && (progress => request.onprogress!(ProgressSchema.parse(entry!.redactOutput(progress, ProgressSchema)))),
+        });
+        admission.recordUsage?.(startMs, Date.now());
+        return { ok: true, result: CallToolResultSchema.parse(entry.redactOutput(result, CallToolResultSchema)) };
+      } catch (error) {
+        active.throwIfAborted();
+        if (error instanceof PluginError) throw error;
+        const safe = entry?.redactError(error) ?? error;
+        const errorCode = safe instanceof RemoteMcpAuthenticationRequiredError ? safe.data.code
+          : safe instanceof CredentialRequestRedirectError ? safe.code
+          : safe instanceof Error && 'code' in safe && safe.code === 'mcp_resource_mismatch' ? safe.code
+          : 'tool_call_failed';
+        return { ok: false, errorCode, error: safe instanceof Error ? safe.message : String(safe) };
+      }
+    },
+  };
+}
 
 type McpHandler = (request: unknown, extra: unknown) => unknown;
 

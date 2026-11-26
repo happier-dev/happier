@@ -8,6 +8,7 @@ import { resolveCliFeatureDecisionEnvironment } from '@/features/featureDecision
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { isSessionToolsBootstrapAction } from '@/agent/tools/happierTools/actionToolCatalog';
 
 import {
   createActionSettingsProvider,
@@ -71,6 +72,7 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
   authorityScope?: 'account' | 'session';
   /** Supplied only by a bound Session host; evaluated again for each call. */
   readSessionMemoryEnabled?: () => boolean;
+  sessionToolsBootstrap?: boolean;
   readServerFeaturesSnapshot: () => CliServerFeaturesSnapshot | undefined;
   env?: NodeJS.ProcessEnv;
 }>): ActionEnablementReader {
@@ -83,6 +85,7 @@ export function createMcpActionEnablementWithServerFeatureAvailability(params: R
     // A Voice Run's host Session is its carrier. The App owns the working Session's Memory choice.
     if (params.surface !== 'voice' && !isActionEnabledWithSessionMemory(id, params.readSessionMemoryEnabled?.())) return { enabled: false };
     if (!isEnabledByPolicy(id)) return { enabled: false };
+    if (isSessionToolsBootstrapAction(id)) return { enabled: params.sessionToolsBootstrap === true };
     const featureId = getActionRequiredServerFeatureId(id);
     if (featureId === null) return { enabled: true };
     if (!params.hasAuthenticatedRuntime) return { enabled: false, authenticatedRuntime: false };

@@ -23,6 +23,7 @@ import { readActionSessionTargetField } from '@happier-dev/protocol/actions/exec
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { CurrentProcessPluginActionExecutionAttempt, OccurrenceBoundActionExecutorContext } from '@/session/actions/createDaemonPluginActionExecutor';
+import { isSessionToolsBootstrapAction } from '@/agent/tools/happierTools/actionToolCatalog';
 
 type ActionExecutor = Readonly<{
   execute(actionId: ActionId, input: unknown, context?: OccurrenceBoundActionExecutorContext): Promise<ActionExecuteResult>;
@@ -118,11 +119,13 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       }
       // The bound host holds its own Board stored-content key. Other
       // Session readers use the credentialed owner, including reads of children.
+      // Tool discovery and dispatch use this host's admitted MCP profile.
       const boundRead = requestedSessionId === params.client.sessionId
         && (BOUND_SESSION_RPC_READS.has(actionId)
           || ACTION_ID_FAMILIES_V1.session_board.some(id => id === actionId)
           || ACTION_ID_FAMILIES_V1.subagent_registry.some(id => id === actionId)
-          || ACTION_ID_FAMILIES_V1.session_permissions.some(id => id === actionId));
+          || ACTION_ID_FAMILIES_V1.session_permissions.some(id => id === actionId)
+          || isSessionToolsBootstrapAction(actionId));
       const sessionRead = executionPlacement === 'session' && !boundRead && spec?.sideEffectClass === 'read';
       // These lifecycle owners resolve credentialed Session/Machine transport.
       // Forward through the same capability channel as reads; the credentialed
