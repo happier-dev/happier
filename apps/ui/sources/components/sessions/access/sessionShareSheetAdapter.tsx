@@ -252,7 +252,9 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                         const reason = option.blockedReason;
                         // A choice refused with its own way forward (the sign-in a Team needs) says it whole under its
                         // name and offers that step where its check would be, as the Share Team row does.
-                        const statedUnderContext = contextReason !== undefined && reason === contextReason;
+                        // The row under the context already says this reason: equal reasons may be separate objects.
+                        const statedUnderContext = contextReason !== undefined && reason !== undefined
+                            && reason.code === contextReason.code && reason.message === contextReason.message;
                         const resolution = option.teamId === context.primaryTeamId || statedUnderContext ? undefined : reason?.action;
                         return <Item
                             key={option.teamId ?? 'personal'}

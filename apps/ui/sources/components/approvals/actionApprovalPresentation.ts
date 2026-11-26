@@ -357,6 +357,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         title,
         summary: [confirmationDraftSubject, governanceSummary ?? acquireLine ?? visibleSummary, disclosure, ...shareLoss].filter(Boolean).join('\n\n') || null,
         ...(governanceSummary !== null ? { governance: true } : {}),
-        ...(spec.irreversible ? { destructive: true } : {}),
+        // Archiving a Team ends members' access, so its verb is destructive; a manager restores it, so it is not
+        // irreversible and never says it can't be undone.
+        ...(spec.irreversible || spec.id === 'teams.archive' ? { destructive: true } : {}),
     };
 }

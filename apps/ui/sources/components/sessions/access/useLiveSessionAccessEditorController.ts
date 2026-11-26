@@ -847,7 +847,9 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         ...(current.snapshot && availability === 'available' ? { context: { primaryTeamId: current.snapshot.primaryTeamId, options: [{ teamId: null, label: t('session.access.noPrimaryTeam'),
             ...(contextLockedByTeamPolicy ? { blockedReason: { code: 'session_access_team_policy_required', message: t('session.access.required') } }
                 : currentContextPolicyUnavailable ? { blockedReason: { code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') } } : {}) }, ...namedContextTeams, ...currentContextTeam], operation: contextOperation,
-            ...(contextPolicyReason ? { unavailableReason: contextPolicyReason } : {}),
+            // A Team that is no longer a context (archived, or one the person left) is said under the context row,
+            // where it shows without opening the list.
+            ...(contextPolicyReason || currentContextRecoveryAllowed ? { unavailableReason: unavailableContextReason } : {}),
             ...(contextError ? { error: contextError } : {}),
             ...(pendingContextTeamId !== undefined ? { confirmation: {
                 teamId: pendingContextTeamId,

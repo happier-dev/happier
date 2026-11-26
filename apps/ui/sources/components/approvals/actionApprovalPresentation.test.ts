@@ -473,6 +473,15 @@ describe('the shared Action approval presentation owner', () => {
         }
     });
 
+    it('archives a Team with a destructive verb, though a manager can restore it', () => {
+        // Archiving ends members' access, so its verb is destructive like its Settings trigger; it is not declared
+        // irreversible, so the confirmation never says it can't be undone.
+        expect(getActionSpec('teams.archive').irreversible).toBeUndefined();
+        expect(presentActionApproval({ actionId: 'teams.archive', kind: 'confirmation' }).destructive).toBe(true);
+        // Restoring gives access back: not destructive.
+        expect(presentActionApproval({ actionId: 'teams.restore', kind: 'confirmation' }).destructive).toBeFalsy();
+    });
+
     it('says what Resume brings back and Refresh changes, in the reader language, without a destructive confirm', async () => {
         for (const language of ['en', 'fr'] as const) {
             await preloadTranslations(language);

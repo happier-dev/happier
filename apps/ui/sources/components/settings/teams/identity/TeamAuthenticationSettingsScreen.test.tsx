@@ -590,22 +590,23 @@ const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
 const { ItemLoadStateRows } = await import('@/components/ui/lists/ItemLoadStateRows');
 
 describe('the Authentication page while its Team is read', () => {
+    async function applyDirectoryRow(directoryRow: Partial<Parameters<typeof teamSummaryFixture>[0]>) {
+        const { applyTeamsDirectoryPage } = await import('@/sync/store/teams/teamsSnapshots');
+        const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+        const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        applyTeamsDirectoryPage({
+            scope: createServerAccountScope(resolveServerProfileScopeIdForIdentifier(serverId), 'account-1')!,
+            queryKey: teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
+            items: [teamSummaryFixture({
+                capabilities: teamCapabilitiesFixture({ manageAuthentication: true }),
+                ...directoryRow,
+            })],
+            observedAt: 1,
+        });
+    }
     async function heldAuthentication(options: Readonly<{ directoryRow: Partial<Parameters<typeof teamSummaryFixture>[0]> | null }>) {
-        if (options.directoryRow) {
-            const { applyTeamsDirectoryPage } = await import('@/sync/store/teams/teamsSnapshots');
-            const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-            const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
-            const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-            applyTeamsDirectoryPage({
-                scope: createServerAccountScope(resolveServerProfileScopeIdForIdentifier(serverId), 'account-1')!,
-                queryKey: teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
-                items: [teamSummaryFixture({
-                    capabilities: teamCapabilitiesFixture({ manageAuthentication: true }),
-                    ...options.directoryRow,
-                })],
-                observedAt: 1,
-            });
-        }
+        if (options.directoryRow) await applyDirectoryRow(options.directoryRow);
         harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture(), respondAfter: new Promise<void>(() => {}) });
         // The page's own reads start beside the Team's read and are still running.
         harness.answer(serverId, connectionsPath, { body: {}, respondAfter: new Promise<void>(() => {}) });
@@ -625,24 +626,38 @@ describe('the Authentication page while its Team is read', () => {
         ['teams.authentication.directory.section', 'teams.authentication.directory.overviewSubtitle'],
     ];
 
-    it('draws only the sections every viewer has when the viewer\'s role is not known yet: no manager section and no "+"', async () => {
+    it('waits on one quiet line, with no section, while the viewer\'s role is not known', async () => {
         const screen = await heldAuthentication({ directoryRow: null });
-        // A member reached by link must not first see the managers' page: Sign-in connections and both "+"s wait
-        // until the role is known.
-        expect(sections(screen)).toEqual(PAGE_SECTIONS.filter(([title]) => title !== 'teams.authentication.connectionsSection'));
-        // Every Team has both policy rows: they stand as segmented rows with nothing chosen yet, read-only.
-        for (const testID of ['team-admission-mode', 'team-authentication-policy-mode']) {
-            const row = screen.findAllByType(Item).find((node) => node.props.testID === testID);
-            expect(row?.props).toMatchObject({ disabled: true, accessoryLayout: 'stacked', subtitle: 'common.loading' });
-            expect(row?.props.rightElement).toBeTruthy();
-        }
-        // The directory waits on one quiet line.
-        expect(screen.findAllByType(ItemLoadStateRows)).toHaveLength(0);
-        expect(stateLine(screen, 'team-authentication-directory-loading')).toBeDefined();
-        expect(stateLine(screen, 'team-authentication-loading')).toBeUndefined();
+        // Each role's page is shaped differently (a manager's Sign-in connections, a member's read-only notice), so
+        // no section scaffold stands that the arriving role would rearrange.
+        expect(sections(screen)).toEqual([]);
+        expect(screen.findAllByType(SurfaceStateCard).filter((node) => node.props.kind === 'loading')).toHaveLength(1);
+        expect(screen.findByTestId('team-admission-mode')).toBeNull();
         expect(screen.findByTestId('team-authentication-add-connection')).toBeNull();
         expect(screen.findByTestId('team-authentication-directory-add')).toBeNull();
     });
+
+    it.each([['a manager', true], ['a member', false]] as const)(
+        'draws %s\'s own page once the Teams row names the role',
+        async (_viewer, manager) => {
+            const screen = await heldAuthentication({ directoryRow: null });
+            await React.act(async () => {
+                await applyDirectoryRow({
+                    directoryMembership: null, capabilities: teamCapabilitiesFixture({ manageAuthentication: manager }),
+                });
+            });
+            await waitForHomeGovernance(() => expect(sections(screen).length).toBeGreaterThan(0));
+            if (manager) {
+                expect(sections(screen)).toEqual(PAGE_SECTIONS);
+                expect(screen.findByTestId('team-authentication-add-connection')).not.toBeNull();
+            } else {
+                expect(screen.findByTestId('team-authentication-forbidden')).not.toBeNull();
+                expect(sections(screen).map(([title]) => title)).not.toContain('teams.authentication.connectionsSection');
+                expect(screen.findByTestId('team-authentication-add-connection')).toBeNull();
+                expect(screen.findByTestId('team-authentication-directory-add')).toBeNull();
+            }
+        },
+    );
 
     it('reserves a known member\'s read-only page from the Teams row, never the managers\' affordances', async () => {
         const screen = await heldAuthentication({ directoryRow: {

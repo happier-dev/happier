@@ -895,6 +895,18 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         await vi.waitFor(() => expect(controller().model.context?.primaryTeamId).toBeNull());
     });
 
+    it('says under the context, not only inside the list, that a Team the person left is no longer a primary Team', async () => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        home.state.primaryTeamId = 'team-acme';
+        TEAM_DIRECTORY.items = [{ id: 'team-design', name: 'Design', policy: {
+            sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed',
+        } }];
+        const controller = await mountController(home.profile.id);
+        const gone = t('session.access.contextTeamUnavailable', { team: 'Acme' });
+        await vi.waitFor(() => expect(controller().model.context?.unavailableReason?.message).toBe(gone));
+        expect(controller().model.context?.options.find((option) => option.teamId === 'team-acme')?.blockedReason?.message).toBe(gone);
+    });
+
     it('makes refused context-policy candidates unavailable and explains the archived Team by name', async () => {
         const home = await setupHome({ sharing: true, encrypted: false });
         home.state.primaryTeamId = 'team-acme';
@@ -939,6 +951,10 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
     ] as const)('keeps the $status $code candidate inspection result and its recovery under the context', async (scenario) => {
         const home = await setupHome({ sharing: true, encrypted: false });
         home.state.primaryTeamId = 'team-acme';
+        // Acme stays an active Team, so a retry that succeeds leaves no reason under the context.
+        TEAM_DIRECTORY.items = [{ id: 'team-acme', name: 'Acme', policy: {
+            sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed',
+        } }];
         home.state.candidatePolicyFailure = { status: scenario.status, code: scenario.code };
         const controller = await mountController(home.profile.id);
         await vi.waitFor(() => expect(controller().model.context?.unavailableReason).toMatchObject({

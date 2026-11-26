@@ -50,14 +50,13 @@ import {
   teamAcceptedSignInSummary,
   teamAdmissionModeConsequence,
   teamAdmissionModeLabel,
-  teamAdmissionModeSegmentLabel,
 } from '../teamPolicyPresentation';
 import {
   directorySourcePresentationState,
   directorySourceStateLabel,
 } from './directoryAdministrationPresentation';
 import { useDirectoryAdministration } from './useDirectoryAdministration';
-import { ADMISSION_MODES, TeamAuthenticationPolicySections } from './TeamAuthenticationPolicySections';
+import { TeamAuthenticationPolicySections } from './TeamAuthenticationPolicySections';
 import { TeamMemberSignInLinkSection } from './TeamMemberSignInLinkSection';
 import { TeamGitHubAppsSection } from './TeamGitHubAppScreens';
 import {
@@ -82,7 +81,6 @@ import {
 } from '../collection/teamsCreateGuidanceText';
 import { createIdentityAdministrationClient } from './identityAdministrationClient';
 import { Icon } from '@/components/ui/icons/Icon';
-import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { ReservedShape } from '@/components/ui/lists/ReservedShape';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
@@ -878,7 +876,7 @@ type AuthenticationLoadingKnown = Parameters<
  * frame. When the Teams directory already holds this Team's row, the sections that row decides are drawn from it as
  * they will stand (read-only until the Team answers): who can join and how members sign in, or a member's facts.
  * What the row does not say is reserved: one row per section, or the connections the policy names. Without the row
- * the viewer's role is unknown, so only the sections every viewer has are drawn.
+ * the viewer's role is unknown, so no section is drawn yet.
  */
 function AuthenticationLoading(known: AuthenticationLoadingKnown) {
   const team = known.row;
@@ -900,60 +898,9 @@ function AuthenticationLoading(known: AuthenticationLoadingKnown) {
       : null;
   // The same element the live page renders, so the page stays mounted when the Team answers.
   if (held) return <TeamAuthenticationBody context={held} />;
-  return (
-    <>
-      <ItemGroup
-        title={t('teams.authentication.policy.admissionSection')}
-        description={t('teams.authentication.policy.admissionHelp')}
-      >
-        <HeldPolicyRow testID="team-admission-mode" title={t('teams.authentication.policy.admissionRow')}
-          options={ADMISSION_MODES.map((mode) => ({ id: mode, label: teamAdmissionModeSegmentLabel(mode) }))} />
-      </ItemGroup>
-      <ItemGroup
-        title={t('teams.authentication.policy.acceptedSection')}
-        description={t('teams.authentication.policy.acceptedHelp')}
-      >
-        <HeldPolicyRow testID="team-authentication-policy-mode" title={t('teams.authentication.policy.acceptedRow')}
-          options={[
-            { id: 'inherit', label: t('teams.authentication.policy.acceptedInherit') },
-            { id: 'restricted', label: t('teams.authentication.policy.acceptedRestricted') },
-          ]} />
-      </ItemGroup>
-      {/* The viewer's role is not known yet: only the sections every viewer has. A manager's Sign-in connections
-          and its "+"s wait for the role, so a member never first sees what only managers can change. */}
-      <ItemGroup
-        title={t('teams.authentication.directory.section')}
-        description={t('teams.authentication.directory.overviewSubtitle')}
-      >
-        <ReservedShape shape={<DirectoryEmptyLine />}>
-          <QuietLoadingLine testID="team-authentication-directory-loading" />
-        </ReservedShape>
-      </ItemGroup>
-    </>
-  );
-}
-
-type HeldPolicyOption = Readonly<{ id: string; label: string }>;
-
-/**
- * A policy row every Team has, before anything of the Team is known: its title, its segments with none chosen
- * (read-only), and one quiet line where the chosen option's consequence lands, so the row is the row that arrives.
- */
-function HeldPolicyRow(props: Readonly<{ testID: string; title: string; options: readonly HeldPolicyOption[] }>) {
-  return (
-    <SegmentedChoiceItem<string>
-      testID={props.testID}
-      title={props.title}
-      subtitle={t('common.loading')}
-      subtitleLines={0}
-      accessoryLayout="stacked"
-      options={props.options}
-      value={null}
-      onChange={NO_OP}
-      disabled
-      testIDPrefix={props.testID}
-    />
-  );
+  // The role is not known yet, and each role's page is shaped differently (a manager's Sign-in connections, a
+  // member's read-only notice): the Team page's one quiet loading line waits until the role draws its page once.
+  return null;
 }
 
 /** One quiet line in the empty line's own shape (the same line component), so what lands replaces it in place. */

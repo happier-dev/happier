@@ -361,6 +361,21 @@ describe('SessionAccessEditor', () => {
         await screen.pressByTestIdAsync('session-access-context-reason');
         expect(intent.explain).toHaveBeenCalledWith(archived);
     });
+    it.each([
+        ['archived', 'session_access_external_sharing_disabled', 'Harbor Freight Collective is archived.'],
+        ['no longer available', 'session_access_context_policy_unavailable', 'Harbor Freight Collective is no longer available as a primary Team.'],
+    ] as const)('says once, with the list open, why a primary Team that is %s cannot be chosen', async (_state, code, message) => {
+        // The controller hands the option and the context equal reasons as separate objects.
+        const screen = await renderScreen(<SessionAccessEditor model={model({
+            context: { primaryTeamId: 'harbor', unavailableReason: { code, message }, options: [
+                { teamId: null, label: 'No primary Team' },
+                { teamId: 'harbor', label: 'Harbor Freight Collective', blockedReason: { code, message } },
+            ] },
+        })} actions={actions()} presentation="full" />);
+        await screen.pressByTestIdAsync('session-access-context');
+        expect(screen.findByTestId('session-access-context-harbor')).not.toBeNull();
+        expect(screen.getTextContent().split(message).length - 1).toBe(1);
+    });
     it('renders context consequences and requires an explicit confirmation', async () => {
         const intent = actions();
         const screen = await renderScreen(<SessionAccessEditor model={model({ context: {
