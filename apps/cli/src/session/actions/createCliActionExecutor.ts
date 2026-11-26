@@ -16,7 +16,7 @@ import {
   hasStoredSessionCredentialProvenance,
   type StoredCredentials,
 } from '@/persistence';
-import { createDaemonPluginActionExecutor, createPluginActionExecutor, readPluginActionExecutionReference, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
+import { createDaemonPluginActionExecutor, createPluginActionExecutor, isPluginActionExecutionDispatchId, readPluginActionExecutionReference, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionSchemaReader, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import type { CliActionExactHomeTarget } from './createCliActionDeps';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -670,7 +670,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
       const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
       if (!resolvedContext) return { kind: 'settled' as const,
         result: actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable') };
-      if (actionId === 'action.options.resolve' && readPluginActionExecutionReference(actionId, input) !== null) {
+      if (usesPluginPlacement(actionId, input) && isPluginActionExecutionDispatchId(actionId)) {
         // Preparation must not bypass the placement owner or run an effect.
         // The same admitted invocation settles once when its caller runs it.
         let result: Promise<ActionExecuteResult> | undefined;
