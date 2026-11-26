@@ -13,6 +13,7 @@ import { readRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } 
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
+import { observeDeploymentSavedChecks, type DeploymentSavedCheckSnapshot } from './observeDeploymentSavedChecks';
 
 type CurrentEdge = ReturnType<typeof DeploymentHealthCurrentResultV1Schema.parse>;
 type MachineServicesList = ReturnType<typeof MachineServicesListResultV1Schema.parse>
@@ -195,7 +196,7 @@ function nativeHealthWatch(lifetime: ServerAccountScopeLifetime, machineId: stri
 function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime, environment: DeploymentEnvironmentHeaderV1,
     link: DeploymentTargetLinkHeaderV1, activeMembers: readonly DeploymentTargetLinkHeaderV1['members'][number][]) {
     const serverId = lifetime.scope.serverId;
-    const needsEdge = environment.ingress?.kind === 'edgeCaddy';
+    const needsEdge = link.targetKind === 'ownServer' && environment.ingress?.kind === 'edgeCaddy';
     const edge = needsEdge && environment.controllerMachineId
         ? createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
             hostRead: 'deployments.health.edge', input: { serverId, machineId: environment.controllerMachineId,
@@ -205,6 +206,10 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
     let nativeEnvironmentId: string | undefined;
     let bindings: { member: typeof activeMembers[number]; owner: ReturnType<typeof nativeHealthWatch> }[] = [];
     let stopEdge: (() => void) | undefined;
+    let savedCheckWatch: ReturnType<typeof observeDeploymentSavedChecks> | undefined;
+    let savedChecks: DeploymentSavedCheckSnapshot | undefined;
+    let publishedSavedChecks: DeploymentSavedCheckSnapshot | undefined;
+    let nativeObservations: readonly DeploymentHealthServicesObservationV1[] = [];
     let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
     let aggregate: ReturnType<typeof projectDeploymentHealthAggregateV1> | undefined;
 
@@ -259,9 +264,14 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
             && (!currentEdge?.value || currentEdge.pending !== 'idle');
         const awaitingRuntime = aggregate !== undefined && status === 'loading'
             && !(edgeReady && edgeResult.observation?.status === 'down');
-        if (!awaitingEdge && !awaitingRuntime) {
+        const nativeReady = !awaitingEdge && !awaitingRuntime;
+        if (nativeReady) nativeObservations = observations;
+        if (savedChecks && !savedChecks.pending && (nativeReady || publishedSavedChecks !== savedChecks)) {
             // Settled Resource snapshots replace withdrawn evidence. Reuse only the published shapes.
-            aggregate = retainDeep(aggregate, projectDeploymentHealthAggregateV1({ environment, targetLink: link, observations }));
+            aggregate = retainDeep(aggregate, projectDeploymentHealthAggregateV1({
+                environment, targetLink: link, observations: nativeObservations, savedChecks: savedChecks.observations,
+            }));
+            publishedSavedChecks = savedChecks;
         }
         feed = nextFeed;
         for (const borrower of borrowers) {
@@ -287,8 +297,10 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
             borrowers.add(borrower);
             if (feed && (!borrower.collection || aggregate)) borrower.publish(feed, aggregate);
             const nativeChanged = syncNative();
-            if (first) stopEdge = edge?.selection.subscribe(update, true);
-            if (first || nativeChanged) update();
+            if (first) {
+                stopEdge = edge?.selection.subscribe(update, true);
+                savedCheckWatch = observeDeploymentSavedChecks(lifetime, environment.id, next => { savedChecks = next; update(); });
+            } else if (nativeChanged) update();
         },
         unsubscribe(borrower: HealthBorrower) {
             borrowers.delete(borrower);
@@ -297,6 +309,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
                 return false;
             }
             stopEdge?.();
+            savedCheckWatch?.dispose();
             for (const { owner } of bindings) owner.unsubscribe(update);
             return true;
         },
@@ -306,11 +319,11 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
 /** List and detail borrow the same current aggregate for an admitted Environment and runtime basis. */
 function subscribeEnvironmentHealth(lifetime: ServerAccountScopeLifetime, target: EnvironmentHealthTarget, borrower: HealthBorrower) {
     const { environment, runtimeTargetLink: link } = target;
-    if (!link || link.targetKind !== 'ownServer') {
+    if (!link) {
         borrower.publish({ environmentId: environment.id, status: 'unavailable', members: [] });
         return () => {};
     }
-    const activeMembers = link.members.filter(member => member.state === 'active');
+    const activeMembers = link.targetKind === 'ownServer' ? link.members.filter(member => member.state === 'active') : [];
     const key = JSON.stringify([environment.id, environment.protection, link.id,
         environment.ingress?.kind === 'edgeCaddy'
             ? [environment.controllerMachineId, environment.ingress.edgeMachineId, link.revision] : null,

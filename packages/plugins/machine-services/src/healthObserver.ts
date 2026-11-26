@@ -9,7 +9,7 @@ import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
 
 import { savedBuiltinHealthCheckActionId } from './actionIds.js';
 import { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT, MACHINE_SERVICES_PLUGIN_ID } from './healthSetup.js';
-import { HEALTH_RESULT_CHECKPOINT_PREFIX, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
+import { healthResultCheckpointKey, healthResultProjectionSchema, healthResultProjectionIdentity, retainHealthResult } from './healthResultProjection.js';
 import { fitHealthResultCheckpoint } from './healthResultCheckpoint.js';
 import { isMonitorCheck, monitorDefinitions, monitorKinds, monitorObserved, type MonitorKind } from './monitorDefinitions.js';
 export { HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEALTH_CHECK_RECOVERED_EVENT } from './healthSetup.js';
@@ -39,7 +39,7 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
         },
         async observe({ context, definition, definitions, source }) {
             const storage = requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv;
-            const key = `${HEALTH_RESULT_CHECKPOINT_PREFIX}${computeCanonicalDomainSeparatedDigest('happier.health.status.v1', [definition.sourceInstanceId])}`;
+            const key = healthResultCheckpointKey(definition.sourceInstanceId);
             const basis = createCanonicalJsonSigningInput({ sourceInstanceId: definition.sourceInstanceId,
                 sourceConfig: source, materialization: context.materialization ?? null });
             let state = live.get(definition.sourceInstanceId);

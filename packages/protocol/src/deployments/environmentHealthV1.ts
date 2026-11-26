@@ -23,6 +23,16 @@ export const DeploymentHealthMemberV1Schema = z.strictObject({
 });
 export type DeploymentHealthMemberV1 = z.infer<typeof DeploymentHealthMemberV1Schema>;
 
+const DeploymentFailingSavedCheckV1Schema = z.strictObject({
+    sourceInstanceId: id,
+    automationId: id,
+    triggerId: id,
+    checkId: id,
+    name: z.string(),
+    status: z.enum(['down', 'degraded']),
+});
+export type DeploymentFailingSavedCheckV1 = z.infer<typeof DeploymentFailingSavedCheckV1Schema>;
+
 /** P40 alone projects this fact; C1 transports the same typed result. */
 export const DeploymentEnvironmentHealthAggregateV1Schema = z.strictObject({
     v: z.literal(1), environmentId: id, targetLinkId: id,
@@ -33,6 +43,7 @@ export const DeploymentEnvironmentHealthAggregateV1Schema = z.strictObject({
     unknown: z.number().check(z.int(), z.nonnegative()),
     members: z.array(DeploymentHealthMemberV1Schema), affectedMachineIds: z.array(id),
     expectedDown: z.optional(z.literal('stop')),
+    failingSavedChecks: z.optional(z.array(DeploymentFailingSavedCheckV1Schema)),
     edgeUnreachable: z.boolean(), authoritativeRecovery: z.boolean(),
 });
 export type DeploymentEnvironmentHealthAggregateV1 = z.infer<typeof DeploymentEnvironmentHealthAggregateV1Schema>;

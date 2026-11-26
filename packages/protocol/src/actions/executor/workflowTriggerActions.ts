@@ -46,6 +46,7 @@ import {
   type SessionPullRequestLinkV1, type SessionTriggerDefinitionV1, type SessionTriggerPullRequestLinksV1,
   type WorkflowTriggerSummaryInputV1, type WorkflowIntendedTriggerV1, type WorkflowIntendedPluginEventV1,
   type WorkflowTriggerHealthSourceV1,
+  workflowTriggerHealthSourceRevisionV1,
   WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
   isWorkflowTriggerSourceGoneV1, readWorkflowTriggerSubjectProjectV1,
@@ -387,7 +388,7 @@ async function* readSavedHealthCheckCandidates(deps: SavedHealthCheckReadDeps,
       const source = HealthCheckSourceConfigV1Schema.safeParse(definition.sourceConfig);
       if (!source.success) continue;
       const sourceInstanceId = definition.sourceInstanceId;
-      yield { sourceInstanceId, revision: `${row.id}:${trigger.id}:${trigger.revision}`,
+      yield { sourceInstanceId, revision: workflowTriggerHealthSourceRevisionV1(row.id, trigger.id, trigger.revision),
         source: source.data, enabled: row.enabled && trigger.enabled,
         observer: trigger.observation.kind === 'checkpointedPull' ? trigger.observation.watcher : null,
         automationId: row.id, triggerId: trigger.id, templateVersion: row.templateVersion } satisfies WorkflowTriggerHealthSourceV1;

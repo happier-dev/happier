@@ -24,6 +24,26 @@ function observation(machineId: string, overrides: Partial<DeploymentHealthObser
 const healthy = [observation('a'), observation('b')];
 
 describe('Environment health aggregate', () => {
+    it('names the Environment’s failing saved check without inventing a failed runtime Machine', () => {
+        const neighbor = { ...environment, id: 'other-environment' };
+        const failing = { environmentId: environment.id, sourceInstanceId: 'saved-staging',
+            automationId: 'automation', triggerId: 'trigger', checkId: 'http', name: 'Staging HTTP', status: 'down' as const };
+        const otherFailing = { ...failing, environmentId: neighbor.id, sourceInstanceId: 'saved-production' };
+        const input = { environment, targetLink, observations: healthy };
+
+        const failed = projectDeploymentHealthAggregateV1({ ...input, savedChecks: [otherFailing, failing] });
+        expect(failed).toMatchObject({ status: 'degraded', n: 2, down: 0, degraded: 0, affectedMachineIds: [],
+            authoritativeRecovery: false, failingSavedChecks: [
+                { sourceInstanceId: 'saved-staging', checkId: 'http', name: 'Staging HTTP', status: 'down' },
+            ] });
+        expect(projectDeploymentHealthAggregateV1({ ...input, savedChecks: [
+            { ...failing, status: 'up' }, otherFailing,
+        ] }, failed)).toMatchObject({ status: 'up', authoritativeRecovery: true });
+        expect(projectDeploymentHealthAggregateV1({ ...input, observations: [], savedChecks: [
+            { ...failing, status: 'unknown' }, otherFailing,
+        ] })).toMatchObject({ status: 'unknown', authoritativeRecovery: false });
+    });
+
     it('reports a passing web check beside an unchecked database and keeps a real gap visible', () => {
         const web = { serviceId: 'web', observation: { status: 'up' as const, observedAtMs: 2000 } };
         const database = { serviceId: 'database', observation: {

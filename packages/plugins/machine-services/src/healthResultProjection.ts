@@ -1,5 +1,6 @@
-import { HealthCheckResultV1ProtocolSchema, HealthCheckSubjectV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
-import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
+import { HealthCheckResultV1ProtocolSchema, HealthCheckSubjectV1ProtocolSchema, computeCanonicalDomainSeparatedDigest,
+    createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
+import type { AccountKvListItem, AccountKvService } from '@happier-dev/plugin-sdk/storage';
 export { HEALTH_REMOVE_ACTION_REF, HEALTH_RESULTS_ACTION_ID, HEALTH_RESULTS_ACTION_REF } from './actionIds.js';
 export { savedHealthRemovalResultSchema } from './healthRemoval.js';
 export { runSavedHealthCheck, type SavedHealthCheckRunInput } from './savedHealthCheckRun.js';
@@ -8,6 +9,9 @@ import { createProtocolStoredReadSchema, defineProtocolArray, defineProtocolLite
 
 /** A presentation of the observer's retained checkpoint, inside the existing encrypted Account KV row. */
 export const HEALTH_RESULT_CHECKPOINT_PREFIX = 'health:';
+export function healthResultCheckpointKey(sourceInstanceId: string): string {
+    return `${HEALTH_RESULT_CHECKPOINT_PREFIX}${computeCanonicalDomainSeparatedDigest('happier.health.status.v1', [sourceInstanceId])}`;
+}
 const count = defineProtocolNumber({ integer: true, minimum: 0 });
 const percent = defineProtocolNumber({ minimum: 0, maximum: 100 }).nullable();
 const daySchema = defineProtocolObject({ dayStartAt: count, up: count, down: count,
@@ -40,6 +44,30 @@ export const healthResultProjectionPageSchema = defineProtocolObject({
     nextCursor: defineProtocolString().optional(),
 }, { policy: 'closed' });
 export type HealthResultProjectionPage = ReturnType<typeof healthResultProjectionPageSchema.parse>;
+type HealthResultProjectionItem = HealthResultProjectionPage['items'][number];
+
+function projectHealthResultCheckpoint(row: AccountKvListItem, at: number): HealthResultProjectionItem | null {
+    if ('deleted' in row || row.value === null || typeof row.value !== 'object' || !('current' in row.value)) return null;
+    const parsed = healthResultProjectionStoredSchema.safeParse(row.value.current);
+    if (!parsed.success) return null;
+    const source = 'source' in row.value ? healthResultSourceStoredSchema.safeParse(row.value.source) : undefined;
+    return { key: row.key, ...(source?.success ? { source: source.data } : {}), projection: healthResultProjectionAt(parsed.data, at) };
+}
+
+/** An Environment reader opens only its exact checkpoints from one Account storage snapshot. */
+export async function readHealthResultProjectionsForSources(kv: Pick<AccountKvService, 'transaction'>,
+    sourceIds: readonly string[], signal: AbortSignal): Promise<ReadonlyMap<string, HealthResultProjectionItem>> {
+    return kv.transaction(async snapshot => {
+        const at = Date.now();
+        const entries = await Promise.all(sourceIds.map(async id => {
+            const key = healthResultCheckpointKey(id);
+            const row = await snapshot.get(key, { signal });
+            const result = row && projectHealthResultCheckpoint({ key, ...row }, at);
+            return result ? [[id, result] as const] : [];
+        }));
+        return new Map(entries.flat());
+    }, { signal });
+}
 
 /** One native Account KV page, shared by retained UI reads and the public Action. No probe or write. */
 export async function readHealthResultProjections(kv: Pick<AccountKvService, 'list'>,
@@ -47,15 +75,11 @@ export async function readHealthResultProjections(kv: Pick<AccountKvService, 'li
     const page = await kv.list({ prefix: HEALTH_RESULT_CHECKPOINT_PREFIX,
         ...(options.cursor ? { cursor: options.cursor } : {}), signal: options.signal });
     options.signal.throwIfAborted();
-    const items: Array<HealthResultProjectionPage['items'][number]> = [];
+    const items: HealthResultProjectionItem[] = [];
     const at = Date.now();
     for (const row of page.items) {
-        if ('deleted' in row || row.value === null || typeof row.value !== 'object' || !('current' in row.value)) continue;
-        const parsed = healthResultProjectionStoredSchema.safeParse(row.value.current);
-        if (parsed.success) {
-            const source = 'source' in row.value ? healthResultSourceStoredSchema.safeParse(row.value.source) : undefined;
-            items.push({ key: row.key, ...(source?.success ? { source: source.data } : {}), projection: healthResultProjectionAt(parsed.data, at) });
-        }
+        const item = projectHealthResultCheckpoint(row, at);
+        if (item) items.push(item);
     }
     return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
 }

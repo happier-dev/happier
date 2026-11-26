@@ -1,5 +1,6 @@
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentHealthAggregateV1, DeploymentHealthMemberV1, DeploymentHealthRoleEvidenceV1, DeploymentHealthRoleV1, DeploymentHealthStatusV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { DeploymentFailingSavedCheckV1 } from '@happier-dev/protocol/deployments/environmentHealthV1';
 
 /**
  * Current, admitted owner facts, after P50's D5/expected-operation admission.
@@ -43,6 +44,10 @@ export type DeploymentHealthServicesObservationV1 = Readonly<Omit<DeploymentHeal
 }>;
 
 type Observation = DeploymentHealthObservationV1 | DeploymentHealthServicesObservationV1;
+export type DeploymentSavedCheckObservationV1 = Readonly<Omit<DeploymentFailingSavedCheckV1, 'status'> & {
+    environmentId: string;
+    status: DeploymentHealthStatusV1;
+}>;
 type Member = Readonly<Pick<DeploymentHealthMemberV1, 'machineId' | 'installationId' | 'roles'>>;
 type RankedHealthEvidence = Readonly<Pick<DeploymentHealthRoleEvidenceV1, 'status' | 'reason'>>;
 const key = (machineId: string, role: DeploymentHealthRoleV1) => JSON.stringify([machineId, role]);
@@ -130,10 +135,11 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
  * finite re-observation before it can recover, whereas order/carrier edits
  * preserve the same admitted member facts.
  */
-export function projectDeploymentHealthAggregateV1({ environment, targetLink, observations }: Readonly<{
+export function projectDeploymentHealthAggregateV1({ environment, targetLink, observations, savedChecks }: Readonly<{
     environment: DeploymentEnvironmentHeaderV1;
     targetLink: DeploymentTargetLinkHeaderV1;
     observations: readonly Observation[];
+    savedChecks?: readonly DeploymentSavedCheckObservationV1[];
 }>, previous?: DeploymentEnvironmentHealthAggregateV1): DeploymentEnvironmentHealthAggregateV1 {
     if (targetLink.environmentId !== environment.id || targetLink.id !== environment.runtimeTargetLinkId) {
         throw new Error('deployment_health_target_mismatch');
@@ -201,15 +207,31 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
     const edgeUnreachable = edge.some(value => value.expectedDown !== 'stop' && value.status === 'down');
     const expectedStop = rows.some(member => member.evidence.some(value => value.expectedDown === 'stop'));
     const n = rows.length;
-    const status: DeploymentHealthStatusV1 = n === 0 ? 'unknown'
+    const runtimeStatus: DeploymentHealthStatusV1 = n === 0 ? 'unknown'
         : edgeUnreachable || down === n ? 'down'
             : down > 0 || degraded > 0 || expectedStop ? 'degraded' : unknown > 0 ? 'unknown' : 'up';
+    const failures = savedChecks?.flatMap(({ environmentId, ...check }): DeploymentFailingSavedCheckV1[] =>
+        environmentId === environment.id && (check.status === 'down' || check.status === 'degraded')
+            ? [{ ...check, status: check.status }] : []);
+    const before = prior?.failingSavedChecks;
+    const failingSavedChecks = failures?.length ? failures : undefined;
+    const sameFailures = before === failingSavedChecks || Boolean(before && failingSavedChecks
+        && before.length === failingSavedChecks.length && before.every((check, index) => {
+            const other = failingSavedChecks[index];
+            return check.sourceInstanceId === other.sourceInstanceId && check.automationId === other.automationId
+                && check.triggerId === other.triggerId && check.checkId === other.checkId
+                && check.name === other.name && check.status === other.status;
+        }));
+    // A subject check proves a failure for the Environment, not for any particular Machine.
+    const status = failingSavedChecks && runtimeStatus !== 'down' ? 'degraded' : runtimeStatus;
     if (prior && prior.protection === environment.protection && prior.status === status
+        && sameFailures
         && rows.length === prior.members.length && rows.every((member, index) => member === prior.members[index])) return prior;
     return {
         v: 1, environmentId: environment.id, targetLinkId: targetLink.id, protection: environment.protection,
         status, n, down, degraded, unknown, members: rows,
         ...(expectedStop ? { expectedDown: 'stop' } : {}),
+        ...(failingSavedChecks ? { failingSavedChecks: sameFailures ? before : failingSavedChecks } : {}),
         affectedMachineIds: rows.filter(member => member.status !== 'up').map(member => member.machineId),
         edgeUnreachable, authoritativeRecovery: status === 'up',
     };

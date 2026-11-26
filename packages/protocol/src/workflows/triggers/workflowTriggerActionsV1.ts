@@ -376,6 +376,9 @@ export const WorkflowTriggerHealthSourceV1Schema = lazyZodSchema(() => z.strictO
   templateVersion: z.optional(z.number().check(z.int(), z.minimum(1))),
 }));
 export type WorkflowTriggerHealthSourceV1 = z.infer<typeof WorkflowTriggerHealthSourceV1Schema>;
+export function workflowTriggerHealthSourceRevisionV1(automationId: string, triggerId: string, revision: number): string {
+  return `${automationId}:${triggerId}:${revision}`;
+}
 export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({
   lifetimeSession: z.optional(z.pick(WorkflowTriggerLifetimeSessionV1Schema, { sessionId: true })),
   pullRequestLinks: z.optional(SessionTriggerPullRequestLinksV1Schema),

@@ -349,9 +349,7 @@ type HealthEvidence = Pick<HealthAggregate, 'status'> & Partial<Pick<HealthAggre
 /** Only current native evidence can confirm that a running service lacks a check. */
 export function deploymentEnvironmentHealthKind(
   health: HealthEvidence | null | undefined,
-  latestState?: ReceiptState,
-): HealthAggregate['status'] | 'unchecked' | 'deploying' {
-  if (latestState === 'queued' || latestState === 'running') return 'deploying';
+): HealthAggregate['status'] | 'unchecked' {
   if (!health) return 'unknown';
   if (health.status !== 'unknown') return health.status;
   const unresolved = health.members?.flatMap(member => member.evidence.filter(evidence => evidence.status === 'unknown'));
@@ -460,15 +458,17 @@ export function deploymentDeployAvailability(
  * "2 of 3 servers healthy" when some of several are not, in its tone. Unavailable coverage is quiet.
  */
 export function deploymentHealthFact(
-  health: (HealthEvidence & Pick<HealthAggregate, 'n' | 'down' | 'degraded'>) | undefined,
+  health: (HealthEvidence & Pick<HealthAggregate, 'n' | 'down' | 'degraded' | 'failingSavedChecks'>) | undefined,
   latestState?: ReceiptState,
 ): Readonly<{ value: string; tone?: 'danger' | 'attention' }> {
-  const kind = deploymentEnvironmentHealthKind(health, latestState);
-  if (kind === 'deploying') return { value: deploymentStateLabel(latestState === 'queued' ? 'queued' : 'running') };
-  if (kind === 'unchecked') return { value: t('projects.deployments.review.noHealthCheck') };
+  const kind = deploymentEnvironmentHealthKind(health);
+  if (kind === 'unchecked') return { value: latestState === 'queued' || latestState === 'running' ? '—'
+    : t('projects.deployments.review.noHealthCheck') };
   if (!health || kind === 'unknown') return { value: '—' };
   if (kind === 'up') return { value: t('projects.deployments.healthUp') };
-  const value = health.n > 1
+  const value = health.failingSavedChecks?.length
+    ? t('projects.deployments.checksFailing', { names: health.failingSavedChecks.map(check => check.name).join(', ') })
+    : health.n > 1
     ? t('projects.deployments.healthServers', { healthy: Math.max(0, health.n - health.down - health.degraded), count: health.n })
     : kind === 'down' ? t('projects.deployments.healthDown') : t('projects.deployments.healthDegraded');
   return { value, tone: kind === 'down' ? 'danger' : 'attention' };

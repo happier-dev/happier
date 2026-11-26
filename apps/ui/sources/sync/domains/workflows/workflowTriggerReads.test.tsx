@@ -73,11 +73,20 @@ function listed(row: ReturnType<typeof automation>) {
 }
 
 describe('Account trigger reads through real Action and Automation owners', () => {
-    it('loads the Environment’s saved checks through one exact Home query', async () => {
+    it('shares one exact saved check read and follows its pushed status without rereading unrelated Environments', async () => {
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected the real Account lifetime');
         const environmentId = 'staging-checks';
+        const { createHealthCheckSourceInstanceIdV1 } = await import('@happier-dev/protocol/deployments/healthCheckSubjectV1');
+        const { healthResultCheckpointKey, healthResultProjectionStoredSchema } = await import('@happier-dev/plugins-machine-services/health-results');
+        const { createEmptyPluginAccountKvRowV1, setPluginAccountKvEntryV1 } = await import('@happier-dev/protocol/plugins/data/accountKvV1');
+        const { buildPluginDomainAccountChangeEntityId, PluginDomainChangeEntrySchema } = await import('@happier-dev/protocol/changes');
+        const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+            await import('@/sync/domains/plugins/availability/projection');
+        const { publishActivePluginCollectionChanges } = await import('@/sync/api/plugins/data/pluginCollectionChangeWatch');
+        const sourceInstanceId = createHealthCheckSourceInstanceIdV1({ kind: 'environment', environmentId });
+        const triggerId = AutomationTriggerIdSchema.parse('a4ab38a9-7260-4d1b-b712-eca1b2f7a6d4');
         const declaration = await projectBundledPluginUiDeclaration({
             packageName: '@happier-dev/plugins-machine-services', packageVersion: bundledMachineServices.version,
             manifest: bundledMachineServices, artifactGraphs: [],
@@ -85,10 +94,10 @@ describe('Account trigger reads through real Action and Automation owners', () =
         if (!declaration) throw new Error('Expected the bundled Machine services declaration');
         onTestFinished(installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiFirstPaintDeclaration(declaration)]));
         const saved = { ...automation('saved-staging-check'), triggers: [createWorkflowAutomationTriggerDetailFixture('saved-staging-check', {
-            triggerId: AutomationTriggerIdSchema.parse('a4ab38a9-7260-4d1b-b712-eca1b2f7a6d4'),
+            triggerId,
             trigger: { kind: 'pluginEvent', enabled: true,
                 eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
-                sourceInstanceId: 'staging-http', sourceContractVersion: 1, displayLabel: 'Event observation',
+                sourceInstanceId, sourceContractVersion: 1, displayLabel: 'Event observation',
                 sourceConfig: { v: 1, subject: { kind: 'environment', environmentId }, checks: [{
                     checkId: 'app-http', kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' },
                     binding: { kind: 'healthCheck' }, config: { endpoint: 'http://127.0.0.1:8080/health', expectStatus: 200 },
@@ -101,13 +110,72 @@ describe('Account trigger reads through real Action and Automation owners', () =
             },
         })] };
         home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [saved], nextCursor: null } });
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 1, materializations: [], snapshots: [],
+            intentReads: [{ pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                intent: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, desiredVersion: null, enabled: true,
+                    offlineUiHosting: 'enabled', writableCollections: [], revision: 'health-check-fixture' },
+                release: null, uiArtifacts: [], packageAssets: [],
+            } }],
+        } });
+        onTestFinished(clearPluginAccountAvailabilityProjection);
+        const { recordAccountStoredContentServerRequirements } = await import('@/sync/http/accountStoredContentCompatibility');
+        recordAccountStoredContentServerRequirements({ serverUrl: 'https://trigger-read.test',
+            requirements: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion: 3,
+                declarationTransport: 'http-header-and-socket-auth-v1' },
+        });
+        const key = healthResultCheckpointKey(sourceInstanceId);
+        const kvPath = `/v1/account/plugin-storage/${HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1}`;
+        let status: 'down' | 'up' = 'down';
+        home.answer(serverId, `GET ${kvPath}`, { select: () => {
+            const row = createEmptyPluginAccountKvRowV1();
+            const current = healthResultProjectionStoredSchema.parse({
+                v: 1,
+                members: [{ automationId: saved.id, triggerId, triggerRevision: saved.triggers[0].revision,
+                    sourceSelectorId: '00000000-0000-4000-8000-000000000001' }],
+                checks: [{ checkId: 'app-http', result: { status, observedAt: Date.now(), evidence: { v: 1, items: [{
+                    source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'HTTP probe completed',
+                }] } } }],
+            });
+            setPluginAccountKvEntryV1(row, key, { current }, undefined);
+            return { body: { status: 'present', revision: 1, content: { t: 'plain', v: row } } };
+        } });
         const { useDeploymentSavedChecks } = await import('@/components/projects/deployments/useDeploymentSavedChecks');
+        const { observeDeploymentSavedChecks } = await import('@/components/projects/deployments/observeDeploymentSavedChecks');
+        const observed = vi.fn<Parameters<typeof observeDeploymentSavedChecks>[2]>();
+        const subscription = observeDeploymentSavedChecks(lifetime, environmentId, observed);
+        onTestFinished(subscription.dispose);
         const hook = await renderHook(() => useDeploymentSavedChecks(lifetime, environmentId, true, 'Staging'));
-        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === kvPath)).toHaveLength(1));
+        await waitForHomeGovernance(() => {
+            expect(observed.mock.lastCall?.[0]).toMatchObject({ pending: false, definitions: { status: 'ready',
+                sources: [expect.objectContaining({ automationId: saved.id, triggerId, sourceInstanceId })] },
+                result: { checks: [{ checkId: 'app-http', status: 'down' }] },
+                observations: [expect.objectContaining({ automationId: saved.id, triggerId, checkId: 'app-http', status: 'down' })],
+            });
+            expect(hook.getCurrent().rows[0]?.healthStatus).toBe('down');
+        });
         expect(hook.getCurrent().rows).toMatchObject([{
             title: 'HTTP · Staging', targetLabel: '127.0.0.1:8080/health', check: { checkId: 'app-http' },
             source: { automationId: 'saved-staging-check', observer: { machineId: 'alternate' } },
+            href: expect.stringContaining(triggerId),
         }]);
+        const push = (cursor: number, changedKey: string) => {
+            const hint = { pluginDomain: 'dataKv' as const, pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, keys: [changedKey] };
+            publishActivePluginCollectionChanges([PluginDomainChangeEntrySchema.parse({
+                kind: 'pluginDomain', cursor, changedAt: 1, entityId: buildPluginDomainAccountChangeEntityId(hint), hint,
+            })]);
+        };
+        const kvReads = () => home.requests.filter(request => request.path === kvPath).length;
+        const publications = observed.mock.calls.length;
+        await act(async () => push(1, healthResultCheckpointKey('production')));
+        expect(kvReads()).toBe(1);
+        expect(observed).toHaveBeenCalledTimes(publications);
+        status = 'up';
+        await act(async () => push(2, key));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows[0]?.healthStatus).toBe('up'));
+        expect(kvReads()).toBe(2);
         expect(home.requests.filter(request => request.path.startsWith('/v3/automations'))).toMatchObject([
             { path: '/v3/automations/query', input: { healthCheckSources: { environmentId } } },
         ]);
