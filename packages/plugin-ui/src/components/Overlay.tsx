@@ -1,7 +1,7 @@
 import { usePropertyCommit } from './propertyCommit.js';
 import type { PluginUiActionBinding } from '@happier-dev/plugin-sdk/ui';
 import { Avatar } from './Avatar.js';
-import { useCallback, useContext, useLayoutEffect, useMemo, useRef, type MutableRefObject, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { View } from 'react-native';
 
 import {
@@ -50,6 +50,8 @@ import type { HappierFloatingRole } from '../presentation/layout/Surface.js';
 import { SURFACE_PADDING_BY_SIZE } from './surfacePadding.js';
 import { HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL } from '../presentation/layout/pageChrome.js';
 import { HappierFloatingSurfaceContext } from '../presentation/layout/floatingSurface.js';
+import { resolveVerticalScrollEdgeMaskStyle } from '../presentation/layout/scrollEdgeMask.js';
+import type { HappierLayoutChangeEvent, HappierScrollEvent } from '../presentation/portableTypes.js';
 import { COLLECTION_ADD_MENU_SEARCH_THRESHOLD } from '../presentation/collection/CollectionAddMenu.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 
@@ -297,10 +299,11 @@ function PopoverPresentation({
     }
     const contentBody = (
       <OverlayFieldTriggerContext.Provider value={null}>
-        <FloatingScrollSurface maxHeight={controls.maxHeight} menu={isMenuPresentation}>
+        {/* Anchored (a wide viewport, or a host without a sheet): the sheet's footer is pinned at the surface's end
+            under the scrolling content, as the phone sheet pins it (D11, Plugin platform ruling 11-26). */}
+        <FloatingScrollSurface maxHeight={controls.maxHeight} menu={isMenuPresentation}
+          {...(sheet?.footer == null ? {} : { footer: sheet.footer })}>
           {renderedChildren}
-          {/* Anchored (a wide viewport, or a host without a sheet): the sheet's footer ends the same surface. */}
-          {sheet?.footer == null ? null : <View style={anchoredSheetFooterStyle}>{sheet.footer}</View>}
         </FloatingScrollSurface>
       </OverlayFieldTriggerContext.Provider>
     );
@@ -942,15 +945,30 @@ const FLOATING_SURFACE_INSET = SURFACE_PADDING_BY_SIZE.small;
 const sheetRowsInsetStyle = {} as const;
 /** Other content keeps the anchored popover's content edge in the phone sheet, so its words line up with the title. */
 const sheetContentInsetStyle = { paddingHorizontal: FLOATING_SURFACE_INSET.horizontal } as const;
-/** An anchored sheet's footer sits on the menu rows' own edge, a row's rhythm below them. */
+/**
+ * An anchored sheet's footer, pinned under the scroller: a row's rhythm above it, on the content's own edge (a
+ * menu's rows run edge to edge, other content stands on the floating inset), and the surface's inset below it.
+ */
 const anchoredSheetFooterStyle = {
   flexDirection: 'row',
   justifyContent: 'flex-end',
   alignItems: 'center',
   gap: 8,
-  paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+  flexShrink: 0,
   paddingTop: HAPPIER_MENU_ROW_METRICS.paddingVerticalPx,
 } as const;
+const anchoredMenuFooterStyle = {
+  ...anchoredSheetFooterStyle,
+  paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+  paddingBottom: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
+} as const;
+const anchoredContentFooterStyle = {
+  ...anchoredSheetFooterStyle,
+  paddingHorizontal: FLOATING_SURFACE_INSET.horizontal + HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
+  paddingBottom: FLOATING_SURFACE_INSET.vertical,
+} as const;
+/** With a pinned footer the scroller takes what the footer leaves of the height cap. */
+const pinnedScrollStyle = { flexShrink: 1, minHeight: 0 } as const;
 /** A count rides the round trigger's upper corner, clear of the glyph. */
 const TRIGGER_COUNT_PADDING_X = 5;
 const triggerCountStyle = {
@@ -977,7 +995,7 @@ const menuTextEdgeStyle = { paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingH
  * content scrolls inside it, so a long menu never ends in a flat cut. Floating content stands outside
  * the page column, so the page's sheet edge does not inset it either.
  */
-function FloatingScrollSurface(props: Readonly<{ maxHeight: number; menu?: boolean; children: ReactNode }>): ReactElement {
+function FloatingScrollSurface(props: Readonly<{ maxHeight: number; menu?: boolean; children: ReactNode; footer?: ReactNode }>): ReactElement {
   // The Surface's 1px border on each side sits outside the scroller.
   const scrollMaxHeight = Math.max(0, props.maxHeight - 2);
   const theme = usePluginTheme();
@@ -987,14 +1005,72 @@ function FloatingScrollSurface(props: Readonly<{ maxHeight: number; menu?: boole
     <HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider value={null}>
       <View style={[{ borderRadius: theme.radii.panel }, lift ?? null]}>
         <Surface padding="none" materialRole="floating" themeSurface={props.menu ? { surface: 'menu', part: 'root' } : undefined}>
-          <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
-            <HappierFloatingSurfaceContext.Provider value>
-              <HappierStack gap={4}>{props.children}</HappierStack>
-            </HappierFloatingSurfaceContext.Provider>
-          </HappierScrollArea>
+          {props.footer == null ? (
+            <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
+              <HappierFloatingSurfaceContext.Provider value>
+                <HappierStack gap={4}>{props.children}</HappierStack>
+              </HappierFloatingSurfaceContext.Provider>
+            </HappierScrollArea>
+          ) : (
+            <View style={{ maxHeight: scrollMaxHeight }}>
+              <PinnedFooterScroller menu={props.menu === true}>{props.children}</PinnedFooterScroller>
+              <HappierFloatingSurfaceContext.Provider value>
+                <View style={props.menu ? anchoredMenuFooterStyle : anchoredContentFooterStyle}>{props.footer}</View>
+              </HappierFloatingSurfaceContext.Provider>
+            </View>
+          )}
         </Surface>
       </View>
     </HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider>
+  );
+}
+
+/** One figure of a platform scroll event (React Native and React Native Web both report these). */
+function scrollEventMetric(event: unknown, key: 'contentOffset' | 'contentSize' | 'layoutMeasurement', axis: 'y' | 'height'): number | null {
+  const group = typeof event === 'object' && event !== null ? (event as Readonly<Record<string, unknown>>)[key] : undefined;
+  const value = typeof group === 'object' && group !== null ? (group as Readonly<Record<string, unknown>>)[axis] : undefined;
+  return typeof value === 'number' ? value : null;
+}
+
+/**
+ * The scroller above a pinned footer: while content continues below it, its bottom edge fades into the footer through
+ * the shared scroll-edge mask; at the end it stands whole. Only the "more below" fact is state, so scrolling within
+ * the content re-renders nothing.
+ */
+function PinnedFooterScroller(props: Readonly<{ menu: boolean; children: ReactNode }>): ReactElement {
+  const measure = useRef({ offset: 0, viewport: 0, content: 0 });
+  const [moreBelow, setMoreBelow] = useState(false);
+  const settle = () => {
+    const { offset, viewport, content } = measure.current;
+    setMoreBelow(viewport > 0 && offset + viewport < content - 1);
+  };
+  const onScroll = (event: HappierScrollEvent) => {
+    const offset = scrollEventMetric(event.nativeEvent, 'contentOffset', 'y');
+    const content = scrollEventMetric(event.nativeEvent, 'contentSize', 'height');
+    const viewport = scrollEventMetric(event.nativeEvent, 'layoutMeasurement', 'height');
+    measure.current = {
+      offset: offset ?? measure.current.offset,
+      content: content ?? measure.current.content,
+      viewport: viewport ?? measure.current.viewport,
+    };
+    settle();
+  };
+  const mask = resolveVerticalScrollEdgeMaskStyle({ top: false, bottom: moreBelow, left: false, right: false });
+  return (
+    <HappierScrollArea style={mask ? [pinnedScrollStyle, mask] : pinnedScrollStyle} scrollEventThrottle={16} onScroll={onScroll}
+      onLayout={(event: HappierLayoutChangeEvent) => { measure.current.viewport = event.nativeEvent.layout.height; settle(); }}
+      contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
+      {/* The scroll range is the content plus the scroller's own inset above and below it. */}
+      <View onLayout={(event: HappierLayoutChangeEvent) => {
+        measure.current.content = event.nativeEvent.layout.height
+          + 2 * (props.menu ? HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx : FLOATING_SURFACE_INSET.vertical);
+        settle();
+      }}>
+        <HappierFloatingSurfaceContext.Provider value>
+          <HappierStack gap={4}>{props.children}</HappierStack>
+        </HappierFloatingSurfaceContext.Provider>
+      </View>
+    </HappierScrollArea>
   );
 }
 

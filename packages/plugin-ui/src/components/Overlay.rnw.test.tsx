@@ -143,6 +143,33 @@ describe('controlled overlay presentation', () => {
       expect(mount.container.querySelector('[role="dialog"]')).toBeNull();
     } finally { mount.unmount(); }
   });
+  it('pins an anchored popover\'s requested footer under its scrolling content, as the phone sheet does', async () => {
+    function LongForm() {
+      const [open, setOpen] = useState(true);
+      return <Popover open={open} onOpenChange={setOpen} trigger="New row" triggerAccessibilityLabel="New row"
+        sheet={{ title: 'New row', footer: <Button title="Stage row" onPress={() => {}} /> }}>
+        {Array.from({ length: 40 }, (_, index) => <Text key={index} value={`Field ${index}`} />)}
+      </Popover>;
+    }
+    const mount = mountWithPresentationHost(<LongForm />, input => <>{input.content}</>);
+    try {
+      const dialog = mount.container.querySelector<HTMLElement>('[role="dialog"]')!;
+      const scrollerOf = (element: Element | null | undefined) => {
+        for (let node = element?.parentElement ?? null; node && node !== dialog; node = node.parentElement) {
+          const overflow = getComputedStyle(node).overflowY;
+          if (overflow === 'auto' || overflow === 'scroll') return node;
+        }
+        return null;
+      };
+      const field = [...dialog.querySelectorAll('*')].find(node => node.childElementCount === 0 && node.textContent === 'Field 39');
+      const stage = [...dialog.querySelectorAll('[role="button"]')].find(node => node.textContent === 'Stage row');
+      expect(scrollerOf(field)).not.toBeNull();
+      expect(stage).toBeDefined();
+      // Long content scrolls; the footer stays outside the scroller, in view at the surface's end.
+      expect(scrollerOf(stage)).toBeNull();
+    } finally { mount.unmount(); }
+  });
+
   it('keeps a composer status trigger disabled and lets the host compose its phone sheet', async () => {
     const onOpenChange = vi.fn();
     const context = createSurfaceContext();
