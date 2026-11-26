@@ -4239,10 +4239,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const scope = accountContext.accountLifetime.scope;
       const item = request.intent === 'update' && request.definitionId === undefined
         ? readCurrentMachineUpdateItem(scope, machineId, { kind: 'agent-cli', agentId: request.agentId }) : null;
-      if (item && item.action.kind !== 'run') return { ok: false, errorCode: 'update_target_unavailable', error: 'update_target_unavailable' };
       const options = { consent: request.consent, ...(request.force === undefined ? {} : { force: request.force }),
         ...(request.expectedDefinitionVersion === undefined ? {} : { expectedDefinitionVersion: request.expectedDefinitionVersion }) };
-      const job = item ? await startMachineAgentItemUpdate(item, scope, options)
+      const job = item?.action.kind === 'run' ? await startMachineAgentItemUpdate(item, scope, options)
         : await startAgentInstallJob({ ...scope, machineId, agentId: request.agentId,
             ...(request.definitionId === undefined ? {} : { definitionId: request.definitionId }) }, request.intent, options);
       return { ok: true, jobId: job.jobId };

@@ -526,6 +526,40 @@ describe('UI machine Agent inventory Action transport', () => {
         }, { surface: 'ui', authority: 'present_user', serverId })).toMatchObject(refusal);
     });
 
+    it('starts the same Agent update from UI and Agent regardless of the mounted Updates row', async () => {
+        const serverId = await addHome({ name: 'Agent Update Home', serverUrl: 'https://agent-update.test', accountId: 'alice',
+            serverIdentityId: 'srv_agent_update', currentAccount: true });
+        await harness.setActionPolicy(serverId, 'machines.agents.install', 'ui', 'allowed');
+        await harness.setActionPolicy(serverId, 'machines.agents.install', 'agent', 'allowed');
+        const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' };
+        const { registerUpdatesActionOwner } = await import('@/updates/updatesActionRuntime');
+        const unregister = registerUpdatesActionOwner(() => ({ scope, check: async () => {}, executeItem: async () => {},
+            groups: [{ id: 'machine:machine-1', kind: 'machine', machineId: 'machine-1', machineName: 'Dev', online: true,
+                lastSeenAt: null, items: [{ id: 'machine-1:agent-cli:acme/helper', machineId: 'machine-1', title: 'Helper',
+                    subject: { kind: 'agent-cli', agentId: 'acme/helper' }, state: 'upToDate', action: { kind: 'none' },
+                    currentVersion: '1.0.0', latestVersion: '1.0.0', managedBy: 'happier', progressPercent: null,
+                    step: null, failure: null, skipped: false }] }] }));
+        const receipt = { ok: true, jobId: 'update-job' };
+        rpc.machine.mockImplementation(async ({ method }) => method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
+            ? receipt : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST ? { ok: true, jobs: [] }
+                : { error: 'Unsupported fixture RPC' });
+        const executor = createDefaultActionExecutor();
+        const input = { machineId: 'machine-1', agentId: 'acme/helper', intent: 'update', consent: { vendorRecipe: true } };
+        const context = { serverId, expectedAccountId: 'alice' };
+        try {
+            expect(await executor.execute('machines.agents.install', input,
+                { ...context, expectedAccountId: 'other', surface: 'agent' })).toMatchObject({
+                ok: false, errorCode: 'action_account_scope_changed',
+            });
+            expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START)).toHaveLength(0);
+            for (const surface of ['ui', 'agent'] as const) {
+                expect(await executor.execute('machines.agents.install', input,
+                    { ...context, surface, authority: surface === 'ui' ? 'present_user' : 'account_automation' }))
+                    .toEqual({ ok: true, result: receipt });
+            }
+        } finally { unregister(); }
+    });
+
     it.each(['install', 'update'] as const)('starts a %s job on the captured Home with explicit vendor consent', async (intent) => {
         const serverId = await addHome({ name: 'Setup Home', serverUrl: 'https://setup.test', accountId: 'alice',
             serverIdentityId: 'srv_install_observation', currentAccount: true });

@@ -49,8 +49,24 @@ export function useMachineRolesEditor(input: Readonly<{
             return true;
         }
         setPending(null);
-        if (parsed?.success && parsed.data.status === 'conflict') {
-            Modal.alert(t('machineDetailPage.roles.title'), t('machineDetailPage.roles.changed'));
+        if (parsed?.success) {
+            switch (parsed.data.status) {
+                case 'conflict':
+                    Modal.alert(t('machineDetailPage.roles.title'), t('machineDetailPage.roles.changed'));
+                    break;
+                case 'outcomeUnknown':
+                    Modal.alert(t('machineDetailPage.roles.title'), t('errors.scmOutcomeUnknown'));
+                    break;
+                case 'locked':
+                    Modal.alert(t('machineDetailPage.roles.saveFailed'), t('machineDetailPage.lockedMachine'));
+                    break;
+                case 'invalid':
+                    Modal.alert(t('machineDetailPage.roles.saveFailed'), t('errors.invalidFormat'));
+                    break;
+                case 'unavailable':
+                    Modal.alert(t('machineDetailPage.roles.saveFailed'), t('common.unavailable'));
+                    break;
+            }
             return false;
         }
         if (!result.ok && result.errorCode === 'action_account_scope_changed') return false;
