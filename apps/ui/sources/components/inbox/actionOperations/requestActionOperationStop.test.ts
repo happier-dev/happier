@@ -18,8 +18,12 @@ import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn(), session: vi.fn() }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', async () =>
@@ -111,7 +115,7 @@ async function addOriginHome(options: Parameters<typeof harness.addHome>[0], mou
 }
 
 describe('requestActionOperationStop', () => {
-    beforeEach(async () => { await harness.reset(); actionOperationStore.reset(); rpc.machine.mockReset(); rpc.session.mockReset(); });
+    beforeEach(async () => { await harness.reset(); actionOperationStore.reset(); rpc.machine.mockReset(); rpc.session.mockReset(); vi.mocked(Modal.alert).mockClear(); });
     afterEach(async () => {
         standardCleanup();
         await connection?.dispose(); connection = null;
@@ -172,6 +176,41 @@ describe('requestActionOperationStop', () => {
         const result = await requestActionOperationStop(operation(serverId));
         expect(result).toMatchObject({ kind: 'approval_request_created', actionId: 'action.operations.cancel' });
         expect(rpc.machine).not.toHaveBeenCalled();
+    });
+
+    it.each(['detail', 'row'] as const)('reveals the original Stop failure through %s Technical details', async surface => {
+        const serverId = await addOriginHome({ name: 'Origin', serverUrl: 'https://origin.test', accountId: 'alice' });
+        harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'action.operations.cancel': ['ui'] } },
+        } }, version: 1 } });
+        const failure = { ok: false, errorCode: 'machine_rpc_failed', error: 'private transport text',
+            requestId: 'stop-request-id', effectAttempted: false,
+            details: { reasonCode: 'daemon_unavailable', path: '/private/operation', token: 'private-secret' },
+            failureCause: { phase: 'action.operations.cancel', errorClass: 'HttpStatusError',
+                errorCode: 'machine_socket_unavailable', httpStatus: 503 } } as const;
+        rpc.machine.mockResolvedValue(failure);
+        const target = operation(serverId);
+        const screen = await renderScreen(surface === 'detail'
+            ? React.createElement(ActionOperationDetailControls, { operation: target, terminal: false, canCancel: true, onClose: () => {} })
+            : React.createElement(ActionOperationLedgerView, { operations: [target], onOpenOperation: () => {},
+                onCancelOperation: requestAcceptedActionOperationStop }));
+        try {
+            await screen.pressByTestIdAsync(surface === 'detail' ? 'action-operation-cancel' : 'action-operation-stop.operation-1');
+            await waitForHomeGovernance(() => expect(Modal.alert).toHaveBeenCalled());
+            const alert = vi.mocked(Modal.alert).mock.calls.at(-1);
+            expect(String(alert?.[1])).not.toContain(failure.requestId);
+            expect(String(alert?.[1])).not.toContain('private');
+            const technical = alert?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+            expect(technical).toBeDefined();
+            technical?.onPress?.();
+            const details = readActionFailureDetails(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]);
+            expect(details).toMatchObject({ code: failure.errorCode, requestId: expect.any(String),
+                effectAttempted: 'false', reasonCode: 'daemon_unavailable', causePhase: failure.failureCause.phase,
+                errorClass: 'HttpStatusError', causeCode: 'machine_socket_unavailable', httpStatus: '503' });
+            expect(JSON.stringify(details)).not.toContain('private');
+            expect(target.snapshot.state).toBe('running');
+            expect(harness.artifacts(serverId).list()).toHaveLength(0);
+        } finally { await screen.unmount(); }
     });
 
     it.each(['unsupported', 'not_found'] as const)('keeps native %s feedback after an Ask-first Stop refusal', async kind => {

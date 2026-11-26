@@ -34,7 +34,7 @@ export function ActionOperationDetailControls(props: Readonly<{
                                 ? t('inbox.actionOperations.cancel.unsupported')
                                 : stopControl.feedback === 'not_found'
                                     ? t('inbox.actionOperations.cancel.notFound')
-                                    : t('inbox.actionOperations.cancel.failed')}
+                                    : stopControl.failureReason ?? t('inbox.actionOperations.cancel.failed')}
                 </Text>
             ) : null}
             <View style={styles.actions}>

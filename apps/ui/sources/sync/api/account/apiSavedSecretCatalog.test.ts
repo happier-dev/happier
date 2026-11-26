@@ -65,6 +65,18 @@ afterEach(async () => {
 });
 
 describe('SavedSecret catalog captured request boundary', () => {
+    it.each([[403, 'forbidden'], [500, 'internal'], [409, 'resource_changed']] as const)(
+        'preserves the material route %s refusal through scalar reference reads', async (status, code) => {
+            const context = { serverId: 'home-a', accountId: 'refusal-owner',
+                credentials: { token: createAccountTokenForTests('refusal-owner') },
+                request: (async () => Response.json({ error: code }, { status })) satisfies ServerFetch,
+                assertCurrent() {}, resolveAccountMode: async () => 'plain' as const,
+                resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }) };
+            await expect(catalog.readSavedSecretReferenceInContext(context, 'happier:shared-secret:v1:refused'))
+                .resolves.toMatchObject({ ok: false, reason: status === 409 ? 'changed' : 'unavailable',
+                    failure: { code, httpStatus: status, kind: status === 403 ? 'forbidden' : status === 409 ? 'conflict' : 'unknown' } });
+        });
+
     it('captures reference revisions from metadata without acquiring Secret contents', async () => {
         const entry = SavedSecretCatalogEntryV1Schema.parse({ ref: 'happier:shared-secret:v1:reference-only', source: 'shared_resource', relationship: 'owner',
             name: 'Reference key', kind: 'token', revision: 7, materialStatus: 'ready',
@@ -210,7 +222,8 @@ describe('SavedSecret catalog captured request boundary', () => {
         rpc.mockClear();
         canUse = true;
         denied = true;
-        await expect(read(context, [ref])).resolves.toEqual({ ok: false, reason: 'unavailable' });
+        await expect(read(context, [ref])).resolves.toMatchObject({ ok: false, reason: 'unavailable',
+            failure: { code: 'forbidden', httpStatus: 403 } });
         denied = false;
         current = false;
         await expect(read(context, [ref])).resolves.toEqual({ ok: false, reason: 'changed' });
@@ -294,7 +307,8 @@ describe('SavedSecret catalog captured request boundary', () => {
         await expect(read(context, ref)).resolves.toEqual({ ok: true, value: 'private-password', revision: 1 });
         expect(materialReads).toEqual(['/v1/account/saved-secrets/resources/materials?resourceId=ssh-password']);
         wrongMode = true;
-        await expect(read(context, ref)).resolves.toEqual({ ok: false, reason: 'unavailable' });
+        await expect(read(context, ref)).resolves.toMatchObject({ ok: false, reason: 'unavailable',
+            failure: { kind: 'invalid', httpStatus: 200 } });
         current = false;
         await expect(read(context, ref)).resolves.toEqual({ ok: false, reason: 'changed' });
     });

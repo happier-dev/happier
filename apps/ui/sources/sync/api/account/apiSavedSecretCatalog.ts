@@ -84,7 +84,7 @@ export async function readSavedSecretCatalogInContext(
 
 export type SavedSecretReferenceReadResult =
     | Readonly<{ ok: true; value: string; revision: number }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>;
+    | Readonly<{ ok: false; reason: 'unavailable' | 'changed'; failure?: HomeDomainFailure }>;
 
 type SavedSecretReferenceMaterial = Readonly<{ value: string; revision: number; name: string; kind: SavedSecret['kind'] }>;
 
@@ -179,7 +179,7 @@ export async function readSavedSecretReferencesInContext(
     signal?: AbortSignal,
     admission?: Readonly<{ expectedRevision: number; requireManage?: boolean; isCurrent?: () => boolean }>,
 ): Promise<Readonly<{ ok: true; values: ReadonlyMap<string, SavedSecretReferenceMaterial> }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>> {
+    | Extract<SavedSecretReferenceReadResult, { ok: false }>> {
     const read = await readSavedSecretContentsInContext(context, references, signal, admission);
     if (!read.ok) return read;
     const values = new Map<string, SavedSecretReferenceMaterial>();
@@ -197,7 +197,7 @@ export async function readSavedSecretContentsInContext(
     signal?: AbortSignal,
     admission?: Readonly<{ expectedRevision: number; requireManage?: boolean; isCurrent?: () => boolean }>,
 ): Promise<Readonly<{ ok: true; contents: ReadonlyMap<string, Readonly<{ content: SavedSecretResourceContentV1; revision: number; entry: SavedSecretCatalogEntryV1 }>> }>
-    | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>> {
+    | Extract<SavedSecretReferenceReadResult, { ok: false }>> {
     const assertCurrent = () => {
         signal?.throwIfAborted();
         context.assertCurrent();
@@ -220,7 +220,7 @@ export async function readSavedSecretContentsInContext(
                     ...(admission.requireManage ? { requireManage: true } : {}) } : {}) }
                 : selectedResourceIds.length > 0 ? { resourceIds: selectedResourceIds } : undefined);
         assertCurrent();
-        if (!result.ok) return { ok: false, reason: result.failure.kind === 'conflict' ? 'changed' : 'unavailable' };
+        if (!result.ok) return { ok: false, reason: result.failure.kind === 'conflict' ? 'changed' : 'unavailable', failure: result.failure };
         const resources = result.resources.filter((row): row is Extract<SavedSecretResourceMaterialV1, { resourceId: string }> =>
             'resourceId' in row && references.includes(row.entry.ref));
         if (resources.length !== references.length || resources.some(resource => resource.entry.materialStatus !== 'ready' || !resource.entry.capabilities.use

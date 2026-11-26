@@ -1,12 +1,17 @@
 import * as React from 'react';
 import { ActionOperationCancelV1ResponseSchema, type ActionOperationCancelV1Response } from '@happier-dev/protocol/actions/operations/v1';
+import { createActionExecuteFailureError, parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { awaitActionApprovalResult, createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { t } from '@/text';
 
 import { requestActionOperationStop, type ActionOperationStopTarget, type ActionOperationStopResponse, type ActionOperationStopContext } from './requestActionOperationStop';
 
-type StopResult = Readonly<{ ok: true; result: ActionOperationCancelV1Response }> | Readonly<{ ok: false; errorCode: string }>;
+type StopResult = Readonly<{ ok: true; result: ActionOperationCancelV1Response }> | ActionExecuteFailure;
 const NO_APPROVAL_REFRESH = () => {};
 
 export function useActionOperationStopControl(
@@ -18,7 +23,7 @@ export function useActionOperationStopControl(
     const [feedback, setFeedback] = React.useState<
         'requested' | 'unsupported' | 'already_settled' | 'not_found' | 'failed' | null
     >(null);
-    const [failureCode, setFailureCode] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<ActionExecuteFailure | null>(null);
     const requestRef = React.useRef<AbortController | null>(null);
     const live = operation?.snapshot.state === 'accepted' || operation?.snapshot.state === 'running';
     const retryUnconfirmedStop = live
@@ -38,7 +43,7 @@ export function useActionOperationStopControl(
     }, []);
     React.useEffect(() => {
         setFeedback(null);
-        setFailureCode(null);
+        setFailure(null);
         return () => { requestRef.current?.abort(); };
     }, [scopeKey]);
 
@@ -48,7 +53,7 @@ export function useActionOperationStopControl(
         requestRef.current = controller;
         setPending(true);
         setFeedback(null);
-        setFailureCode(null);
+        setFailure(null);
         void (async () => {
             const account = await captureLazyActionAccountContext(operation.serverId!, controller.signal);
             const retirement = account.accountLifetime.onRetire(() => controller.abort());
@@ -84,11 +89,11 @@ export function useActionOperationStopControl(
                         const output = ActionOperationCancelV1ResponseSchema.safeParse(failure?.details);
                         return output.success && output.data.kind === errorCode
                             ? { ok: true, result: output.data }
-                            : { ok: false, errorCode };
+                            : failure ?? { ok: false, errorCode, error: errorCode };
                     },
-                    aborted: () => ({ ok: false, errorCode: 'cancelled' }),
+                    aborted: () => ({ ok: false, errorCode: 'cancelled', error: 'cancelled' }),
                 });
-                if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                if (!result.ok) throw createActionExecuteFailureError(result);
                 return result.result;
             } finally {
                 retirement.dispose();
@@ -101,8 +106,14 @@ export function useActionOperationStopControl(
             .catch((error: unknown) => {
                 if (mountedRef.current) {
                     setFeedback(controller.signal.aborted ? null : 'failed');
-                    setFailureCode(controller.signal.aborted ? null : error instanceof Error && 'code' in error
-                        && typeof error.code === 'string' ? error.code : 'operation_stop_failed');
+                    if (controller.signal.aborted) { setFailure(null); return; }
+                    const failure = parseActionExecuteFailure(error) ?? {
+                        ok: false as const, ...normalizeActionExecutorThrownError(error, 'action.operations.cancel'),
+                    };
+                    setFailure(failure);
+                    const presentation = presentActionExecutionFailure(failure, t('inbox.actionOperations.cancel.failed'));
+                    alertActionFailure({ reason: presentation.reason, code: failure.errorCode, requestId: failure.requestId,
+                        context: Object.fromEntries(presentation.technicalDetails.map(detail => [detail.key, detail.value])) });
                 }
             })
             .finally(() => {
@@ -115,6 +126,9 @@ export function useActionOperationStopControl(
 
     // A late cancel acknowledgement cannot override the operation owner's settled
     // outcome. Keep request custody until it returns, but stop presenting it as work.
-    return { pending: live && pending && !awaitingApproval, feedback, failureCode, stopRequested, retryUnconfirmedStop, requestStop,
+    return { pending: live && pending && !awaitingApproval, feedback, failure,
+        failureCode: failure?.errorCode ?? null,
+        failureReason: live && failure ? resolveActionExecutionErrorMessage(failure, t('inbox.actionOperations.cancel.failed')) : null,
+        stopRequested, retryUnconfirmedStop, requestStop,
         pendingApproval: approval.approvalId ? { artifactId: approval.approvalId, serverId: operation?.serverId } : null } as const;
 }

@@ -198,9 +198,9 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         <Item
             testID={`inbox.action-operation.${snapshot.operationId}`}
             title={title}
-            subtitle={failureReason ? `${subtitleText}\n${failureReason}` : subtitleText}
+            subtitle={stopControl.failureReason || failureReason ? `${subtitleText}\n${stopControl.failureReason ?? failureReason}` : subtitleText}
             detail={detailText || undefined}
-            accessibilityLabel={accessibilityLabel}
+            accessibilityLabel={stopControl.failureReason ? joinHappierFacts(accessibilityLabel, stopControl.failureReason) : accessibilityLabel}
             accessibilityLiveRegion="polite"
             density="compact"
             leftElement={active && observation === 'available'

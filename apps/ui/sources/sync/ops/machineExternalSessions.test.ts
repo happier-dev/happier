@@ -131,6 +131,22 @@ describe('machine direct sessions ops server-scoped routing', () => {
         });
     });
 
+    it('retains the typed Browse RPC refusal and correlation through its Action envelope', async () => {
+        const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'RpcError' as const,
+            errorCode: 'machine_unavailable', httpStatus: null };
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(createRpcCallError({
+            error: 'Machine is offline', errorCode: 'target_unavailable', details, failureCause, effectAttempted: false,
+        }), { requestId: 'request-browse-cause' }));
+        const { executeExternalSessionBrowseAction } = await import('./actions/externalSessionBrowseAction');
+        await expect(executeExternalSessionBrowseAction({
+            actionId: 'sessions.external.candidates.list',
+            input: { machineId: 'machine-1', agentId: 'codex', source: directSource },
+            context: { surface: 'ui', serverId: 'home-b', authority: 'present_user' },
+        })).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+            details, failureCause, requestId: 'request-browse-cause', effectAttempted: false });
+    });
+
     it('routes direct session candidate listing through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,

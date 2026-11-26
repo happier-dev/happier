@@ -34,6 +34,7 @@ installHomeGovernanceBoundaries(homes);
 
 import {
     createHomeDomainActionExecutorForScope,
+    homeDomainActionFailureFromDomainFailure,
     homeDomainFailureCode,
     homeDomainFailureFromActionFailure,
 } from './homeDomainActions';
@@ -83,6 +84,29 @@ it.each(['team_not_found', 'invitation_not_found', 'group_not_found', 'home_acco
 it('keeps a disabled Team route unsupported after the Action envelope is decoded', () => {
     expect(homeDomainFailureFromActionFailure({ errorCode: 'teams_unavailable' }).kind).toBe('unsupported');
 });
+
+it.each(['approval_rejected', 'approval_stale', 'outcome_unknown', 'home_unreachable', 'team_forbidden'])(
+    'preserves the admitted failure evidence when decoding %s', (errorCode) => {
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode, error: errorCode,
+            requestId: 'request-home-cause', effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'RpcError', errorCode: 'machine_unavailable', httpStatus: null } });
+        expect(homeDomainFailureFromActionFailure(failure)).toMatchObject({
+            requestId: failure.requestId, effectAttempted: false, failureCause: failure.failureCause,
+            ...(errorCode === 'outcome_unknown' ? { kind: 'outcome_unknown', code: errorCode } : {}),
+        });
+    },
+);
+
+it.each(['outcome_unknown', 'unreachable', 'unsupported', 'forbidden'] as const)(
+    'retains Home failure evidence when encoding %s for the Action executor', (kind) => {
+        const failure = { kind, retryable: false, code: kind === 'forbidden' ? 'team_forbidden' : null,
+            requestId: 'request-home-encode', effectAttempted: true,
+            failureCause: { phase: 'home.response', errorClass: 'HttpStatusError' as const, errorCode: 'team_forbidden', httpStatus: 403 } };
+        expect(homeDomainActionFailureFromDomainFailure('teams.members.list', failure)).toMatchObject({
+            requestId: failure.requestId, effectAttempted: true, failureCause: failure.failureCause,
+        });
+    },
+);
 
 it.each([
     { status: 409, error: 'references_conflict', kind: 'conflict' },

@@ -1,5 +1,5 @@
 import { ActionOperationCancelV1ResponseSchema, type ActionOperationCancelV1Response } from '@happier-dev/protocol/actions/operations/v1';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
@@ -22,7 +22,7 @@ export async function requestActionOperationStop(
         serverId: operation.serverId,
     }, { ...context, expectedAccountId: operation.snapshot.scope.accountId,
         surface: 'ui', authority: 'present_user', serverId: operation.serverId });
-    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+    if (!result.ok) throw createActionExecuteFailureError(result);
     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
     if (approval.success) return approval.data;
     return ActionOperationCancelV1ResponseSchema.parse(result.result);

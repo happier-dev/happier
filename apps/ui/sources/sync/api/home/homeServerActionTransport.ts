@@ -3,6 +3,7 @@ import {
     type HomeDomainActionErrorCodeV1,
 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 
@@ -58,7 +59,7 @@ export type HomeDomainFailure<TCode extends string = HomeDomainErrorCode> = Read
     details?: unknown;
     /** The actual HTTP answer, when one was obtained; never inferred from a code. */
     httpStatus?: number;
-}>;
+} & Pick<ActionExecuteFailure, 'requestId' | 'effectAttempted' | 'failureCause'>>;
 
 export type HomeDomainResult<TValue, TCode extends string = HomeDomainErrorCode> =
     | Readonly<{ ok: true; value: TValue }>

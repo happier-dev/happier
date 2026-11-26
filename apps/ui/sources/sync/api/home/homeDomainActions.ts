@@ -52,27 +52,17 @@ export function homeDomainActionFailureFromDomainFailure(actionId: string, failu
         ...(typeof failure.details === 'object' && failure.details !== null ? failure.details : {}),
         httpStatus: failure.httpStatus,
     };
-    if (failure.code) {
-        return {
-            ok: false,
-            errorCode: failure.code,
-            error: failure.code,
-            ...(details === undefined ? {} : { details }),
-        };
-    }
-    if (failure.kind === 'unsupported') {
-        return {
-            ok: false,
-            errorCode: 'unsupported_action',
-            error: `unsupported_action:${actionId}`,
-            ...(details === undefined ? {} : { details }),
-        };
-    }
-    if (failure.kind === 'outcome_unknown') {
-        return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
-    }
-    const code = `home_${failure.kind}`;
-    return { ok: false, errorCode: code, error: code, ...(details === undefined ? {} : { details }) };
+    const code = failure.code || (failure.kind === 'unsupported' ? 'unsupported_action'
+        : failure.kind === 'outcome_unknown' ? 'outcome_unknown' : `home_${failure.kind}`);
+    return {
+        ok: false,
+        errorCode: code,
+        error: !failure.code && failure.kind === 'unsupported' ? `unsupported_action:${actionId}` : code,
+        ...(details === undefined ? {} : { details }),
+        ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+        ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+        ...(failure.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+    };
 }
 
 const HOME_DOMAIN_FAILURE_KINDS = [
@@ -96,18 +86,25 @@ const HOME_DOMAIN_FAILURE_KINDS = [
  * may additionally carry schema-validated retryability and recovery details.
  */
 export function homeDomainFailureFromActionFailure(
-    failure: Readonly<{ errorCode?: string | undefined; details?: unknown }>,
+    failure: Readonly<{ errorCode?: string | undefined; details?: unknown }
+        & Pick<ActionExecuteFailure, 'requestId' | 'effectAttempted' | 'failureCause'>>,
     actionId?: ActionId,
 ): HomeDomainFailure<string> {
     const code = failure.errorCode ?? '';
+    const evidence = {
+        ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+        ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+        ...(failure.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+    };
+
     // Consent ended before dispatch. Preserve its exact Action disposition as
     // a refusal rather than describing it as an unknown Home/network failure.
     if (isActionApprovalDeclinedErrorCode(code)) {
-        return Object.freeze({ kind: 'forbidden' as const, retryable: false, code });
+        return Object.freeze({ kind: 'forbidden' as const, retryable: false, code, ...evidence });
     }
     if (code === 'approval_stale') {
         const details = ApprovalStaleFailureDetailsSchema.safeParse(failure.details);
-        return Object.freeze({ kind: 'forbidden' as const, retryable: false, code,
+        return Object.freeze({ kind: 'forbidden' as const, retryable: false, code, ...evidence,
             ...(details.success ? { details: details.data } : {}) });
     }
     // The shared Action executor emits this only after its mutation dependency
@@ -115,7 +112,7 @@ export function homeDomainFailureFromActionFailure(
     // uncertainty: presenting it as a definite offline refusal invites a
     // second, non-idempotent mutation.
     if (code === 'outcome_unknown') {
-        return Object.freeze({ kind: 'outcome_unknown' as const, retryable: false, code: null });
+        return Object.freeze({ kind: 'outcome_unknown' as const, retryable: false, code, ...evidence });
     }
     const rawDetails = failure.details;
     const status = typeof rawDetails === 'object' && rawDetails !== null && 'httpStatus' in rawDetails
@@ -137,6 +134,7 @@ export function homeDomainFailureFromActionFailure(
                 : sourceFailure?.success ? { repair: sourceFailure.data.repair } : undefined;
     const withDetails = (value: HomeDomainFailure<string>): HomeDomainFailure<string> => Object.freeze({
         ...value,
+        ...evidence,
         ...(details === undefined ? {} : { details }),
         ...(httpStatus === undefined ? {} : { httpStatus }),
         ...(httpStatus !== undefined && (httpStatus >= 500 || httpStatus === 408 || httpStatus === 429) ? { retryable: true } : {}),

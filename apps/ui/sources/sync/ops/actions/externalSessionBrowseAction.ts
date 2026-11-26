@@ -4,6 +4,7 @@ import { EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID, EXTERNAL_SESSION_STAT
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import {
     ExternalSessionMaterializeActionInputV1Schema,
     ExternalSessionOperationReferenceV1Schema,
@@ -107,10 +108,13 @@ export const executeExternalSessionBrowseAction = async (
             try {
                 return { ok: true, result: await machineExternalSessionsCandidatesList(ExternalSessionsCandidatesListRequestSchema.parse(input), options) };
             } catch (error) {
-                // Preserve transport classification through the Action envelope without vendor text.
+                // The shared failure owner preserves typed evidence and redacts exception text.
                 const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error
                     && error.code === 'MACHINE_RPC_TIMEOUT' ? error.code : null);
-                if (code) return { ok: false, errorCode: code, error: code };
+                if (code) return { ok: false, ...normalizeActionExecutorThrownError({
+                    ...(error && typeof error === 'object' ? error : {}),
+                    ok: false, errorCode: code, error: code,
+                }, actionId) };
                 throw error;
             }
         }
