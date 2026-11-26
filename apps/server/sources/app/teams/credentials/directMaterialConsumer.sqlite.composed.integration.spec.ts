@@ -372,9 +372,26 @@ describe("Team credential direct material consumed boundary (SQLite integration)
         } });
         // The worker's custodian owns its RPC registration; the recipient
         // remains the consumer principal on this shared worker.
+        const installationId = crypto.randomUUID();
         const worker = await db.machine.create({ data: {
-            id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}", active: true,
+            id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}", active: true, installationId,
         } });
+        const unrelatedSession = await db.session.create({ data: {
+            accountId: recipient.id, tag: 'direct-review-unrelated', metadata: '{}', encryptionMode: 'plain',
+        } });
+        const createWorkflow = (originSessionId: string) => db.automationRun.create({ data: {
+            id: crypto.randomUUID(), accountId: recipient.id, originKind: 'direct', causeKind: null,
+            originSessionId, claimedByMachineId: worker.id, state: 'running',
+            scheduledAt: new Date(0), dueAt: new Date(0),
+            workflowCustodyState: 'settled', workflowAcceptedSnapshotEnvelope: '{}',
+            assignments: { create: { machineId: worker.id, admittedMachineInstallationId: installationId } },
+        } });
+        const reviewWorkflow = await createWorkflow(session.id);
+        const unrelatedWorkflow = await createWorkflow(unrelatedSession.id);
+        const workflowIdByRun = new Map([
+            ['detached-reviewer', reviewWorkflow.id],
+            ['unrelated-reviewer', unrelatedWorkflow.id],
+        ]);
 
         const app = createAuthenticatedTestApp();
         app.decorate("forwardRpcForUser", async (request: Readonly<{
@@ -391,6 +408,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             expect(request.params.requestingAccountId).toBe(recipient.id);
             return {
                 ok: true,
+                verifiedMachineInstallationId: installationId,
                 result: {
                     status: "current",
                     requestNonce: request.params.requestNonce,
@@ -400,6 +418,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                     executionRunId: request.params.executionRunId,
                     occurrenceId: `occurrence-${request.params.executionRunId}`,
                     parentSessionId: request.params.executionRunId === "attached-run" ? session.id : null,
+                    workflowRunId: workflowIdByRun.get(request.params.executionRunId),
                     intent: "agent",
                     runtimeState: "idle",
                     // The Run owner's own accepted selection: this resource, direct.
@@ -484,6 +503,13 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 slot: { kind: "provider_model" },
                 sourceMemberKey,
             })).resolves.toEqual({ ok: false, reason: "access_removed" });
+            const openReviewer = (executionRunId: string) => directClient.open({
+                teamId: team.id,
+                ...attachedRequest,
+                consumer: { ...attachedRequest.consumer, executionRunId },
+            });
+            await expect(openReviewer("detached-reviewer")).resolves.toMatchObject({ ok: true });
+            await expect(openReviewer("unrelated-reviewer")).resolves.toEqual({ ok: false, reason: "access_removed" });
             // Finite platform work has no Session context; the same visibility policy still refuses it.
             const standalone = await app.inject({
                 method: "POST",
@@ -524,8 +550,8 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 credential: { kind: "apiKey", value: "direct-provider-secret" },
             });
 
-            // Revocation must win over already-published material for both
-            // consumers; regranting restores access through the same owners.
+            // Each fresh material open applies the current grant. Regranting
+            // restores access through the same owners.
             await db.teamCredentialMemberGrant.deleteMany({ where: {
                 resourceId: resource.id, teamMembershipId: recipientMembership.id,
             } });
@@ -534,6 +560,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                     teamId: team.id, ...attachedRequest, consumer,
                 })).resolves.toEqual({ ok: false, reason: "access_removed" });
             }
+            await expect(openReviewer("detached-reviewer")).resolves.toEqual({ ok: false, reason: "access_removed" });
             await db.teamCredentialMemberGrant.create({ data: {
                 resourceId: resource.id, teamMembershipId: recipientMembership.id, deliveryMode: "direct",
             } });

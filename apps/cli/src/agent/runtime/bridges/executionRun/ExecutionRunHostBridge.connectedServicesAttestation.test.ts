@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { SessionExecutionRunBrokerAuthorityResponseV1 } from '@happier-dev/protocol';
 
+import { findCatalogEntry } from '@/agent/catalog/registry';
 import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 
 /**
@@ -63,6 +66,7 @@ afterAll(() => {
 describe('Execution Run direct Team connected-service material', () => {
   it('attests the Run\'s own resolved selection to the Home during its own materialization', async () => {
     const runtime = createTestExecutionRunHostRuntime({ onWaitForTurnCompletion: async () => {} });
+    const workflowRunId = 'review-workflow-run';
     boundaries.resolveBackendEngineAdapterResolution.mockResolvedValue({
       backendId: 'codex',
       agentId: 'codex',
@@ -79,6 +83,7 @@ describe('Execution Run direct Team connected-service material', () => {
       agent: {
         id: 'codex',
         identity: CODEX_AGENT,
+        catalogEntry: findCatalogEntry('codex'),
         provenance: 'built_in',
         source: { kind: 'built_in' },
       },
@@ -89,6 +94,7 @@ describe('Execution Run direct Team connected-service material', () => {
 
     let bridge!: InstanceType<typeof ExecutionRunHostBridge>;
     const homeQueries: SessionExecutionRunBrokerAuthorityResponseV1[] = [];
+    const materialization = Promise.withResolvers<void>();
     boundaries.requestExecutionRunConnectedServicesMaterialization.mockImplementation(async (
       request: { runId: string; connectedServices: unknown },
     ) => {
@@ -106,6 +112,7 @@ describe('Execution Run direct Team connected-service material', () => {
           disclosedMember: DISCLOSED_MEMBER,
         },
       }));
+      materialization.resolve();
       return {
         ok: true,
         result: {
@@ -127,6 +134,10 @@ describe('Execution Run direct Team connected-service material', () => {
       };
     });
 
+    const pluginRuntime = await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      runtimeOptions: { pluginIds: [CODEX_AGENT.pluginId] },
+    });
     bridge = new ExecutionRunHostBridge({
       parentProvider: 'codex' as never,
       cwd,
@@ -134,8 +145,9 @@ describe('Execution Run direct Team connected-service material', () => {
       getNowMs: () => 1_700_000_000_000,
     });
     try {
-      await bridge.start({
+      const started = await bridge.start({
         sessionId: null,
+        workflowRunId,
         intent: 'agent',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' as never },
         permissionMode: 'default',
@@ -154,13 +166,24 @@ describe('Execution Run direct Team connected-service material', () => {
           },
         },
       });
-      await vi.waitFor(() => {
-        expect(boundaries.requestExecutionRunConnectedServicesMaterialization).toHaveBeenCalledTimes(1);
-      });
-
-      expect(homeQueries).toEqual([expect.objectContaining({ status: 'current' })]);
+      await Promise.race([
+        materialization.promise,
+        bridge.waitForTerminal(started.runId).then(() => {
+          const errorCode = bridge.get(started.runId)?.error?.code ?? 'unknown';
+          throw new Error('Run ended before Direct material acquisition (' + errorCode + ')');
+        }),
+      ]);
+      expect(homeQueries).toEqual([expect.objectContaining({
+        status: 'current',
+        parentSessionId: null,
+        workflowRunId,
+      })]);
     } finally {
-      await bridge.dispose();
+      try {
+        await bridge.dispose();
+      } finally {
+        await pluginRuntime.dispose();
+      }
     }
   });
 });

@@ -630,6 +630,7 @@ export function registerTeamCredentialResourceRoutes(
                 requestingAccountId: request.userId,
                 workerMachineId: body.data.consumer.workerMachineId,
                 expectedOccurrenceId: null,
+                resolveWorkflowOrigin: true,
                 expectedDirectMaterialUse: {
                     resourceId: body.data.resourceId,
                     ...("sourceMemberKey" in body.data
@@ -662,8 +663,10 @@ export function registerTeamCredentialResourceRoutes(
                 ? body.data.consumer
                 : {
                     kind: "execution_run" as const,
-                    executionRunId: body.data.consumer.executionRunId,
-                    parentSessionId: run?.ok ? run.parentSessionId : null,
+                    parentSessionId: run?.parentSessionId ?? null,
+                    ...(run?.workflowOriginSessionId !== undefined
+                        ? { workflowOriginSessionId: run.workflowOriginSessionId }
+                        : {}),
                 },
             sessionAuthentication: readSessionAccessAuthenticationFromRequest(request),
             authentication: readTeamOperationAuthenticationFromRequest(request),

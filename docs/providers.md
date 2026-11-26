@@ -2641,12 +2641,15 @@ For a brokered Team model, pass the current entitled catalog row's
 `team_resource` ref to this operand. This applies to both detached and
 Session-owned Runs.
 
-In 0.3 development, a detached reviewer using a brokered Team model inherits
-the credential-policy context of its Workflow’s admitted source Session. Home
-resolves that Session using the requester’s Account and the authenticated
-installation assigned to the live Workflow Run. It applies current Team
-visibility and context policy when opening the reviewer’s credential. The
-development Home and worker must both support the Workflow Run attestation.
+In 0.3 development, a detached reviewer using a Team credential inherits
+the credential-policy context of its Workflow’s admitted source Session for
+both Brokered and Direct delivery. Home resolves that Session using the
+requester’s Account and the authenticated installation assigned to the live
+Workflow Run. It applies current Team visibility and context policy on each
+fresh credential open. If Home cannot resolve an origin, the resource’s
+Session-use policy applies to the detached Run without a Session context.
+The development Home and worker must both support the Workflow Run
+attestation to use the origin Session.
 
 In 0.3 development source, a native tunnel-start failure during Team model
 binding open returns the retryable `broker_unavailable` cause. Check the Team

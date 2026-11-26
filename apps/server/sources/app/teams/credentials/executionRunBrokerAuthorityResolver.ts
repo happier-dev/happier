@@ -62,19 +62,15 @@ export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
             return failure('operation_not_current');
         }
         let workflowOriginSessionId: string | undefined;
-        if (request.resolveWorkflowOrigin && parsed.data.parentSessionId === null && parsed.data.workflowRunId) {
-            if (!rpc.verifiedMachineInstallationId) return failure('operation_not_current', 'unverified_installation');
+        if (request.resolveWorkflowOrigin && parsed.data.parentSessionId === null
+            && parsed.data.workflowRunId && rpc.verifiedMachineInstallationId) {
             const origin = await resolveAssignedWorkflowRunOriginSession({
                 accountId: request.requestingAccountId,
                 installationId: rpc.verifiedMachineInstallationId,
                 workflowRunId: parsed.data.workflowRunId,
             });
-            if (!origin.ok) return {
-                ok: false, reasonCode: 'operation_not_current',
-                failureCause: { phase: 'provider_broker.execution_run.workflow_origin',
-                    errorClass: 'Error', errorCode: origin.code, httpStatus: null },
-            };
-            workflowOriginSessionId = origin.originSessionId;
+            // An unresolved origin leaves admission to the resource's detached Session policy.
+            if (origin.ok) workflowOriginSessionId = origin.originSessionId;
         }
         return {
             ok: true,

@@ -575,7 +575,7 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
         recipientAccountId: string;
         consumer: Readonly<
             | { kind: "session"; sessionId: string }
-            | { kind: "execution_run"; executionRunId: string; parentSessionId: string | null }
+            | { kind: "execution_run"; parentSessionId: string | null; workflowOriginSessionId?: string }
             | { kind: "platform_operation"; operationId: string }
             | TeamCredentialActionOperationConsumerV1
         >;
@@ -617,15 +617,14 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return { ok: false as const, outcome: "operation_error" as const, error: qualification.error };
     if (!resource.enabled) return { ok: false as const, outcome: "unavailable" as const, reason: "disabled" as const };
-    // A Session reads through its accepted witness; an Execution Run through
-    // its own Run-attested direct use, in its parent Session's context when
-    // attached — never through the parent's selection.
+    // A Session reads through its accepted witness. A Run uses its attested
+    // selection with the Session context supplied by the currentness resolver.
     const admitted = await admitTeamCredentialOperationBindingInTx(tx, {
         consumer: input.consumer.kind === "session"
             ? input.consumer
             : input.consumer.kind !== "execution_run"
                 ? { kind: input.consumer.kind, resourceId: input.resourceId }
-                : { kind: "execution_run", parentSessionId: input.consumer.parentSessionId, resourceId: input.resourceId },
+                : { ...input.consumer, resourceId: input.resourceId },
         accountId: input.recipientAccountId,
         slot: input.slot,
         deliveryMode: "direct",

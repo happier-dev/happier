@@ -4437,7 +4437,7 @@ describe('Team credential Provider broker admission', () => {
         expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(2);
     });
 
-    it('admits detached reviewers in the assigned Workflow requester’s Session context', async () => {
+    it('admits detached reviewers in the assigned Workflow Session and preserves personal access without an origin', async () => {
         const fixture = await createBrokerFixture('detached-reviewers');
         const origin = await fixture.createSession();
         const outsideTeam = await fixture.createSession('-outside-team');
@@ -4469,6 +4469,18 @@ describe('Team credential Provider broker admission', () => {
                 assignments: { create: { machineId: fixture.worker.id, admittedMachineInstallationId: assignmentInstallationId } },
             } });
         const workflow = await createWorkflow(origin, installationId);
+        const automation = await db.automation.create({ data: {
+            accountId: fixture.requester.id, name: 'Account-scoped Automation', templateCiphertext: '{}',
+        } });
+        const automationWithoutOrigin = await db.automationRun.create({ data: {
+            id: crypto.randomUUID(), accountId: fixture.requester.id, automationId: automation.id,
+            originKind: 'automation', causeKind: 'manual', causeOccurredAt: new Date(0),
+            claimedByMachineId: fixture.worker.id, state: 'running',
+            scheduledAt: new Date(0), dueAt: new Date(0),
+            workflowCustodyState: 'settled', workflowAcceptedSnapshotEnvelope: '{}',
+            assignments: { create: { machineId: fixture.worker.id, admittedMachineInstallationId: installationId } },
+        } });
+        const personal = await fixture.createResource('personal-automation');
         const unrelated = await createWorkflow(outsideTeam, installationId);
         const otherAccount = await createWorkflow(ownerSession, installationId);
         const otherInstallation = await createWorkflow(origin, crypto.randomUUID());
@@ -4532,14 +4544,15 @@ describe('Team credential Provider broker admission', () => {
                 ok: false, reasonCode: 'resource_forbidden', failureCause: { errorCode: resource.sessionUsePolicy },
             });
         }
+        await expect(openReviewer(personal, automationWithoutOrigin.id)).resolves.toMatchObject({ ok: true });
+        await expect(openReviewer(personal, workflow.id, false)).resolves.toMatchObject({ ok: true });
         for (const denied of [otherInstallation, otherAccount, terminal]) {
             await expect(openReviewer(context, denied.id)).resolves.toMatchObject({
-                ok: false, reasonCode: 'operation_not_current', failureCause: { errorCode: 'run_not_found' },
+                ok: false, reasonCode: 'resource_forbidden', failureCause: { errorCode: 'team_context_required' },
             });
         }
         await expect(openReviewer(context, workflow.id, false)).resolves.toMatchObject({
-            ok: false, reasonCode: 'operation_not_current',
-            failureCause: { phase: 'provider_broker.execution_run.unverified_installation' },
+            ok: false, reasonCode: 'resource_forbidden', failureCause: { errorCode: 'team_context_required' },
         });
         await expect(openReviewer(context, undefined)).resolves.toMatchObject({
             ok: false, reasonCode: 'resource_forbidden', failureCause: { errorCode: 'team_context_required' },
