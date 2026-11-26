@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { act, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 
@@ -7,6 +7,8 @@ import { projectHappierUiEnvironment } from '../environment/projectEnvironment.j
 import * as publicUi from '../index.public.js';
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createSurfaceContext } from '../surfaceFixture.testSupport.js';
+import { PluginUiPresentationHostProviderInternal } from '../presentationHost/context.js';
+import type { HappierDisclosureMotionDriver } from '../presentation/collection/Disclosure.js';
 
 const finding: ReviewFinding = {
   id: 'finding', title: 'Retain the draft', severity: 'high', category: 'correctness',
@@ -22,6 +24,56 @@ function byId(root: Element, id: string) {
 }
 
 describe('public Review finding presentation', () => {
+  it.each([false, true])('settles finding disclosure through host motion without delaying reduced motion (%s)', async reducedMotion => {
+    let finishCollapse: (() => void) | undefined;
+    // The platform animation driver is the boundary; the real disclosure owns mounting and accessibility.
+    const motion = {
+      setHeight: vi.fn(), setOpacity: vi.fn(), animateOpacity: vi.fn(), cancel: vi.fn(),
+      animateHeight: vi.fn((_height: number, _durationMs: number, onFinished: () => void) => { finishCollapse = onFinished; }),
+    };
+    const driver: HappierDisclosureMotionDriver = {
+      useMotion: () => motion,
+      Body: ({ children, testID }) => <div data-testid={testID}>{children}</div>,
+    };
+    const draw = (expanded: boolean) => (
+      <HappierUiEnvironmentProvider environment={projectHappierUiEnvironment(createSurfaceContext({ reducedMotion }))}>
+        <PluginUiPresentationHostProviderInternal host={{ disclosureMotion: driver,
+          renderMarkdown: () => null, renderCodeBlock: () => null, renderIcon: () => null, renderPopover: () => null }}>
+          <publicUi.HappierReviewFinding rowId="motion" finding={finding} severityLabel="High"
+            decision={{ value: 'accept', label: 'Accepted' }} decisionControl={<button>Decide</button>}
+            expanded={expanded} onToggleExpanded={() => {}}>
+            <div data-testid="retained-finding-discussion"><input defaultValue="Unsent question" /></div>
+          </publicUi.HappierReviewFinding>
+        </PluginUiPresentationHostProviderInternal>
+      </HappierUiEnvironmentProvider>
+    );
+    const mounted = mountThroughReactNativeWeb(draw(false));
+    try {
+      expect(byId(mounted.container, 'retained-finding-discussion')).toBeNull();
+      await mounted.render(draw(true));
+      const discussion = byId(mounted.container, 'retained-finding-discussion')!;
+      expect(discussion).not.toBeNull();
+      expect(byId(mounted.container, 'review-finding-toggle:motion')?.getAttribute('aria-expanded')).toBe('true');
+      const question = discussion.querySelector('input')!;
+      question.value = 'Keep this question while the finding closes';
+      await mounted.render(draw(false));
+      expect(byId(mounted.container, 'review-finding-toggle:motion')?.getAttribute('aria-expanded')).toBe('false');
+      if (reducedMotion) {
+        expect(byId(mounted.container, 'retained-finding-discussion')).toBeNull();
+        expect(motion.animateHeight).not.toHaveBeenCalled();
+        expect(motion.animateOpacity).not.toHaveBeenCalled();
+      } else {
+        expect(byId(mounted.container, 'retained-finding-discussion')).toBe(discussion);
+        expect(discussion.closest('[aria-hidden="true"]')).not.toBeNull();
+        expect(question.value).toBe('Keep this question while the finding closes');
+        expect(finishCollapse).toBeTypeOf('function');
+        act(() => finishCollapse!());
+        expect(byId(mounted.container, 'retained-finding-discussion')).toBeNull();
+      }
+      expect(byId(mounted.container, 'review-finding-decision:motion')?.textContent).toBe('Accepted');
+    } finally { mounted.unmount(); }
+  });
+
   it('keeps a persisted read-only decision visible while disclosure controls the shared body', async () => {
     const toggle = vi.fn();
     const draw = (expanded: boolean) => inSurface(

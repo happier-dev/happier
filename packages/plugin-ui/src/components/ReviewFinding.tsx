@@ -3,6 +3,7 @@ import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import type { ReviewCommentV1, ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 
 import { DiffViewer, Markdown } from './Content.js';
+import { CountedDisclosureFrame } from './CountedDisclosureItem.js';
 import { Icon } from './Icon.js';
 import { HappierPressable } from '../presentation/interaction/Pressable.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
@@ -74,7 +75,8 @@ export function HappierReviewFinding(props: HappierReviewFindingProps) {
   return (
     <View testID={`review-finding:${props.rowId}`} onLayout={onLayout}
       style={[styles.row, props.divided ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border } : null]}>
-      <View style={styles.head}>
+      <CountedDisclosureFrame expanded={props.expanded} onExpandedChange={() => props.onToggleExpanded(props.rowId)}
+        testID={`review-finding-disclosure:${props.rowId}`} showDivider={false} header={<View style={styles.head}>
         {selection ? (
           <HappierPressable testID={selection.testID} accessibilityRole="checkbox" checked={selection.selected}
             accessibilityLabel={props.accessibilityLabel ?? props.finding.title} disabled={selection.disabled}
@@ -95,11 +97,12 @@ export function HappierReviewFinding(props: HappierReviewFindingProps) {
         )}
         {props.expanded && !narrow ? decisionControl : null}
         {decisionWord}
-      </View>
-      {props.expanded ? <View style={[styles.opened, narrow ? null : styles.hung]}>
+      </View>}>
+      <View style={[styles.opened, narrow ? null : styles.hung]}>
         {narrow && decisionControl ? <View style={styles.narrowDecision}>{decisionControl}</View> : null}
         {props.children}
-      </View> : null}
+      </View>
+      </CountedDisclosureFrame>
     </View>
   );
 }
@@ -174,13 +177,13 @@ export function HappierReviewFindingBody(props: HappierReviewFindingBodyProps) {
 }
 
 const styles = StyleSheet.create({
-  row: { paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx, gap: 16 },
+  row: { paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx },
   head: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   toggle: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx },
   glyph: { width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx, alignItems: 'center', paddingTop: 2 },
   titleColumn: { flexGrow: 1, flexShrink: 1, flexBasis: 200, minWidth: 0, gap: 2 },
   meta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 2 },
-  opened: { gap: 16 },
+  opened: { gap: 16, paddingTop: 16 },
   hung: { marginLeft: HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx },
   narrowDecision: { alignSelf: 'stretch' },
   body: { gap: 24 },
