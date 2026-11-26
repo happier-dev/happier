@@ -1238,10 +1238,10 @@ it('persists a mounted gutter comment through a cold PR read while keeping Viewe
 it('repairs an HTTP-refused Review relationship from the mounted Task draft without creating another Task', async () => {
     const { isPluginError } = await import('@happier-dev/plugin-sdk');
     const { createPluginTestkit } = await import('@happier-dev/plugin-sdk/testing');
-    const { resolveManifestTargetedContributions } = await import('@happier-dev/cli-common/plugins/registration');
+    const { createManifestTargetedContributionsService, resolveManifestTargetedContributions } = await import('@happier-dev/cli-common/plugins/registration');
+    const { createPluginInvocationActionsService } = await import('../../../../../cli/src/plugins/runtime/invocation/services/actions');
     const { projectPluginUiTargetedContributionsV1 } = await import('@happier-dev/protocol/plugins/ui/targetedContributions');
     const { PluginUiProviderInternal: PluginUiProvider } = await import('../../../../../../packages/plugin-ui/src/components/PluginUiProvider');
-    const { TriageSourceDescriptorV1Schema } = await import('@happier-dev/triage-protocol/v1');
     const { PLUGIN_MANIFEST, TRIAGE_PLUGIN, collectionMigrations, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } = await import('../../../../../../packages/plugins/triage/src/manifest');
     const { INTERNAL_TASK_SOURCE_RECORD_V1 } = await import('../../../../../../packages/plugins/triage/src/internalTasks/configuration');
     const { TriageCreateTaskFields } = await import('../../../../../../packages/plugins/triage/src/ui/detail/taskFields');
@@ -1352,19 +1352,36 @@ it('repairs an HTTP-refused Review relationship from the mounted Task draft with
             const uiCalls: string[] = [];
             const results: unknown[] = [];
             let plugin: Awaited<ReturnType<typeof createPluginTestkit>>;
+            const readCurrentDeclarations = () => {
+                const snapshot = plugin.readTargetedContributionFixture(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1);
+                return { declarations: [{ manifest: PLUGIN_MANIFEST, occurrenceId: snapshot.occurrenceId,
+                    sourceCustody: snapshot.sourceCustody }] };
+            };
+            const targetedOwner = createManifestTargetedContributionsService({ readCurrentDeclarations,
+                subscribeToCatalogChanges: () => () => {} });
             plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { ...TRIAGE_PLUGIN, activateAccount(api) {
                 TRIAGE_PLUGIN.activateAccount({ ...api, actions: { register(id, handler, options) {
-                    api.actions.register(id, (input, context) => handler(input, { ...context, services: { ...context.services,
-                        // The SDK supplies real opaque operation handles; its host fixture omits declaration descriptors.
-                        targetedContributions: { observeForSelf: point => {
-                            return { dispose() {}, readCurrent: async options => {
-                                const snapshot = plugin.readTargetedContributionFixture(point, options?.signal);
-                                return { ...snapshot, contributions: snapshot.contributions.map(entry => ({ ...entry,
-                                    descriptor: TriageSourceDescriptorV1Schema.parse(PLUGIN_MANIFEST.contributes.targetedPluginContributions
-                                        .find(declaration => declaration.id === entry.contributor.contributionId)?.descriptor), surfaces: {} })) };
-                            } };
-                        } },
-                    } }), options);
+                    api.actions.register(id, (input, context) => {
+                        const declaration = readCurrentDeclarations().declarations[0]!;
+                        const actions = createPluginInvocationActionsService({ seed: {
+                            plugin: context.plugin, contribution: { id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${id}` },
+                            occurrenceId: declaration.occurrenceId, sourceCustody: declaration.sourceCustody,
+                            surface: context.surface, signal: context.signal, isOccurrenceCurrent: () => !lifetime.signal.aborted,
+                            readCurrentTargetedDeclarations: async () => readCurrentDeclarations(),
+                        }, actionExecutor: { execute: async () => { throw new Error('Unexpected host Action dispatch'); } },
+                        // The SDK fixture is only the cross-host registration/parser/provider dispatch boundary.
+                        invokeContributedAction: async request => {
+                            await request.beforeHandlerInvocation?.();
+                            return { status: 'executed', value: await plugin.invokeAction(request.action.localId,
+                                request.input, { surface: 'plugin', signal: request.signal }) };
+                        } });
+                        return handler(input, { ...context, services: { ...context.services,
+                            targetedContributions: targetedOwner.bind({ pluginId: PLUGIN_MANIFEST.id,
+                                signal: context.signal, isCurrent: () => !lifetime.signal.aborted }),
+                            actions: { ...context.services.actions,
+                                executeAdmittedTargetedOperation: actions.executeAdmittedTargetedOperation },
+                        } });
+                    }, options);
                 } } });
             } }, services: { storage: { account: storage }, actions: { execute: async (id, input, options) => {
                 hostCalls.push(id);
