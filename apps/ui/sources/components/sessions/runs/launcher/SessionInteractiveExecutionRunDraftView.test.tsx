@@ -235,6 +235,8 @@ let emittedStarts: Array<Record<string, unknown>>;
 let externalStartBoundary: ((input: unknown) => Promise<unknown>) | undefined;
 let transcriptMessagesBoundary: ((request: ServedHomeRequest) => Response) | undefined;
 let reviewTranscriptAvailable = false;
+/** Optional real producer behind the Review inventory HTTP boundary. */
+let reviewInventoryBoundary: ((request: ServedHomeRequest) => Promise<Response>) | undefined;
 let emittedWorkflowStarts: Array<ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>>;
 let emittedHumanReviewerRequests: Array<ReturnType<typeof ReviewReviewersSetInputV1Schema.parse>>;
 let refuseWorkflowStart = false;
@@ -458,6 +460,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         externalStartBoundary = undefined;
         transcriptMessagesBoundary = undefined;
         reviewTranscriptAvailable = false;
+        reviewInventoryBoundary = undefined;
         emittedWorkflowStarts = [];
         emittedHumanReviewerRequests = [];
         refuseWorkflowStart = false;
@@ -622,6 +625,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     headers: request.headers, signal: request.signal,
                     ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
                 if (artifactResponse) return artifactResponse;
+                if (request.path === '/v1/actions/review.engines.list' && reviewInventoryBoundary) return await reviewInventoryBoundary(request);
                 if (request.path === '/v1/actions/review.engines.list') return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
                     v: 1, actionId: 'review.engines.list', requestId: record(request.body).requestId,
                     execution: { ok: true, result: { items: Object.keys(backends).map((engineId) => ReviewEngineListItemSchema.parse({
@@ -2732,4 +2736,123 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts).toEqual([]);
         expect(input().props.value).toBe('Keep this secret-bound draft');
     });
+    it.each([
+        ['signedIn', true, 'ready', true],
+        ['signedOut', false, 'needsSignIn', true],
+        ['probe_failed', 'true', 'unknown', true],
+        ['notInstalled', false, 'notInstalled', false],
+    ] as const)('presents the registered CodeRabbit native probe through the real Review inventory without private identity (%s)', async (_label, authenticated, expectedReadiness, installed) => {
+        const [{ join }, { createTempDir, removeTempDir }, { writeExecutableShim },
+            { createAdmittedPluginRuntimeFixture }, { pluginReloadController },
+            { detectCliSnapshotOnDaemonPath }, { buildCliCapabilityData },
+            { buildReviewEngineInventory }, { buildExecutionRunProfileCatalog },
+            { buildPluginProjectionV2 }, { projectMachineAgentsDetectResponse },
+            { readAgentTargetReadinessV1 }, { parseBackendTargetKeyV2 },
+            { resolveSpawnConnectedServicesDefaultDisposition }] = await Promise.all([
+            import('node:path'),
+            import('../../../../../../cli/src/testkit/fs/tempDir'),
+            import('../../../../../../cli/src/testkit/fs/executableShim'),
+            import('../../../../../../cli/src/plugins/testkit/admittedRuntime'),
+            import('../../../../../../cli/src/plugins/runtime/reload/singleton'),
+            import('../../../../../../cli/src/capabilities/snapshots/cliSnapshot'),
+            import('../../../../../../cli/src/capabilities/probes/cliBase'),
+            import('../../../../../../cli/src/session/actions/inventory/buildReviewEngineInventoryItems'),
+            import('../../../../../../cli/src/agent/executionRuns/profiles/intentRegistry'),
+            import('../../../../../../cli/src/plugins/projection/registry/projection/v2'),
+            import('@happier-dev/protocol/capabilities/machineAgentInventory'),
+            import('@happier-dev/protocol/actions/executor/agents/agentBackendReadiness'),
+            import('@happier-dev/protocol/backends/targets/backendTargetRefV2'),
+            import('../../../../../../cli/src/session/services/spawnConnectedServicesDefaults'),
+        ]);
+        const directory = await createTempDir('review-native-probe-picker-');
+        const runtime = await createAdmittedPluginRuntimeFixture({
+            controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.review.coderabbit'] },
+        });
+        try {
+            const authSentinel = 'PRIVATE_NATIVE_AUTH_TOKEN_SENTINEL';
+            const custodianSentinel = 'PRIVATE_CUSTODIAN_IDENTITY_SENTINEL';
+            const payload = { type: 'status', phase: 'auth', authenticated,
+                user: { email: `${custodianSentinel}@example.invalid` }, organization: custodianSentinel,
+                access_token: authSentinel };
+            const script = join(directory, 'native-probe.cjs');
+            // This executable is the vendor process boundary. The registered
+            // CodeRabbit contribution, detector and projections all remain real.
+            await writeFile(script, `if (process.argv.slice(2).join(' ') === 'auth status --agent') process.stdout.write(${JSON.stringify(JSON.stringify(payload))}); else process.stdout.write('1.0.0');`);
+            if (installed) await writeExecutableShim({ dir: directory, fileName: process.platform === 'win32' ? 'coderabbit.cmd' : 'coderabbit',
+                contents: process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+                    : `#!/bin/sh\nexec '${process.execPath.replace(/'/g, `'\\''`)}' '${script.replace(/'/g, `'\\''`)}' "$@"\n`,
+            });
+            const agent = [...runtime.registry.contributes.agentDefinitionsById.values()]
+                .find(candidate => candidate.identity?.localId === 'coderabbit');
+            if (!agent?.identity) throw new Error('The admitted CodeRabbit Agent must exist');
+            const snapshot = await detectCliSnapshotOnDaemonPath({ requestedCliNames: [agent.id], includeLoginStatus: true,
+                includeVersion: false, requestedTools: [], bypassCache: true }, undefined,
+            { ...process.env, PATH: directory, HOME: directory, USERPROFILE: directory,
+                HAPPIER_HOME_DIR: runtime.happyHomeDir, CODERABBIT_API_KEY: '' }, directory);
+            expect(snapshot.clis[agent.id]).toMatchObject({ installed });
+            if (installed) expect(snapshot.clis[agent.id]).toMatchObject({
+                authStatus: { state: authenticated === true ? 'logged_in' : authenticated === false ? 'logged_out' : 'unknown',
+                    ...(authenticated === 'true' ? { reason: 'probe_failed' } : {}) } });
+            const nativeResult = { ok: true, checkedAt: Date.now(), data: buildCliCapabilityData({
+                request: { id: `cli.${agent.id}`, params: { includeLoginStatus: true } }, entry: snapshot.clis[agent.id],
+            }) };
+            const machineInventory = projectMachineAgentsDetectResponse({ agents: [{ agentId: agent.id, title: 'CodeRabbit' }],
+                response: { protocolVersion: 1, results: { [`cli.${agent.id}`]: nativeResult } } });
+            expect(JSON.stringify(machineInventory)).not.toContain(authSentinel);
+            expect(JSON.stringify(machineInventory)).not.toContain(custodianSentinel);
+            const inventory = await buildReviewEngineInventory({ includeDisabled: true, engineIds: [agent.id],
+                registrySnapshot: runtime.registry.contributes,
+                profileCatalog: buildExecutionRunProfileCatalog(runtime.registry.contributes.executionRunProfiles),
+                acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+                readReadiness: targets => readAgentTargetReadinessV1({ machinesAgentsList: async () => machineInventory,
+                    agentsConnectedDefaultRoutesRead: async ({ agentIds }) => Object.fromEntries(agentIds.map(agentId => [agentId,
+                        resolveSpawnConnectedServicesDefaultDisposition({ agentId, accountSettings: settingsDefaults,
+                            purposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [] } } },
+                        }).kind])) },
+                'machine_1', targets.map(parseBackendTargetKeyV2), {}),
+            });
+            expect(inventory.items).toHaveLength(1);
+            expect(inventory.items[0]).toMatchObject({ engineId: agent.id, enabled: installed, available: installed, readiness: expectedReadiness,
+                ...(!installed ? { unavailableCode: 'notInstalled' } : {}) });
+            reviewInventoryBoundary = async request => Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
+                v: 1, actionId: 'review.engines.list', requestId: record(request.body).requestId, execution: { ok: true, result: inventory },
+            }));
+            const projection = buildPluginProjectionV2({ registry: runtime.registry.contributes, generation: runtime.registry.generation });
+            const originalTransport = transport.call.getMockImplementation()!;
+            transport.call.mockImplementation(async request => {
+                if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                    return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection });
+                }
+                const response = await originalTransport(request);
+                if (request.method !== RPC_METHODS.CAPABILITIES_DETECT) return response;
+                return { ...record(response), results: { ...record(record(response).results), [`cli.${agent.id}`]: nativeResult } };
+            });
+            backends[agent.id] = { available: true, intents: ['review'] };
+            await mount({ intent: 'review' });
+            await showAgentChoices();
+            await waitFor(() => expect(agentRows().find(row => row.testID === `contextual-start-agent:${agent.id}`)).toBeDefined());
+            await waitFor(() => expect(agentRows().find(candidate => candidate.testID === `contextual-start-agent:${agent.id}`)?.disabled,
+                screen.getTextContent()).not.toBe(true));
+            const row = agentRows().find(candidate => candidate.testID === `contextual-start-agent:${agent.id}`)!;
+            expect(row.disabled).not.toBe(true);
+            const beforeSelection = selectedAgentIds();
+            if (!installed) expect(row.subtitle).toContain(t('machineAgents.notOnThisMachineYet'));
+            await screen.pressByTestIdAsync(row.testID!);
+            if (installed) await waitFor(() => expect(screen.getTextContent()).toContain(t('connectedServices.authModal.nativeAuthTitle')));
+            else {
+                await waitFor(() => expect(screen.findByTestId(`engine-setup-pane.${agent.id}`)).not.toBeNull());
+                expect(selectedAgentIds()).toEqual(beforeSelection);
+            }
+            expect(screen.getTextContent()).not.toContain(authSentinel);
+            expect(screen.getTextContent()).not.toContain(custodianSentinel);
+            expect(JSON.stringify(inventory)).not.toContain(authSentinel);
+            expect(JSON.stringify(inventory)).not.toContain(custodianSentinel);
+            expect(emittedStarts).toEqual([]);
+            expect(emittedWorkflowStarts).toEqual([]);
+        } finally {
+            await runtime.dispose();
+            await removeTempDir(directory);
+        }
+    });
+
 });
