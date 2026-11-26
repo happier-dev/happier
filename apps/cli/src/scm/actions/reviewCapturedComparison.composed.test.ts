@@ -1,8 +1,14 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol';
+import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
+import type { AgentExecutionRunEvent, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
@@ -14,6 +20,12 @@ import { executeScmActionOperation } from './executeScmActionOperation';
 import { projectCapturedComparison } from '../comparisons/projectCapturedComparison';
 import { deleteCapturedScmComparison } from '../comparisons/captureScmComparison';
 import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
+import { ReviewProfile } from '@/agent/executionRuns/profiles/review/ReviewProfile';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createGitBackend } from '../../../../../packages/plugins/scm-git/src/backend';
+import { runWithRealGitScmRuntime } from '../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { activate as activateCodeRabbit } from '../../../../../packages/plugins/review-coderabbit/src/activate';
+import { PLUGIN_MANIFEST as CODERABBIT_MANIFEST } from '../../../../../packages/plugins/review-coderabbit/src/manifest';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
 import { buildRepositoryCheckpointRefs } from '@/scm/checkpoints/refs';
 import { retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
@@ -28,6 +40,126 @@ import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_FIXTURE_REPOSIT
 const reviewer = { kind: 'engine' as const, engineId: 'codex' };
 
 describe('Review captured comparison transport', () => {
+  it.each(['committed', 'workingTree', 'movedHead', 'included'] as const)(
+    'consumes the admitted %s comparison and typed options through the registered CodeRabbit adapter', async scenario =>
+      runWithScmAccountScope('review-capture-coderabbit', () => runWithRealGitScmRuntime(async () => {
+        const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-coderabbit-capture-' });
+        const records = createInMemoryReviewRecordPortV1();
+        const captures = new Set<string>();
+        const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+        const activation = await createPluginTestkit({ manifest: CODERABBIT_MANIFEST, module: { activate: activateCodeRabbit } });
+        const registry = createScmBackendRegistry([createGitBackend()]);
+        const bytes = new TextEncoder().encode(JSON.stringify({ type: 'complete', status: 'review_completed', outcome: 'completed', findings: 0 }) + '\n');
+        let listener: ((chunk: PluginProcessOutput) => void) | undefined;
+        // Only the vendor process is substituted; its ordinary adapter folds NDJSON.
+        const spawn: PluginServices['exec']['spawn'] = vi.fn(async () => ({
+          write: async () => {}, closeStdin: async () => {}, dispose: async () => {},
+          waitForExit: async () => ({ observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } }),
+          onOutput(callback) { listener = callback; return { dispose() { listener = undefined; } }; },
+          async wait() {
+            listener?.({ sequence: 0, stream: 'stdout', data: bytes });
+            return { termination: { observed: { kind: 'exit' as const, exitCode: 0 }, requestedBy: { kind: 'none' as const } },
+              stdout: bytes, stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+          },
+        }));
+        try {
+          await writeFile(join(fixture.rootPath, fixture.trackedPath), 'selected captured change\n');
+          const committed = scenario === 'committed' || scenario === 'movedHead';
+          if (committed || scenario === 'included') runScmExecutable(fixture.rootPath, 'git', ['add', '--', fixture.trackedPath]);
+          if (committed) runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'selected captured change']);
+          const capturedHead = runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD']);
+          const source = committed
+            ? { kind: 'branch' as const, base: fixture.headCommit, head: 'HEAD' }
+            : { kind: 'workingTree' as const, area: scenario === 'included' ? 'included' as const : 'both' as const };
+          const executor = createActionExecutor({ reviewRecords: () => records,
+            resolveApiTokenGrantSessionMachineId: async () => 'capture-machine',
+            // Machine transport remains a boundary; real SCM and Review owners run below it.
+            scmActionExecute: async request => {
+              const result = ScmComparisonCaptureOutputSchema.parse(await executeScmActionOperation({
+                actionId: request.actionId, input: request.input, workingDirectory: fixture.rootPath, registry,
+                authorizeSession: async id => id === 'capture-session',
+              }));
+              if (result.success) captures.add(result.comparison.id);
+              return result;
+            },
+            reviewEnginesList: async () => ({ items: [{ value: 'coderabbit', label: 'CodeRabbit' }] }),
+            executionRunStart: async (_sessionId, input) => {
+              requests.push(ExecutionRunStartRequestSchema.parse(input));
+              return { runId: 'coderabbit-captured-run', callId: 'call', sidechainId: 'sidechain' };
+            },
+          });
+          const reviewInput = { sessionId: 'capture-session', cwd: fixture.rootPath, source,
+            instructions: 'Review the captured comparison.', reviewers: [{ kind: 'engine' as const, engineId: 'coderabbit',
+              options: { gate: 'major', configFiles: ['review.md', 'team.md'] } }] };
+          const started = await executor.execute('review.start', reviewInput, { surface: 'ui' });
+          expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
+          const request = requests[0]!;
+          const binding = ReviewPreparedRoundV1Schema.shape.reviewRound.parse(request.intentInput?.reviewRound);
+          const capture = (await records.read(binding.reviewId))?.rounds[0]?.comparisonCapture?.input;
+          const prepared = await executor.execute('review.prepare_round', { reviewRound: binding,
+            reviewInput: { ...reviewInput, comparisonId: capture?.comparisonId }, comparisonCapture: capture,
+            previousRoundContext: null }, { surface: 'ui' });
+          expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true });
+          if (!prepared.ok) throw new Error(prepared.error);
+          const comparison = ReviewPreparedRoundV1Schema.parse(prepared.result).comparison;
+          expect(comparison).toMatchObject({ source, endpoints: committed
+            ? { before: fixture.headCommit, after: capturedHead } : { before: capturedHead } });
+          // Ordinary profile preparation rereads admitted capture identity, rather than trusting caller scope.
+          const patch = await ReviewProfile.prepareStartParams!({ request, cwd: fixture.rootPath, sessionId: 'capture-session' });
+          const structuredInput = projectNativeJsonValueForTransport(patch?.intentInput);
+          if (!isJsonObject(structuredInput)) throw new Error('Expected prepared review input');
+          expect(structuredInput).toMatchObject({ comparisonId: comparison!.id,
+            scmReviewScope: { status: 'supported', comparison: { endpoints: comparison!.endpoints } },
+            engines: { coderabbit: { gate: 'major', configFiles: ['review.md', 'team.md'] } } });
+          if (scenario === 'movedHead') {
+            await writeFile(join(fixture.rootPath, 'unrelated.txt'), 'later ambient defect\n');
+            runScmExecutable(fixture.rootPath, 'git', ['add', '--', 'unrelated.txt']);
+            runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'later ambient head']);
+          }
+          const factory = activation.registration('agents', 'coderabbit')?.factory;
+          if (!factory) throw new Error('Expected registered CodeRabbit factory');
+          const agent = await factory({ plugin: { id: CODERABBIT_MANIFEST.id, version: '0.0.0' },
+            agent: { id: 'coderabbit' }, signal: new AbortController().signal });
+          // Host services are the external invocation boundary; no internal review logic is mocked.
+          const context = { plugin: { id: CODERABBIT_MANIFEST.id, version: '0.0.0' },
+            contribution: { id: 'coderabbit', qualifiedId: `${CODERABBIT_MANIFEST.id}/agents/coderabbit` },
+            surface: 'agent', signal: new AbortController().signal, agent: { id: 'coderabbit' },
+            services: { availability: () => ({ status: 'available' }), exec: { spawn }, actions: {
+              execute: async (actionId: 'scm.status.snapshot', input: unknown) => executeScmActionOperation({
+                actionId, input, workingDirectory: fixture.rootPath, registry,
+              }),
+            } },
+          } as unknown as AgentRuntimeContext;
+          const opened = await agent.executionRuns?.open({ kind: 'create', runId: 'coderabbit-captured-run', cwd: fixture.rootPath,
+            profile: { pluginId: CODERABBIT_MANIFEST.id, localId: 'review' },
+            input: { text: request.instructions, structuredInput } }, context);
+          if (!opened) throw new Error('Expected registered execution run');
+          const events: AgentExecutionRunEvent[] = [];
+          try {
+            opened.watch(event => events.push(event));
+            await vi.waitFor(() => expect(['run-complete', 'run-failed']).toContain(events.at(-1)?.kind));
+            if (scenario === 'movedHead' || scenario === 'included') {
+              expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'coderabbit_scope_unsupported' } });
+              expect(spawn).not.toHaveBeenCalled();
+            } else {
+              expect(events.at(-1)).toMatchObject({ kind: 'run-complete' });
+              const output = events.flatMap(event => event.kind === 'output-delta' && event.channel === 'assistant' ? [event.text] : []).join('');
+              expect(JSON.parse(output)).toMatchObject({ reviewOutcome: 'complete', findings: [] });
+              expect(spawn).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ args: [
+                'review', '--agent', '--dir', fixture.rootPath,
+                ...(committed ? ['--committed', '--base-commit', fixture.headCommit] : ['--uncommitted']),
+                '--gate', 'major', '--config', 'review.md', 'team.md',
+              ] }), expect.anything());
+            }
+          } finally { await opened.dispose(); }
+        } finally {
+          await activation.dispose();
+          for (const comparisonId of captures) await deleteCapturedScmComparison({ cwd: fixture.rootPath, sessionId: 'capture-session', comparisonId });
+          await rm(fixture.rootPath, { recursive: true, force: true });
+        }
+      })),
+  );
+
   it('retains the real forge producer PR endpoints through Review admission instead of ambient Git', async () => runWithScmAccountScope('review-capture-pr-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-forge-pr-' });
     const repository = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`.toLowerCase();
