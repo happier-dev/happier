@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 
 import { PageHeader, renderPageHeaderText, type PageHeaderProps } from '@/components/ui/layout/PageHeader';
@@ -114,6 +115,13 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
         serverId: props.serverId,
         onExecuted: approvalRefresh,
     });
+    const approvalAction = React.useMemo(() => approvalId ? {
+        label: t('approvals.details'),
+        onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}`),
+    } : undefined, [approvalId, props.serverId, router]);
+    useCurrentUiContextLocalCommands(binding.kind === 'bound' && binding.state.kind === 'ready' && approvalAction ? [{
+        key: 'approval.open', title: approvalAction.label, invoke: approvalAction.onPress,
+    }] : [], { contextKey: scopeKey });
 
     React.useEffect(() => {
         navigation.setOptions({ title: props.title });
@@ -271,10 +279,7 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
                             ? t('approvals.status.open')
                             : undefined}
                     accessibilityLiveRegion={approvalError ? 'assertive' : 'polite'}
-                    action={{
-                        label: t('approvals.details'),
-                        onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(props.serverId)}`),
-                    }}
+                    action={approvalAction}
                 />
             ) : null}
             {/* Retained content stays on screen; the reason it may be behind is

@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -200,6 +201,11 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
     }, [props.controller.detectedUrl?.url, props.platformOS]);
 
     const frameState = resolveTerminalFrameState(props);
+    const approvalAction = frameState.kind === 'line' && frameState.action?.onPress === props.controller.onOpenApproval
+        ? frameState.action : undefined;
+    useCurrentUiContextLocalCommands(approvalAction ? [{
+        key: 'approval.open', title: approvalAction.label, invoke: approvalAction.onPress,
+    }] : [], { contextKey: props.testIdPrefix ?? undefined });
     // A state card that covers the body leaves nothing to read: the renderer stays mounted (it sizes the
     // terminal) but is not seen, so its cursor never shows through a clear content coat.
     const surfaceCovered = frameState.kind === 'failed' || frameState.kind === 'not-open';

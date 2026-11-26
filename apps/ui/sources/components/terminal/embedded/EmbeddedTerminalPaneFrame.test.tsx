@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installEmbeddedTerminalPaneCommonModuleMocks } from './embeddedTerminalPaneTestHelpers';
 
@@ -90,6 +91,56 @@ function makeController(overrides: Partial<EmbeddedTerminalPaneController>): Emb
 }
 
 describe('EmbeddedTerminalPaneFrame states (terminal lab ST)', () => {
+    it('publishes only the displayed approval opener and retires it when another terminal state owns the line', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+        const locks = installWebLockManagerMock();
+        function Publication() {
+            const commands = useCurrentUiContextComposedCommands();
+            usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+            return null;
+        }
+        let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
+        try {
+            home = await createPlainArtifactHomeFixture('https://terminal-approval-navigation.test');
+            function Surface({ recovery = false, pending = true }) {
+                const [opened, setOpened] = React.useState(0);
+                return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                    <Publication />{`opened review ${opened}`}<EmbeddedTerminalPaneFrame title="shell"
+                        controller={makeController({ status: 'connecting', approvalPending: pending,
+                            inputRecoveryAvailable: recovery, onOpenApproval: () => setOpened(count => count + 1) })}
+                        chrome="none" surface={React.createElement('TerminalSurface')} testIdPrefix="pending" />
+                </CurrentUiContextCommandsProvider>;
+            }
+            const screen = await renderMountedCurrentUiContext(<Surface />);
+            const executor = createDefaultActionExecutor();
+            const readCommands = async () => {
+                const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+                if (!read.ok) throw new Error('Expected terminal approval context');
+                return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+            };
+            const inventory = await readCommands();
+            expect(inventory.map(command => command.title)).toEqual(['approvals.title']);
+            await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+                { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+            expect(screen.getTextContent()).toContain('opened review 1');
+            await screen.pressByTestIdAsync('pending-state-line-action');
+            expect(screen.getTextContent()).toContain('opened review 2');
+            await screen.update(<Surface recovery />);
+            expect(await readCommands()).toEqual([]);
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: false });
+            await screen.update(<Surface pending={false} />);
+            expect(await readCommands()).toEqual([]);
+            await screen.unmount();
+        } finally { await home?.dispose(); locks.restore(); }
+    });
     it('keeps writable disconnected Shell input available without admitting read-only or uncertain input', () => {
         const disconnected = makeController({ status: 'error', connectionLost: true });
         expect(terminalAcceptsKeys(disconnected)).toBe(true);

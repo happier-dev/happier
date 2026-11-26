@@ -32,6 +32,8 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 installSettingsViewCommonModuleMocks({
     storage: 'real',
@@ -56,6 +58,7 @@ installSettingsViewCommonModuleMocks({
 // engine, store and view state below them are the production ones.
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+let disposeMountedHome: (() => Promise<void>) | null = null;
 // Keep the real screen import behind its installed boundaries and outside individual case deadlines.
 const { HomeAdministrationSection } = await import('./HomeAdministrationSection');
 
@@ -88,8 +91,10 @@ beforeEach(async () => {
     routerPush.mockReset();
 });
 
-afterEach(() => {
-    standardCleanup();
+afterEach(async () => {
+    await standardCleanup();
+    await disposeMountedHome?.();
+    disposeMountedHome = null;
 });
 
 type RenderedNode = Readonly<{ children: ReadonlyArray<RenderedNode | string> }>;
@@ -102,40 +107,74 @@ function textUnder(node: RenderedNode | null): string {
 
 describe('HomeAdministrationSection', () => {
     it('keeps a pending Home Action reachable through its shared approval artifact', async () => {
-        const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada' });
+        // Credential-store boundary: the released terminal bearer carries its
+        // Session claim; the real auth decoder derives automation authority.
+        const payload = globalThis.btoa(JSON.stringify({ sub: 'account-ada', session: 'home-policy-terminal' }))
+            .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        const home = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-ada',
+            credentials: { token: `e30.${payload}.signature` } });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        expect(await TokenStorage.getCredentialsForServerUrl('https://home-a.example')).not.toBeNull();
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://home-a.example');
+        if (!credentials) throw new Error('Home fixture requires its Account credentials');
         harness.answer(home, GOVERNANCE_PATH, { body: projection() });
-        // Imported here, not at the top of the file: `Item` reaches the shared
-        // scoped-request transport through `@/modal`, and a static import would
-        // evaluate that module before `installHomeGovernanceBoundaries` replaces
-        // its network leaf — leaving every Home read on the real network.
-        const { Item } = await import('@/components/ui/lists/Item');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
+        const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+        const restored = await restoreServerAccountForTest({ serverUrl: 'https://home-a.example', accountId: 'account-ada',
+            credentials, request: createSessionReadBatchFetchBoundary(async (input, init) => {
+                const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+                return createEmptyAccountBootstrapHttpResponse(path, init) ?? harness.request(input, init);
+            }) });
+        disposeMountedHome = () => restored.dispose();
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(restored.serverId);
+        try { expect(account.credentialAuthorityKind).toBe('terminal'); } finally { account.dispose(); }
+        // This retained terminal Account bearer exercises the supported durable
+        // Ask path; an ordinary Account-app press uses native confirmation.
+        await harness.requireUiApproval(home, 'home.policy.set');
+        const { TeamCreationPolicyEditor } = await import('./HomeTeamsPolicySections');
 
-        const screen = await renderScreen(
+        const { storage } = await import('@/sync/domains/state/storage');
+        await storage.getState().activateSettingsScope({ serverId: home, accountId: 'account-ada' });
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        function Publication() {
+            const commands = useCurrentUiContextComposedCommands();
+            usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+            return null;
+        }
+        const screen = await renderMountedCurrentUiContext(
+            <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}><Publication />
             <HomeAdministrationSection serverId={home} title="Home">
-                {(context) => (
-                    <Item
-                        testID="request-home-approval"
-                        title="Request approval"
-                        disabled={!context.mutationsAvailable}
-                        onPress={context.mutationsAvailable
-                            ? () => context.requestApproval?.('approval-home-1')
-                            : undefined}
-                    />
-                )}
-            </HomeAdministrationSection>,
+                {(context) => <TeamCreationPolicyEditor context={context} />}
+            </HomeAdministrationSection></CurrentUiContextCommandsProvider>,
         );
-        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('request-home-approval'));
+        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-policy-team-creation:self_service'));
 
-        screen.pressByTestId('request-home-approval');
+        await screen.pressByTestIdAsync('home-policy-team-creation:self_service');
         await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-admin-approval'));
-        expect(screen.findByTestId('request-home-approval')?.props.accessibilityState?.disabled).toBe(true);
+        expect(screen.findByTestId('home-policy-team-creation:self_service')?.props.accessibilityState?.disabled).toBe(true);
+        const [approval] = harness.artifacts(home).list();
+        expect(approval).toBeDefined();
+        const executor = createDefaultActionExecutor();
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!read.ok) throw new Error('Expected pending Home approval context');
+        const inventory = CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+        expect(inventory.map(command => command.title)).toEqual(['approvals.details']);
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
         screen.pressByTestId('home-admin-approval.action');
 
         expect(routerPush).toHaveBeenCalledWith(
-            `/inbox/approvals/approval-home-1?serverId=${encodeURIComponent(home)}`,
+            `/inbox/approvals/${encodeURIComponent(approval!.id)}?serverId=${encodeURIComponent(home)}`,
         );
+        await screen.unmount();
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+            .toMatchObject({ ok: false });
     });
 
     it('says the device is signed out of a Home rather than claiming the Home refused', async () => {

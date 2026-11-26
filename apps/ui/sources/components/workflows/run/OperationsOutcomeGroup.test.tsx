@@ -5,13 +5,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { Item } from '@/components/ui/lists/Item';
+import { createCommittedFiberRenderCounter, readTestRendererRoot } from '@/dev/testkit/performance/committedFiberCounts';
 import { Modal } from '@/modal';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 
 import { OperationsOutcomeGroup } from './OperationsOutcomeGroup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+
+function Publication() {
+  const commands = useCurrentUiContextComposedCommands();
+  const enrichment = React.useMemo(() => ({ commands }), [commands]);
+  usePublishCurrentUiContext(enrichment);
+  return null;
+}
 
 const routerMock = vi.hoisted(() => ({ push: null as null | ReturnType<typeof vi.fn> }));
 
@@ -64,6 +80,46 @@ afterEach(async () => {
 });
 
 describe('OperationsOutcomeGroup', () => {
+  it('publishes exactly its approval navigation and withdraws hidden outcome addresses', async () => {
+    const home = await createPlainArtifactHomeFixture('https://workflow-approval-navigation.test');
+    try {
+      const counter = createCommittedFiberRenderCounter();
+      let root: ReturnType<typeof readTestRendererRoot> | undefined;
+      function Surface({ visible = true, revision = 0 }) {
+        return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+          <Publication /><React.Fragment key={revision}>{null}</React.Fragment>
+          {visible ? <OperationsOutcomeGroup input={input} testID="o" /> : null}
+        </CurrentUiContextCommandsProvider>;
+      }
+      const measure = (surface: React.ReactNode) => <React.Profiler id="outcome" onRender={() => {
+        if (root) counter.onCommitRoot(root());
+      }}>{surface}</React.Profiler>;
+      const screen = await renderMountedCurrentUiContext(measure(<Surface />));
+      root = readTestRendererRoot(screen.tree.root);
+      counter.start();
+      await screen.update(measure(<Surface revision={1} />));
+      expect(counter.read().rendersFor(Item)).toBe(0);
+      counter.stop();
+      const executor = createDefaultActionExecutor();
+      const readCommands = async () => {
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!read.ok) throw new Error('Expected workflow outcome context');
+        return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+      };
+      const inventory = await readCommands();
+      expect(inventory.map(command => command.title)).toEqual(['workflows.triggers.guided.outcome.proposal']);
+      await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+        { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+      expect(routerMock.push?.mock.calls.at(-1)?.[0]).toBe('/inbox/approvals/appr-1?serverId=srv');
+      await screen.pressByTestIdAsync('o.proposal.link.approval.appr-1');
+      expect(routerMock.push?.mock.calls.at(-1)?.[0]).toBe('/inbox/approvals/appr-1?serverId=srv');
+      await screen.update(measure(<Surface visible={false} />));
+      expect(await readCommands()).toEqual([]);
+      expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+        .toMatchObject({ ok: false });
+      await screen.unmount();
+    } finally { await home.dispose(); }
+  });
   async function mount(open = vi.fn()) {
     const screen = await renderScreen(
       <InjectedAuthProvider credentials={null}>

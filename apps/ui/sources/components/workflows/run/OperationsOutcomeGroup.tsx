@@ -2,6 +2,7 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { Item } from '@/components/ui/lists/Item';
@@ -53,6 +54,22 @@ export const OperationsOutcomeGroup = React.memo(
           ? () => openReceipt.open(link.environmentId, link.deploymentId) : undefined;
       }
     };
+    const renderedRows = rows.map(row => {
+      const session = row.session;
+      return {
+        row,
+        onPress: session
+          ? () => void navigateToSession(session.sessionId, { serverId: session.serverId })
+          : row.opens ? linkOpener(row.opens) : undefined,
+        links: row.links.filter(link => link !== row.opens).map(link => ({ link, onPress: linkOpener(link) })),
+      };
+    });
+    useCurrentUiContextLocalCommands(renderedRows.flatMap(({ row, onPress, links }) => [
+      ...(!row.session && row.opens?.kind === 'approval' && onPress
+        ? [{ key: `${row.key}.${linkKey(row.opens)}`, title: row.title, invoke: onPress }] : []),
+      ...links.flatMap(({ link, onPress: open }) => link.kind === 'approval' && open
+        ? [{ key: `${row.key}.${linkKey(link)}`, title: link.title, invoke: open }] : []),
+    ]), { contextKey: props.testID });
     const factProps = (value: string | undefined, tone: 'danger' | 'attention' | undefined) => tone && value
       ? { rightElement: <Text variant="body" style={tone === 'danger' ? styles.danger : styles.attention} numberOfLines={1}>{value}</Text> }
       : { detail: value };
@@ -62,11 +79,7 @@ export const OperationsOutcomeGroup = React.memo(
         title={t('workflows.triggers.guided.outcome.title')}
         description={t('workflows.triggers.guided.outcome.description')}
       >
-        {rows.flatMap((row) => {
-          const session = row.session;
-          const onPress = session
-            ? () => void navigateToSession(session.sessionId, { serverId: session.serverId })
-            : row.opens ? linkOpener(row.opens) : undefined;
+        {renderedRows.flatMap(({ row, onPress, links }) => {
           return [
             <Item
               key={row.key}
@@ -84,8 +97,7 @@ export const OperationsOutcomeGroup = React.memo(
               showChevron={Boolean(onPress)}
               {...(onPress ? { onPress } : {})}
             />,
-            ...row.links.filter(link => link !== row.opens).map((link) => {
-              const open = linkOpener(link);
+            ...links.map(({ link, onPress: open }) => {
               return (
                 <Item
                   key={`${row.key}.${linkKey(link)}`}
