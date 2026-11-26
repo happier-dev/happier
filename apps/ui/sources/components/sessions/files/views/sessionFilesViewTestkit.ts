@@ -111,6 +111,7 @@ export async function prepareSessionFilesViewTestkit() {
 
 export async function createSessionFilesViewFixture(input: Readonly<{
     serverUrl?: string;
+    accountId?: string;
     rootPath?: string;
     sessionId?: string;
     machineId?: string;
@@ -133,6 +134,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
     const machineId = input.machine?.id ?? input.machineId ?? 'm1';
+    const accountId = input.accountId ?? 'alice';
     const serverUrl = input.serverUrl ?? 'https://session-file-views.test';
     // Fixture Homes use short .test URLs; distinct Homes retain distinct admitted identities.
     const serverIdentityId = input.serverIdentityId ?? `srv_${Buffer.from(serverUrl).toString('base64url')}`;
@@ -155,7 +157,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         let issuer = actionIssuers.get(actionId);
         if (!issuer) {
-            issuer = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'alice',
+            issuer = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId,
                 machineId: machineId, actionId, tokenEpoch: 0,
                 execute: (actionInput, context) => {
                     const { machineId: targetId = context.target.machineId, ...payload } = actionInput as Record<string, unknown> & { machineId?: string };
@@ -173,13 +175,13 @@ export async function createSessionFilesViewFixture(input: Readonly<{
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, ...(installationPublicKey ? { installationPublicKey } : {}) };
     // Own-Machine Action admission reads the Machine's ready custody from the full row.
     const ownedMachine = machine && serverIdentityId && !machine.access
-        ? { ...machine, access: createPlainMachineRowFixture({ id: machine.id, accountId: 'alice' }).access, installationId: machine.installationId ?? 'test-installation', installationPublicKey }
+        ? { ...machine, access: createPlainMachineRowFixture({ id: machine.id, accountId }).access, installationId: machine.installationId ?? 'test-installation', installationPublicKey }
         : machine;
-    const machineRow = machine ? { ...(serverIdentityId ? createPlainMachineRowFixture({ id: machine.id, accountId: 'alice' }) : {}), ...machine, ...(installationPublicKey ? { installationPublicKey } : {}),
+    const machineRow = machine ? { ...(serverIdentityId ? createPlainMachineRowFixture({ id: machine.id, accountId }) : {}), ...machine, ...(installationPublicKey ? { installationPublicKey } : {}),
         dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         metadata: encodePlainMachineStoredContent(machine.metadata),
         daemonState: machine.daemonState ? encodePlainMachineStoredContent(machine.daemonState) : null } : null;
-    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: 'plain' });
     const homeRequest: RuntimeFetch = async (url, init) => {
         const requestUrl = new URL(String(url));
         const path = requestUrl.pathname;
@@ -201,7 +203,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
         if (path === '/v1/features') return Response.json(features);
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-        if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'alice' }));
+        if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: accountId }));
         // These fixture Machines are user-run, so wake preparation observes no
         // managed enrollment through the real Home HTTP contract.
         if (path === managedMachineActionEndpointPathV1('machines.managed.list') && init?.method === 'POST') {
@@ -228,8 +230,8 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     transportsByOrigin.set(origin, transport);
     // An Account Action is signed only by a present-user Account token with its epoch.
     const accountToken = serverIdentityId && !input.credentials
-        ? { token: (await import('@/dev/testkit/harness/homeGovernanceHarness')).createAccountTokenForTests('alice', { currentAccount: true }) } : undefined;
-    const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homeRequest,
+        ? { token: (await import('@/dev/testkit/harness/homeGovernanceHarness')).createAccountTokenForTests(accountId, { currentAccount: true }) } : undefined;
+    const connection = await restoreServerAccountForTest({ serverUrl, accountId, request: homeRequest,
         credentials: input.credentials ?? accountToken,
         serverIdentityId });
     const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -248,10 +250,10 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     });
     const scope = { serverId: resolveServerProfileScopeId(connection.home), machineId: input.machineId ?? 'm1', rootPath: input.rootPath ?? '/workspace' };
     const session = createSessionFixture({ id: input.sessionId ?? 's1', serverId: scope.serverId, active: true, metadata: { path: scope.rootPath, machineId: scope.machineId, host: 'tester.local' } });
-    installTransferProjection({ serverId: scope.serverId, session, machine: ownedMachine, features });
+    installTransferProjection({ serverId: scope.serverId, accountId, session, machine: ownedMachine, features });
     await vi.waitFor(() => {
         const accountScope = getActiveServerAccountScope();
-        if (accountScope?.serverId !== scope.serverId || accountScope.accountId !== 'alice') {
+        if (accountScope?.serverId !== scope.serverId || accountScope.accountId !== accountId) {
             throw new Error('File-view fixture is waiting for its admitted Account/Home');
         }
     });

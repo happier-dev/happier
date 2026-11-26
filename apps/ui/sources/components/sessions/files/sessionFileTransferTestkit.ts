@@ -77,6 +77,7 @@ export async function disposeTransferFixture(): Promise<void> {
 
 export function installTransferProjection(input: Readonly<{
     serverId?: string;
+    accountId?: string;
     sessionId?: string;
     session?: Session | null;
     machine?: Machine | null;
@@ -84,6 +85,7 @@ export function installTransferProjection(input: Readonly<{
     features?: FeaturesResponse;
 }> = {}): void {
     const serverId = input.serverId ?? 'server-1';
+    const accountId = input.accountId ?? 'alice';
     const sessionId = input.sessionId ?? input.session?.id ?? 's1';
     const machine = input.machine === undefined ? transferMachine() : input.machine;
     const session = input.session === undefined
@@ -96,7 +98,7 @@ export function installTransferProjection(input: Readonly<{
         machineListByServerId: { ...state.machineListByServerId, [serverId]: machine ? [machine] : null },
         // A settled Home inventory wins over the active display-map fallback.
         machineListStatusByServerId: { ...state.machineListStatusByServerId, [serverId]: 'idle' },
-        profileScope: { serverId, accountId: 'alice' },
+        profileScope: { serverId, accountId },
     }));
-    observeMachinePresenceForTest({ serverId, accountId: 'alice' }, machine ? [machine.id] : []);
+    observeMachinePresenceForTest({ serverId, accountId }, machine ? [machine.id] : []);
 }
