@@ -1,4 +1,3 @@
-import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 
@@ -8,6 +7,7 @@ export async function runWithRunnerHomeTransport<T>(run: () => Promise<T>, signa
   const target = await resolveCurrentCliHomeTarget();
   // Released URL-only Homes retain the configured invocation route.
   if (!target.descriptor) return await run();
+  const { acquireTerminalAuthEnrollmentRuntime } = await import('@/auth/terminalAuthEnrollmentRuntime');
   const acquired = await acquireTerminalAuthEnrollmentRuntime(target.descriptor, target.preferredTransport, signal);
   if (!acquired.ok) throw acquired.error;
   const unpublish = publishServerHttpRuntimeOrigin(acquired.runtime.runtimeOrigin, acquired.runtime.carrier);
