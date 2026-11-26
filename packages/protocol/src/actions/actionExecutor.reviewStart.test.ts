@@ -78,6 +78,42 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each(['native', 'workflow'] as const)('reads the source Session once for %s Review comparison and Project admission', async mode => {
+    const records = createInMemoryReviewRecordPortV1();
+    const statusReads: unknown[] = [];
+    let reviewId = '';
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      sessionStatusGet: async input => {
+        statusReads.push(input);
+        return { session: { id: input.sessionId, createdAt: 1, updatedAt: 1, active: true,
+          activeAt: 1, encryption: null, path: '/repo', machineId: 'machine-1' },
+          projectContextSource: { kind: 'source', sourceId: 'project-source' } };
+      },
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      executionRunStart: async (_sessionId, input) => {
+        reviewId = ReviewRoundBindingV1Schema.parse((input.intentInput as Readonly<Record<string, unknown>>).reviewRound).reviewId;
+        return { runId: 'run', callId: 'call', sidechainId: 'call' };
+      },
+      workflowAction: async invocation => {
+        const request = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        reviewId = ReviewRoundBindingV1Schema.parse(request.inputs?.reviewRound).reviewId;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    });
+    const reviewers = [{ kind: 'engine', engineId: 'codex' }];
+    const result = await executor.execute('review.start', { sessionId: 'source', cwd: '/repo',
+      source: { kind: 'workingTree' }, instructions: 'Review.', reviewers,
+      ...(mode === 'workflow' ? { steps: [{ kind: 'review', instructions: 'Review.', reviewers }] } : {}),
+    }, { surface: 'ui' });
+    expect(result).toMatchObject(mode === 'native' ? { ok: true } : { ok: false, errorCode: 'content_unavailable' });
+    expect(records.readMetadata(reviewId)).toMatchObject({ projectSourceId: 'project-source' });
+    expect((await records.read(reviewId))?.rounds[0]).toMatchObject({
+      comparisonCapture: { target: { kind: 'machine', machineId: 'machine-1' } } });
+    expect(statusReads).toHaveLength(1);
+    expect(statusReads[0]).toMatchObject({ sessionId: 'source', live: false, includeAcceptedWorkspace: true });
+  });
   it.each(['admitted', 'refused', 'wrong-session'] as const)('consumes each selected Team consent before composing detached reviewers: %s', async outcome => {
     const grants: ReturnType<typeof SessionAccessGrantSetActionInputV1Schema.parse>[] = [];
     let workflow: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse> | undefined;

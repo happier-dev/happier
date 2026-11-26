@@ -10,7 +10,7 @@ import { resolveSessionIdFromInput } from '../sessionScope.js';
 import { readReviewRunActionPayload } from '../executionRuns.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import type { ReviewRoundComparisonCaptureV1 } from '../../../reviews/reviewArtifactV1.js';
-import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
+import { SessionStatusResultSchema, type SessionStatusResult } from '../../../sessions/control/contract.js';
 import { RpcError } from '../../../rpc/errors.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
@@ -19,17 +19,25 @@ import { WorkspaceRefV1Schema } from '../../../workspaces/workspaceRefV1.js';
 import { resolveSessionProjectKeyV1 } from '../../../workspaces/workspaceRefResolutionV1.js';
 import { resolveSessionProjectContextSourceV1, type ProjectContextSourceResolutionV1 } from '../../../projects/projectListProjectionV1.js';
 
+/** Initial Review consumers share the Session's Machine and accepted Project snapshot. */
+export async function readReviewSessionStatusV1(ctx: ActionExecutorContext, sessionId: string,
+  executeHostChild: RoundActionInvocation['executeHostChild'], includeAcceptedWorkspace = false): Promise<SessionStatusResult> {
+  const response = await executeHostChild('session.status.get', { sessionId, live: false,
+    ...(includeAcceptedWorkspace ? { includeAcceptedWorkspace: true } : {}) }, ctx);
+  if (!response.ok) throw createActionExecuteFailureError(response);
+  const status = SessionStatusResultSchema.safeParse(response.result);
+  if (!status.success || status.data.session.id !== sessionId) throw new RpcError('invalid_action_output', 'invalid_action_output');
+  return status.data;
+}
+
 /** Initial Review creation consumes the same admitted Project association in native and Workflow paths. */
 export async function resolveReviewProjectSourceV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
   sessionId: string | undefined, serverId: string | undefined, cwd: string | undefined,
-  executeHostChild: RoundActionInvocation['executeHostChild']): Promise<string | undefined> {
+  executeHostChild: RoundActionInvocation['executeHostChild'], sessionStatus?: SessionStatusResult): Promise<string | undefined> {
   let source: ProjectContextSourceResolutionV1 | undefined;
   if (sessionId && deps.sessionStatusGet) {
-    const response = await executeHostChild('session.status.get', { sessionId, live: false, includeAcceptedWorkspace: true }, ctx);
-    if (!response.ok) throw createActionExecuteFailureError(response);
-    const status = SessionStatusResultSchema.safeParse(response.result);
-    if (!status.success || status.data.session.id !== sessionId) throw new RpcError('invalid_action_output', 'invalid_action_output');
-    source = status.data.projectContextSource;
+    const status = sessionStatus ?? await readReviewSessionStatusV1(ctx, sessionId, executeHostChild, true);
+    source = status.projectContextSource;
   } else if (!sessionId && deps.projectWorkspaceRefs) {
     const project = ctx.workflowStartProject ?? (ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.project : undefined);
     const machineId = project?.machineId ?? (ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.machineId : undefined)
@@ -51,17 +59,14 @@ export async function resolveReviewProjectSourceV1(deps: ActionExecutorDeps, ctx
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
   sessionId: string | null, actionId: ActionId,
-  executeHostChild: RoundActionInvocation['executeHostChild']): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
+  executeHostChild: RoundActionInvocation['executeHostChild'], sessionStatus?: SessionStatusResult): Promise<ReviewRoundComparisonCaptureV1['target'] | undefined> {
   if (sessionId) {
     const knownMachineId = (sessionId === ctx.defaultSessionId ? ctx.defaultSessionMachineId : undefined)
       ?? await deps.resolveApiTokenGrantSessionMachineId?.({ actionId, sessionId, context: ctx });
     if (knownMachineId) return { kind: 'machine', machineId: knownMachineId };
-    const response = await executeHostChild('session.status.get', { sessionId, live: false }, ctx);
-    if (!response.ok) throw new Error(response.error, { cause: response });
-    const status = SessionStatusResultSchema.safeParse(response.result);
-    if (!status.success || status.data.session.id !== sessionId) throw new RpcError('invalid_action_output', 'invalid_action_output');
-    if (!status.data.session.machineId) throw new RpcError('workspace_unavailable', 'workspace_unavailable');
-    return { kind: 'machine', machineId: status.data.session.machineId };
+    const status = sessionStatus ?? await readReviewSessionStatusV1(ctx, sessionId, executeHostChild);
+    if (!status.session.machineId) throw new RpcError('workspace_unavailable', 'workspace_unavailable');
+    return { kind: 'machine', machineId: status.session.machineId };
   }
   if (ctx.externalActionTarget?.kind === 'machine') return ctx.externalActionTarget;
   const machineId = ctx.executionRunTargetMachineId ?? ctx.agentStartContext?.baseline.machineId ?? ctx.defaultSessionMachineId;

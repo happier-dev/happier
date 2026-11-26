@@ -25,7 +25,7 @@ import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
-import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComparisonTargetV1, resolveReviewProjectSourceV1 } from './rounds.js';
+import { captureReviewComparisonV1, dispatchReviewRoundAction, readReviewSessionStatusV1, resolveReviewComparisonTargetV1, resolveReviewProjectSourceV1 } from './rounds.js';
 import type { ScmComparison } from '../../../scm/comparison.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
 import { prepareReviewRoundV1, preparedReviewTitleV1, resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
@@ -315,8 +315,11 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         };
         let selectedSource = reviewInput.reviewRound ? undefined : await resolveReviewComparisonSourceV1(reviewInput, readComparisonSnapshot);
         const needsComparison = !reviewInput.reviewRound && Boolean(selectedSource || reviewInput.comparisonId);
+        const sourceSessionStatus = !reviewInput.reviewRound && sourceSessionId && deps.sessionStatusGet
+          ? await readReviewSessionStatusV1(ctx, sourceSessionId, executeHostChild, true) : undefined;
         const comparisonTarget = needsComparison || needsWorkflowProject
-          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId, executeHostChild) : undefined;
+          ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId, executeHostChild,
+            sessionId === sourceSessionId ? sourceSessionStatus : undefined) : undefined;
         if ((needsComparison || needsWorkflowProject) && !comparisonCwd) await readComparisonSnapshot();
         if (needsComparison && (!comparisonCwd || !comparisonTarget)) {
           return { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' };
@@ -367,7 +370,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ? await readReviewTranscriptInput(reviewInput.sourceSession, executeHostChild, ctx) : null;
         if (transcript && !transcript.ok) return transcript;
         const projectSourceId = reviewInput.reviewRound ? undefined
-          : await resolveReviewProjectSourceV1(deps, ctx, sourceSessionId, serverId ?? undefined, comparisonCwd, executeHostChild);
+          : await resolveReviewProjectSourceV1(deps, ctx, sourceSessionId, serverId ?? undefined, comparisonCwd, executeHostChild, sourceSessionStatus);
         if (workflowComposition) {
           const selectedConsents: { consent: NonNullable<ReviewStartInput['teamCredentialSessionBindingConsent']>;
             model: NonNullable<ReviewStartInput['teamCredentialModel']> }[] = [];
