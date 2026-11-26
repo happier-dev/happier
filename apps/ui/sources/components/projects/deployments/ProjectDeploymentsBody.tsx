@@ -142,6 +142,7 @@ export const ProjectDeploymentsBody = React.memo(
 );
 
 const NO_OPENED_SOURCES: ReadonlySet<string> = new Set();
+const NO_VISIBLE_ENVIRONMENT_HEALTH: readonly string[] = Object.freeze([]);
 
 function ProjectDeploymentsTitle({ title }: Readonly<{ title: string }>) {
   useDestinationPageTitle(title);
@@ -284,10 +285,15 @@ const ProjectDeploymentsPage = React.memo(
     // The phone Overview, like a Receipt or Database, replaces the list and reads its own selected Environment.
     const collectionVisible = !(phone && selection.environmentId
       && (selection.deploymentId || selection.database || destination.tab === 'overview'));
+    const environmentId = selection.environmentId;
+    const hasDetail = environmentId !== null || selection.drafting === true || selection.defaults === true;
+    const usesServicesColumn = props.workspaceRef == null && shellColumnVisible && hasDetail;
     const collection = useDeploymentCollection(props.controller, {
       ...props.demand,
       visible: props.demand.visible && collectionVisible,
       focused: props.demand.focused && collectionVisible,
+      // Keep the Project metadata for the detail. The visible column owns its rows' live health.
+      healthEnvironmentIds: usesServicesColumn ? NO_VISIBLE_ENVIRONMENT_HEALTH : props.demand.healthEnvironmentIds,
     });
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
@@ -319,7 +325,6 @@ const ProjectDeploymentsPage = React.memo(
     const homeUnreachable = deploymentReadIssue(readFailure?.code) === 'homeUnreachable';
     const retained = collection.snapshot.value !== null;
     // The exact read owns admission; a paged collection is not a membership authority.
-    const environmentId = selection.environmentId;
     const selectedTitle =
       items.find((item) => item.environment.id === environmentId)?.title ??
       null;
@@ -541,10 +546,9 @@ const ProjectDeploymentsPage = React.memo(
           }
         : null;
     // An open Environment stands beside the Services column. A bare Project route keeps its own collection and title.
-    const hasDetail = environmentId !== null || selection.drafting === true || selection.defaults === true;
     // An open Environment means the Project has one, so the page stands beside the column from the first paint rather
     // than in a split with an empty rail until its list answers (PAGE-ACCEPT-176 R12-D3: the detail pane's 0.14 shift).
-    const besideList = props.workspaceRef == null && shellColumnVisible && hasDetail && (items.length > 0 || environmentId !== null);
+    const besideList = usesServicesColumn && (items.length > 0 || environmentId !== null);
     const openHostProject = () => router.push(projectSourceRoute(props.sourceId));
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`defaults:${props.serverId}:${props.accountId}:${props.sourceId}`}

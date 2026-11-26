@@ -135,4 +135,42 @@ describe('receipt route read demand', () => {
             expect(counts).toEqual({ collections: 1, headers: rows.length, environments: 1, histories: 1, receipts: 1 });
         } finally { await screen.unmount(); controller.retire(); }
     });
+
+    it('does not open a second live health watch for the hidden Project list beside a historical Receipt', async () => {
+        const { AppShellColumnContext: ShellColumn } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        viewport.width = 1440;
+        router.resetParams();
+        const base = createDeploymentEnvironmentDetailV1();
+        const savedLink = base.targetLinks[0]!;
+        const runtimeTargetLink = { ...savedLink.targetLink, activeDeploymentId: 'newer-serving-deployment' };
+        const detail = { ...base, targetLinks: [{ ...savedLink, targetLink: runtimeTargetLink }] };
+        const receipt = createDeploymentReceiptDetailV1();
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const watches = { collection: 0, detail: 0 };
+        const controller = createDeploymentReadControllerV1({ scope, transport: {
+            listEnvironments: async () => ({ ok: true, value: {
+                items: [{ environment: detail.environment, title: detail.content.name, runtimeTargetLink }], nextCursor: null,
+            } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [receipt.deployment], nextCursor: null } }),
+            readReceipt: async () => ({ ok: true, value: receipt }),
+            observeEnvironmentCollectionHealth: () => { watches.collection++; return () => {}; },
+            observeEnvironmentHealth: () => { watches.detail++; return () => {}; },
+        } });
+        const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const page = (columnVisible: boolean) => <AccountNoticeInvestigationBoundary>
+            <ShellColumn.Provider value={{ present: columnVisible, columnVisible }}>
+                <ProjectDeploymentsView controller={controller} lifetime={lifetime} sourceId={scope.projectSourceId}
+                    serverId={scope.serverId} accountId={scope.accountId} demand={{ mounted: true, visible: true, focused: true }} />
+            </ShellColumn.Provider>
+        </AccountNoticeInvestigationBoundary>;
+        const screen = await renderScreen(page(true));
+        try {
+            expect(screen.findByTestId('project-deployments.receipt')).not.toBeNull();
+            expect(watches).toEqual({ collection: 0, detail: 0 });
+            await act(async () => { await screen.update(page(false)); });
+            expect(screen.findByTestId('project-deployments.receipt')).not.toBeNull();
+            expect(watches).toEqual({ collection: 1, detail: 0 });
+        } finally { await screen.unmount(); controller.retire(); }
+    });
 });
