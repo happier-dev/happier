@@ -4,7 +4,7 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { resolvePublishTargetRecommendation } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
-import { DeploymentTargetRoleResultV1ProtocolSchema, type JsonValue } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetLinkProviderContentV1ProtocolSchema, DeploymentTargetRoleResultV1ProtocolSchema, type JsonValue } from '@happier-dev/plugin-sdk';
 
 // Provider response projection from the Pages create API example, read 2026-11-16.
 // https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/create/
@@ -172,16 +172,18 @@ it.each([
     } }),
   } });
   try {
-    const result = await kit.invokeAction('workers-create', workersGitInput('github'));
+    const result = DeploymentTargetLinkProviderContentV1ProtocolSchema.parse(
+      await kit.invokeAction('workers-create', workersGitInput('github')),
+    );
     expect(result).toMatchObject({
       providerIdentity: { providerResourceId: 'worker-tag' },
       preparedNative: { productionBranchOutcome: { status: 'unconfirmed', requestedBranch: 'main',
         failureCause: { httpStatus: status, ...(nativeCode === null ? { errorCode: null } : {
           nativeErrorCode: String(nativeCode),
           errorCode: 'cloudflare_builds_configuration_edit_required',
-          requiredPermission: 'Workers Builds Configuration (Edit)',
         }) } } },
     });
+    expect(result).not.toHaveProperty('preparedNative.productionBranchOutcome.failureCause.requiredPermission');
     expect(result).not.toHaveProperty('repositoryAccess.status', 'needsGitAccess');
     expect(paths.filter(path => path.endsWith('/triggers'))).toHaveLength(1);
   } finally { await kit.dispose(); }

@@ -58,11 +58,12 @@ export function deploymentActionRefusalRemedy(code: string, definition?: Publish
 
 /** The provider reports its missing token permission separately from Home access. */
 export function readDeploymentConnectionPermissionRemedy(code: string | undefined, details: unknown): string | null {
-  const permission = code === 'cloudflare_builds_configuration_edit_required' && isRecord(details)
-    ? details.requiredPermission : undefined;
-  return typeof permission === 'string' && permission
-    ? t('projects.deployments.platformLink.connectionRequiresPermission', { permission })
-    : null;
+  if (code !== 'cloudflare_builds_configuration_edit_required') return null;
+  const permission = isRecord(details) ? details.requiredPermission : undefined;
+  return t('projects.deployments.platformLink.connectionRequiresPermission', {
+    permission: typeof permission === 'string' && permission.trim()
+      ? permission : 'Workers Builds Configuration (Edit)',
+  });
 }
 
 type ReceiptState = DeploymentReceiptHeaderV1['state'];

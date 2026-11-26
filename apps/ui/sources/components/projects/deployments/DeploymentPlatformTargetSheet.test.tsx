@@ -103,9 +103,10 @@ it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-ke
       : { status: ambiguous === 'branch-kept' ? 'defaultKept' : 'unconfirmed',
         ...(ambiguous === 'branch-kept' ? { branch: 'main' } : { previousBranch: 'main' }), requestedBranch: 'release',
         failureCause: ambiguous === 'branch-permission' ? { phase: 'deployment.cloudflare.link', errorClass: 'Error',
-          errorCode: 'cloudflare_builds_configuration_edit_required', httpStatus: 403, nativeErrorCode: '10000',
-          requiredPermission: 'Workers Builds Configuration (Edit)' }
-          : { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
+          errorCode: 'cloudflare_builds_configuration_edit_required', httpStatus: 403, nativeErrorCode: '10000' }
+          : ambiguous === 'branch-unconfirmed' ? { phase: 'deployment.cloudflare.link', errorClass: 'Error',
+            errorCode: null, httpStatus: 503 }
+            : { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } };
     const creates: unknown[] = [];
     const associations: unknown[] = [];
     await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.targets.link',
@@ -192,6 +193,11 @@ it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-ke
         if (ambiguous === 'branch-permission') {
           expect(card?.props.diagnosticCode).toBe('cloudflare_builds_configuration_edit_required');
           expect(screen.getTextContent()).toContain('Add Workers Builds Configuration (Edit) to the connected token, then reconnect.');
+        }
+        if (ambiguous === 'branch-unconfirmed') {
+          expect(card?.props.diagnosticCode).toBeUndefined();
+          expect(screen.getTextContent()).not.toContain('Workers Builds Configuration (Edit)');
+          expect(screen.findByTestId('project-deployments.platform.needsGitAccess')).toBeNull();
         }
       });
       expect(creates).toHaveLength(1);

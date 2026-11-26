@@ -40,7 +40,7 @@ async function buildsWrite(io: DeploymentContext, accountId: string, path: strin
       const code = 'cloudflare_builds_configuration_edit_required';
       throw new PluginError({ code, retryable: false,
         details: { phase: 'link', requiredPermission: workersBuildsEditPermission },
-        failureCause: { ...cause, errorCode: code, requiredPermission: workersBuildsEditPermission }, effectAttempted: true });
+        failureCause: { ...cause, errorCode: code }, effectAttempted: true });
     }
     if (method === 'PUT' && cause?.httpStatus === 404
       && (nativeErrorCode === '12000' || nativeErrorCode === '8000008')) {

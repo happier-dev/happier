@@ -1,6 +1,6 @@
 import { executionRunKindForIntent } from '@happier-dev/protocol/execution/runs/startRequest';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, type ExecutionRunError, type ExecutionRunGetResponse, type ExecutionRunStatus } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -15,7 +15,7 @@ import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/exec
 
 const executeAction = createFrontDoorActionExecute();
 
-/** A null result means Start settled without acknowledging a Run to stop. */
+/** Dispatch failures resolve as refusals. Null means Start settled without acknowledging a Run to stop. */
 export type LlmTaskRunStop = () => Promise<ActionExecuteResult | null>;
 
 export type LlmTaskRunResult =
@@ -132,10 +132,16 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     };
     const accepted: { runId?: string; stop?: Promise<ActionExecuteResult> } = {};
     const requestStop = (runId: string) => {
-        accepted.stop ??= stopLlmTaskRun({ host: params.host, runId }).then(result => {
-            if (!result.ok) delete accepted.stop;
-            return result;
-        });
+        accepted.stop ??= stopLlmTaskRun({ host: params.host, runId })
+            .catch((error: unknown): ActionExecuteResult => {
+                const errorCode = readActionErrorCodeV1(error) ??
+                    (error instanceof Error && error.message === 'action_home_not_found' ? error.message : 'action_failed');
+                return { ok: false, error: errorCode, errorCode };
+            })
+            .then(result => {
+                if (!result.ok) delete accepted.stop;
+                return result;
+            });
         return accepted.stop;
     };
     let acknowledge: ((runId: string | null) => void) | undefined;

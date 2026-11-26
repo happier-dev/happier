@@ -475,7 +475,7 @@ it('a refused Stop keeps the run on screen with the refusal and Retry; it never 
 });
 
 it.each(['after a timed-out wait', 'before Start acknowledges'] as const)
-('settles the same Suggest Run when Stop is refused %s', async (when) => {
+('settles the same Suggest Run when Stop fails %s', async (when) => {
   const early = when === 'before Start acknowledges';
   const startReply = Promise.withResolvers<{ runId: string; callId: string; sidechainId: string }>();
   const settled = terminal({ recommendations: [recommendation] });
@@ -490,6 +490,17 @@ it.each(['after a timed-out wait', 'before Start acknowledges'] as const)
     executionRunGet: read,
     executionRunStop: async () => ({ ok: false, errorCode: 'stop_refused', error: 'Stop refused' }),
   });
+  if (early) {
+    const dispatch = execute.getMockImplementation()!;
+    let rejected = false;
+    execute.mockImplementation(async (actionId, input, context) => {
+      if (actionId === 'execution.run.stop' && !rejected) {
+        rejected = true;
+        throw new Error('action_home_not_found');
+      }
+      return dispatch(actionId, input, context);
+    });
+  }
   const { fixture, screen } = await openDescribe('auto-stop-refused-after-timeout');
   try {
     await screen.pressByTestIdAsync('newApp.describeApp');
@@ -506,6 +517,17 @@ it.each(['after a timed-out wait', 'before Start acknowledges'] as const)
     }
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.stopRefused.retry')).toBeTruthy());
     expect(screen.findByTestId('newApp.auto.working')).toBeTruthy();
+    if (early) {
+      const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+      const stopRefused = screen.findAllByType(AttentionBanner).find((node) => node.props.testID === 'newApp.auto.stopRefused');
+      expect(stopRefused?.props.details).toEqual(['action_home_not_found']);
+      await screen.pressByTestIdAsync('newApp.auto.stopRefused.retry');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.stopRefused.retry')).toBeTruthy());
+      expect(calls('execution.run.stop').map(([, input]) => input)).toEqual([
+        expect.objectContaining({ runId: 'run_1' }),
+        expect.objectContaining({ runId: 'run_1' }),
+      ]);
+    }
 
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { notifyExecutionRunActivity } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
@@ -520,7 +542,7 @@ it.each(['after a timed-out wait', 'before Start acknowledges'] as const)
     expect(screen.getTextContent()).toContain(recommendation.title);
     expect(screen.findByTestId('newApp.auto.stopRefused')).toBeNull();
     expect(calls('execution.run.start')).toHaveLength(1);
-    expect(calls('execution.run.stop')).toHaveLength(1);
+    expect(calls('execution.run.stop')).toHaveLength(early ? 2 : 1);
     await act(async () => notifyExecutionRunActivity(address, { runId: 'run_1' }));
     expect(read).toHaveBeenCalledTimes(2);
   } finally {
