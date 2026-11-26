@@ -107,6 +107,41 @@ describe('daemon managed policy census transport', () => {
             expect(executions.slice(3, machineCount).every(entry => entry.signal?.aborted === false)).toBe(true);
         } finally { await runtime.stop(); await apiMachine.shutdown(); }
     });
+    it('observes bound sealed presets on connection and schedules their admitted wake or retention', async () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const retained = ManagedMachineV1Schema.parse({
+            id: 'retained', homeId: 'home', custodianAccountId: 'owner', controller,
+            preset: { id: 'preset', revision: 1, contentEncryptionMode: 'e2ee' },
+            enrolledMachineId: 'retained-guest', allocation: 'bound', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'deadline', at: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: false,
+        });
+        const asleep = ManagedMachineV1Schema.parse({ ...retained, id: 'asleep', enrolledMachineId: 'asleep-guest',
+            desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+        const target = ManagedWakeTargetV1Schema.parse({ homeId: asleep.homeId, managedId: asleep.id,
+            enrolledMachineId: asleep.enrolledMachineId, expectedIntentRevision: 1, controller, reason: 'admitted-work',
+            origin: { kind: 'session-input', session: { homeId: asleep.homeId, sessionId: 'session' },
+                pendingRequestId: 'pending', requestedAt: 1 } });
+        const observations: string[] = [];
+        const scheduled = new Map<string, string>();
+        const runtime = createDaemonManagedMachinePolicyRuntime({
+            readCensus: async () => ({ machines: [retained, asleep], targets: [target] }),
+            reconcileObservation: async machine => {
+                observations.push(machine.id);
+                return machine;
+            },
+            executePolicy: async ({ machine, purpose }) => {
+                scheduled.set(machine.id, purpose.kind);
+                return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            },
+        });
+        try {
+            await runtime.notifyChanged();
+            expect(observations).toEqual([retained.id, asleep.id]);
+            expect(scheduled).toEqual(new Map([[retained.id, 'retention'], [asleep.id, 'accepted-input-start']]));
+        } finally { await runtime.stop(); }
+    });
+
     it('visits wake targets once per census and schedules the first accepted origin for each Machine', async () => {
         const controller = { machineId: 'controller', installationId: 'installation' };
         const machines = Array.from({ length: 128 }, (_, index) => ManagedMachineV1Schema.parse({

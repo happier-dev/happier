@@ -31,7 +31,7 @@ import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtur
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema, projectManagedEnrollmentCorrelationV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedPolicyCensusOutputV1Schema, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedPolicyCensusOutputV1Schema, MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1, type ManagedPolicyProofPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
 import { createLumeNativeClient } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
 import { lumeProcessResult } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient.testkit';
@@ -94,6 +94,31 @@ describe("managed acquisition durable authority", () => {
                 headers: { [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(proof) } });
         };
         const read = () => db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+        const readPolicyContext = (purpose: ManagedPolicyProofPurposeV1, structural: boolean, key = keys.secretKey) => {
+            const path = '/v1/machines/managed/controller/context';
+            const { requestId: _requestId, ...body } = correlation;
+            const proof = createManagedPolicyProofV1({ correlation, purpose,
+                custodianAccountId: account.id, path, body, privateKey: key, ...(structural ? {} : { resource }) });
+            return app.inject({ method: 'POST', url: path, payload: body,
+                headers: { [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(proof) } });
+        };
+        const purposes: ManagedPolicyProofPurposeV1[] = [{ kind: 'retention' }, { kind: 'accepted-input-start',
+            target: { homeId, managedId: row.id, controller, expectedIntentRevision: 3, enrolledMachineId: 'guest', reason: 'admitted-work',
+                origin: { kind: 'session-input', session: { homeId, sessionId: 'session' },
+                    pendingRequestId: 'pending', requestedAt: 1 } } }];
+        for (const purpose of purposes) {
+            const context = await readPolicyContext(purpose, opaque);
+            expect(context.statusCode, context.body).toBe(200);
+            const projected = ManagedControllerContextOutputV1Schema.parse(context.json());
+            if (opaque) {
+                expect(projected.machine).not.toHaveProperty('resource');
+                expect(projected.presetContent).toEqual({ content, recipients: [] });
+            } else {
+                expect(projected.machine.resource).toEqual(resource);
+            }
+            expect((await readPolicyContext(purpose, !opaque)).statusCode).toBe(403);
+            expect((await readPolicyContext(purpose, opaque, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(403);
+        }
         expect((await submit(99, { ...correlation, expectedIntentRevision: 2 })).statusCode).toBe(403);
         expect((await submit(99, correlation, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(403);
         expect((await submit(9)).statusCode).toBe(200);

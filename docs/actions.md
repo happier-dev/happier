@@ -11178,6 +11178,11 @@ transport framing, not a new credential, admission or Action input version.
 Unframed requests retain the existing verifier. Both CLI
 and Home must load this development transport change before sending framed
 requests; an older Home refuses the frame rather than accepting weaker proof.
+A managed-policy proof binds the installed controller, custodian, managed row,
+intent revision, purpose, and HTTP request. Full rows also bind the native
+resource digest. For sealed presets, Home verifies the structural proof and the
+installed controller opens the sealed resource. The controller keeps provider
+coordinates and credentials inside the preset content.
 Read proof bodies cannot follow a cross-origin redirect, under the same credential
 redirect policy as signed mutation bodies. Header and body parser limits are unchanged.
 

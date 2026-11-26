@@ -165,12 +165,12 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
         const currentAdmission = readManagedAdmissionState(row.admittedInput).currentAdmission;
         const admittedPolicyRequest = binding.requestId === readManagedCurrentRequestId(row) && currentAdmission?.kind === 'policy'
             && currentAdmission.request.purpose.kind === carrier.purpose.kind;
-        // The installed controller opens and verifies this row's sealed target.
-        // Home can authenticate its already-committed cleanup via structural custody.
-        const structuralCleanup = carrier.purpose.kind === 'creation-cleanup' && isManagedOpaquePresetMachineV1(machine)
-            && (currentSigner && (isManagedCreationCleanupV1(machine) || phase === 'current' && admittedPolicyRequest) || submittedSigner);
-        const structuralObservation = stoppedObservation && isManagedOpaquePresetMachineV1(machine);
-        const expectedResourceDigest = structuralCleanup || structuralObservation ? managedPolicyDigestV1('resource', null)
+        // The installed controller verifies the sealed target. Home verifies
+        // signed structural custody and the existing cleanup admission.
+        const structuralProof = isManagedOpaquePresetMachineV1(machine)
+            && (carrier.purpose.kind !== 'creation-cleanup'
+                || (currentSigner && (isManagedCreationCleanupV1(machine) || phase === 'current' && admittedPolicyRequest) || submittedSigner));
+        const expectedResourceDigest = structuralProof ? managedPolicyDigestV1('resource', null)
             : nativeTarget && managedPolicyDigestV1('resource', nativeTarget);
         const acceptedSource = carrier.purpose.kind === 'accepted-input-start' ? carrier.purpose.target : undefined;
         const activationFailureSigner = phase === 'activation-failure' && acceptedSource

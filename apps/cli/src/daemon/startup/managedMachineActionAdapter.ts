@@ -548,7 +548,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         snapshotAdmitted: async (request: import('@/machines/managed/acquire').ManagedNativeSnapshotRequest) =>
             withBoundDriver(params, request.options.signal, driver => driver.snapshotAdmitted(request)),
         supportsNativeLifetimeRenewal: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<boolean> =>
-            withBoundDriver(params, signal, async driver => driver.supportsNativeLifetimeRenewal(machine)),
+            withBoundDriver(params, signal, async driver => driver.supportsNativeLifetimeRenewal(machine, { requestId: machine.id, signal })),
         reconcileObservation: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<ManagedMachineV1> =>
             withBoundDriver(params, signal, async driver => {
                 const actionId = 'machines.managed.inspect';

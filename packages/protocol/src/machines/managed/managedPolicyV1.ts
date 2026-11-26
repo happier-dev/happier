@@ -114,14 +114,14 @@ export function createManagedPolicyProofV1(input: Readonly<{
   actionOrigin?: ExternalActionExecutionAuthorizationV1;
 }> & (Readonly<{ resource: ManagedResourceV1; nativeOperation?: never }>
   | Readonly<{ resource?: never; nativeOperation: ManagedNativeOperationReferenceV1 }>
-  | Readonly<{ purpose: { kind: 'creation-cleanup' | 'target-power-observation' }; resource?: never; nativeOperation?: never }>)): ManagedPolicyProofV1 {
+  | Readonly<{ resource?: never; nativeOperation?: never }>)): ManagedPolicyProofV1 {
   const purpose = ManagedPolicyProofPurposeV1Schema.parse(input.purpose);
   const correlation = z.extend(ManagedControllerCurrentnessV1Schema, { controller: ManagedControllerV1Schema }).parse(input.correlation);
   const actionOrigin = input.actionOrigin === undefined ? undefined : ExternalActionExecutionAuthorizationV1Schema.parse(input.actionOrigin);
   const nativeTarget = input.resource !== undefined ? ManagedResourceV1Schema.parse(input.resource)
     : input.nativeOperation !== undefined ? ManagedNativeOperationReferenceV1Schema.parse(input.nativeOperation) : null;
-  if (input.resource === undefined && purpose.kind !== 'creation-cleanup' && purpose.kind !== 'target-power-observation') {
-    throw new Error('This managed policy proof requires a bound native resource.');
+  if (input.nativeOperation !== undefined && purpose.kind !== 'creation-cleanup' && purpose.kind !== 'target-power-observation') {
+    throw new Error('This managed policy proof requires a bound native resource or a sealed preset.');
   }
   const payload: MachineInstallationProofPayloadV1 = { version: 1,
     machineId: correlation.controller.machineId, installationId: correlation.controller.installationId,

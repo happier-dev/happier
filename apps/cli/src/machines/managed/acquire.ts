@@ -450,8 +450,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
                 const binding = { correlation: correlation(policyMachine), custodianAccountId: policyMachine.custodianAccountId,
                     path, body, privateKey: input.externalActionMachineRequestPrivateKey,
                     ...(options.actionOrigin ? { actionOrigin: options.actionOrigin } : {}) };
-                const proof = (purpose.kind === 'creation-cleanup' || purpose.kind === 'target-power-observation')
-                    && (isManagedOpaquePresetMachineV1(policyMachine) || hydrator.isOpaque(policyMachine))
+                const proof = isManagedOpaquePresetMachineV1(policyMachine) || hydrator.isOpaque(policyMachine)
                     ? createManagedPolicyProofV1({ ...binding, purpose })
                     : policyMachine.resource ? createManagedPolicyProofV1({ ...binding, purpose, resource: policyMachine.resource })
                     : purpose.kind === 'creation-cleanup' && policyMachine.nativeOperationRef
@@ -953,7 +952,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         async supportsNativeLifetimeRenewal(machine: ManagedMachineV1,
             options?: Pick<ManagedMachineExecutionOptions, 'requestId' | 'signal'>): Promise<boolean> {
             const hydrator = createManagedPresetHydrator(input);
-            const current = await openPolicyMachine(machine, options ?? { requestId: machine.id },
+            const current = await openPolicyMachine(machine, { requestId: machine.id, ...options,
+                policyPurpose: { kind: 'retention' }, policyMachine: machine },
                 machine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', hydrator);
             return Boolean(nativeLifetimeRenewal(current) && current.observation?.availability === 'present'
                 && current.observation.power === 'running' && current.observation.nativeExpiry !== undefined);
@@ -991,8 +991,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 || options.context.externalActionCredential || options.context.externalActionExecutionAuthorization) {
                 throw new ManagedMachineControllerError('admission_unavailable');
             }
-            const contextOptions = purpose.kind === 'creation-cleanup' && isManagedOpaquePresetMachineV1(structuralMachine)
-                ? { ...options, policyPurpose: purpose, policyMachine: structuralMachine } : options;
+            const contextOptions = { ...options, policyPurpose: purpose, policyMachine: structuralMachine };
             const machine = await openPolicyMachine(structuralMachine, contextOptions,
                 structuralMachine.desired === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', hydrator);
             if (purpose.kind === 'accepted-input-start' && purpose.target.origin.kind === 'finite-command') {
@@ -1026,7 +1025,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     } : undefined;
                     for (;;) {
                         if (options.signal?.aborted) throw new ManagedMachineControllerError('cancelled');
-                        const observed = await this.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, options);
+                        const observed = await this.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, contextOptions);
                         const row = ManagedControllerMachineOutputV1Schema.parse(observed).machine;
                         if (prepared.nativeExpiry === undefined || row.observation?.availability === 'absent'
                             || row.observation?.power === 'stopped' || row.observation?.power === 'suspended') return observed;

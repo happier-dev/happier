@@ -115,13 +115,14 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         const current = new Set<string>();
         for (let machine of census.machines) {
             const canceledCleanup = isManagedCreationCleanupV1(machine);
-            if (machine.archivedAt !== undefined || !(machine.allocation === 'bound' && machine.resource
-                || canceledCleanup && (isManagedOpaquePresetMachineV1(machine)
-                    || machine.allocation === 'may-exist' && machine.nativeOperationRef))) continue;
+            const opaque = isManagedOpaquePresetMachineV1(machine);
+            const bound = machine.allocation === 'bound' && (opaque || machine.resource !== undefined);
+            if (machine.archivedAt !== undefined || !(bound || canceledCleanup
+                && (opaque || machine.allocation === 'may-exist' && machine.nativeOperationRef))) continue;
             if (machine.creationState !== 'active' && !canceledCleanup) continue;
             // A controller may have missed host/native power changes while down.
             // Inspect once at this connection boundary, never on our own report push.
-            if (refreshObservations && machine.controller && machine.creationState === 'active' && machine.resource
+            if (refreshObservations && machine.controller && machine.creationState === 'active' && bound
                 && params.reconcileObservation) {
                 try {
                     machine = await params.reconcileObservation(machine, lifetime.signal);
