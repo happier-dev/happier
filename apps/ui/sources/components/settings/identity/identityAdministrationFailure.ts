@@ -313,6 +313,7 @@ export function identityAdministrationFailureMessage(code: string, context?: 'ma
     }
     switch (code) {
         case 'outcome_unknown': return t('homeGovernance.errorOutcomeUnknown');
+        case 'team_archived': return t('teams.errors.archived');
         case 'oidc_discovery_failed': return t('identityAdministration.oidcDiscoveryFailed');
         case 'oidc_endpoint_forbidden': return t('identityAdministration.oidcEndpointForbidden');
         case 'oidc_issuer_mismatch': return t('identityAdministration.oidcIssuerMismatch');

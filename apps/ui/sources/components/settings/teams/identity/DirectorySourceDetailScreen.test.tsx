@@ -356,6 +356,18 @@ describe('DirectorySourceDetailScreen through real Home governance', () => {
         expect(requestsAt(sourcePath).filter(request => request.method === 'DELETE')).toHaveLength(1);
         expect(harness.artifacts(serverId).list()).toHaveLength(0);
     });
+    it('preserves the Team archive refusal when Directory Sync Group mapping is submitted', async () => {
+        harness.answer(serverId, `PUT ${bindingPath}`, { status: 409, body: { error: 'team_archived' } });
+        const screen = await renderDetail();
+        await waitForHomeGovernance(() => expect(screen.findByTestId('directory-group:external-group-1')).not.toBeNull());
+        await screen.pressByTestIdAsync('directory-group:external-group-1');
+        await screen.pressByTestIdAsync('directory-group-map-create');
+        await waitForHomeGovernance(() => {
+            expect(textOf(screen, 'directory-group-mapping-failure')).toContain('teams.errors.archived');
+        });
+        expect(requestsAt(bindingPath)).toHaveLength(1);
+    });
+
     it.each([true, false])('settles mapping through native Ask and leaves it recoverable (accepted=%s)', async accepted => {
         await harness.requireUiApproval(serverId, 'teams.externalGroupBindings.set');
         vi.mocked(Modal.confirm).mockResolvedValue(accepted);
