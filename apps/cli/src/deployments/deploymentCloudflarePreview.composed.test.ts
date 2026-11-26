@@ -72,11 +72,12 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 // Home persistence and Cloudflare HTTP are the boundaries. The actual portable
 // Account artifact, role admission, reviewed child and receipt writer stay real.
 it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-response', 'missing-preview', 'settled-preview', 'settled-worker', 'settled-pages', 'pages branch review', 'pages repository grant', 'watched-non-production',
-    'stop workers preview', 'stop workers preview refused', 'settled authored replay', 'pending authored deploy', 'same authored retry after no effect', 'changed authored sha after no effect'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
+    'stop workers preview', 'stop workers preview refused', 'settled authored replay', 'pending authored deploy', 'pending deploy with Home read failure', 'same authored retry after no effect', 'changed authored sha after no effect'] as const)('deploys the reviewed Cloudflare source through the plugin target and retains its %s outcome', async scenario => {
     const stopRefused = scenario === 'stop workers preview refused';
     const stopPreview = scenario === 'stop workers preview' || stopRefused;
     const watched = scenario === 'watched-non-production';
-    const pendingAction = scenario === 'pending authored deploy';
+    const failPostSettlementRead = scenario === 'pending deploy with Home read failure';
+    const pendingAction = scenario === 'pending authored deploy' || failPostSettlementRead;
     const broker = pendingAction ? createStablePluginEventsBroker() : undefined;
     const retryAfterNoEffect = scenario === 'same authored retry after no effect' || scenario === 'changed authored sha after no effect';
     const authoredRetry = scenario === 'settled authored replay' || retryAfterNoEffect;
@@ -230,7 +231,10 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                     provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: repository.deployment },
                     repository: { nameWithOwner: repository.repository, cloneUrl: 'https://github.com/example/app.git' } } } });
     });
-    app.get('/v1/deployments/environments/:environmentId', async request => {
+    app.get('/v1/deployments/environments/:environmentId', async (request, reply) => {
+        if (failPostSettlementRead && receipt.state === 'succeeded') {
+            return reply.code(503).send({ ok: false, error: 'home_unavailable' });
+        }
         if ((request.query as { projection?: string }).projection === 'approvalScope') {
             const { id, projectSourceId, purpose } = environment.environment;
             return { ok: true, environment: { id, projectSourceId, purpose } };
@@ -378,7 +382,7 @@ it.each(['queued', 'succeeded', 'second-preview', 'production', 'failed', 'lost-
                 expect(observed).toMatchObject({ ok: true, result: { state: 'succeeded' } });
                 const terminal = await operations.runner.waitForCompletion(scope, receipt.actionOperationId);
                 expect(terminal).toMatchObject({ state: 'succeeded', result: {
-                    deploymentId: receipt.id, deploymentRevision: receipt.revision, state: 'succeeded' } });
+                    deploymentId: receipt.id, deploymentRevision: receipt.revision, state: 'succeeded', revision: environment.environment.revision } });
                 expect(providerRequests.filter(request => request.method === 'POST')).toHaveLength(1);
             } finally {
                 operations.runner.cancel(scope, receipt.actionOperationId);

@@ -41,6 +41,8 @@ it('rejects unknown plan fields and malformed source provenance', () => {
         // Any price written as text, under any label, is refused: it belongs in a priced fact.
         { ...plan, facts: [{ label: 'Extra requests', value: '$0.30 per 1M' }] },
         { ...plan, facts: [{ label: 'Credit', value: '20 USD a month' }] },
+        { ...plan, facts: [{ label: 'Credit', value: '$-5' }] },
+        { ...plan, facts: [{ label: 'Credit', value: 'USD -10 per month' }] },
         { ...plan, facts: [{ label: 'Extra requests', value: '0.30', price: { amount: '0.30', currency: 'USD', unit: '1M requests' } }] },
         { ...plan, facts: [{ label: 'Extra requests', price: { amount: 'free', currency: 'USD', unit: '1M requests' } }] },
         { ...plan, facts: [{ ...plan.facts[0], currency: 'USD' }] },

@@ -64,6 +64,10 @@ it.each(['github', 'gitlab'])('creates a %s Pages source and retains final mode 
 const buildTokenUuid = '42c231bf-fa21-41e4-94e8-5de1b555ba20';
 const repoConnectionUuid = '9af1436c-bc09-428c-9dfa-ac29d927431e';
 const triggerUuid = 'fbcb312f-859e-4a3c-bc81-43a7e9d36263';
+function workerConnection(kind: 'github' | 'gitlab') {
+  return { repo_connection_uuid: repoConnectionUuid, provider_type: kind, provider_account_id: '101',
+    provider_account_name: 'my-org', repo_id: '100', repo_name: 'my-repo' };
+}
 function workersGitInput(kind: 'github' | 'gitlab') {
   const draft = input(kind);
   return { ...draft, credentialPrincipal: { ...draft.credentialPrincipal,
@@ -79,7 +83,7 @@ it.each(['github', 'gitlab'] as const)('creates a Worker with a %s Builds trigge
       const path = new URL(request.url).pathname;
       const body: unknown = request.body === undefined ? undefined : JSON.parse(new TextDecoder().decode(request.body));
       calls.push({ path, method: request.method, body });
-      const result = path.endsWith('/connections') ? { repo_connection_uuid: repoConnectionUuid }
+      const result = path.endsWith('/connections') ? workerConnection(kind)
         : path.endsWith('/triggers') ? { trigger_uuid: triggerUuid }
         : path.endsWith('/scripts') ? [{ id: 'my-project', tag: 'worker-tag' }]
         : { id: 'worker-id', name: 'my-project' };
@@ -127,25 +131,54 @@ it.each([
   } finally { await kit.dispose(); }
 });
 
-it('retains an acknowledged Worker when trigger configuration fails', async () => {
+it.each([
+  ['a different repository', { ...workerConnection('github'), repo_name: 'different-repo' }],
+  ['an identity-free acknowledgement', { repo_connection_uuid: repoConnectionUuid }],
+])('refuses to attach a production trigger to %s', async (_name, connection) => {
   const paths: string[] = [];
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
     http: createPluginHttpFixture({ async request(request) {
       const path = new URL(request.url).pathname;
       paths.push(path);
-      if (path.endsWith('/triggers')) return { status: 503, headers: {}, body: new Uint8Array() };
-      const result = path.endsWith('/connections') ? { repo_connection_uuid: repoConnectionUuid,
-        provider_type: 'github', provider_account_id: '101', provider_account_name: 'my-org', repo_id: '100', repo_name: 'my-repo' }
+      const result = path.endsWith('/connections') ? connection
+        : path.endsWith('/triggers') ? { trigger_uuid: triggerUuid }
         : path.endsWith('/scripts') ? [{ id: 'my-project', tag: 'worker-tag' }]
         : { id: 'worker-id', name: 'my-project' };
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true, result })) };
     } }),
   } });
   try {
-    expect(await kit.invokeAction('workers-create', workersGitInput('github'))).toMatchObject({
-      providerIdentity: { providerResourceId: 'worker-tag' }, repositoryAccess: { status: 'needsGitAccess' },
-      preparedNative: { productionBranchOutcome: { status: 'unconfirmed', requestedBranch: 'main' } },
+    await expect(kit.invokeAction('workers-create', workersGitInput('github')))
+      .rejects.toMatchObject({ code: 'outcome_unknown' });
+    expect(paths).toEqual(['/client/v4/accounts/account/builds/repos/connections']);
+  } finally { await kit.dispose(); }
+});
+
+it.each([
+  { status: 503, nativeCode: null },
+  { status: 403, nativeCode: 10000 },
+])('retains an acknowledged Worker and the trigger failure after HTTP $status', async ({ status, nativeCode }) => {
+  const paths: string[] = [];
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+    http: createPluginHttpFixture({ async request(request) {
+      const path = new URL(request.url).pathname;
+      paths.push(path);
+      if (path.endsWith('/triggers')) return { status, headers: {}, body: nativeCode === null ? new Uint8Array()
+        : new TextEncoder().encode(JSON.stringify({ success: false, errors: [{ code: nativeCode }] })) };
+      const result = path.endsWith('/connections') ? workerConnection('github')
+        : path.endsWith('/scripts') ? [{ id: 'my-project', tag: 'worker-tag' }]
+        : { id: 'worker-id', name: 'my-project' };
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true, result })) };
+    } }),
+  } });
+  try {
+    const result = await kit.invokeAction('workers-create', workersGitInput('github'));
+    expect(result).toMatchObject({
+      providerIdentity: { providerResourceId: 'worker-tag' },
+      preparedNative: { productionBranchOutcome: { status: 'unconfirmed', requestedBranch: 'main',
+        failureCause: { httpStatus: status, ...(nativeCode === null ? {} : { nativeErrorCode: String(nativeCode) }) } } },
     });
+    expect(result).not.toHaveProperty('repositoryAccess.status', 'needsGitAccess');
     expect(paths.filter(path => path.endsWith('/triggers'))).toHaveLength(1);
   } finally { await kit.dispose(); }
 });

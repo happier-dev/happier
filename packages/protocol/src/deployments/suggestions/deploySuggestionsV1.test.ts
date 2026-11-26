@@ -46,6 +46,13 @@ it('drops currency amounts and dollar-word prices while preserving technical ver
         { index: 3, reason: 'invalid_recommendation' },
     ], questions: null, droppedQuestions: [] });
 });
+it.each(['Credit: $-5', 'USD -10 per month', 'EUR 1.234.567,89', 'CAD +20 per month'])(
+    'rejects the unstructured price %s', whatToBuild => {
+        const result = validateDeploySuggestionV1({ recommendations: [{ ...recommendation, whatToBuild }] }, catalog);
+        expect(result.recommendations).toEqual([]);
+        expect(result.dropped).toEqual([{ index: 0, reason: 'invalid_recommendation' }]);
+    },
+);
 it('rejects variable values before a description reaches a run', () => {
     const input = { description: 'Bakery', catalog, variables: [{ key: 'API_KEY', secret: true }] };
     expect(DeploySuggestionInputV1Schema.safeParse(input).success).toBe(true);

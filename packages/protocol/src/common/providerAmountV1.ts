@@ -19,22 +19,22 @@ export const ProviderAmountV1Schema = lazyZodSchema(() =>
 export type ProviderAmountV1 = z.infer<typeof ProviderAmountV1Schema>;
 
 // A currency code beside a numeric prefix is not a price in text such as "CAD 3D" or "CAD 2.5D".
-const amount = String.raw`\d+(?:[.,]\d+)*`;
+const amount = String.raw`[+-]?\d+(?:[.,]\d+){0,3}`;
 const amountEnd = String.raw`\b(?![.,]\d)`;
 const commonPriceText = new RegExp(
-  String.raw`\b(?:USD|EUR|GBP|CAD|CHF|JPY)\s*${amount}${amountEnd}|\b${amount}\s*(?:USD|EUR|GBP|CAD|CHF|JPY|dollars?)\b`,
+  String.raw`\b(?:USD|EUR|GBP|CAD|CHF|JPY)\s*${amount}${amountEnd}|(?<!\w)${amount}\s*(?:USD|EUR|GBP|CAD|CHF|JPY|dollars?)\b`,
   'iu',
 );
 // Supplemental codes use their ISO casing so ordinary text such as "try 3 options" stays valid.
 const currencyCodes = Intl.supportedValuesOf?.('currency').join('|');
 const isoPriceText = currencyCodes
-  ? new RegExp(String.raw`\b(?:${currencyCodes})\s*${amount}${amountEnd}|\b${amount}\s*(?:${currencyCodes})\b`, 'u')
+  ? new RegExp(String.raw`\b(?:${currencyCodes})\s*${amount}${amountEnd}|(?<!\w)${amount}\s*(?:${currencyCodes})\b`, 'u')
   : null;
 
 /** Money written as text ("$5", "0.30 USD", "20 dollars"): a price that belongs in a ProviderAmountV1 instead. */
 export function containsPriceTextV1(value: unknown): boolean {
   if (typeof value === 'string') {
-    return /\p{Sc}\s*\d|\d\s*\p{Sc}/u.test(value)
+    return /\p{Sc}\s*[+-]?\d|\d\s*\p{Sc}/u.test(value)
       || commonPriceText.test(value)
       || isoPriceText?.test(value) === true;
   }

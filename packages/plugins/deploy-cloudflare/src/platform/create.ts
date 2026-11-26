@@ -7,7 +7,7 @@ import { request, type DeploymentContext } from './deploymentHttp.js';
 import { isCloudflareTokenRefusal, isObject } from '../connectedAccounts/probe.js';
 import { workersBuildsEditPermission } from '../connectedAccounts/permissions.js';
 import { resolveWorkerTag, workerEnvironmentKey } from './workers.js';
-import { cloudflareGitGrantUrl, cloudflareGitRepository, pagesCreateSource, pagesRepositoryAccess } from './pagesSource.js';
+import { cloudflareGitGrantUrl, cloudflareGitRepository, pagesCreateSource, pagesRepositoryAccess, workerBuildsRepositoryMatches } from './pagesSource.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
 import { cloudflareRoleSchema, type CloudflareRoleInput } from './targetSelection.js';
 
@@ -21,7 +21,8 @@ function unknownOutcome(): never { throw new PluginError({ code: 'outcome_unknow
 
 type NativeReply = Awaited<ReturnType<typeof request>>;
 function refuseNative(reply: Extract<NativeReply, { code: string }>): never {
-  throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } }),
+  throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
+    failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
     { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
 }
 function acknowledged(reply: NativeReply): unknown {
@@ -82,7 +83,8 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
       provider_type: git.kind, provider_account_id: builds.namespaceId, provider_account_name: git.owner,
       repo_id: builds.repositoryId, repo_name: git.name,
     });
-    if (!isObject(connection) || !text(connection.repo_connection_uuid)) return unknownOutcome();
+    if (!isObject(connection) || !text(connection.repo_connection_uuid)
+      || !workerBuildsRepositoryMatches(connection, repository)) return unknownOutcome();
     repoConnectionUuid = connection.repo_connection_uuid;
   }
   const native = acknowledged(await request(io, accountId, product === 'pages' ? '/pages/projects' : '/workers/workers',
@@ -116,7 +118,6 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
       // The Worker already exists. Preserve the acknowledgment for the same link/recovery flow as Vercel.
       productionBranchOutcome = { status: 'unconfirmed', requestedBranch: branch,
         failureCause: projectActionFailureCauseV1(error, 'deployment.provider.branch') };
-      repositoryAccess = { status: 'needsGitAccess', repository };
     }
   }
   return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,

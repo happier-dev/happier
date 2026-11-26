@@ -244,8 +244,13 @@ export async function waitForPlatformDeploymentReceiptForHost(request: Readonly<
             // and old senders only invalidate and need one exact read.
             completion = delivered ?? await readCompletion();
         }
-        return { ...initial, revision: await host.readEnvironmentRevision(),
-            deploymentRevision: completion.revision, state: completion.state };
+        const terminal = { ...initial, deploymentRevision: completion.revision, state: completion.state };
+        // Refresh the Environment revision when available. The Receipt already settled independently.
+        try {
+            return { ...terminal, revision: await host.readEnvironmentRevision() };
+        } catch {
+            return terminal;
+        }
     } finally {
         receipt.dispose();
         reconnect.dispose();
