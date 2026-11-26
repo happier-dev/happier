@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
+import type { Prisma } from '@prisma/client';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -75,7 +76,7 @@ it.each(['plain', 'e2ee'] as const)('keeps public %s Review list pages bodyless 
     await db.artifact.createMany({ data: wanted });
     await db.reviewMetadata.createMany({ data: wanted.map(row => ({ artifactId: row.id, projectSourceId,
         subjectKind: 'comparison', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1, startedAt: at })) });
-    const grant = (artifactId: string, arm: number) => ({ artifactId, accessLevel: 'view', createdByAccountId: owner.id,
+    const grant = (artifactId: string, arm: number): Prisma.ArtifactGrantCreateManyInput => ({ artifactId, accessLevel: 'view', createdByAccountId: owner.id,
         ...(arm === 0 ? { principalKind: 'account', accountId: reader.id }
             : arm === 1 ? { principalKind: 'team', teamId: team.id } : { principalKind: 'group', teamGroupId: group.id }) });
     await db.artifactGrant.createMany({ data: wanted.slice(1).map((row, index) => grant(row.id, index)) });
