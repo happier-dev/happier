@@ -41,6 +41,7 @@ import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResour
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { getTeamSharedResourcesSummarySnapshot, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
@@ -196,12 +197,14 @@ export function TeamSharedKindBody(props: Readonly<{
   kind: TeamSharedListKind | typeof TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;
   collection: TeamSharedResourceCollectionRefV1 | null;
   presetScrollContinuation: PresetScrollContinuation;
+  besideOverview?: boolean;
 }>) {
   const { icon } = TEAM_SHARED_KIND_PRESENTATION[props.kind];
   if (props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1) {
     return props.collection ? <CollectionList context={props.context} icon={icon} collection={props.collection} /> : null;
   }
-  return <TeamSharedKindList context={props.context} kind={props.kind} icon={icon} presetScrollContinuation={props.presetScrollContinuation} />;
+  return <TeamSharedKindList context={props.context} kind={props.kind} icon={icon}
+    presetScrollContinuation={props.presetScrollContinuation} besideOverview={props.besideOverview} />;
 }
 
 function TeamSharedKindList(
@@ -210,6 +213,7 @@ function TeamSharedKindList(
     kind: TeamSharedListKind;
     icon: IconName;
     presetScrollContinuation: PresetScrollContinuation;
+    besideOverview?: boolean;
   }>,
 ) {
   const { context, kind } = props;
@@ -219,7 +223,8 @@ function TeamSharedKindList(
     case 'machinePools':
       return <MachinePoolsList context={context} icon={props.icon} />;
     case 'machinePresets':
-      return <MachinePresetsList context={context} icon={props.icon} scrollContinuation={props.presetScrollContinuation} />;
+      return <MachinePresetsList context={context} icon={props.icon}
+        scrollContinuation={props.presetScrollContinuation} besideOverview={props.besideOverview} />;
     case 'projectSources':
       return <ProjectSourcesList context={context} icon={props.icon} />;
     case 'discussions':
@@ -321,9 +326,23 @@ function MachinePoolsList({ context, icon }: ListProps) {
   return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
 }
 
-function MachinePresetsList({ context, icon, scrollContinuation }: ListProps & Readonly<{ scrollContinuation: PresetScrollContinuation }>) {
+function MachinePresetsList({ context, icon, scrollContinuation, besideOverview }: ListProps & Readonly<{
+  scrollContinuation: PresetScrollContinuation;
+  besideOverview?: boolean;
+}>) {
   const serverId = context.address.serverId;
   const list = useTeamSharedMachinePresets({ scope: context.scope, address: context.address, onApprovalPending: context.requestApproval });
+  // The Overview already presents this Team qualification with its action once the count settles.
+  const code = list.error?.code;
+  const canShareNotice = besideOverview === true
+    && (code === 'team_authentication_required' || code === 'team_authentication_unavailable');
+  const subscribe = React.useCallback((notify: () => void) =>
+    canShareNotice ? subscribeTeamsSnapshots(notify) : () => undefined, [canShareNotice]);
+  const readNoticeShown = React.useCallback(() => canShareNotice
+    && getTeamSharedResourcesSummarySnapshot(context.scope, context.address)?.data?.some(
+      (row) => row.kind === 'machinePresets' && row.status === 'unavailable' && row.reason === code,
+    ) === true, [canShareNotice, code, context.scope, context.address]);
+  const noticeShownBeside = React.useSyncExternalStore(subscribe, readNoticeShown, readNoticeShown);
   const onEndReached = list.hasMore && list.status === 'ready' ? list.loadMore : null;
   React.useLayoutEffect(() => {
     scrollContinuation.current = onEndReached;
@@ -338,7 +357,7 @@ function MachinePresetsList({ context, icon, scrollContinuation }: ListProps & R
       })),
     [list.rows, serverId],
   );
-  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} />;
+  return <KindList address={context.address} icon={icon} state={pagedState(list, rows)} noticeShownBeside={noticeShownBeside} />;
 }
 
 function ProjectSourcesList({ context, icon }: ListProps) {
@@ -492,7 +511,7 @@ function pagedState(
 const LOADING_ROWS = 4;
 
 /** The rows of one kind, each opening the record at its owner; loading, empty and failed states said once. */
-function KindList(props: Readonly<{ address: TeamAddress; icon: IconName; state: KindListState }>) {
+function KindList(props: Readonly<{ address: TeamAddress; icon: IconName; state: KindListState; noticeShownBeside?: boolean }>) {
   const router = useRouter();
   const presentAction = useTeamReadFailureAction(props.address);
   const { state } = props;
@@ -518,7 +537,7 @@ function KindList(props: Readonly<{ address: TeamAddress; icon: IconName; state:
             onRetry: state.reload,
           }}
         />
-      ) : failure ? (
+      ) : failure && !props.noticeShownBeside ? (
         <SurfaceStateCard
           testID={testID}
           kind="error"

@@ -65,12 +65,14 @@ const SUMMARY = bindHomeDomainActionHttpRequestV1(
 
 async function addHome(
   kinds: readonly TeamSharedResourceSummaryRowV1[],
+  serverIdentityId?: string,
 ): Promise<string> {
   const serverId = await harness.addHome({
     name: 'Home A',
-    serverUrl: 'https://shared-resources.example',
+    serverUrl: serverIdentityId ? `https://${serverIdentityId.replaceAll('_', '-')}.example` : 'https://shared-resources.example',
     accountId: 'account-ada',
     teamsEnabled: true,
+    ...(serverIdentityId ? { serverIdentityId } : {}),
   });
   await harness.selectHomes([serverId]);
   harness.answer(serverId, '/v1/teams/get', {
@@ -209,6 +211,42 @@ describe('Team overview: Shared with this Team', () => {
     screen.pressByTestId('team-overview-shared:sessions');
     expect(routerPush).toHaveBeenLastCalledWith(`/teams/team-1/sessions?serverId=${encodeURIComponent(serverId)}`);
     await screen.unmount();
+  });
+
+  it.each([
+    { code: 'team_authentication_required', status: 403, message: 'session.access.authenticationRequired', signIn: true },
+    { code: 'team_authentication_unavailable', status: 503, message: 'teams.credentials.externalApi.authenticationUnavailable', signIn: false },
+  ] as const)('presents a shared Preset refusal $code once across the overview and pane', async ({ code, status, message, signIn }) => {
+    detailsPane.available = true;
+    const serverId = await addHome([{ kind: 'machinePresets', status: 'available', count: 1 }], `srv_shared_overview_${status}`);
+    const overview = () => <InPanes serverId={serverId} teamId="team-1" />;
+    const row = 'team-overview-shared:machinePresets';
+    const previous = await renderScreen(overview());
+    await vi.waitFor(() => expect(ids(previous)).toContain(row));
+    await previous.unmount();
+
+    let answerSummary!: () => void;
+    harness.answer(serverId, SUMMARY.path, {
+      body: { teamId: 'team-1', kinds: [{ kind: 'machinePresets', status: 'unavailable', count: null, reason: code }] },
+      respondAfter: new Promise<void>((resolve) => { answerSummary = resolve; }),
+    });
+    const presetPath = '/v1/machines/presets/list';
+    harness.answer(serverId, presetPath, { status, body: { kind: 'refused', code } });
+    const screen = await renderScreen(overview());
+    await vi.waitFor(() => expect(ids(screen)).toContain(row));
+    await screen.pressByTestIdAsync(row);
+    await vi.waitFor(() => expect(harness.requestsFor(presetPath)).toHaveLength(1));
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-shared-kind-failed'));
+
+    await act(async () => { answerSummary(); });
+    await vi.waitFor(() => {
+      expect(ids(screen)).not.toContain('team-shared-kind-empty');
+      expect(screen.findByTestId(row)?.props.accessibilityLabel).toContain(t(message));
+    });
+    expect(screen.getTextContent().split(t(message))).toHaveLength(2);
+    expect(ids(screen)).not.toContain('team-shared-kind-failed-retry');
+    expect(ids(screen).includes(`${row}-sign-in`)).toBe(signIn);
+    expect(ids(screen)).not.toContain('team-shared-kind-failed-sign-in');
   });
 
   it.each([

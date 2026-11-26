@@ -643,7 +643,7 @@ const TeamSharedKindPane = React.memo(function TeamSharedKindPane(props: Readonl
   return (
     <ItemList testID="team-overview-shared-pane-list" {...listScroll}>
       <TeamSection serverId={props.serverId} teamId={props.teamId} presentation="embedded">
-        {(context) => <TeamSharedKindBody context={context} kind={kind} collection={collection} presetScrollContinuation={continuation} />}
+        {(context) => <TeamSharedKindBody context={context} kind={kind} collection={collection} presetScrollContinuation={continuation} besideOverview />}
       </TeamSection>
     </ItemList>
   );
