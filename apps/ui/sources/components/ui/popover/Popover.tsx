@@ -2297,7 +2297,9 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         },
     });
 
-    React.useEffect(() => {
+    // A retained body can move into a new shell during layout. Release this shell's
+    // dismissal listeners before that move restores focus in the new presentation.
+    React.useLayoutEffect(() => {
         if (Platform.OS !== 'web') return;
         if (!open) return;
         if (!onRequestClose) return;

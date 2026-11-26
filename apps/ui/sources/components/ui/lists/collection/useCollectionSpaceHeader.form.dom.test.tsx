@@ -8,18 +8,23 @@ import { createDefaultCollectionSpaceV1 } from '@happier-dev/protocol/collection
 import { reviewListFilterFieldsV1, type ReviewListFilterV1 } from '@happier-dev/protocol/reviews/reviewListFilterV1';
 import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popoverTestHelpers';
 
+const viewport = vi.hoisted(() => ({ width: 1440, height: 1000 }));
+const dimensionSubscriptions = vi.hoisted(() => new Set<() => void>());
 installPopoverCommonModuleMocks({
     reactNative: async () => ({
         ...await vi.importActual<typeof import('react-native-web')>('react-native-web'),
         // Physical layout is the boundary; the header, form, menus and Popover stay real.
-        useWindowDimensions: () => ({ width: 1440, height: 1000, scale: 1, fontScale: 1 }),
-        Dimensions: { get: () => ({ width: 1440, height: 1000, scale: 1, fontScale: 1 }), addEventListener: () => ({ remove: () => {} }) },
+        useWindowDimensions: () => ({ ...viewport, scale: 1, fontScale: 1 }),
+        Dimensions: { get: () => ({ ...viewport, scale: 1, fontScale: 1 }), addEventListener: (_event: string, listener: () => void) => {
+            dimensionSubscriptions.add(listener);
+            return { remove: () => { dimensionSubscriptions.delete(listener); } };
+        } },
     }),
 });
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const { useCollectionSpaceHeader } = await import('./useCollectionSpaceHeader');
 
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); viewport.width = 1440; viewport.height = 1000; });
 
 it.each([true, false])('keeps the Save as space form visible and interactive with spaces enabled=%s', async spacesEnabled => {
     vi.useFakeTimers();
@@ -57,6 +62,22 @@ it.each([true, false])('keeps the Save as space form visible and interactive wit
         await settled();
         expect(document.querySelector('[data-testid="review-space-form"]')).toBe(form);
         expect(manual.getAttribute('aria-checked')).toBe('true');
+        const name = document.querySelector<HTMLInputElement>('[data-testid="review-space-name"]')!;
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        await act(async () => { name.focus(); setValue.call(name, 'Retained review space'); name.dispatchEvent(new Event('input', { bubbles: true })); });
+        expect(document.activeElement).toBe(name);
+        for (const width of [390, 1440]) {
+            // Chromium emits focusout(null) when the retained focused host leaves its shell;
+            // jsdom removes the host without this native event. Keep the real dismissal owner.
+            name.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+            viewport.width = width;
+            await act(async () => { for (const listener of [...dimensionSubscriptions]) listener(); });
+            await settled();
+            expect(document.querySelector('[data-testid="review-space-form"]')).toBe(form);
+            expect(document.querySelector<HTMLInputElement>('[data-testid="review-space-name"]')?.value).toBe('Retained review space');
+            expect(document.querySelector('[data-testid="review-space-membership:manual_only"]')?.getAttribute('aria-checked')).toBe('true');
+            expect(document.activeElement).toBe(name);
+        }
     } finally {
         await act(async () => root.unmount());
         container.remove();
