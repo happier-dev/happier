@@ -367,7 +367,7 @@ export function machineUpdateHandler(
                         && (verifiedInvocation.binding.custodianAccountId !== userId
                             || parsed.data.targetMachineId !== sourceMachineId)
                     || verifiedInvocation.binding.machineId !== sourceMachineId
-                    || parsed.data.targetMachineId !== sourceMachineId && !verifiedInvocation.deploymentPrepareSessionInput
+                    || parsed.data.targetMachineId !== sourceMachineId && !verifiedInvocation.sessionMessageChildInput
                     || verifiedInvocation.effectActionId !== "session.message.send"
                     || verifiedInvocation.target.kind !== "session"
                     || verifiedInvocation.target.sessionId !== parsed.data.sessionId

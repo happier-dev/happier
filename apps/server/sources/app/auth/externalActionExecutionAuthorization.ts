@@ -118,7 +118,7 @@ import { isDeploymentDomainNativeAdmissionV1, isDeploymentBackupConfigureNativeA
 import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvenanceOnlyActionId, isSessionTargetPreparationAction, isScmDiffSummaryRunAction, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
-    isMachineDeploymentEnvironmentAccessActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1,
+    isMachineDeploymentEnvironmentAccessActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1, isReviewApplySessionMessageEffectV1,
     SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { isMachineGrantSetAccessReadV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
@@ -1238,8 +1238,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     machineNpmProfileAdmission?: Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>;
     /** The ordinary child Action's admission, consumed by the RPC router once. */
     sessionAgentReadinessAdmission?: Extract<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>, { kind: 'admitted' }>;
-    /** Prepare's signed Session input carrier; the Pending owner admits its runtime target. */
-    deploymentPrepareSessionInput?: Readonly<{ sessionId: string; targetMachineId: string }>;
+    /** The signed Session child input carrier; the Pending owner admits its runtime target. */
+    sessionMessageChildInput?: Readonly<{ sessionId: string; targetMachineId: string }>;
     /** Service inventory admitted for this installed runtime Machine. */
     deploymentReferenceServiceList?: Readonly<{ machineId: string; installationId: string }>;
     binding: ExternalActionExecutionAuthorizationBindingV1;
@@ -1600,28 +1600,31 @@ function readGrantedSessionAgentReadinessChild(binding: ExternalActionExecutionA
         actionId, target: binding.target, targetMachineId: binding.machineId }).ok) ? actionId : null;
 }
 
-/** Prepare resolves its reviewed handoff to an accessible Session; Session owners retain access decisions. */
-function isAdmittedDeploymentPrepareSessionMessage(binding: ExternalActionExecutionAuthorizationBindingV1,
+/** The installed root resolves its message child; Session owners retain access decisions. */
+function isAdmittedSessionMessageChild(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1): boolean {
     // Prepare's declared Session child names the one message Action it may send.
-    return effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && readDeploymentReviewedChildV1(binding,
-        { actionId: effectActionId, role: DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 }, effectActionId) !== undefined
+    return (effectActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && readDeploymentReviewedChildV1(binding,
+            { actionId: effectActionId, role: DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 }, effectActionId) !== undefined
+            || isReviewApplySessionMessageEffectV1(binding.actionId, effectActionId))
         && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
         && target.kind === 'session' && 'authentication' in binding;
 }
 
-function readDeploymentPrepareSessionHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+function readSessionMessageChildHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof):
     Readonly<{ machineId: string } | { sessionId: string }> | null {
-    if (readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId, proof)?.row.role
-        !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1) return null;
+    if ((!isReviewApplySessionMessageEffectV1(binding.actionId, effectActionId)
+            && readDeploymentReviewedChildV1(binding, proof.reviewedChild, effectActionId, proof)?.row.role
+                !== DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1)
+        || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return null;
     // The ordinary birth owner binds the reviewed recipe and creates the Session.
     // Its preceding codec read needs only the root's selected Machine.
     if ('authentication' in binding && binding.target.kind === 'machine'
         && binding.target.machineId === binding.machineId && target.kind === 'machine' && target.machineId === binding.machineId
         && effectActionId === SESSION_SPAWN_NEW_ACTION_ID_V1
         && proof.path === `/v1/machines/${encodeURIComponent(binding.machineId)}`) return { machineId: binding.machineId };
-    if (!isAdmittedDeploymentPrepareSessionMessage(binding, effectActionId, target) || target.kind !== 'session') return null;
+    if (!isAdmittedSessionMessageChild(binding, effectActionId, target) || target.kind !== 'session') return null;
     const path = `/v2/sessions/${encodeURIComponent(target.sessionId)}`;
     const sessionRead = proof.sessionRouteTarget?.sessionId === target.sessionId
         && (proof.path === path || proof.path === `${path}?accessProjectionVersion=1`
@@ -1801,7 +1804,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
-    const prepareSession = readDeploymentPrepareSessionHttpPurpose(binding, effectActionId, target, proof);
+    const prepareSession = readSessionMessageChildHttpPurpose(binding, effectActionId, target, proof);
     // A reviewed provider child spends its admitted root's finite workspace
     // preparation purpose. The native owner still decides the exact selection.
     const deploymentWorkspaceRead = proof.reviewedChild?.actionId === effectActionId
@@ -4596,6 +4599,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         ? verified.signedChildPurpose.requesterOperationRead === 'machineLookup'
         : isExactExecutionMachineLookup(verified.binding.machineId, proof) && root.success
         && (((rootSpec?.executionPlacements ?? [rootSpec?.executionPlacement]).includes('machine')
+                || rootSpec?.executionPlacement === 'session'
                 || verified.binding.sessionActionOrigin && isLedSubtreeSessionLifecycleActionId(root.data))
             && verified.binding.target.kind === 'machine' && verified.binding.target.machineId === verified.binding.machineId
             || getActionSpec(root.data).executionPlacement === 'session' && verified.target.kind === 'session'
@@ -6168,7 +6172,7 @@ export async function verifyExternalActionMachineRpcExecution(
     // Pending input has no general descendant grant, including under PAT roots.
     const pendingEvent = request.event === SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1
         || request.event === SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2;
-    const preparePending = isAdmittedDeploymentPrepareSessionMessage(binding, execution.effectActionId, execution.target)
+    const preparePending = isAdmittedSessionMessageChild(binding, execution.effectActionId, execution.target)
         && request.event === SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1 && request.method === request.event
         ? SessionPendingEnqueueByMachineRequestV1Schema.safeParse(request.params) : null;
     // ApiMachine signs this root/effect/Session/payload carrier directly, without an HTTP reviewed-child field.
@@ -6301,7 +6305,7 @@ export async function verifyExternalActionMachineRpcExecution(
     return { binding, effectActionId: execution.effectActionId, target: execution.target, principal, effectiveAuthority: principal.authority,
         ...(sessionRpcTarget ? { sessionRpcTarget } : {}),
         ...(readinessAdmission?.kind === 'admitted' ? { sessionAgentReadinessAdmission: readinessAdmission } : {}),
-        ...(prepareInputPurpose ? { deploymentPrepareSessionInput: prepareInputPurpose } : {}),
+        ...(prepareInputPurpose ? { sessionMessageChildInput: prepareInputPurpose } : {}),
         ...(managedGuestActivity ? { managedGuestActivity } : {}) };
 }
 
