@@ -1,4 +1,5 @@
 import type { definePlugin, DefinePluginInput } from '@happier-dev/plugin-sdk';
+import type { ActionConfirmationInputField } from '@happier-dev/plugin-sdk/actions';
 import { createTriageRunConfiguredActionHandler } from './actions/configuredActionRun.js';
 import { TRIAGE_PREPARE_REVIEW_WORKSPACE_ROLE_V1 } from './ui/detail/sourceSurface.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from './targetedContributions.js';
@@ -106,6 +107,36 @@ const configuredConfirmationText = (name: string, fallback: string) => ({
   key: `plugins.triage.approval.configured.${name}`, fallback,
 });
 
+const configuredConfirmationFields = [
+  { path: 'singleIntent.launchMode', title: configuredConfirmationText('launch', 'Launch'), valueLabels: {
+    start: configuredConfirmationText('start', 'Start a new Session'),
+    review: configuredConfirmationText('draft', 'Open a draft to add instructions'),
+  } },
+  { path: 'handoff.context.destination', title: configuredConfirmationText('grouping', 'Grouping'), valueLabels: {
+    single: configuredConfirmationText('single', 'One entry'),
+    oneSessionForAllEntries: configuredConfirmationText('shared', 'One new Session for all entries'),
+    oneSessionPerEntry: configuredConfirmationText('separate', 'One new Session per entry'),
+  } },
+  { path: 'handoff.sessionChoice.kind', title: configuredConfirmationText('destination', 'Destination'), valueLabels: {
+    existing: configuredConfirmationText('existing', 'Existing Session'),
+    new: configuredConfirmationText('new', 'New Session'),
+    configured: configuredConfirmationText('new', 'New Session'),
+  } },
+  { path: 'handoff.delivery', title: configuredConfirmationText('delivery', 'Delivery'), valueLabels: {
+    send: configuredConfirmationText('send', 'Send now'),
+    compose: configuredConfirmationText('compose', 'Open a draft'),
+    configured: configuredConfirmationText('default', 'Use the selected launch mode'),
+  } },
+  { path: 'sendPresentation.actionLabel', title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
+  { path: 'sendPresentation.sessionTitle', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
+  { path: 'handoff.configuredActionId', title: configuredConfirmationText('reference', 'Configured action'),
+    valueLabels: Object.fromEntries(TRIAGE_SEEDED_ACTIONS_V1.actions.map(action => {
+      const key = readTriageActionTitleKeyV1(action);
+      return [action.actionId, key === null ? action.label : { key, fallback: action.label }];
+    })) },
+  { path: 'recipientStopNotice', title: configuredConfirmationText('sessionStatus', 'Session status') },
+] satisfies readonly ActionConfirmationInputField[];
+
 const TRIAGE_NEW_SESSION_COMPOSE_INPUT = { op: 'and', all: [
   { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'new' },
   { op: 'eq', path: 'handoff.delivery', value: 'compose' },
@@ -128,35 +159,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           title: configuredConfirmationText('title', 'Run this Triage action?'),
           body: configuredConfirmationText('body', 'Check what this action will do.'),
           confirmLabel: configuredConfirmationText('confirm', 'Run action'),
-          inputFields: [
-            { path: 'singleIntent.launchMode', title: configuredConfirmationText('launch', 'Launch'), valueLabels: {
-              start: configuredConfirmationText('start', 'Start a new Session'),
-              review: configuredConfirmationText('draft', 'Open a draft to add instructions'),
-            } },
-            { path: 'handoff.context.destination', title: configuredConfirmationText('grouping', 'Grouping'), valueLabels: {
-              single: configuredConfirmationText('single', 'One entry'),
-              oneSessionForAllEntries: configuredConfirmationText('shared', 'One new Session for all entries'),
-              oneSessionPerEntry: configuredConfirmationText('separate', 'One new Session per entry'),
-            } },
-            { path: 'handoff.sessionChoice.kind', title: configuredConfirmationText('destination', 'Destination'), valueLabels: {
-              existing: configuredConfirmationText('existing', 'Existing Session'),
-              new: configuredConfirmationText('new', 'New Session'),
-              configured: configuredConfirmationText('new', 'New Session'),
-            } },
-            { path: 'handoff.delivery', title: configuredConfirmationText('delivery', 'Delivery'), valueLabels: {
-              send: configuredConfirmationText('send', 'Send now'),
-              compose: configuredConfirmationText('compose', 'Open a draft'),
-              configured: configuredConfirmationText('default', 'Use the selected launch mode'),
-            } },
-            { path: 'sendPresentation.actionLabel', title: { key: 'plugins.triage.surface.bulk.action', fallback: 'Action' } },
-            { path: 'sendPresentation.sessionTitle', title: { key: 'plugins.triage.surface.detail.session', fallback: 'Session' } },
-            { path: 'handoff.configuredActionId', title: configuredConfirmationText('reference', 'Configured action'),
-              valueLabels: Object.fromEntries(TRIAGE_SEEDED_ACTIONS_V1.actions.map(action => {
-                const key = readTriageActionTitleKeyV1(action);
-                return [action.actionId, key === null ? action.label : { key, fallback: action.label }];
-              })) },
-            { path: 'recipientStopNotice', title: configuredConfirmationText('sessionStatus', 'Session status') },
-          ],
+          inputFields: configuredConfirmationFields,
         },
         inputSchema: TriageRunConfiguredActionInputV1Schema,
         resultSchema: TriageRunConfiguredActionResultV1Schema,
