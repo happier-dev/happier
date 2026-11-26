@@ -4,9 +4,8 @@ import { isMachineAgentInventoryReadActionIdV1, REVIEW_START_ACTION_ID_V1, SESSI
 import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { projectSessionSpawnNewActionAuthoringInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
-import { createRequesterBoundDeploymentActionDeps } from './deploymentActionDeps';
+import { createRequesterBoundDeploymentActionDeps, needsDaemonDeploymentActionDeps } from './deploymentActionDeps';
 import { carriesNonLocalRequesterAuthority, isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { executeScmSourceReadForRequester } from '@/scm/hostingProviders/resolveRefForHost';
 import type { MachineVitalsSampleV1 } from "@happier-dev/protocol/machines/vitals/machineVitalsSampleV1";
@@ -646,10 +645,8 @@ resolveServerFeaturesSnapshot?: () =>
       }
       const fallbackProjectAction = params.resolveProjectAction?.();
       let deploymentHomeId = observedServerIdentityId ?? executionContext?.serverIdentityId;
-      const needsDeploymentDeps = isDeploymentActionIdV1(actionId)
-        || actionId === 'projects.readiness.read'
-        || actionId === 'machines.services.adopt'
-        || actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply';
+      const needsDeploymentDeps = needsDaemonDeploymentActionDeps(actionId,
+        executionContext?.externalActionExecutionAuthorization?.binding.deploymentReadAdmission);
       if (needsDeploymentDeps && !deploymentHomeId) {
         const origin = await params.resolveCurrentMachineExecutionOriginContext?.(executionContext?.signal);
         if (origin?.machineId === params.machineId) deploymentHomeId = origin.serverIdentityId;

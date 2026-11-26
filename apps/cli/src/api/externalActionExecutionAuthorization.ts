@@ -51,7 +51,7 @@ import type { ManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machi
 import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkflowPlacement } from './managedPresetOrigination';
 import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1,
   projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { projectDeploymentTelemetryReadAdmissionV1, readDeploymentDatabaseReadAccessBindingChildV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, isTelemetryCollectorKeyPinRequiredV1, readExecutorKeyPinFromMachineContentV1, sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { MachineContentKeyUnavailableError, resolvePublishedMachineContentCodec } from '@/api/machine/machineDataEncryptionKey';
 import { StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -1965,10 +1965,14 @@ function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   effectActionId: string;
   authority: ActionExecutorContext['authority'];
+  reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): Readonly<{ ok: true; headers: Readonly<Record<string, string>> }> | ExternalActionHeaderRefusal | null {
   const binding = input.authorization.binding;
   if (binding.actionId !== ACTION_INVOKE_ACTION_ID_V1 || input.effectActionId === binding.actionId
     || !('authentication' in binding) || binding.telemetryCollectorCodec) return null;
+  // A database read setup's reviewed bindings child spends the signed root with its review proof:
+  // Home admits that exact purpose and its opaque-content writer needs the root binding.
+  if (readDeploymentDatabaseReadAccessBindingChildV1(binding.deploymentReadAdmission, input.reviewedChild)) return null;
   // The outer proof cannot authorize this HTTP purpose. Both the Session
   // issuer and installed ingress already carry the requester's Account transport.
   const requester = readRequesterAccountActionTransportContext(input.authorization);
@@ -2162,7 +2166,8 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
       if (input.forwardedMove && isSessionStopChildRootV1(authorization.binding.actionId)
         && request.effectActionId !== 'session.stop') return null;
       const contributed = resolveContributedActionRequesterHttpHeaders({ authorization,
-        effectActionId: request.effectActionId, authority: 'account_automation' });
+        effectActionId: request.effectActionId, authority: 'account_automation',
+        ...(request.reviewedChild ? { reviewedChild: request.reviewedChild } : {}) });
       if (contributed) return contributed.ok && await isCurrent(request.signal) ? contributed.headers : null;
       // Topology is private Account data, not authority conferred by a Project
       // execution root. Spend only its exact, still-current requester read port.
