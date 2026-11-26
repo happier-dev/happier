@@ -2,8 +2,8 @@ import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
-    readManagedOpaquePresetAcquireEffectDigestV1, type ManagedNativeChannelIO } from '@happier-dev/cli-common/machines/managed';
-import { captureManagedMachineRoleCredentialConfigurationsV1 } from '@happier-dev/cli-common/machines/managed/reconcile';
+    readManagedOpaquePresetAcquireEffectDigestV1 } from '@happier-dev/cli-common/machines/managed';
+import { captureManagedMachineRoleCredentialConfigurationsV1, type ManagedNativeInvocationIO } from '@happier-dev/cli-common/machines/managed/reconcile';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { generateKeyPair, randomBytes, randomUUID } from 'node:crypto';
 import { readManagedGuestHomeWarning, resolveManagedGuestHome } from './homeQualification';
@@ -386,7 +386,10 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
         return resolveManagedRoleCredentialAuthorizations(input, launch.provider, localId, launch.credentials,
             { descriptor: contribution.definition, launch: launch.choices });
     }
-    async function invoke(role: MachineProvisionerRoleV1, body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; channel?: ManagedNativeChannelIO; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {
+    async function invoke(role: MachineProvisionerRoleV1, body: unknown,
+        io?: ManagedNativeInvocationIO & Readonly<{ managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>,
+        custodyScope?: 'delete-guest',
+    ): Promise<JsonValue | null> {
         let dispatched = false;
         try {
             if (params.action === 'machines.managed.inspect' && role !== 'inspect' && role !== 'reconcile' && role !== 'cleanup'
@@ -425,10 +428,11 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             const authorizations = await roleCredentialAuthorization(localId, input);
             const signal = invocationSignal ?? new AbortController().signal;
             const declaration = input.runtimeRegistry.contributes.actionsById?.get(actionId);
+            const requestId = params.options.context?.externalActionExecutionAuthorization?.binding.requestId ?? params.options.requestId;
             const binding: ConnectedAccountInvocationPurposeBinding = {
                 identity: { pluginId: contribution.pluginId, localId },
                 operationId: targetAuthority ? `${params.options.requestId}:${++targetInvocations}`
-                    : params.options.context?.externalActionExecutionAuthorization?.binding.requestId ?? params.options.requestId,
+                    : custodyScope ? `${requestId}:${custodyScope}` : requestId,
                 purposes: authorizations.map(authorization => authorization.purpose),
                 purposeBindings: projectManagedMachineRolePurposeBindingsV1(authorizations),
                 ...(declaration?.pluginVersion ? { actionOperation: { pluginVersion: declaration.pluginVersion, signal,
@@ -513,6 +517,9 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                             // the managed row. Recheck the FIN source, not that row.
                             if (!await params.client.isOriginCurrent()) throw new ManagedMachineControllerError('intent_changed');
                         }
+                        // The guest command has its own temporary role lease while destroy keeps custody.
+                        if (role === 'destroy') await io?.beforeDestroy?.((guestRole, body, guestIO) =>
+                            invoke(guestRole, body, guestIO, 'delete-guest'));
                     } catch (error) {
                         rowCurrent = false;
                         // This host callback is before native IO. Keep that

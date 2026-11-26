@@ -1,10 +1,21 @@
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedDeleteTailnetWarningV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { reconcileManagedAcquisitionIdentity, settleManagedNativeIntent, type ManagedMachineReconciliation, type ManagedReconciliationReportHome,
     type ManagedNativeInvocation, type ManagedNativeInvocationIO } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
+
+/** Only the exact guest's already opened publication can name a leftover node. */
+export function projectManagedDeleteTailnetWarning(daemonState: ReturnType<typeof StoredMachinePublishedDaemonStateV1Schema.parse> | null | undefined): ManagedDeleteTailnetWarningV1 | undefined {
+    const network = daemonState?.reachability?.privateNetworks.find(candidate =>
+        candidate.provider.kind === 'builtin' && candidate.provider.id === 'tailscale');
+    if (network?.dnsName && network.state !== 'needsAuth') {
+        return { code: 'tailscale_logout_unconfirmed', node: network.dnsName };
+    }
+}
 
 /** Recover uncertain acquisition identity before claiming Delete; an issued Delete keeps its cleanup custody. */
 export async function prepareManagedMachineDeleteIntent(input: Readonly<Pick<ManagedMachineReconciliation, 'requestId' | 'provisioner' | 'signal'> & {

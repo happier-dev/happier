@@ -605,9 +605,9 @@ export const ActionOperationDetailModal = React.memo(
             testID="action-operation-warning"
             tone="warning"
             announce="status"
-            title={t('inbox.actionOperations.warning.cleanupTitle')}
-            description={t('inbox.actionOperations.warning.cleanupDescription')}
-            details={[detail.warning.message]}
+            title={detail.warning.title ?? t('inbox.actionOperations.warning.cleanupTitle')}
+            description={detail.warning.description ?? t('inbox.actionOperations.warning.cleanupDescription')}
+            details={detail.warning.description ? undefined : [detail.warning.message]}
           />
         ) : null}
 

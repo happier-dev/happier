@@ -187,12 +187,20 @@ describe('Account native power through the original reviewed role port', () => {
     });
 });
 
-it.each(['confirmed', 'admission-refused', 'guest-startup-report-failed', 'native-refused-report-failed', 'confirmed-report-failed', 'native-refused-report-confirmed', 'resize-unsupported-report-failed', 'delete-refused-report-failed', 'delete-refused-report-confirmed', 'delete-confirmed-report-failed'] as const)(
+it.each(['confirmed', 'admission-refused', 'guest-startup-report-failed', 'native-refused-report-failed', 'confirmed-report-failed', 'native-refused-report-confirmed', 'resize-unsupported-report-failed', 'delete-refused-report-failed', 'delete-refused-report-confirmed', 'delete-confirmed-report-failed', 'delete-tailnet-unavailable'] as const)(
     'settles retained Account power through public activation and its selected credential, outcome=%s', async outcome => {
-    const { refused, guestStartup, nativeRefused, reportFailed, resizeUnsupported, deleting, deleteRefused, actionId, logStart, result, reported, roles, requests, admissions, submitted, reports, nativeResumes, guestBoots, secret, machine } = await executeManagedAccountPowerOutputScenario(outcome, vendorHttp);
+    const { refused, guestStartup, nativeRefused, reportFailed, resizeUnsupported, deleting, deleteRefused, tailnetGuest, actionId, logStart, result, reported, roles, requests, admissions, submitted, reports, nativeResumes, guestBoots, secret, machine } = await executeManagedAccountPowerOutputScenario(outcome, vendorHttp);
     // The original Action already owns review. A provider role cannot ask the
     // person a second time instead of consuming its exact reviewed-child proof.
     expect(Modal.show).not.toHaveBeenCalled();
+    if (tailnetGuest) {
+        expect(result).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: machine.id,
+            warning: { code: 'tailscale_logout_unconfirmed', node: tailnetGuest.node } } });
+        expect(machine.allocation).toBe('confirmed-absent');
+        expect(roles).toContain('destroy');
+        expect(nativeResumes).toBe(0);
+        return;
+    }
     if (deleting) {
         expect(result).toMatchObject({ ok: false, errorCode: deleteRefused ? 'vercel_scope_mismatch' : 'managed_request_failed' });
         expect(reported).toEqual([expect.objectContaining({ result: expect.objectContaining(deleteRefused

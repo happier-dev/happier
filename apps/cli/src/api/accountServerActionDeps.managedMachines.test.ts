@@ -39,7 +39,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import type { MachineWorkSummaryV1 } from '@happier-dev/protocol/machines/machineWorkSummaryV1';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -482,6 +482,7 @@ describe('managed inventory CLI Home adapter', () => {
     const recovering = entry === 'delete-acquisition-bound' || entry === 'delete-acquisition-unknown';
     const identityUnknown = entry === 'delete-acquisition-unknown';
     const nativeRefused = entry === 'delete-refused-report-failed';
+    const plainGuest = entry === 'delete-factory' ? { id: 'account-delete-guest', node: 'account-delete-guest.fixture.ts.net' } : undefined;
     const actionId = deleting ? 'machines.managed.delete' : 'machines.managed.power.set';
     const service = { pluginId: 'acme.accounts', localId: 'cloud' };
     const disclosed: string[] = [];
@@ -501,6 +502,7 @@ describe('managed inventory CLI Home adapter', () => {
     }] };
     let retained: ManagedMachineV1 = { id: 'retained', homeId: 'srv_home', custodianAccountId: 'owner', launch,
       allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 2,
+      ...(plainGuest ? { enrolledMachineId: plainGuest.id } : {}),
       resource: { contributionRef: provider, schemaVersion: 1, value: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
       reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
@@ -514,6 +516,14 @@ describe('managed inventory CLI Home adapter', () => {
       ...(deleting ? { intent: 'delete' as const, reviewedDependencies: true } : { intent: 'start' as const }) };
     const paths: string[] = [];
     app.addHook('onRequest', async request => { paths.push(request.url); });
+    if (plainGuest) app.get('/v1/machines/account-delete-guest', async () => ({ machine: {
+      id: plainGuest.id, managedMachineRef: null, storageMode: 'plain', metadata: null, metadataVersion: 0,
+      daemonState: encodePlainMachineStoredContent({ status: 'running', pid: 1, reachability: {
+        revision: 1, management: { daemon: 'ready', providers: [], publicSsh: 'unknown' }, ingress: [],
+        privateNetworks: [{ provider: { kind: 'builtin', id: 'tailscale' }, state: 'ready', displayName: 'Fixture network',
+          networkIdentity: 'fixture.ts.net', dnsName: plainGuest.node, addresses: [], interfaceName: null, sourceRanges: [], magicDnsEnabled: null }],
+      } }), daemonStateVersion: 1,
+    } }));
     const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
       actions: base.manifest.contributes.actions.map(action => ({ ...action,
         ...(entry === 'delete-factory' ? { hostAccess: undefined } : {}),
@@ -631,7 +641,8 @@ describe('managed inventory CLI Home adapter', () => {
       : identityUnknown ? { ok: false, errorCode: 'native_identity_unavailable',
         failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_identity_unavailable' } }
       : nativeRefused ? { ok: false, errorCode: 'fixture_delete_refused' }
-      : { kind: 'accepted', managedId: retained.id, intentRevision: 3 });
+      : { kind: 'accepted', managedId: retained.id, intentRevision: 3,
+        ...(plainGuest ? { warning: { code: 'tailscale_logout_unconfirmed', node: plainGuest.node } } : {}) });
     expect(native).toEqual(refused || entry === 'delete-factory' ? [] : recovering ? identityUnknown ? ['reconcile'] : ['reconcile', 'destroy']
       : deleting ? ['destroy'] : ['inspect', 'power', 'inspect']);
     if (recovering) expect(retained.allocation).toBe(identityUnknown ? 'may-exist' : 'confirmed-absent');

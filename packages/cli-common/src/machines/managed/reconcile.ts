@@ -70,6 +70,7 @@ export type ManagedNativeInvocationIO = Readonly<{
     signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void;
     channel?: ManagedNativeChannelIO;
     beforeNativeEffect?: () => Promise<void>;
+    beforeDestroy?: (invokeGuestRole: (role: 'exec' | 'bootstrap', body: unknown, io?: ManagedNativeInvocationIO) => Promise<JsonValue | null>) => Promise<void>;
 }>;
 export type ManagedNativeInvocation = (role: ManagedNativeRole, body: unknown, io?: ManagedNativeInvocationIO) => Promise<JsonValue | null>;
 export type ManagedReconciliationReportHome = Readonly<{

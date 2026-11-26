@@ -34,10 +34,14 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    const { actionOperationInboxTranslations } = await import('@/text/translations/actionOperationInboxTranslations');
     return createTextModuleMock({ translate: (key, params) => {
         if (key === 'workflows.run.attempt') return `Attempt ${String(params?.attempt)}`;
         if (key === 'projects.scripts.setup.step') return `Step ${String(params?.n)}`;
         if (key === 'machinePresets.setup.commandStoppedWithExit') return `${String(params?.step)} exited with code ${String(params?.code)}`;
+        if (key === 'inbox.actionOperations.warning.tailnetLogoutDescription') {
+            return actionOperationInboxTranslations.actionOperations.warning.tailnetLogoutDescription({ node: String(params?.node) });
+        }
         return key;
     } });
 });
@@ -479,6 +483,24 @@ describe('ActionOperationDetailModal', () => {
         const chrome = setChrome.mock.calls.at(-1)?.[0];
         expect(chrome?.title).toBe('Fork session');
         expect(chrome?.subtitle).toBeUndefined();
+    });
+
+    it('shows the leftover tailnet node beside a completed managed guest Delete', async () => {
+        const node = 'deleted-guest.tailnet.fixture.ts.net';
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [{
+            version: 1, operationId: 'guest-delete', revision: 3, actionId: 'machines.managed.delete', state: 'succeeded',
+            scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Delete guest',
+            createdAt: 1_000, startedAt: 1_100, settledAt: 2_000, cancellation: 'unsupported',
+            domainRef: { kind: 'managedMachine', id: 'managed-guest' },
+            result: { kind: 'accepted', managedId: 'managed-guest', intentRevision: 2,
+                machineReferences: { homeId: 'home', machineId: 'enrolled-guest', coverage: 'complete', references: [], unavailable: [] },
+                warning: { code: 'tailscale_logout_unconfirmed', node } },
+        }] });
+
+        const screen = await renderScreen(<ActionOperationDetailModal
+            serverId="home-a" operationId="guest-delete" onClose={vi.fn()} setChrome={vi.fn()} />);
+
+        expect(screen.getTextContent()).toContain(node);
     });
 
     it('renders the successful handoff cleanup warning and semantic phase', async () => {

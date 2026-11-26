@@ -59,6 +59,8 @@ export const actionOperationInboxTranslations = {
         warning: {
             cleanupTitle: 'Source cleanup needs attention',
             cleanupDescription: 'The session moved successfully, but cleanup on the source machine did not finish.',
+            tailnetLogoutTitle: 'Tailscale logout unconfirmed',
+            tailnetLogoutDescription: ({ node }: { node: string }) => `The machine was deleted. ${node} may still be in your tailnet.`,
         },
         recovery: {
             title: 'Recovery',

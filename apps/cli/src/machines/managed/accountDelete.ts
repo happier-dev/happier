@@ -11,6 +11,7 @@ import { createCliManagedAccountNativeInvocation, resolveCliManagedAccountProvis
 import type { executeCliManagedAccountPower } from './accountPower';
 import { createManagedPresetHydrator, openManagedPresetCarrier } from './presetHydration';
 import { retireManagedMachineProviderState } from './retireManagedMachineProviderState';
+import { readManagedDeleteTailnetWarning } from './deleteGuestTailnet';
 
 /** Account deletion consumes the retained control admission and reports the native cleanup owner's result. */
 export async function executeCliManagedAccountDelete(input: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> & Readonly<{
@@ -20,11 +21,12 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     if (!requestId) throw new ManagedMachineControllerError('admission_unavailable');
     const admitted = await input.post('admit-control', ManagedControlAdmissionInputV1Schema.parse({
         action: 'machines.managed.delete', input: input.body, requestId }), ManagedAdmissionOutputV1Schema);
-    const accepted = async (machine: typeof admitted.machine) => {
+    const accepted = async (machine: typeof admitted.machine, warning?: Awaited<ReturnType<typeof readManagedDeleteTailnetWarning>>) => {
         await retireManagedMachineProviderState(machine, input);
-        return ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision,
+        const result = ManagedIntentResultSchema.parse({ kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision,
             ...(input.context.operationAcceptance ? { operation: { operationId: input.context.operationAcceptance.operationId } } : {}),
         });
+        return { ...result, ...(warning ? { warning } : {}) };
     };
     if (admitted.machine.desiredWhen !== 'now' || admitted.machine.allocation === 'confirmed-absent') return accepted(admitted.machine);
     const hydrator = createManagedPresetHydrator(input);
@@ -62,6 +64,8 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
     if (!submitted.submitted && outstanding?.intent !== 'delete') throw new ManagedMachineControllerError('native_intent_unconfirmed');
     const retainedCorrelation = outstanding ? { ...correlation(), requestId: outstanding.requestId,
         expectedIntentRevision: outstanding.intentRevision, controller: outstanding.controller } : correlation();
+    const warning = submitted.submitted && machine.enrolledMachineId
+        ? await readManagedDeleteTailnetWarning(machine.enrolledMachineId, input) : undefined;
     machine = await settleManagedMachineDeleteIntent({ machine, invoke, io: { signal: input.signal },
         report: async deletion => {
             const body = await hydrator.prepareControllerReport('report-intent', { ...retainedCorrelation, ...deletion });
@@ -71,5 +75,5 @@ export async function executeCliManagedAccountDelete(input: Omit<Parameters<type
         onNativeFailureReportError: error => logger.warn('[MANAGED MACHINE] Native cleanup report failed',
             projectActionFailureCauseV1(error, 'machines.managed.delete')),
     });
-    return accepted(machine);
+    return accepted(machine, warning);
 }

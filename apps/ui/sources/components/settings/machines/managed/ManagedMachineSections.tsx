@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
 import { useUnistyles } from 'react-native-unistyles';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { MANAGED_RESIZE_ACTION_ID_V1, isManagedCreatorActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedCreatorActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1, type ManagedGuestDiagnosticsV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -17,6 +17,7 @@ import { projectActionFailureCauseV1, readActionErrorCodeV1, type ActionExecuteF
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { presentManagedDeleteWarning } from '@/components/machines/managed/managedDeleteResultPresentation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationVisibility } from '@/components/appShell/workspace/destinationInstanceContext';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
@@ -203,11 +204,16 @@ function ManagedMachineFullSections(props: FullSectionProps) {
         if (id) Modal.hide(id);
     }, []);
     const [deleteReview, setDeleteReview] = React.useState<Readonly<{ key: string; review: ManagedMachineDeleteReview }> | null>(null);
+    const [deleteCompletion, setDeleteCompletion] = React.useState<Readonly<{
+        key: string;
+        warning: NonNullable<ReturnType<typeof presentManagedDeleteWarning>>;
+    }> | null>(null);
     const [rebuildReview, setRebuildReview] = React.useState<Readonly<{ key: string; review: DevcontainerEffectReviewV1 }> | null>(null);
     const [moveReview, setMoveReview] = React.useState<Readonly<{ key: string; candidates: readonly ManagedMachineMoveCandidate[] }> | null>(null);
     const [moveLoading, setMoveLoading] = React.useState(false);
     const moveLoadingRef = React.useRef(false);
     const [removeReviewKey, setRemoveReviewKey] = React.useState<string | null>(null);
+    const deleteCompletionKey = JSON.stringify([props.serverId, props.binding?.accountId, machine.id]);
     const deleteReviewKey = JSON.stringify([props.serverId, props.binding?.accountId, props.binding?.revision,
         machine.id, machine.intentRevision, machine.controller, machine.resource]);
     const currentDeleteReview = deleteReview?.key === deleteReviewKey ? deleteReview.review : null;
@@ -325,6 +331,11 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const bound = machine.allocation === 'bound' && Boolean(machine.resource);
     const operation = useManagedMachineActionOperation({ serverId: props.serverId, accountId: props.binding?.accountId ?? null,
         homeId: machine.homeId, machineId: machine.controller?.machineId ?? '', managedId: machine.id, enrolledMachineId: machine.enrolledMachineId, managedMachine: machine });
+    const operationDeleteWarning = operation?.snapshot.actionId === MANAGED_DELETE_ACTION_ID_V1 && operation.snapshot.state === 'succeeded'
+        ? presentManagedDeleteWarning(operation.snapshot.result) : null;
+    const deleteWarning = props.binding?.isCurrent()
+        ? operationDeleteWarning ?? (deleteCompletion?.key === deleteCompletionKey ? deleteCompletion.warning : null)
+        : null;
     // A fresh guest heartbeat can supersede a failed creation receipt. Healthy
     // receipts do not display or depend on the guest's exact timestamp.
     const enrolledActivity = useMachineActivity(operation?.snapshot.state === 'failed' ? enrolledMachine : null);
@@ -442,6 +453,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 fail(result.kind === 'conflict' ? 'intent_changed'
                     : 'code' in result && typeof result.code === 'string' ? result.code : 'managed_request_failed');
                 return false;
+            }
+            if (actionId === MANAGED_DELETE_ACTION_ID_V1) {
+                const warning = presentManagedDeleteWarning(result);
+                if (warning) setDeleteCompletion({ key: deleteCompletionKey, warning });
             }
             onSucceeded?.(result);
             if (actionId !== 'machines.managed.references.get') {
@@ -870,6 +885,8 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const resizeResultView = resizeResult ? <ManagedMachineResizeResult output={resizeResult} /> : null;
     return <ManagedReceiptColumns receipt={pageReceipt} compact={compact} testID="managed-machine.detail"
         receiptFollowUp={<>{resizeReviewView}{resizeResultView}{deleteReviewView}</>}>
+        {deleteWarning ? <AttentionBanner testID="managed-machine.delete-warning" tone="warning" announce="status"
+            title={deleteWarning.title} description={deleteWarning.description} /> : null}
         {pendingDeleteApprovalId
             ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={resolveActionTitle('machines.managed.delete', null)} description={t('approvals.waitingForYou')}

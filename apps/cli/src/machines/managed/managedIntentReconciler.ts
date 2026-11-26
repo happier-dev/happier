@@ -1,6 +1,7 @@
 import { type SupportedNativeIntent } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerCleanupObservationV1Schema, MachineProvisionerDestroyResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import type { ManagedDeleteTailnetWarningV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MANAGED_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -19,6 +20,7 @@ import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/fir
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import { retireManagedMachineProviderState } from './retireManagedMachineProviderState';
+import { logoutManagedDeleteGuest } from './deleteGuestTailnet';
 
 /** In-process host receipt settlement, never part of the plugin or wire context. */
 export type ManagedNativeOperationSettlement = Readonly<{
@@ -272,7 +274,10 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
     }
 }
 
-type ManagedIntentReconciliation = ManagedMachineReconciliationInput & Readonly<{ nativeExecWake?: true }>;
+type ManagedIntentReconciliation = ManagedMachineReconciliationInput & Readonly<{
+    nativeExecWake?: true;
+    onDeleteWarning?: (warning: ManagedDeleteTailnetWarningV1) => void;
+}>;
 
 /** One live admitted Action, one exact retained native resource, no replay queue. */
 export async function reconcileManagedIntent(params: ManagedIntentReconciliation): Promise<ManagedMachineFullV1> {
@@ -560,7 +565,14 @@ async function runManagedIntent(params: ManagedIntentReconciliation): Promise<Ma
                         }
                         const io = { ...invocationOptions, signal: options.signal };
                         const effect = machine.desired === 'delete'
-                            ? await executeManagedMachineDeleteIntent({ machine, invoke: native().invoke, io })
+                            ? await executeManagedMachineDeleteIntent({ machine, invoke: native().invoke, io: { ...io, beforeDestroy: async invokeGuestRole => {
+                                const warning = await logoutManagedDeleteGuest(machine, native(), invokeGuestRole, {
+                                    credentials: params.input.credentials, serverUrl: params.input.serverUrl,
+                                    context: effectContext, signal: options.signal,
+                                });
+                                assertLive(options.signal);
+                                if (warning) params.onDeleteWarning?.(warning);
+                            } } })
                             : await executeManagedMachinePowerIntent({ machine, invoke: native().invoke, io,
                                 guestStartup: params.nativeExecWake ? undefined : { transport: native().contribution.definition.bootstrapTransport,
                                     channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },

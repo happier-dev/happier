@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachinePresetContentV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControllerCurrentInputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -111,7 +112,8 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     } = {}) {
     const effects: string[] = [];
     const nativeInputs: unknown[] = [];
-    const native = fixture({ privateNative: true, supportedIntents: [intent], ...(recoverRebuild ? { reconciliation: true, reconciliationResource: true } : {}),
+    const native = fixture({ privateNative: true, supportedIntents: [intent], nativeTransport: intent !== 'delete',
+        ...(recoverRebuild ? { reconciliation: true, reconciliationResource: true } : {}),
         ...(cleanupObservation ? { cleanupObservation } : {}),
         nativeRoleResults: { destroy: nativeResult, power: nativeResult,
         ...(recoverRebuild && rebuildResult ? { reconcile: rebuildResult } : {}),
@@ -122,6 +124,12 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
     const homeId = 'srv_managed_intent';
     const controller = { machineId: 'controller', installationId: 'installation' };
     const installationKeys = tweetnacl.sign.keyPair();
+    if (intent === 'delete' && !vi.isMockFunction(axios.get)) vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        expect(path).toBe('/v1/machines/guest');
+        return { status: 404, data: null };
+    });
     let machine = ManagedMachineV1Schema.parse({
         id: 'managed', homeId, custodianAccountId: 'owner', controller,
         launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
@@ -1088,6 +1096,62 @@ describe('unused Stop through guest drain and controller operation custody', () 
         expect(paths).toEqual(['admit-control', 'submit-intent', 'report-intent']);
         expect(test.effects).toEqual(['destroy']);
         expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+    });
+    it('logs an enrolled guest out of Tailscale before issuing the freshly admitted native Delete', async () => {
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, false, undefined, {
+            nativeTransport: true,
+            nativeRoleResults: {
+                exec: input => {
+                    const invocation = input as { argv: string[]; allowWake?: boolean; resource?: unknown };
+                    expect(invocation.allowWake).toBe(false);
+                    expect(invocation.resource).toEqual(test.readMachine().resource?.value);
+                    expect(test.readMachine().submittedNativeEffect).toMatchObject({ intent: 'delete', requestId: 'control' });
+                    const command = invocation.argv.join(' ');
+                    expect(command).toMatch(/tailscale.*(status|logout)/u);
+                    return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                        stdoutBase64: command.includes('status') ? Buffer.from(JSON.stringify({
+                            BackendState: 'Stopped', HaveNodeKey: true, Self: { DNSName: 'real-guest.fixture.ts.net.' },
+                        })).toString('base64') : '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
+                },
+                destroy: () => {
+                    expect(test.effects).toEqual(['exec', 'exec', 'destroy']);
+                    expect(test.nativeInputs[0]).toMatchObject({ argv: expect.arrayContaining([expect.stringMatching(/status/u)]) });
+                    expect(test.nativeInputs[1]).toMatchObject({ argv: expect.arrayContaining([expect.stringMatching(/logout/u)]) });
+                    return { kind: 'confirmed' };
+                },
+            },
+        });
+        await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.readMachine().allocation).toBe('confirmed-absent');
+    });
+    it.each([true, false])('settles Delete and names the last published Tailscale node when guest command transport is unavailable (declared=%s)', async nativeTransport => {
+        const node = 'tail-node.fixture.ts.net';
+        const reads = vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            expect(path).toBe('/v1/machines/guest');
+            return { status: 200, data: { machine: { id: 'guest', managedMachineRef: null, storageMode: 'plain',
+                metadata: null, metadataVersion: 0,
+                daemonState: encodePlainMachineStoredContent({ status: 'running', pid: 1, reachability: {
+                    revision: 1, management: { daemon: 'ready', providers: [], publicSsh: 'unknown' }, ingress: [],
+                    privateNetworks: [{ provider: { kind: 'builtin', id: 'tailscale' }, state: 'ready',
+                        displayName: 'Fixture network', networkIdentity: 'fixture.ts.net', dnsName: node, addresses: [],
+                        interfaceName: null, sourceRanges: [], magicDnsEnabled: null }],
+                } }), daemonStateVersion: 1,
+            } } };
+        });
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, false, undefined, {
+            nativeTransport,
+            nativeRoleResults: { exec: {
+                termination: { observed: { kind: 'signal', signal: 'HUP' }, requestedBy: { kind: 'none' } },
+                stdoutBase64: '', stderrBase64: '', stdoutTruncated: false, stderrTruncated: false,
+            }, destroy: { kind: 'confirmed' } },
+        });
+        await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed',
+            warning: { code: 'tailscale_logout_unconfirmed', node } });
+        expect(test.readMachine().allocation).toBe('confirmed-absent');
+        expect(test.effects).toEqual(nativeTransport ? ['exec', 'destroy'] : ['destroy']);
+        expect(reads.mock.calls.some(([url]) => String(url).endsWith('/v1/machines/guest'))).toBe(true);
     });
     it('reads one authoritative row per Delete deadline wake and settles a pushed absence without native IO', async () => {
         vi.useFakeTimers();

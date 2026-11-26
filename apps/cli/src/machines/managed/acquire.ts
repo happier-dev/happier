@@ -27,7 +27,8 @@ import { ManagedAdmissionInputV1Schema, isManagedPresetAcquireInputV1, managedWo
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh/shellQuote';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { MANAGED_EXEC_ACTION_ID_V1, isManagedMetadataControlActionIdV1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataControlResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMetadataControlAdmissionOutputV1Schema, projectManagedMetadataControlResultV1,
+    type ManagedDeleteTailnetWarningV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { settleManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControllerRequestFailureDetailsV1Schema, type ManagedControllerRequestFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readActionFailureCauseV1, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -1039,6 +1040,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     '/v1/machines/managed/controller/prepare-policy', policyInput, ManagedPolicyAdmissionOutputV1Schema),
                 hydrator, options.signal)).machine;
                 let accepted: ReturnType<typeof ManagedIntentResultSchema.parse> | undefined;
+                let deleteWarning: ManagedDeleteTailnetWarningV1 | undefined;
                 const runApproved = async (context?: ActionExecutorContext): Promise<ManagedMachineFullV1> => {
                     if (context) {
                         if (context.operationAcceptance?.operationId !== options.context?.operationAcceptance?.operationId
@@ -1079,7 +1081,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     currentOptions.context?.operationAcceptance?.accept(accepted);
                     ownerStarted = true;
                     return await reconcileManagedIntent({ input: { ...input, ...(prepared.bridge ? { managedGuestActivity: prepared.bridge } : {}) },
-                        options: currentOptions, client, machine: admitted.machine, action });
+                        options: currentOptions, client, machine: admitted.machine, action,
+                        onDeleteWarning: warning => { deleteWarning = warning; } });
                 };
                 const settled = await (options.runPolicyAction ? options.runPolicyAction(preview, runApproved) : runApproved());
                 if (purpose.kind === 'accepted-input-start' && (settled.observation?.power !== 'running'
@@ -1087,7 +1090,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     throw new ManagedMachineControllerError('native_intent_unconfirmed');
                 }
                 if (!accepted) throw new ManagedMachineControllerError('admission_unavailable');
-                return accepted;
+                return deleteWarning ? { ...accepted, warning: deleteWarning } : accepted;
             } catch (error) {
                 if (purpose.kind === 'accepted-input-start'
                     && purpose.target.origin.kind === 'session-input' && failureClient
@@ -1253,8 +1256,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     intentRevision: admission.machine.intentRevision, operation: { operationId } });
                 options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: admission.machine.id } });
                 options.context?.operationAcceptance?.accept(accepted);
+                let deleteWarning: ManagedDeleteTailnetWarningV1 | undefined;
                 try {
                     await reconcileManagedIntent({ input, options, client, machine: admission.machine, action,
+                        onDeleteWarning: warning => { deleteWarning = warning; },
                         ...(nativeExecWake ? { nativeExecWake: true } : {}),
                         ...(action === 'machines.managed.rebuild' ? { rebuild: ManagedMachineActionInputSchemasV1['machines.managed.rebuild'].parse(parsed) } : {}) });
                 } catch (error) {
@@ -1269,7 +1274,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         || (!error.details && error.code !== 'native_intent_unconfirmed')) throw error;
                     return unconfirmed(error, true);
                 }
-                return accepted;
+                return deleteWarning ? { ...accepted, warning: deleteWarning } : accepted;
             }
             if (review.homeId !== input.homeId || ('controller' in review && review.controller
                 && (review.controller.machineId !== input.controller.machineId || review.controller.installationId !== input.controller.installationId))) {

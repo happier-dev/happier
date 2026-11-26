@@ -1,13 +1,18 @@
 import { MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedMachineControllerError, createManagedNativeObservationWait, prepareManagedMachineDeleteIntent, settleManagedMachineDeleteIntent,
-    assertManagedPowerIntentConfirmed, executeManagedMachinePowerIntent, settleManagedMachineResize, settleManagedNativeIntent } from '@happier-dev/cli-common/machines/managed';
+    assertManagedPowerIntentConfirmed, executeManagedMachinePowerIntent, projectManagedDeleteTailnetWarning, settleManagedMachineResize, settleManagedNativeIntent } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
     ManagedControllerMachineOutputV1Schema, ManagedControllerResizeReportV1Schema, ManagedOpaquePresetResizeInputV1Schema,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { decodePlainMachineStoredContent, resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { admitMachineRowPlainMode } from '@happier-dev/sync-client';
+import { readAccountE2eeCustody } from '@/auth/storage/tokenStorage';
+import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { readMachineRows } from './machineRowsApi';
 import { createUiManagedAccountHome, createUiManagedAccountHomeRequest,
     normalizeUiManagedAccountMachine } from './managedMachineAccountHome';
 import { createUiManagedAccountNative, readUiManagedAccountAdmission } from './managedMachineAccountNative';
@@ -20,6 +25,29 @@ import { log } from '@/log';
 type Control = Readonly<{ action: 'machines.managed.resize'; input: ManagedMachineActionInputV1<'machines.managed.resize'> }>
     | Readonly<{ action: 'machines.managed.power.set'; input: ManagedMachineActionInputV1<'machines.managed.power.set'> }>
     | Readonly<{ action: 'machines.managed.delete'; input: ManagedMachineActionInputV1<'machines.managed.delete'> }>;
+
+async function readPublishedDeleteTailnetWarning(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
+    const readTransport = account.readTransport;
+    try {
+        return await withActionAccountRequestSignal(account, signal, async ownedSignal => {
+            const expectedAccountMode = await account.resolveAccountMode(ownedSignal);
+            if (expectedAccountMode !== 'plain') return;
+            const rows = await readMachineRows({ ...(readTransport ? { readTransport } : { request: account.request }),
+                machineIds: [machineId], signal: ownedSignal });
+            account.assertCurrent();
+            const row = rows.get(machineId);
+            if (!row?.daemonState || resolvePublishedMachineDataEncryptionKeyV1({ machine: row, openedDataEncryptionKey: null,
+                expectedAccountMode, viewerAccountId: account.accountId }).status !== 'plain') return;
+            admitMachineRowPlainMode({ access: row.access, viewerAccountId: account.accountId,
+                custody: readAccountE2eeCustody(account.credentials) });
+            const opened = StoredMachinePublishedDaemonStateV1Schema.safeParse(decodePlainMachineStoredContent(row.daemonState));
+            if (opened.success) return projectManagedDeleteTailnetWarning(opened.data);
+        });
+    } catch {
+        signal?.throwIfAborted();
+        account.assertCurrent();
+    }
+}
 
 /** Home admits the intent once; the foreground Account continues its retained native effects. */
 export async function executeUiManagedAccountControl(params: Readonly<{
@@ -75,8 +103,9 @@ export async function executeUiManagedAccountControl(params: Readonly<{
                 });
                 return { ok: true, result };
             }
-            const accepted = (): ActionExecuteResult => ({ ok: true, result: { kind: 'accepted', managedId: machine.id,
+            const accepted = (warning?: Awaited<ReturnType<typeof readPublishedDeleteTailnetWarning>>): ActionExecuteResult => ({ ok: true, result: { kind: 'accepted', managedId: machine.id,
                 intentRevision: machine.intentRevision,
+                ...(warning ? { warning } : {}),
                 ...(params.context.operationAcceptance ? { operation: { operationId: params.context.operationAcceptance.operationId } } : {}) } });
             if (machine.desiredWhen !== 'now') return accepted();
             const admitted = readUiManagedAccountAdmission(params.context, machine);
@@ -98,11 +127,13 @@ export async function executeUiManagedAccountControl(params: Readonly<{
             const correlation = outstanding ? { ...client.home.correlation(machine), requestId: outstanding.requestId,
                 expectedIntentRevision: outstanding.intentRevision, controller: outstanding.controller } : client.home.correlation(machine);
             if (control.action === MANAGED_DELETE_ACTION_ID_V1) {
+                const warning = submitted.submitted && machine.enrolledMachineId
+                    ? await readPublishedDeleteTailnetWarning(params.account, machine.enrolledMachineId, params.signal) : undefined;
                 machine = await settleManagedMachineDeleteIntent({ machine, invoke: native.invoke, io: { signal: params.signal },
                     report: async deletion => machine = await client.home.row('report-intent', { ...correlation, ...deletion }, null),
                     onNativeFailureReportError: error => log.log(JSON.stringify(projectActionFailureCauseV1(error, control.action))),
                 });
-                return accepted();
+                return accepted(warning);
             }
             const power = await settleManagedNativeIntent({
                 invoke: () => executeManagedMachinePowerIntent({ machine, invoke: native.invoke,

@@ -16,10 +16,12 @@ import type { PlanChecklistExecutionState, PlanChecklistItem, PlanChecklistItemS
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigureFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { MANAGED_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupRunResultV1Schema, type DeploymentBackupSourceV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { describeProjectCommandSource } from '@/components/projects/projectSetup/projectScriptPresentation';
+import { presentManagedDeleteWarning } from '@/components/machines/managed/managedDeleteResultPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 export type MachineSetupOutputAttachment = Extract<NonNullable<ActionOperationSnapshot['domainRef']>, { kind: 'machineSetup' }>;
@@ -89,7 +91,7 @@ export type ActionOperationDetailProjection = Readonly<{
     /** Structured result values, whole, for the Technical details disclosure; never a summary row. */
     resultTechnicalLines: readonly TechnicalDetailsLine[];
     failure: ActionOperationDetailFailure | null;
-    warning: Readonly<{ code: string; message: string }> | null;
+    warning: Readonly<{ code: string; message: string; title?: string; description?: string }> | null;
     recovery: ActionOperationDetailRecovery | null;
     nextAction:
         | Readonly<{ kind: 'open_session'; sessionId: string }>
@@ -362,6 +364,10 @@ const DETAIL_PROJECTORS_BY_ACTION_ID: Readonly<Record<string, DetailProjector>> 
     'sessions.external.materialize.start': projectExternal,
     'sessions.external.takeover.start': projectExternal,
     [DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1]: projectDeploymentBackupRun,
+    [MANAGED_DELETE_ACTION_ID_V1]: snapshot => ({
+        ...projectPlugin(snapshot),
+        warning: snapshot.state === 'succeeded' ? presentManagedDeleteWarning(unwrapResult(snapshot)) : null,
+    }),
 });
 
 function projectProjectCommand(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {

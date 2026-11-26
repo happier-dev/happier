@@ -551,9 +551,14 @@ export const ManagedDeleteInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ...ManagedIntentInputSchema.def.options[0].def.shape, intent: z.literal('delete'), reviewedDependencies: z.literal(true) }),
   z.strictObject({ ...ManagedIntentInputSchema.def.options[1].def.shape, intent: z.literal('delete'), reviewedDependencies: z.literal(true) }),
 ]));
-/** Delete discloses its captured census on every semantic outcome; native intent facts stay unchanged. */
+export const ManagedDeleteTailnetWarningV1Schema = lazyZodSchema(() => z.strictObject({
+  code: z.literal('tailscale_logout_unconfirmed'), node: id(),
+}));
+export type ManagedDeleteTailnetWarningV1 = z.infer<typeof ManagedDeleteTailnetWarningV1Schema>;
+/** Delete discloses its captured census and any unfinished guest cleanup. */
 export const ManagedDeleteOutputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ ...ManagedIntentResultSchema.def.options[0].def.shape, machineReferences: MachineReferenceCensusV1Schema }),
+  z.strictObject({ ...ManagedIntentResultSchema.def.options[0].def.shape, machineReferences: MachineReferenceCensusV1Schema,
+    warning: z.optional(ManagedDeleteTailnetWarningV1Schema) }),
   z.strictObject({ ...ManagedIntentResultSchema.def.options[1].def.shape, machineReferences: MachineReferenceCensusV1Schema }),
   z.strictObject({ ...ManagedIntentResultSchema.def.options[2].def.shape, machineReferences: MachineReferenceCensusV1Schema }),
 ]));

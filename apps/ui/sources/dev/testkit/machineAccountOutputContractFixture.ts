@@ -13,6 +13,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { randomUUID } from '@/platform/randomUUID';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from './fixtures/machineFixtures';
 
 /** These cases use the connected UI Account and the real Home HTTP/SQLite
  * producers. Persistence setup creates disposable Machines, never Action results. */
@@ -109,7 +110,7 @@ export async function executeManagedAccountPowerOutputScenario(
     outcome: 'confirmed' | 'admission-refused' | 'guest-startup-report-failed'
         | 'native-refused-report-failed' | 'confirmed-report-failed'
         | 'native-refused-report-confirmed' | 'resize-unsupported-report-failed'
-        | 'delete-refused-report-failed' | 'delete-refused-report-confirmed' | 'delete-confirmed-report-failed',
+        | 'delete-refused-report-failed' | 'delete-refused-report-confirmed' | 'delete-confirmed-report-failed' | 'delete-tailnet-unavailable',
     vendorHttp: ReturnType<typeof vi.fn<typeof fetch>>,
 ) {
     const refused = outcome === 'admission-refused';
@@ -119,6 +120,8 @@ export async function executeManagedAccountPowerOutputScenario(
     const resizeUnsupported = outcome === 'resize-unsupported-report-failed';
     const deleting = outcome.startsWith('delete-');
     const deleteRefused = outcome.startsWith('delete-refused-');
+    const tailnetGuest = outcome === 'delete-tailnet-unavailable'
+        ? { id: 'enrolled-guest', node: 'enrolled-guest.fixture.ts.net' } : undefined;
     // Declared (non-widening) so the returned scenario keeps the exact Action id.
     const actionId: Extract<ActionId, 'machines.managed.resize' | 'machines.managed.delete' | 'machines.managed.power.set'> = resizeUnsupported
         ? 'machines.managed.resize' : deleting ? 'machines.managed.delete' : 'machines.managed.power.set';
@@ -149,7 +152,7 @@ export async function executeManagedAccountPowerOutputScenario(
     }] };
     let machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: refused ? 'another-owner' : accountId,
         launch, allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 2,
-        ...(guestStartup ? { enrolledMachineId: 'enrolled-guest', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } : {}),
+        ...(guestStartup || tailnetGuest ? { enrolledMachineId: 'enrolled-guest', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } : {}),
         resource: { contributionRef: provider, schemaVersion: 1,
             value: { name: 'same-native', createdAt: 1000, managedId: 'retained', teamId: deleteRefused ? 'another-team' : 'team_one', projectId: 'prj_one' } },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -183,6 +186,15 @@ export async function executeManagedAccountPowerOutputScenario(
                     credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }] });
             if (address.pathname === '/v4/connect/qualified/credential') return Response.json(credential);
             if (address.pathname === '/v4/connect/qualified/configuration') return Response.json(configuration);
+            if (tailnetGuest && address.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
+                id => id !== tailnetGuest.id ? null : createPlainMachineRowFixture({ id, accountId,
+                    machine: createMachineFixture({ id, daemonState: { status: 'running', pid: 1, reachability: {
+                        revision: 1, management: { daemon: 'ready', providers: [], publicSsh: 'unknown' }, ingress: [], privateNetworks: [{
+                            provider: { kind: 'builtin', id: 'tailscale' }, state: 'ready', displayName: 'Fixture network',
+                            networkIdentity: 'fixture.ts.net', dnsName: tailnetGuest.node, addresses: [],
+                            interfaceName: null, sourceRanges: [], magicDnsEnabled: null,
+                        }],
+                    } } }) }));
             if (address.pathname.endsWith('/actions/get')) return refused
                 ? Response.json({ code: 'permission_denied' }, { status: 403 })
                 : Response.json({ ...machine, resource: { ...machine.resource, value: { name: 'stale-public-row', createdAt: 1000,
@@ -207,7 +219,8 @@ export async function executeManagedAccountPowerOutputScenario(
                 reported.push(body);
                 if (reportFailed) return Response.json({ code: 'managed_request_failed', message: 'private-home-report-body' }, { status: 503 });
                 if (body && typeof body === 'object' && 'observation' in body) {
-                    machine = ManagedMachineV1Schema.parse({ ...machine, observation: body.observation });
+                    machine = ManagedMachineV1Schema.parse({ ...machine, observation: body.observation,
+                        ...(tailnetGuest ? { allocation: 'confirmed-absent', resource: undefined } : {}) });
                 }
                 return Response.json({ machine });
             }
@@ -293,5 +306,6 @@ export async function executeManagedAccountPowerOutputScenario(
     const result = await createDefaultActionExecutor().execute(actionId, input,
         bindPresentUserActionConfirmation(actionId, input, { surface: 'ui', authority: 'present_user',
             actionCaller: { kind: 'host' }, serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'foreground-power' }));
-    return { refused, guestStartup, nativeRefused, reportFailed, resizeUnsupported, deleting, deleteRefused, actionId, logStart, result, reported, roles, requests, admissions, submitted, reports, nativeResumes, guestBoots, secret, machine };
+    return { refused, guestStartup, nativeRefused, reportFailed, resizeUnsupported, deleting, deleteRefused, tailnetGuest,
+        actionId, logStart, result, reported, roles, requests, admissions, submitted, reports, nativeResumes, guestBoots, secret, machine };
 }

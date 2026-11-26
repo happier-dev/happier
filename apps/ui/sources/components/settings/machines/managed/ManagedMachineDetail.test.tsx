@@ -2877,6 +2877,7 @@ describe('managed Machine detail', () => {
         const nativeRequests: unknown[] = [];
         const additionalConfirmations: string[] = [];
         const deleted: unknown[] = [];
+        const tailnetNode = 'paid-guest.fixture.ts.net';
         // The native HTTP hop is the boundary. Its receiving admission still
         // runs the real policy and executor against the actual private carrier.
         const nativeExecutor = createActionExecutor(createActionExecutorBoundaryFixture({
@@ -2884,8 +2885,10 @@ describe('managed Machine detail', () => {
             managedMachineAction: async request => {
                 deleted.push(request.input);
                 return { kind: 'accepted', managedId: machine.id, intentRevision: machine.intentRevision + 1,
-                    operation: { operationId: 'delete-operation' }, machineReferences: { homeId: machine.homeId,
-                        machineId: machine.enrolledMachineId ?? null, coverage: 'complete', references: [], unavailable: [] } };
+                    ...(authority === 'controller' ? {} : { operation: { operationId: 'delete-operation' } }),
+                    machineReferences: { homeId: machine.homeId,
+                        machineId: machine.enrolledMachineId ?? null, coverage: 'complete', references: [], unavailable: [] },
+                    ...(authority === 'controller' ? { warning: { code: 'tailscale_logout_unconfirmed', node: tailnetNode } } : {}) };
             },
         }));
         const minted: Array<ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>> = [];
@@ -3058,6 +3061,7 @@ describe('managed Machine detail', () => {
             // (executeExternalAction approvedCreationRecovery, covered by memberContainerJourney);
             // this fake controller stops at that boundary for the member who created it.
             if (!creatorOnly) expect(deleted).toHaveLength(1);
+            if (authority === 'controller') expect(screen.getTextContent()).toContain(tailnetNode);
         });
         if (creatorOnly) {
             expect(minted).toHaveLength(1);
