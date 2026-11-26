@@ -1,5 +1,6 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { logger } from '@/ui/logger';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import type { ProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
@@ -178,23 +179,27 @@ type SourceReview = Readonly<{
     reviewedEffectDigest: string;
 }>;
 class ServiceStartRefusal extends Error {
-    constructor(readonly code: string, readonly review?: Readonly<{ reviewedEffect: JsonValue; reviewedEffectDigest: string }>) { super(code); }
+    constructor(readonly code: string, readonly review?: Readonly<{ reviewedEffect: JsonValue; reviewedEffectDigest: string }>,
+        readonly childFailure?: ActionExecuteFailure) { super(code); }
 }
 const digest = (value: unknown) => createHash('sha256').update(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(value))).digest('hex');
 const codeOf = (error: unknown) => error instanceof ServiceStartRefusal ? error.code
     : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_service_start_unavailable';
-const refusal = (error: unknown): Extract<LocalServiceLauncherStartResolution<SelectedDeclaration>, { ok: false }> => {
-    const details = isPluginError(error) && error.details && typeof error.details === 'object'
-        && !Array.isArray(error.details) ? error.details : undefined;
-    const prerequisite = LocalServiceNativePrerequisiteV1Schema.safeParse(isPluginError(error) && error.code === 'native_tool_unavailable'
-        && details && 'prerequisite' in details ? details.prerequisite : undefined);
+const refusal = (error: unknown, nativeCompose = false): Extract<LocalServiceLauncherStartResolution<SelectedDeclaration>, { ok: false }> => {
+    const childFailure = error instanceof ServiceStartRefusal ? error.childFailure : undefined;
+    const details = readRecord(childFailure?.details ?? (isPluginError(error) ? error.details : undefined));
+    const prerequisite = LocalServiceNativePrerequisiteV1Schema.safeParse(childFailure || (isPluginError(error) && error.code === 'native_tool_unavailable')
+        ? details.prerequisite : undefined);
     const runtimeFailure = WorktreePortsUnavailableV1Schema.safeParse(error && typeof error === 'object' && 'runtimeFailure' in error ? error.runtimeFailure : undefined);
     const failure = LocalServiceEstablishmentFailureV1Schema.safeParse(runtimeFailure.success
         ? { cause: 'runtime_unavailable', reason: runtimeFailure.data.reason,
-            ...(runtimeFailure.data.causeCode ? { causeCode: runtimeFailure.data.causeCode } : {}) } : isPluginError(error)
-        && error.code === 'plugin_managed_service_establishment_failed'
-        && details && 'establishmentFailure' in details ? details.establishmentFailure : undefined);
-    return { ok: false, reasonCode: codeOf(error), failureCause: projectActionFailureCauseV1(error, 'service.launch.supervision', { allowUnknownErrorCode: true }),
+            ...(runtimeFailure.data.causeCode ? { causeCode: runtimeFailure.data.causeCode } : {}) }
+        : childFailure || (isPluginError(error) && error.code === 'plugin_managed_service_establishment_failed')
+            ? details.establishmentFailure : undefined);
+    const reasonCode = !childFailure && failure.success && failure.data.cause === 'port_in_use'
+        ? (nativeCompose ? 'deployment_port_in_use' : 'project_service_start_unavailable') : codeOf(error);
+    return { ok: false, reasonCode,
+        failureCause: childFailure?.failureCause ?? projectActionFailureCauseV1(error, 'service.launch.supervision', { allowUnknownErrorCode: true }),
         ...(error instanceof ServiceStartRefusal && error.review ? error.review : {}),
         ...(failure.success ? { establishmentFailure: failure.data } : {}),
         ...(prerequisite.success ? { prerequisite: prerequisite.data } : {}) };
@@ -771,6 +776,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
 
     async function executeManagedDeclaration(selected: SelectedDeclaration, request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead): Promise<LocalServiceLauncherStartExecutionOutcome> {
         let lease: PluginRuntimeLease | undefined;
+        let nativeCompose = false;
         const nativeInvocations = new Set<ProjectNativeEffectCaptureForHost>();
         let uncertain = false;
         try {
@@ -890,7 +896,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 context, callerInputAuthorization: ingress.callerInputAuthorization,
                 parent: { actionId: 'localServices.launcher.start', input: projectNativeJsonValueForTransport(request) as Record<string, JsonValue> },
                 ...(request.declaration.selection.kind === 'manifest' ? { excludeServiceName: request.declaration.selection.name } : {}) });
-            if (autostartFailure) throw new ServiceStartRefusal(autostartFailure.errorCode);
+            if (autostartFailure) throw new ServiceStartRefusal(autostartFailure.errorCode, undefined, autostartFailure);
             current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
             unchanged(current);
             if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
@@ -903,6 +909,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 && (!current.nativeLifecycleLease || current.nativeLifecycleLease.isCurrent());
             if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
             const builtinNative = current.builtinNative;
+            nativeCompose = builtinNative !== undefined;
             const releaseNativeLifecycle = current.releaseNativeLifecycle;
             const selectedService = current.declaration.selection.kind === 'manifest'
                 ? current.plan.manifest?.services?.[current.declaration.selection.name] : undefined;
@@ -1010,7 +1017,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             return { status: 'succeeded', currentTarget, ...(handle.terminalView ? { terminalView: handle.terminalView } : {}) };
         } catch (error) { uncertain ||= isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) throw error;
-            const denied = refusal(error); return { status: 'denied', reasonCode: denied.reasonCode,
+            const denied = refusal(error, nativeCompose); return { status: 'denied', reasonCode: denied.reasonCode,
             ...(denied.failureCause ? { failureCause: denied.failureCause } : {}),
             ...(denied.establishmentFailure ? { establishmentFailure: denied.establishmentFailure } : {}),
             ...(denied.prerequisite ? { prerequisite: denied.prerequisite } : {}),

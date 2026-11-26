@@ -49,8 +49,14 @@ export async function startProjectSetupAutostartServices(input: Readonly<{
         const started = DaemonLocalServiceLauncherStartResponseV1Schema.safeParse(result.result);
         if (!started.success) return { ok: false, errorCode: 'project_service_start_unavailable', error: 'project_service_start_unavailable' };
         if (started.data.status !== 'succeeded') {
-            const code = started.data.reasonCode!;
-            return { ok: false, errorCode: code, error: code };
+            const { reasonCode, failureCause, establishmentFailure, prerequisite } = started.data;
+            const code = reasonCode!;
+            return { ok: false, errorCode: code, error: code,
+                ...(failureCause ? { failureCause } : {}),
+                ...(establishmentFailure || prerequisite ? { details: {
+                    ...(establishmentFailure ? { establishmentFailure } : {}),
+                    ...(prerequisite ? { prerequisite } : {}),
+                } } : {}) };
         }
     }
     return null;

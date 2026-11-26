@@ -5090,6 +5090,10 @@ content-free `failureCause` through the launcher response, retained Start operat
 replay. The native Start observer carries the supervisor's same failure facts
 into operation settlement, including when the RPC completes successfully. The Action failure carries it at the top level, alongside `errorCode`;
 `details.establishmentFailure` remains the structured process/bind diagnosis.
+On a bind collision the public code is `project_service_start_unavailable` for
+command and terminal services or `deployment_port_in_use` for Compose. Both
+carry the nested `port_in_use` cause. Setup that autostarts a Service carries the
+same failure details and uses the accepted setup's caller authorization.
 Use matching development Protocol and daemon/client sources for the closed
 launcher response. Earlier responses without a cause remain readable.
 

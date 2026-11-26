@@ -1784,7 +1784,7 @@ describe('accepted Project Service declaration starter', () => {
             ...f.request, expectedEffectDigest: review.reviewedEffectDigest,
         }));
         assertActionOutputContract('localServices.launcher.start', result);
-        expect(result).toMatchObject({ status: 'failed', reasonCode: 'plugin_managed_service_establishment_failed',
+        expect(result).toMatchObject({ status: 'failed', reasonCode: 'project_service_start_unavailable',
             failureCause: { phase: 'managed_service.establishment', errorCode: expect.any(String) },
             establishmentFailure: { cause: 'port_in_use', port: address.port, sameProject: true, exitCode: 1,
                 lastStderrLine: `Error: listen EADDRINUSE: address already in use 127.0.0.1:${address.port}` } });
@@ -1795,7 +1795,7 @@ describe('accepted Project Service declaration starter', () => {
         ]);
         expect(f.operationRuntime.store.list({ accountId: 'owner', machineId: f.targetWorkspace.machineId }).items
             .find(item => item.actionId === 'localServices.launcher.start')).toMatchObject({ state: 'failed',
-                error: { errorCode: 'plugin_managed_service_establishment_failed',
+                error: { errorCode: 'project_service_start_unavailable',
                     failureCause: result.failureCause,
                     details: { establishmentFailure: result.establishmentFailure } } });
         const replay = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await action({
@@ -3331,8 +3331,26 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(h.setupProcesses).toEqual([]);
     });
 
-    it('waits for the actual admitted setup PTY exit before establishing the Service', async () => {
+    it.each([false, true])('waits for setup PTY exit and carries an autostart collision (%s)', async childCollision => {
         const h = await fixture(true);
+        const port = 4321;
+        const failureCause = { phase: 'managed_service.establishment', errorClass: 'Error', errorCode: 'port_in_use', httpStatus: null };
+        const establishmentFailure = { cause: 'port_in_use', port, sameProject: false };
+        if (childCollision) {
+            await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(ProjectManifestV1Schema.parse({
+                ...h.manifest, services: { ...h.manifest.services,
+                    web: { source: { kind: 'command', command: 'serve web' }, runtime: { autostart: true } },
+                },
+            })));
+        }
+        const context = { ...h.context, executeHostReviewedChildAction: async (_action: string, input: unknown) => {
+            // The addressed child Machine returns its native Start receipt.
+            expect(input).toMatchObject({ machineId: h.workspace.machineId, declaration: { selection: { name: 'web' } } });
+            return { ok: true as const, result: { protocolVersion: 1, machineId: h.workspace.machineId, targetId: 'web',
+                status: 'failed', reasonCode: 'deployment_port_in_use', failureCause, establishmentFailure,
+                snapshot: { v: 1, machineId: h.workspace.machineId, updatedAt: 1, targets: [] },
+            } };
+        } };
         const setupReview = await h.starter.resolveStartTarget(h.request, h.ingress, h.context);
         if (setupReview.ok || setupReview.reasonCode !== 'project_setup_consent_required' || !setupReview.reviewedEffectDigest) throw new Error('Expected setup review');
         // The Home boundary now reports the pre-existing approved D18 setup row, not a Service trust grant.
@@ -3342,7 +3360,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const resolved = await h.starter.resolveStartTarget(request, h.ingress, h.context);
         if (!resolved.ok) throw new Error(resolved.reasonCode);
         let finished = false;
-        const completion = h.starter.startManagedDeclaration(resolved.declaration, request, h.ingress, h.context).then(result => { finished = true; return result; });
+        const completion = h.starter.startManagedDeclaration(resolved.declaration, request, h.ingress, context).then(result => { finished = true; return result; });
         // The exit subscription is the admitted setup's real signal: a poll can
         // time out under load or exit the PTY before the waiter subscribes.
         await Promise.race([h.setupStarted, completion]);
@@ -3351,6 +3369,11 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(finished).toBe(false);
         expect(h.setupProcesses[0]?.params).toMatchObject({ args: ['-c', 'echo setup'], options: { cwd: h.root } });
         h.setupProcesses[0]!.pty.exit(0);
+        if (childCollision) {
+            expect(await completion).toMatchObject({ status: 'denied', reasonCode: 'deployment_port_in_use', failureCause, establishmentFailure });
+            expect(h.owner.listProjectServices()).toEqual([]);
+            return;
+        }
         expect(await completion).toMatchObject({ status: 'succeeded', currentTarget: { kind: 'managed_service', machineId: 'machine' } });
         expect(h.owner.listProjectServices()[0]?.snapshot()).toMatchObject({ state: 'running', baseUrl: null });
         await h.owner.listProjectServices()[0]?.stop();

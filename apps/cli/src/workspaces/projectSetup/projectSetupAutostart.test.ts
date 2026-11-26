@@ -71,11 +71,15 @@ it('preserves the native Start failure rather than reporting successful autostar
     const executor = createActionExecutor({
         // Addressed native host boundary; the reviewed child still crosses the real Action executor.
         runtimeActionExecute: async () => ({ protocolVersion: 1, machineId: 'machine', targetId: 'web',
-            status: 'denied', reasonCode: 'deployment_port_in_use',
+            status: 'failed', reasonCode: 'deployment_port_in_use',
+            failureCause: { phase: 'managed_service.establishment', errorClass: 'Error', errorCode: 'port_in_use', httpStatus: null },
+            establishmentFailure: { cause: 'port_in_use', port: 4321, sameProject: false },
             snapshot: { v: 1, machineId: 'machine', updatedAt: 1, targets: [] } }),
     });
     const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'person',
         executeHostReviewedChildAction: (actionId, value, childContext) => executor.execute(actionId, value, childContext) };
     expect(await startProjectSetupAutostartServices({ outcome: finished, manifest, parent, context }))
-        .toMatchObject({ ok: false, errorCode: 'deployment_port_in_use' });
+        .toMatchObject({ ok: false, errorCode: 'deployment_port_in_use',
+            failureCause: { phase: 'managed_service.establishment', errorCode: 'port_in_use' },
+            details: { establishmentFailure: { cause: 'port_in_use', port: 4321 } } });
 });

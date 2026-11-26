@@ -1289,7 +1289,7 @@ describe('accepted Project Service declaration starter', () => {
             ...f.request, expectedEffectDigest: review.reviewedEffectDigest,
         }));
         assertActionOutputContract('localServices.launcher.start', result);
-        expect(result).toMatchObject({ status: 'failed', reasonCode: 'plugin_managed_service_establishment_failed',
+        expect(result).toMatchObject({ status: 'failed', reasonCode: 'project_service_start_unavailable',
             establishmentFailure: { cause: 'port_in_use', port: address.port, sameProject: true, exitCode: 1,
                 lastStderrLine: `Error: listen EADDRINUSE: address already in use 127.0.0.1:${address.port}` } });
         expect(f.owner.listProjectServices().map(handle => handle.snapshot())).toEqual([
@@ -1299,7 +1299,7 @@ describe('accepted Project Service declaration starter', () => {
         ]);
         expect(f.operationRuntime.store.list({ accountId: 'owner', machineId: f.targetWorkspace.machineId }).items
             .find(item => item.actionId === 'localServices.launcher.start')).toMatchObject({ state: 'failed',
-                error: { errorCode: 'plugin_managed_service_establishment_failed' } });
+                error: { errorCode: 'project_service_start_unavailable' } });
         expect(occupant.exitCode).toBeNull();
     });
 
