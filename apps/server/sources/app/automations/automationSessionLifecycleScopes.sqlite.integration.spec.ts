@@ -211,7 +211,7 @@ describe('Session lifecycle scoped admission', () => {
         expect(runs.map(run => run.causeSourceSessionId).sort()).toEqual([first.id, second.id].sort());
     });
 
-    it('admits native changed-work facts once across selected launch profiles and ignores unchanged and other-profile turns', async () => {
+    it('shares native changed-work capture across selected Account habits and launch profiles without per-habit SCM reads', async () => {
         const current = await owner();
         const credentials = { token: await createAccountTokenForTests(current.accountId, {
             kind: 'account', authority: 'present_user',
@@ -226,13 +226,14 @@ describe('Session lifecycle scoped admission', () => {
                 })),
             },
         });
-        const selected = await habit(current, {
+        const definition: AutomationSessionLifecycleTrigger = {
             kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
             filter: { v: 1, all: [
                 { field: '/launchProfileId', op: 'in', values: ['profile-one', 'profile-two'] },
                 { field: '/changedFiles', op: 'eq', value: true },
             ] },
-        });
+        };
+        const selected = await habit(current, definition);
         const root = await mkdtemp(join(tmpdir(), 'happier-native-habit-'));
         const git = promisify(execFile);
         const restoreHttp = installEmptyProjectAccountRowsHttpBoundary();
@@ -242,6 +243,11 @@ describe('Session lifecycle scoped admission', () => {
             ? { status: 200, data: artifactListResponse(String(url), []) } : accountGet(url, config));
         const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
             runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+        // Git's own process trace observes capture without replacing a host/SCM owner.
+        let tracePath = '';
+        const gitCommandCount = async () => (await readFile(tracePath, 'utf8')).trim().split('\n')
+            .filter(Boolean).map(line => JSON.parse(line) as { event: string })
+            .filter(event => event.event === 'start').length;
         try {
             process.env.HAPPIER_SERVER_URL = 'http://habit-home.test';
             process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = 'optional';
@@ -255,12 +261,21 @@ describe('Session lifecycle scoped admission', () => {
             await git('git', ['add', 'tracked.txt'], { cwd: root });
             await git('git', ['commit', '-m', 'initial'], { cwd: root });
             const sourceSessions: string[] = [];
+            const matchingTurnGitCommands: number[] = [];
+            let second: Awaited<ReturnType<typeof habit>> | undefined;
             for (const [index, scenario] of [
                 { profileId: 'profile-one', changed: false, runs: 0 },
                 { profileId: 'profile-one', changed: true, runs: 1 },
                 { profileId: 'other-profile', changed: true, runs: 1 },
                 { profileId: 'profile-two', changed: true, runs: 2 },
             ].entries()) {
+                // The first changed turn establishes real SCM work for one habit;
+                // the second selected profile has two habits consuming its one fact.
+                if (index === 3) second = await habit(current, definition);
+                await writeFile(join(root, 'tracked.txt'), 'initial\n');
+                tracePath = join(root, '.git', `habit-processes-${index}.jsonl`);
+                await writeFile(tracePath, '');
+                process.env.GIT_TRACE2_EVENT = tracePath;
                 const source = await db.session.create({ data: { accountId: current.accountId,
                     tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
                 if (scenario.changed && scenario.profileId !== 'other-profile') sourceSessions.push(source.id);
@@ -295,8 +310,10 @@ describe('Session lifecycle scoped admission', () => {
                     enqueueSessionEventCommitted: async () => ({ persisted: true as const, delivered: true as const }),
                     enqueueSessionTurnMutation: async (input: unknown) => {
                         const mutation = SessionTurnMutationV1Schema.parse(input);
+                        const commandsBeforeAdmission = await gitCommandCount();
                         expect(await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation }))
                             .toMatchObject({ ok: true });
+                        expect(await gitCommandCount()).toBe(commandsBeforeAdmission);
                         if (mutation.action === 'complete') terminals.push(mutation);
                     },
                 });
@@ -330,9 +347,14 @@ describe('Session lifecycle scoped admission', () => {
                 };
                 const runtime = { ...createNativeAgentSessionOperations(provider, source.id,
                     undefined, undefined, undefined, undefined, undefined, {
-                        // This vendor boundary fixture does not consume the plugin context.
-                        context: {} as AgentSessionRuntimeContext, cwd: root, connectedAccounts: [],
-                        scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+                        // The vendor fixture needs the host control lifetime, but no plugin services.
+                        context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
+                        cwd: root, connectedAccounts: [],
+                        scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true,
+                            agentIsolation: { read: () => ({ enabled: false, status: {
+                                kind: 'effective', platform: 'linux', agentUser: 'happier-agent',
+                            }, workspaceRoots: [] }) },
+                        }),
                         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
                         cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
                     }), readSessionStartupInstructionsSupport: () => false };
@@ -345,6 +367,7 @@ describe('Session lifecycle scoped admission', () => {
                 let ready = false;
                 base.permissionModeState.messageQueue.push({ text: 'Do the work', localId: inputLocalId,
                     userMessageSeq: userMessage.message.seq }, { permissionMode: 'default' });
+                const commandsBeforeTurn = await gitCommandCount();
                 await runSessionLoopLifecycle({ ...base, opts: { credentials, accountSettingsContext: {
                     source: 'network', scopeKey: accountSnapshot.scopeKey, settings: accountSnapshot.settings,
                     settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], whenRefreshed: null,
@@ -355,6 +378,8 @@ describe('Session lifecycle scoped admission', () => {
                         runPermissionModePromptLoopFn: input => runPermissionModePromptLoop({ ...input,
                             onPromptFailure: async (error, context) => {
                                 failures.push(error);
+                                ready = true;
+                                controller.abort();
                                 await input.onPromptFailure?.(error, context);
                             },
                             shouldExit: () => ready, getAbortSignal: () => controller.signal }),
@@ -374,15 +399,26 @@ describe('Session lifecycle scoped admission', () => {
                     launchProfileId: projectAutomationSessionLifecycleLaunchProfileId(scenario.profileId),
                     changedFiles: scenario.changed,
                 });
+                if (scenario.changed && scenario.profileId !== 'other-profile') {
+                    matchingTurnGitCommands.push(await gitCommandCount() - commandsBeforeTurn);
+                }
                 expect(await db.sessionTurn.findUniqueOrThrow({ where: { sessionId_turnId: {
                     sessionId: source.id, turnId: terminals[0].turnId,
                 } }, select: { initiator: true, workDepth: true, status: true } })).toEqual({
                     initiator: 'user', workDepth: 0, status: 'completed',
                 });
                 // Delivery replay consumes the captured fact, without deriving it again.
+                const commandsBeforeReplay = await gitCommandCount();
                 await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: terminals[0] });
+                expect(await gitCommandCount()).toBe(commandsBeforeReplay);
                 expect(await db.automationRun.count({ where: { automationId: selected.automation.id } })).toBe(scenario.runs);
+                if (second) expect(await db.automationRun.findMany({ where: { automationId: second.automation.id },
+                    select: { triggerId: true, causeSourceSessionId: true } })).toEqual([
+                    { triggerId: second.trigger.id, causeSourceSessionId: source.id },
+                ]);
             }
+            expect(matchingTurnGitCommands[0]).toBeGreaterThan(0);
+            expect(matchingTurnGitCommands[1]).toBe(matchingTurnGitCommands[0]);
             const runs = await db.automationRun.findMany({ where: { automationId: selected.automation.id },
                 select: { triggerId: true, causeSourceSessionId: true } });
             expect(runs.map(run => run.triggerId)).toEqual([selected.trigger.id, selected.trigger.id]);
