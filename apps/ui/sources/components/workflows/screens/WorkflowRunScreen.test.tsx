@@ -1954,6 +1954,26 @@ describe('WorkflowRunScreen', () => {
         expect(sourceAccessResponse).not.toHaveBeenCalled();
     });
 
+    it('returns a draft Run to its retained editor when asked to edit the source', async () => {
+        const artifact = await sourceArtifact('owner');
+        getStorage().getState().updateArtifact(artifact);
+        const returnToRetained = vi.fn(() => true);
+        const run = createWorkflowRunSummaryFixture({ sourceArtifactId });
+        await renderRunScreen({
+            run,
+            wrap: screen => <DestinationInstanceHost tabId="draft-run-tab"
+                ref={{ kind: 'workflowRun', params: { runId: run.id } }}
+                pathname={`/workflows/runs/${run.id}`} focused visible phone
+                navigation={{ ...routerSpy, replace: vi.fn(), returnToRetained }}>
+                {screen}
+            </DestinationInstanceHost>,
+        });
+        expect(readContentProps()?.sourceAction?.kind).toBe('edit');
+        act(() => readContentProps()?.sourceAction?.onPress());
+        expect(returnToRetained).toHaveBeenCalledOnce();
+        expect(routerSpy.push).not.toHaveBeenCalled();
+    });
+
     it('opens a view-only source even when the Run itself can be controlled', async () => {
         const artifact = await sourceArtifact('view');
         getStorage().getState().updateArtifact(artifact);

@@ -1000,15 +1000,15 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
         const lifetime = accountLifetime;
         if (!activelyViewed || !sourceAvailable || sourceRef === null || !lifetime?.isCurrent()) return null;
         const editableSavedSource = sourceArtifactId !== null && sourceAccess !== 'view';
-        const navigate = (href: Parameters<typeof router.push>[0]) => {
+        const navigate = (href: Parameters<typeof router.push>[0], preferRetained = false) => {
             const latest = currentSourceRef.current;
-            if (mountedRef.current && lifetime.isCurrent() && latest.lifetime === lifetime && latest.active
-                && latest.available && latest.identity === sourceIdentity && latest.access === sourceAccess) {
-                router.push(href);
-            }
+            if (!mountedRef.current || !lifetime.isCurrent() || latest.lifetime !== lifetime || !latest.active
+                || !latest.available || latest.identity !== sourceIdentity || latest.access !== sourceAccess) return;
+            if (preferRetained && router.returnToRetained?.()) return;
+            router.push(href);
         };
         return { kind: editableSavedSource ? 'edit' : 'open',
-            onPress: () => navigate(createWorkflowDefinitionRoute(sourceRef) as never),
+            onPress: () => navigate(createWorkflowDefinitionRoute(sourceRef) as never, editableSavedSource),
             ...(editableSavedSource ? { onAddTrigger: () => navigate(resolveTriggerEditorHref({
                 workflowDefinitionId: sourceArtifactId, serverId: lifetime.scope.serverId,
             }) as never) } : {}),
