@@ -308,9 +308,11 @@ export function createExternalMcpServer(params: Readonly<{
               }
               requestedTarget = focusedTarget;
             }
-            if (!builtInActionId.success || (
+            const builtInSpec = builtInActionId.success ? getActionSpec(builtInActionId.data) : null;
+            if (!builtInActionId.success || !builtInSpec || (
               executionPlacement !== 'client'
-              && !hasDeclaredActionDaemonIngress(getActionSpec(builtInActionId.data), 'cli')
+              && !(hasDeclaredActionDaemonIngress(builtInSpec, 'cli')
+                && (daemonControlTarget !== null || builtInSpec.originalExecution?.accountRoot !== 'allowed'))
               && !requiresManagedMachineDaemonIngress(builtInActionId.data, executionPlacement, controlControllerTarget)
               && !REGISTRY_ACTION_IDS_V1.some(id => id === builtInActionId.data)
             )) {

@@ -845,4 +845,74 @@ describe('standalone MCP client Action admission', () => {
       await new Promise<void>(resolve => daemon.close(() => resolve()));
     }
   });
+
+  it('allows accountRoot Actions through standalone MCP when no daemon is captured while keeping daemon-only Actions refused', async () => {
+    const requests: ReturnType<typeof ApprovalRequestV2Schema.parse>[] = [];
+    const artifacts = new Map<string, object>();
+    const home = createServer(async (request, response) => {
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      response.setHeader('content-type', 'application/json');
+      if (path === '/v1/account/encryption/currentness') response.end(JSON.stringify({
+        mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+      }));
+      else if (path === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else if (request.method === 'GET' && path === '/v1/machines/controller') response.end(JSON.stringify({
+        machine: { id: 'controller', managedMachineRef: null, active: true, activeAt: Date.now(),
+          revokedAt: null, replacedByMachineId: null, kind: 'persistent', installationId: 'controller-inst' },
+      }));
+      else if (request.method === 'POST' && path === '/v1/artifacts') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const artifact = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const content = decodePlainArtifactStoredContent(artifact.body);
+        if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') {
+          response.statusCode = 400; response.end('{}'); return;
+        }
+        requests.push(ApprovalRequestV2Schema.parse(JSON.parse(content.body)));
+        const stored = { ...artifact, ownerAccountId: 'mcp-test-account', access: 'owner', encryptionMode: 'plain',
+          dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+          seq: 1, createdAt: 1, updatedAt: 1 };
+        artifacts.set(artifact.id, stored);
+        response.end(JSON.stringify(stored));
+      } else if (request.method === 'GET' && path.startsWith('/v1/artifacts/') && artifacts.has(path.slice('/v1/artifacts/'.length))) {
+        response.end(JSON.stringify(artifacts.get(path.slice('/v1/artifacts/'.length))));
+      } else { response.statusCode = 404; response.end('{}'); }
+    });
+    home.listen(0, '127.0.0.1'); await once(home, 'listening');
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('Missing Home address');
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', JSON.stringify(normalizeActionsSettingsV1({ v: 1 })));
+    const { mcp } = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => createExternalMcpServer({
+      credentials, machineId: 'controller', daemonControlTarget: null,
+      serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) },
+    }));
+    const client = new Client({ name: 'standalone-account-root-no-daemon', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      const readinessInput = getActionSpec('projects.readiness.read').inputSchema.parse({
+        serverId: configuration.activeServerId, machineId: 'controller',
+        projectId: 'project', environments: [{ environmentId: 'production', expectedRevision: 2 }],
+      });
+      const refused = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'projects.readiness.read', input: readinessInput } }));
+      const refusedText = refused.content.find(entry => entry.type === 'text');
+      expect(refusedText?.type === 'text' ? JSON.parse(refusedText.text) : null)
+        .toEqual({ errorCode: 'daemon_unavailable', error: 'daemon_unavailable' });
+      expect(refused.isError).toBe(true);
+
+      const terminateInput = { controllerMachineId: 'controller', relationshipId: 'rel-1' };
+      const terminated = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'workspace.sync.relationship.terminate', input: terminateInput } }));
+      const terminatedText = terminated.content.find(entry => entry.type === 'text');
+      expect(terminatedText?.type === 'text' ? JSON.parse(terminatedText.text) : null)
+        .toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
+      expect(requests).toEqual([expect.objectContaining({
+        actionId: 'workspace.sync.relationship.terminate', actionArgs: terminateInput,
+      })]);
+    } finally {
+      await client.close(); await mcp.close();
+      home.closeAllConnections(); await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
 });
