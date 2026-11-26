@@ -322,30 +322,56 @@ export function StagedReview(
             ? translate('plugins.database.review.titleOne', 'Review 1 change')
             : translate('plugins.database.review.titleCount', 'Review {count} changes', { count })
         }
+        // The one guarantee the review states (D22): one transaction everywhere; on MySQL, writes that triggers make to
+        // non-transactional (MyISAM) tables are the exception, said here rather than in a second note.
         description={
           production
             ? environmentName
-              ? translate(
-                  'plugins.database.review.productionIn',
-                  'These changes go to {name} in {environment} on Production.',
-                  { name: descriptor.label, environment: environmentName },
-                )
-              : translate(
-                  'plugins.database.review.production',
-                  'These changes go to {name} on Production.',
-                  { name: descriptor.label },
-                )
+              ? engineIsMysql
+                ? translate(
+                    'plugins.database.review.productionInMysql',
+                    'These changes go to {name} in {environment} on Production. They apply together, except writes that triggers make to MyISAM tables.',
+                    { name: descriptor.label, environment: environmentName },
+                  )
+                : translate(
+                    'plugins.database.review.productionIn',
+                    'These changes go to {name} in {environment} on Production.',
+                    { name: descriptor.label, environment: environmentName },
+                  )
+              : engineIsMysql
+                ? translate(
+                    'plugins.database.review.productionMysql',
+                    'These changes go to {name} on Production. They apply together, except writes that triggers make to MyISAM tables.',
+                    { name: descriptor.label },
+                  )
+                : translate(
+                    'plugins.database.review.production',
+                    'These changes go to {name} on Production.',
+                    { name: descriptor.label },
+                  )
             : environmentName
-              ? translate(
-                  'plugins.database.review.togetherIn',
-                  'Changes to {name} in {environment} apply together, or not at all.',
-                  { name: descriptor.label, environment: environmentName },
-                )
-              : translate(
-                  'plugins.database.review.togetherTo',
-                  'Changes to {name} apply together, or not at all.',
-                  { name: descriptor.label },
-                )
+              ? engineIsMysql
+                ? translate(
+                    'plugins.database.review.togetherInMysql',
+                    'Changes to {name} in {environment} apply together, or not at all, except writes that triggers make to MyISAM tables.',
+                    { name: descriptor.label, environment: environmentName },
+                  )
+                : translate(
+                    'plugins.database.review.togetherIn',
+                    'Changes to {name} in {environment} apply together, or not at all.',
+                    { name: descriptor.label, environment: environmentName },
+                  )
+              : engineIsMysql
+                ? translate(
+                    'plugins.database.review.togetherToMysql',
+                    'Changes to {name} apply together, or not at all, except writes that triggers make to MyISAM tables.',
+                    { name: descriptor.label },
+                  )
+                : translate(
+                    'plugins.database.review.togetherTo',
+                    'Changes to {name} apply together, or not at all.',
+                    { name: descriptor.label },
+                  )
         }
       />
       {production && target ? host?.renderProductionBackup?.(target) : null}
@@ -363,17 +389,6 @@ export function StagedReview(
           }
         />
       ))}
-      {engineIsMysql ? (
-        // D22: one transaction on MySQL too; only trigger writes to MyISAM tables escape the rollback.
-        <Text
-          tone="secondary"
-          variant="meta"
-          value={translate(
-            'plugins.database.review.mysqlNote',
-            'These changes apply together, but changes that triggers make to non-transactional (MyISAM) tables can’t be rolled back.',
-          )}
-        />
-      ) : null}
       {writeSetup || (policyLifted ? null : execution ? <Action.Failure execution={execution} />
         : outcome && outcome.tone !== 'success'
           ? <ErrorState layout="line" kind="error" title={outcome.text} details={refusalCode} />
