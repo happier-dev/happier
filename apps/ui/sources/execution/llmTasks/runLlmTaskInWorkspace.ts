@@ -9,6 +9,7 @@ import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/pr
 import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { type LlmTaskRunnerUnavailableAgentV1, type LlmTaskIdV1, LLM_TASK_DECLARATIONS_V1, LlmTaskRunnerResolutionWireV1Schema, needsLlmTaskRunnerCandidatesV1, resolveLlmTaskRunnerV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 
@@ -103,6 +104,8 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     instructions?: string;
     resolvedRunner?: LlmTaskRunnerConfigV1;
     continueObservationAfterTimeout?: boolean;
+    /** Contextual title carried onto the underlying execution.run.start operation when surfaced in Activity/Inbox. */
+    operationTitle?: string;
     onStarted?: (runId: string) => void;
     signal?: AbortSignal;
     intent: 'task' | 'scm_commit_message';
@@ -116,6 +119,12 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     if (params.signal?.aborted) return { ok: false, error: 'Task cancelled', errorCode: 'cancelled' };
     const { runner } = resolved;
 
+    const serverId = params.host.kind === 'workspace' ? params.host.workspace.serverId : params.host.serverId;
+    const registerOperationTitle = (runId: string | undefined) => {
+        if (params.operationTitle && serverId && runId) {
+            actionOperationStore.setOperationDisplayTitle({ serverId, operationId: runId }, params.operationTitle);
+        }
+    };
     const accepted: { runId?: string; stop?: Promise<ActionExecuteResult> } = {};
     const stopAcceptedRun = () => {
         if (accepted.runId && !accepted.stop) {
@@ -124,8 +133,9 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     };
     const context: ActionExecutorContext = { ...llmTaskActionContext(params.host),
         ...(params.signal ? { signal: params.signal } : {}),
-        ...(params.onStarted || params.signal ? { onExecutionRunStarted: (runId: string) => {
+        ...(params.onStarted || params.signal || params.operationTitle ? { onExecutionRunStarted: (runId: string) => {
             accepted.runId = runId;
+            registerOperationTitle(runId);
             params.onStarted?.(runId);
             if (params.signal?.aborted) stopAcceptedRun();
         } } : {}),
@@ -156,6 +166,7 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
             context,
         );
         let result = readLlmTaskStartResult(startResult);
+        registerOperationTitle(result.ok ? result.terminal.run.runId : result.runId);
         if (params.continueObservationAfterTimeout && params.host.kind === 'workspace'
             && !result.ok && result.outcome === 'pending' && result.runId !== undefined) {
             result = await observePendingWorkspaceRun(params.host, result.runId, params.signal);

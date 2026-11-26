@@ -64,6 +64,7 @@ export type ActionOperationStoreSnapshot = Readonly<{
     dismissedRecentOperationKeys: ReadonlySet<string>;
     dismissedUnavailableOperationKeys: ReadonlySet<string>;
     followUpAttentionByRequestKey: ReadonlyMap<string, string>;
+    displayTitleByOperationKey: ReadonlyMap<string, string>;
 }>;
 
 export type ActionOperationStore = Readonly<{
@@ -100,7 +101,8 @@ export type ActionOperationStore = Readonly<{
         machineIds: ReadonlySet<string>;
     }>): void;
     setMachineObservation(address: ActionOperationMachineAddress, observation: ActionOperationObservation): void;
-    markTerminalSeen(address: ActionOperationAddress, seenAt?: number): boolean;
+    setOperationDisplayTitle(address: ActionOperationAddress, title: string): void;
+    markTerminalSeen(address: ActionOperationAddress, seenAt?: number, options?: Readonly<{ bindOnTerminal?: true }>): boolean;
     markAllTerminalSeen(seenAt?: number): boolean;
     dismissRecentSucceeded(): boolean;
     dismissUnavailable(address: ActionOperationAddress): boolean;
@@ -123,6 +125,7 @@ const EMPTY_STATE: ActionOperationStoreSnapshot = Object.freeze({
     dismissedRecentOperationKeys: new Set<string>(),
     dismissedUnavailableOperationKeys: new Set<string>(),
     followUpAttentionByRequestKey: new Map<string, string>(),
+    displayTitleByOperationKey: new Map<string, string>(),
 });
 
 const TERMINAL_STATES: ReadonlySet<ActionOperationStateV1> = new Set(['succeeded', 'failed', 'cancelled']);
@@ -161,7 +164,7 @@ export function createActionOperationStore(): ActionOperationStore {
             const key = actionOperationAddressKey({ serverId: scope.serverId, operationId: entry.operationId });
             // The predecessor has no revision acknowledgement. Bind it once to
             // the first terminal replay, then use current revision semantics.
-            if (entry.seenAt !== undefined) seenAtByOperationKey.set(key, { seenAt: entry.seenAt, revision: entry.seenRevision ?? -1 });
+            if (entry.seenAt !== undefined && !seenAtByOperationKey.has(key)) seenAtByOperationKey.set(key, { seenAt: entry.seenAt, revision: entry.seenRevision ?? -1 });
             if (entry.dismissed) dismissedRecentOperationKeys.add(key);
         }
         state = Object.freeze({ ...state, seenAtByOperationKey, dismissedRecentOperationKeys });
@@ -309,7 +312,7 @@ export function createActionOperationStore(): ActionOperationStore {
                     ...(current?.resumeNewSession ? { resumeNewSession: current.resumeNewSession } : {}),
                     ...(recovery ? { agentIsolationRecovery: recovery } : {}) }));
             }
-            if (!operationsByKey && !machineObservationByKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys) return;
+            if (!operationsByKey && !seenAtByOperationKey && !machineObservationByKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys) return;
             publish(Object.freeze({
                 ...state,
                 operationsByKey: operationsByKey ?? state.operationsByKey,
@@ -380,6 +383,7 @@ export function createActionOperationStore(): ActionOperationStore {
             let unavailableOperationKeys: Set<string> | null = null;
             let dismissedUnavailableOperationKeys: Set<string> | null = null;
             let dismissedRecentOperationKeys: Set<string> | null = null;
+            let displayTitleByOperationKey: Map<string, string> | null = null;
             // The complete list cannot retire decisions for rows accepted after
             // its read began, just as it cannot retire those snapshots.
             const retainedAcknowledgementKeys = new Set(listedOperationKeys);
@@ -428,6 +432,10 @@ export function createActionOperationStore(): ActionOperationStore {
                     unavailableOperationKeys ??= new Set(state.unavailableOperationKeys);
                     unavailableOperationKeys.delete(currentOperationKey);
                 }
+                if (state.displayTitleByOperationKey.has(currentOperationKey)) {
+                    displayTitleByOperationKey ??= new Map(state.displayTitleByOperationKey);
+                    displayTitleByOperationKey.delete(currentOperationKey);
+                }
             }
 
             for (const key of persistence.prune({ serverId, accountId: input.accountId },
@@ -456,7 +464,7 @@ export function createActionOperationStore(): ActionOperationStore {
                 machineObservationByKey = new Map(state.machineObservationByKey);
                 machineObservationByKey.set(scopedMachineKey, 'available');
             }
-            if (!operationsByKey && !machineObservationByKey && !seenAtByOperationKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys && !dismissedRecentOperationKeys) return;
+            if (!operationsByKey && !machineObservationByKey && !seenAtByOperationKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys && !dismissedRecentOperationKeys && !displayTitleByOperationKey) return;
             publish(Object.freeze({
                 ...state,
                 operationsByKey: operationsByKey ?? state.operationsByKey,
@@ -465,6 +473,7 @@ export function createActionOperationStore(): ActionOperationStore {
                 dismissedRecentOperationKeys: dismissedRecentOperationKeys ?? state.dismissedRecentOperationKeys,
                 unavailableOperationKeys: unavailableOperationKeys ?? state.unavailableOperationKeys,
                 dismissedUnavailableOperationKeys: dismissedUnavailableOperationKeys ?? state.dismissedUnavailableOperationKeys,
+                displayTitleByOperationKey: displayTitleByOperationKey ?? state.displayTitleByOperationKey,
             }), true, new Set([...input.knownOperationKeys, ...listedOperationKeys]));
         },
         retainAccountMachines(input) {
@@ -476,6 +485,7 @@ export function createActionOperationStore(): ActionOperationStore {
             let unavailableOperationKeys: Set<string> | null = null;
             let dismissedUnavailableOperationKeys: Set<string> | null = null;
             let dismissedRecentOperationKeys: Set<string> | null = null;
+            let displayTitleByOperationKey: Map<string, string> | null = null;
             const changedOperationKeys = new Set<string>();
             for (const key of persistence.prune({ serverId, accountId: input.accountId }, machineId => input.machineIds.has(machineId))) {
                 seenAtByOperationKey ??= new Map(state.seenAtByOperationKey);
@@ -501,6 +511,10 @@ export function createActionOperationStore(): ActionOperationStore {
                     dismissedUnavailableOperationKeys ??= new Set(state.dismissedUnavailableOperationKeys);
                     dismissedUnavailableOperationKeys.delete(currentOperationKey);
                 }
+                if (state.displayTitleByOperationKey.has(currentOperationKey)) {
+                    displayTitleByOperationKey ??= new Map(state.displayTitleByOperationKey);
+                    displayTitleByOperationKey.delete(currentOperationKey);
+                }
             }
             const retainedMachineKeys = new Set([...input.machineIds].map((machineId) => actionOperationMachineAddressKey({ serverId, machineId })));
             let machineObservationByKey: Map<string, ActionOperationObservation> | null = null;
@@ -509,7 +523,7 @@ export function createActionOperationStore(): ActionOperationStore {
                 machineObservationByKey ??= new Map(state.machineObservationByKey);
                 machineObservationByKey.delete(currentMachineKey);
             }
-            if (!operationsByKey && !machineObservationByKey && !seenAtByOperationKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys && !dismissedRecentOperationKeys) return;
+            if (!operationsByKey && !machineObservationByKey && !seenAtByOperationKey && !unavailableOperationKeys && !dismissedUnavailableOperationKeys && !dismissedRecentOperationKeys && !displayTitleByOperationKey) return;
             publish(Object.freeze({
                 ...state,
                 operationsByKey: operationsByKey ?? state.operationsByKey,
@@ -518,6 +532,7 @@ export function createActionOperationStore(): ActionOperationStore {
                 dismissedRecentOperationKeys: dismissedRecentOperationKeys ?? state.dismissedRecentOperationKeys,
                 unavailableOperationKeys: unavailableOperationKeys ?? state.unavailableOperationKeys,
                 dismissedUnavailableOperationKeys: dismissedUnavailableOperationKeys ?? state.dismissedUnavailableOperationKeys,
+                displayTitleByOperationKey: displayTitleByOperationKey ?? state.displayTitleByOperationKey,
             }), true, changedOperationKeys);
         },
         setMachineObservation(address, observation) {
@@ -529,13 +544,30 @@ export function createActionOperationStore(): ActionOperationStore {
             machineObservationByKey.set(key, observation);
             publish(Object.freeze({ ...state, machineObservationByKey }));
         },
-        markTerminalSeen(address, seenAt = Date.now()) {
+        setOperationDisplayTitle(address, title) {
+            const serverId = normalizeActionOperationServerId(address.serverId);
+            const operationId = address.operationId.trim();
+            const normalizedTitle = title.trim();
+            if (!serverId || !operationId || !normalizedTitle) return;
+            const key = actionOperationAddressKey({ serverId, operationId });
+            if (state.displayTitleByOperationKey.get(key) === normalizedTitle) return;
+            const displayTitleByOperationKey = new Map(state.displayTitleByOperationKey);
+            displayTitleByOperationKey.set(key, normalizedTitle);
+            publish(Object.freeze({ ...state, displayTitleByOperationKey }), false, [key]);
+        },
+        markTerminalSeen(address, seenAt = Date.now(), options) {
             const serverId = normalizeActionOperationServerId(address.serverId);
             if (!serverId) return false;
             const key = actionOperationAddressKey({ ...address, serverId });
             const qualifiedOperation = state.operationsByKey.get(key);
             const operation = qualifiedOperation?.snapshot;
-            if (!qualifiedOperation || !operation || !TERMINAL_STATES.has(operation.state)) return false;
+            if (!qualifiedOperation || !operation || !TERMINAL_STATES.has(operation.state)) {
+                if (options?.bindOnTerminal !== true) return false;
+                if (state.seenAtByOperationKey.get(key)?.revision === -1) return false;
+                const seenAtByOperationKey = new Map(state.seenAtByOperationKey).set(key, { seenAt, revision: -1 });
+                publish(Object.freeze({ ...state, seenAtByOperationKey }));
+                return true;
+            }
             const current = state.seenAtByOperationKey.get(key);
             const shouldAdvanceSeen = !current || current.revision < operation.revision;
             const followUpKey = operation.requestId

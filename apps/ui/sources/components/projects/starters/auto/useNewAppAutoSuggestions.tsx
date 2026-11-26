@@ -23,6 +23,7 @@ import {
 import { isUsageLimitedRuntimeIssue, presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { describeAgentReadinessCause } from '@/components/sessions/model/sessionReadinessPresentation';
 import { useDeploymentSuggestionRunner } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
+import { acknowledgeActionOperationSettlementPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -56,6 +57,8 @@ type Phase =
       retryChoice?: LlmTaskRunnerChoiceV1;
       /** Cards a Session's agent checked and handed over: they say so, as the lab's Source row and footer do (jdF-autoRecs). */
       origin?: 'session';
+      /** Accepted execution run whose settlement this mounted surface took in place. */
+      runId?: string;
     }>;
 
 export type NewAppAutoChosen = Readonly<{
@@ -121,7 +124,16 @@ export function useNewAppAutoSuggestions(
   React.useEffect(() => {
     if (!params.active) stop();
   }, [params.active, stop]);
-  React.useEffect(() => () => abort.current?.abort(), []);
+  const mounted = React.useRef(true);
+  React.useEffect(() => () => {
+    mounted.current = false;
+    abort.current?.abort();
+    abort.current = null;
+  }, []);
+  React.useEffect(() => {
+    if (!params.active || !params.serverId || phase.kind !== 'settled' || !phase.runId) return;
+    acknowledgeActionOperationSettlementPresented({ serverId: params.serverId, operationId: phase.runId });
+  }, [params.active, params.serverId, phase]);
 
   const retryChoice = phase.kind === 'settled' ? phase.retryChoice : undefined;
   const changeRetryChoice = React.useCallback((choice: LlmTaskRunnerChoiceV1) => setPhase(current =>
@@ -143,6 +155,7 @@ export function useNewAppAutoSuggestions(
     runStop.current = null;
     setPhase({ kind: 'working', counts: null, runner: null, running: false, stop: 'idle' });
     let runner: Runner | null = null;
+    let runId: string | undefined;
     void suggestDeploySetup({
       serverId: params.serverId,
       description,
@@ -151,9 +164,13 @@ export function useNewAppAutoSuggestions(
       ...(answers ? { answers } : {}),
       ...(followUp?.note === undefined ? {} : { note: followUp.note }),
       choice: retryChoice ?? runnerChoice,
+      operationTitle: t('newApp.auto.suggest'),
       signal: controller.signal,
       onProgress: (progress) => {
-        if (progress.kind === 'run') runStop.current = progress.stop;
+        if (progress.kind === 'run') {
+          runStop.current = progress.stop;
+          runId = progress.runId;
+        }
         if (controller.signal.aborted) return;
         if (progress.kind === 'runner') runner = progress;
         setPhase((current) =>
@@ -167,7 +184,7 @@ export function useNewAppAutoSuggestions(
         );
       },
     }).then((outcome) => {
-      if (abort.current !== controller) return;
+      if (!mounted.current || abort.current !== controller) return;
       if (outcome.kind === 'stopRefused') {
         // Stop was asked and refused: the Run may still be going. Keep it on screen with the refusal.
         setPhase((current) => (current.kind === 'working' ? { ...current, stop: { refused: outcome.code } } : current));
@@ -181,7 +198,8 @@ export function useNewAppAutoSuggestions(
       }
       if ('catalog' in outcome) round.current = { serverId, catalog: outcome.catalog, answers: answers ?? {}, connections };
       if (outcome.kind === 'recommendations') { lastRecommendations.current = outcome; setChosenCardId(cardId(0)); }
-      setPhase({ kind: 'settled', outcome, runner });
+      const settledRunId = (outcome.kind === 'failed' && outcome.stage === 'run' ? outcome.runId : undefined) ?? runId;
+      setPhase({ kind: 'settled', outcome, runner, ...(settledRunId ? { runId: settledRunId } : {}) });
     });
   }, [binding, connections, description, params.serverId, retryChoice, runnerChoice]);
 

@@ -282,18 +282,23 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     const serviceCache = new Map<string, readonly ActionOperationProjection[]>();
 
     const readProjection = (state: ActionOperationStoreSnapshot, key: string, operation: QualifiedActionOperation): ActionOperationProjection => {
-        const snapshot = operation.snapshot;
+        const displayTitle = state.displayTitleByOperationKey.get(key);
+        const effectiveTitle = displayTitle ?? operation.snapshot.title;
         const isUnavailableProjection = state.unavailableOperationKeys.has(key);
         const observation = readOperationObservation(state, key, operation);
         const followUpAttention = readFollowUpAttention(state, operation);
         const cached = projectionCache.get(operation);
         if (
-            cached?.snapshot === snapshot
+            cached
+            && cached.snapshot.title === effectiveTitle
             && cached.serverId === operation.serverId
             && cached.observation === observation
             && cached.isUnavailableProjection === isUnavailableProjection
             && cached.followUpAttention === followUpAttention
         ) return cached;
+        const snapshot = displayTitle && displayTitle !== operation.snapshot.title
+            ? Object.freeze({ ...operation.snapshot, title: displayTitle })
+            : operation.snapshot;
         const projection = Object.freeze({ serverId: operation.serverId, snapshot, observation, isUnavailableProjection, followUpAttention,
             ...(operation.snapshotComplete ? { snapshotComplete: operation.snapshotComplete } : {}),
             ...(operation.agentIsolationRecovery ? { agentIsolationRecovery: operation.agentIsolationRecovery } : {}) });

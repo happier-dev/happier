@@ -1023,6 +1023,100 @@ describe('action operation store', () => {
             hasAttention: false,
         });
     });
+
+    it('binds a foreground-consumed terminal acknowledgement once the terminal snapshot arrives without affecting ordinary markTerminalSeen on running operations', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        const running = operation({ operationId: 'op-running', revision: 1, state: 'running', startedAt: 100 });
+        merge(store, [running]);
+        // Opening a running operation without bindOnTerminal must not pre-acknowledge a future failure.
+        expect(store.markTerminalSeen(operationAddress('op-running'), 120)).toBe(false);
+        merge(store, [operation({ operationId: 'op-running', revision: 2, state: 'failed', startedAt: 100, settledAt: 150,
+            error: { errorCode: 'failed', error: 'Failed' } })]);
+        expect(selectors.selectInbox(store.getSnapshot()).map(entry => entry.operation.snapshot.operationId)).toEqual(['op-running']);
+
+        // A waited foreground surface that already consumed settlement can acknowledge before the failed snapshot lands.
+        expect(store.markTerminalSeen(operationAddress('op-waited-merge'), 200, { bindOnTerminal: true })).toBe(true);
+        expect(store.markTerminalSeen(operationAddress('op-waited-merge'), 205, { bindOnTerminal: true })).toBe(false);
+        // Intermediate running snapshot does not consume the pending terminal binding.
+        merge(store, [operation({ operationId: 'op-waited-merge', revision: 1, state: 'running', startedAt: 180 })]);
+        merge(store, [operation({ operationId: 'op-waited-merge', revision: 2, state: 'failed', startedAt: 180, settledAt: 210,
+            error: { errorCode: 'usage_limit', error: 'Limit' } })]);
+        expect(selectors.selectInbox(store.getSnapshot()).map(entry => entry.operation.snapshot.operationId)).toEqual(['op-running']);
+
+        // Also binds cleanly when the terminal snapshot arrives through machine reconciliation.
+        expect(store.markTerminalSeen(operationAddress('op-waited-reconcile'), 220, { bindOnTerminal: true })).toBe(true);
+        store.reconcileMachineProjection({
+            serverId: SERVER_ID,
+            accountId: 'account-a',
+            machineId: 'machine-a',
+            snapshots: [operation({ operationId: 'op-waited-reconcile', revision: 3, state: 'failed', startedAt: 200, settledAt: 230,
+                error: { errorCode: 'usage_limit', error: 'Limit' } })],
+            knownOperationKeys: new Set(store.getSnapshot().operationsByKey.keys()),
+        });
+        expect(selectors.selectInbox(store.getSnapshot())).toEqual([]);
+        expect(selectors.selectInboxSummary(store.getSnapshot())).toEqual({ count: 0, hasAttention: false });
+    });
+
+    it('projects caller-supplied display titles across revisions without mutating wire snapshots and prunes them on retirement', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        // Register contextual title at start before any snapshot arrives.
+        store.setOperationDisplayTitle(operationAddress('op-titled'), 'Suggest a setup');
+        merge(store, [operation({
+            operationId: 'op-titled',
+            actionId: 'execution.run.start',
+            revision: 1,
+            state: 'running',
+            title: 'Start execution run',
+            startedAt: 100,
+        })]);
+        expect(selectors.selectById(store.getSnapshot(), operationAddress('op-titled'))?.snapshot.title).toBe('Suggest a setup');
+        // Raw wire snapshot stays intact for strict snapshot reconciliation.
+        expect(store.getSnapshot().operationsByKey.get(actionOperationAddressKey(operationAddress('op-titled')))?.snapshot.title)
+            .toBe('Start execution run');
+
+        // Title persists across transition to failed and surfaces in Needs you.
+        merge(store, [operation({
+            operationId: 'op-titled',
+            actionId: 'execution.run.start',
+            revision: 2,
+            state: 'failed',
+            title: 'Start execution run',
+            startedAt: 100,
+            settledAt: 150,
+            error: { errorCode: 'usage_limit', error: 'Limit' },
+        })]);
+        const inbox = selectors.selectInbox(store.getSnapshot());
+        expect(inbox).toHaveLength(1);
+        expect(inbox[0]?.operation.snapshot.title).toBe('Suggest a setup');
+
+        // Title registered after snapshot arrival also updates the projection immediately.
+        merge(store, [operation({
+            operationId: 'op-late-title',
+            actionId: 'execution.run.start',
+            revision: 1,
+            state: 'failed',
+            title: 'Start execution run',
+            startedAt: 110,
+            settledAt: 160,
+            error: { errorCode: 'usage_limit', error: 'Limit' },
+        })]);
+        expect(selectors.selectById(store.getSnapshot(), operationAddress('op-late-title'))?.snapshot.title).toBe('Start execution run');
+        store.setOperationDisplayTitle(operationAddress('op-late-title'), 'Suggest a setup');
+        expect(selectors.selectById(store.getSnapshot(), operationAddress('op-late-title'))?.snapshot.title).toBe('Suggest a setup');
+
+        // Reconciling away retired terminal operations prunes their display titles.
+        store.reconcileMachineProjection({
+            serverId: SERVER_ID,
+            accountId: 'account-a',
+            machineId: 'machine-a',
+            snapshots: [],
+            knownOperationKeys: new Set(store.getSnapshot().operationsByKey.keys()),
+        });
+        expect(store.getSnapshot().displayTitleByOperationKey.size).toBe(0);
+    });
+
     it('accepts a newer settled receipt refinement without reviving the lifecycle', () => {
         const store = createActionOperationStore();
         const selectors = createActionOperationSelectors();

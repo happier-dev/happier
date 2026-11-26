@@ -54,7 +54,7 @@ export type DeploySuggestionOutcome =
     /** Where it failed: before any agent ran (`setup`), or in the agent's Run (`run`, with the Run's typed error when it settled). */
     | Readonly<{ kind: 'failed'; code: string; stage: 'setup' }>
     /** `runner`: the explicit runner the Run used, so the failure can offer that Agent's other routes (usage limit). */
-    | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError; runner: LlmTaskRunnerConfigV1 }>
+    | Readonly<{ kind: 'failed'; code: string; stage: 'run'; runError?: ExecutionRunError; runner: LlmTaskRunnerConfigV1; runId?: string }>
     | Readonly<{ kind: 'stopRefused'; code: string }>
     | Readonly<{ kind: 'stopped' }>;
 
@@ -109,6 +109,8 @@ export async function suggestDeploySetup(params: Readonly<{
     answers?: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
     catalog?: DeploySuggestionCatalogV1;
     choice?: LlmTaskRunnerChoiceV1 | null;
+    /** Contextual title carried onto the underlying execution.run.start operation when surfaced unconsumed. */
+    operationTitle?: string;
     onProgress?: (progress: DeploySuggestionProgress) => void;
     signal?: AbortSignal;
 }>): Promise<DeploySuggestionOutcome> {
@@ -168,6 +170,7 @@ export async function suggestDeploySetup(params: Readonly<{
             const run = await runLlmTaskInWorkspace({ host, choice: params.choice ?? null, resolvedRunner: resolved.runner,
                 task: 'deploy_suggestion', intent: 'task', instructions: DEPLOY_SUGGESTION_INSTRUCTIONS_V1,
                 continueObservationAfterTimeout: true,
+                ...(params.operationTitle ? { operationTitle: params.operationTitle } : {}),
                 intentInput: { input: input.data, resultSchema: zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' }) },
                 ...(params.signal ? { signal: params.signal } : {}),
                 onStarted: runId => params.onProgress?.({ kind: 'run', ...runner, runId, stop: () => stopLlmTaskRun({ host, runId }) }),
@@ -175,7 +178,8 @@ export async function suggestDeploySetup(params: Readonly<{
             if (!run.ok && run.stopRefused) return { kind: 'stopRefused', code: run.errorCode ?? 'execution_run_failed' };
             if (!run.ok) return params.signal?.aborted && run.errorCode === 'cancelled' && !run.runError
                 ? { kind: 'stopped' } : { kind: 'failed', code: run.errorCode ?? 'execution_run_failed', stage: 'run',
-                    runner: resolved.runner, ...(run.runError ? { runError: run.runError } : {}) };
+                    runner: resolved.runner, ...(run.runError ? { runError: run.runError } : {}),
+                    ...(run.runId ? { runId: run.runId } : {}) };
             // The check's own validator, against the exact catalog this run was given (the check Action reads a fresh one).
             const result = validateDeploySuggestionV1(run.terminal.latestToolResult ?? run.terminal.structuredMeta?.payload, catalog);
             const questions = result.questions ? normalizeInteractionTransientQuestionsV1(result.questions) : null;
