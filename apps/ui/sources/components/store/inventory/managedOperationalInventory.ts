@@ -16,6 +16,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { isPluginEventAutomationTrigger, type AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
+import { useAdmittedMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { t } from '@/text';
 import type { InstalledAppRow, InstalledAppsResult } from '../catalog/storeApps';
 import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
@@ -50,13 +51,16 @@ export function useManagedConfiguredBackups(app: InstalledAppsResult) {
 
 export type ManagedWatchedServiceRow = Readonly<{
     kind: 'watchedService'; key: string; scope: ServerAccountScope; machineId: string;
-    native: NonNullable<MachineMetadata['serviceWatchesV1']>['watches'][number];
+    native: Pick<NonNullable<MachineMetadata['serviceWatchesV1']>['watches'][number], 'watchId' | 'name' | 'lifecyclePurpose'>;
 }>;
 type NativeReason = NonNullable<InstalledScopeAdmission['failure']>
     | NonNullable<ReturnType<typeof useInstalledMachines>['failure']>
     | NonNullable<ReturnType<typeof useInstalledMachines>['snapshot']>;
-type WatchedServiceResult = InstalledFamilyResult<ManagedWatchedServiceRow, NativeReason, never>;
+type ServiceList = ReturnType<typeof useAdmittedMachineServicesList>;
+type WatchedServiceResult = InstalledFamilyResult<ManagedWatchedServiceRow, NativeReason
+    | NonNullable<ServiceList['coverage'] | ServiceList['error'] | ServiceList['unavailable']>, never>;
 const EMPTY_ROWS: readonly ManagedWatchedServiceRow[] = Object.freeze([]);
+const NO_WATCH_FIELDS = { machineIds: [], fields: [] } as const;
 type WatchedProjection = Readonly<{ rows: readonly ManagedWatchedServiceRow[]; missing: boolean }>;
 const EMPTY_WATCHED: WatchedProjection = Object.freeze({ rows: EMPTY_ROWS, missing: false });
 
@@ -83,11 +87,26 @@ const EMPTY_CHECK_ROWS: readonly ManagedConfiguredCheckRow[] = Object.freeze([])
 
 /** P30 records only adopted Machine watches here; Environment services stay with their App. */
 export function useManagedWatchedServices(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission): WatchedServiceResult {
-    const held = useInstalledMachines(input, demand, admitted.scope);
+    const { scope } = admitted;
+    const machineId = input.machine?.machineId;
+    const list = useAdmittedMachineServicesList(machineId && scope && !input.projectKey && demand.presented
+        ? { machineId, serverId: scope.serverId, active: true } : null, admitted.binding);
+    const machineRows = React.useMemo<readonly ManagedWatchedServiceRow[]>(() => {
+        if (!machineId || !scope || !list.rows?.length) return EMPTY_ROWS;
+        return list.rows.flatMap(row => row.authority === 'machine' && row.watchId ? [{
+            kind: 'watchedService' as const,
+            key: serverAccountScopedResourceKey(scope, 'watched-service', machineId, row.watchId),
+            scope, machineId, native: { watchId: row.watchId, name: row.name, lifecyclePurpose: row.lifecyclePurpose },
+        }] : []);
+    }, [scope, machineId, list.rows]);
+
+    // The Account-wide view reads retained watch configuration from Home without opening a list on every Machine.
+    const accountScope = machineId ? null : scope;
+    const held = useInstalledMachines(input, demand, accountScope);
     const projectRows = React.useMemo(() => {
         let previous: WatchedProjection = EMPTY_WATCHED;
         return (records: readonly Machine[], machines: ReturnType<typeof useInstalledMachines>['machines'], enabled: boolean): WatchedProjection => {
-            if (!admitted.scope || !enabled) return EMPTY_WATCHED;
+            if (!accountScope || !enabled) return EMPTY_WATCHED;
             const visible = new Set(machines.map(machine => machine.id));
             const byKey = new Map(previous.rows.map(row => [row.key, row]));
             // A visible Machine whose content isn't readable yet may hold watches: it leaves the family partial (as Setup).
@@ -99,7 +118,7 @@ export function useManagedWatchedServices(input: StoreInstalledInput, demand: St
                     return [];
                 }
                 return (machine.metadata.serviceWatchesV1?.watches ?? []).map(native => {
-                    const scope = admitted.scope!;
+                    const scope = accountScope;
                     const key = serverAccountScopedResourceKey(scope, 'watched-service', machine.id, native.watchId);
                     const retained = byKey.get(key);
                     return retained?.native === native ? retained : {
@@ -112,20 +131,30 @@ export function useManagedWatchedServices(input: StoreInstalledInput, demand: St
             return previous;
         };
     // The projection retains native watch identities across Machine metadata/liveness carriers.
-    }, [admitted.scope]);
+    }, [accountScope]);
     const projecting = demand.presented && !input.projectKey && !held.failure;
     // Selected from the Home's list: another Machine's daemon publication that changes no watch keeps the rows.
-    const { rows, missing } = useMachineListForServerSelection(admitted.scope?.serverId ?? '', React.useCallback(
-        (records: readonly Machine[]) => projectRows(records, held.machines, projecting), [projectRows, held.machines, projecting]));
+    const { rows, missing } = useMachineListForServerSelection(accountScope?.serverId ?? '', React.useCallback(
+        (records: readonly Machine[]) => projectRows(records, held.machines, projecting), [projectRows, held.machines, projecting]),
+        accountScope ? undefined : NO_WATCH_FIELDS);
     return React.useMemo<WatchedServiceResult>(() => {
-        if (!admitted.scope) return { rows: EMPTY_ROWS, coverage: admitted.coverage };
+        if (!scope) return { rows: EMPTY_ROWS, coverage: admitted.coverage };
+        if (machineId) {
+            if (!demand.presented) return { rows: EMPTY_ROWS, coverage: 'loading' };
+            if (input.projectKey) return { rows: EMPTY_ROWS, coverage: 'available' };
+            const reason = list.error ?? list.unavailable;
+            if (reason) return { rows: machineRows, coverage: list.rows ? { partial: reason } : { unavailable: reason } };
+            if (!list.rows) return { rows: EMPTY_ROWS, coverage: 'loading' };
+            return { rows: machineRows, coverage: list.coverage ? { partial: list.coverage } : 'available' };
+        }
         if (held.failure) return { rows: EMPTY_ROWS, coverage: { unavailable: held.failure } };
         const snapshot = held.snapshot;
         if (!demand.presented || !snapshot) return { rows: EMPTY_ROWS, coverage: 'loading' };
         if (input.projectKey) return { rows: EMPTY_ROWS, coverage: 'available' };
         return { rows, coverage: !missing && snapshot.kind === 'resolved' && snapshot.settled && snapshot.observation === 'live'
             ? 'available' : { partial: snapshot } };
-    }, [admitted.scope, admitted.coverage, held.failure, held.snapshot, demand.presented, input.projectKey, rows, missing]);
+    }, [scope, admitted.coverage, machineId, machineRows, list.rows, list.error, list.unavailable, list.coverage,
+        held.failure, held.snapshot, demand.presented, input.projectKey, rows, missing]);
 }
 
 /** Attached presets from each Machine's recorded Setup. Directly added items are its Software rows, so they are not repeated here. */

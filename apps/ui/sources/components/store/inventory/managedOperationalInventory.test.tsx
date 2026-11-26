@@ -135,7 +135,7 @@ it('lists configured Backups through the shared App page in Installed and Machin
     await hook.unmount();
 });
 
-it('consumes only recorded watches as configured subjects across both doors without native discovery', async () => {
+it('lists recorded watches across the Account without opening each Machine’s service inventory', async () => {
     const identity = 'srv_inventory_recorded_watches';
     const watches = watchesField({ v: 1, watches: [{ v: 1, watchId: 'adopted-native', name: 'Database watch',
         adapter: { pluginId: 'example.service', localId: 'native' }, nativeResourceId: 'opaque-native-id', lifecyclePurpose: 'infrastructure' }] });
@@ -153,9 +153,6 @@ it('consumes only recorded watches as configured subjects across both doors with
     // Configuration is not a native observation. Opening All starts no list, discovery, logs or control Action.
     expect(native).not.toHaveProperty('state');
     expect(rpc.state.requests).toHaveLength(0);
-    query = { ...query, machine: { serverIdentityId: identity, machineId: 'b' } };
-    await hook.rerender();
-    expect(hook.getCurrent().operationalFamilies.watchedService.rows.map(row => row.machineId)).toEqual(['b']);
     query = { ...query, projectKey: 'unproven-project' };
     await hook.rerender();
     expect(hook.getCurrent().operationalFamilies.watchedService.rows).toEqual([]);

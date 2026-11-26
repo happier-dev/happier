@@ -50,7 +50,7 @@ it('summarizes all-Machine membership once and keeps a subset explicit in the ac
     expect(rpc.state.requests).toHaveLength(0);
 });
 
-it('renders recorded Software and watches in the real Installed page and its Machine door without native enumeration', async () => {
+it('renders recorded Software and watches in Installed and shares the Software projection with its Machine door', async () => {
     const identity = 'srv_installed_page_software';
     const machine = createMachineFixture({ id: 'software-machine', metadata: {
         ...createMachineFixture().metadata!,
@@ -74,7 +74,6 @@ it('renders recorded Software and watches in the real Installed page and its Mac
         <MachineInventoryBlock serverId={scope.serverId} machineId={machine.id} scope={scope} />
     </PluginSurfaceFocusEligibilityProvider>);
     await vi.waitFor(() => expect(embed.findByTestId(`machine.inventory.section.software.row.${row.key}`)).not.toBeNull());
-    expect(embed.findHostByTestId(`machine.inventory.section.watchedService.row.${watch.key}`)).not.toBeNull();
     expect(rpc.state.requests.filter(request => request.method !== 'capabilities.detect')).toHaveLength(0);
 });
 

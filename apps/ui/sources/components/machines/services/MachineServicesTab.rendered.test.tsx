@@ -211,6 +211,47 @@ it('SV-C15 carries the Resource refusal metadata through the Services list hook'
     } finally { await hook.unmount(); }
 });
 
+it('shows a watched service in Machine Overview from the same live Resource as Services', async () => {
+    // QA-B B21: the Machine inventory metadata had no usable watch, but its admitted Services list did.
+    const watchId = '38e09b4f-a87e-4fe2-8a27-1e968d0bce9a';
+    const row = service('happier-qa-b-orch1520-fixture.service', {
+        serviceId: watchId, watchId, lifecyclePurpose: 'infrastructure',
+        identity: { kind: 'adopted', machineId, serviceId: watchId, watchId, watchRevision: 'revision-a' },
+        nativeInstance: { adapter: { pluginId: 'happier.machine.services', localId: 'systemd' },
+            nativeResourceId: 'user/happier-qa-b-orch1520-fixture.service' },
+    });
+    const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }),
+        'machines.services.list', (value, reference) => {
+            expect(reference).toEqual({ hostRead: 'machines.services.list', input: { serverId, machineId } });
+            return value;
+        });
+    const { useManagedInventory } = await import('@/components/store/inventory/useManagedInventory');
+    const { InboxArtifactSourceBoundary } = await import('@/hooks/inbox/useInboxArtifactSource');
+    const { useMachineServicesList } = await import('./useMachineServicesList');
+    const scope = { serverId, accountId };
+    const query = { scope, machine: { serverIdentityId, machineId }, projectKey: null, presented: true,
+        kinds: ['watchedService'] as const };
+    const hook = await renderHook(() => ({
+        overview: useManagedInventory(query).operationalFamilies.watchedService,
+        services: useMachineServicesList({ serverId, machineId, active: true }),
+    }), { wrapper: InboxArtifactSourceBoundary });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().services.rows?.map(service => service.serviceId)).toEqual([watchId]));
+        await vi.waitFor(() => expect(hook.getCurrent().overview.rows.map(watch => watch.native.watchId)).toEqual([watchId]));
+        expect(resource.reads).toBe(1);
+
+        await resource.publish({ kind: 'snapshot', services: [] });
+        await vi.waitFor(() => expect(hook.getCurrent().overview.rows).toEqual([]));
+        expect(hook.getCurrent().services.rows).toEqual([]);
+        expect(resource.reads).toBe(2);
+
+        await resource.publish({ kind: 'snapshot', services: [row] });
+        await vi.waitFor(() => expect(hook.getCurrent().overview.rows.map(watch => watch.native.watchId)).toEqual([watchId]));
+        expect(hook.getCurrent().services.rows?.map(service => service.serviceId)).toEqual([watchId]);
+        expect(resource.reads).toBe(3);
+    } finally { await hook.unmount(); }
+});
+
 it('retains settled Services during credential resolution, publishes changes once and retires another Account\'s rows', async () => {
     const row = service('Continuity');
     const stableRow = service('Unchanged');
