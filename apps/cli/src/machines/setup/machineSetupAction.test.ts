@@ -719,7 +719,8 @@ describe('admitted Machine setup snapshot lifetime', () => {
     }).prepareMachineSetupApply!({ input, context: fixture.context('machines.setup.apply', 'agent-apply-review') });
     expect(approval).toMatchObject({ input, preview: { kind: 'machineSetup', scripts: [{ targetIndex: 0,
       homeId: target.homeId, machineId: target.machineId,
-      review: { steps: plan.review?.steps, presetUpdateEffects: plan.review?.presetUpdateEffects } }] } });
+      review: { steps: plan.review?.steps, presetUpdateEffects: plan.review?.presetUpdateEffects },
+      resolvedSources: plan.resolvedSources }] } });
 
     expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, plan),
       context: fixture.context('machines.setup.apply', 'source-change-apply') })).toMatchObject({ operationId: expect.any(String) });

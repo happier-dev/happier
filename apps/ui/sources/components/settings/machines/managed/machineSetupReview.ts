@@ -104,6 +104,19 @@ export function reviewMachineSetupPlanScripts(review: MachineSetupPlanScriptRevi
     }) };
 }
 
+/** Open this viewer's copies of a Plan, then review exactly the scripts it runs: the one path every Setup review uses. */
+export async function openMachineSetupPlanScriptReview(params: Readonly<{
+    serverId?: string; accountId?: string; signal?: AbortSignal; requireAddresses: boolean;
+    plan: Pick<MachineSetupPlanResultV1, 'sources' | 'resolvedSources'> & Readonly<{ review?: MachineSetupPlanScriptReviewFacts }>;
+}>): Promise<ReturnType<typeof reviewMachineSetupPlanScripts>> {
+    const presentations = await openManagedMachineSetupPlanSourcesV1({
+        ...(params.serverId === undefined ? {} : { serverId: params.serverId }),
+        ...(params.accountId === undefined ? {} : { accountId: params.accountId }),
+        plan: params.plan, ...(params.signal ? { signal: params.signal } : {}),
+    });
+    return reviewMachineSetupPlanScripts(params.plan.review, presentations, params.requireAddresses);
+}
+
 /** One effects-Plan/result admission for preset Use and direct Software, before any Apply. */
 export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
     executeAction: ReturnType<typeof createDefaultActionExecutor>['execute']; context: ActionExecutorContext; homeId: string; machineId: string;
@@ -164,16 +177,15 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
             || expected.candidatePreset === undefined && !sameStrictJsonValue(plan.sources, expectedSources[index])) return fail('plan_changed');
         if (!sameStrictJsonValue(effects.data.removeItemKeys, expected.removeItemKeys)) return fail('plan_changed');
         if (expected.removeItemKeys !== undefined && effects.data.removalPlans === undefined) return fail('managed_response_invalid');
-        let presentations = await openManagedMachineSetupPlanSourcesV1({
+        const scriptReview = await openMachineSetupPlanScriptReview({
             ...(typeof params.context.serverId === 'string' ? { serverId: params.context.serverId } : {}),
             ...(typeof params.context.expectedAccountId === 'string' ? { accountId: params.context.expectedAccountId } : {}),
-            plan: effects.data,
-            signal: params.context.signal,
+            plan, requireAddresses: expected.candidatePreset !== undefined,
+            ...(params.context.signal ? { signal: params.context.signal } : {}),
         });
         if (!current()) return fail('continuation_retired');
-        const scriptReview = reviewMachineSetupPlanScripts(plan.review, presentations, expected.candidatePreset !== undefined);
         if (!scriptReview.ok) return scriptReview;
-        presentations = scriptReview.presentations;
+        const presentations = scriptReview.presentations;
         const reviewedScripts = scriptReview.scripts;
         admitted.push({ ...machineSetupApplyTargetFromPlanV1(expected, plan),
             ...(expected.preset ? { preset: expected.preset } : {}) });

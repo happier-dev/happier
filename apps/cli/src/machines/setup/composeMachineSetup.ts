@@ -154,7 +154,8 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
     const appDeployments: (AppObservation & Readonly<{ targetIndex: number; homeId: string; machineId: string }>)[] = [];
     // The target Plan's own script review, so the approval shows exactly the scripts this Apply runs.
     const scripts: Readonly<{ targetIndex: number; homeId: string; machineId: string;
-      review: Pick<MachineSetupPlanReviewV1, 'steps' | 'presetUpdateEffects'> }>[] = [];
+      review: Pick<MachineSetupPlanReviewV1, 'steps' | 'presetUpdateEffects'>;
+      resolvedSources?: MachineSetupPlanResultV1['resolvedSources'] }>[] = [];
     for (const [targetIndex, target] of input.targets.entries()) {
       if (context.signal?.aborted) return failure('cancelled');
       let exclusions = target.exclusions ?? [];
@@ -178,7 +179,9 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         observedPlan = observed.data;
         const review = observedPlan.review;
         if (review?.presetUpdateEffects) scripts.push({ targetIndex, homeId: target.homeId, machineId: target.machineId,
-          review: { ...(review.steps ? { steps: review.steps } : {}), presetUpdateEffects: review.presetUpdateEffects } });
+          review: { ...(review.steps ? { steps: review.steps } : {}), presetUpdateEffects: review.presetUpdateEffects },
+          // The reviewer's own recipient projections, so the approval opens exactly what Setup Review opens.
+          ...(observedPlan.resolvedSources ? { resolvedSources: observedPlan.resolvedSources } : {}) });
       }
       if (opaqueSources) {
         // The target owns private source opening and native review. An already

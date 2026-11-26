@@ -27,6 +27,7 @@ import { getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/m
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import sodium from '@/encryption/libsodium.lib';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import recordedAgentApply from '@/components/approvals/ApprovalPreviewCard.machineSetupRecorded.json';
 import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
@@ -218,6 +219,36 @@ it('opens the exact retained App invocation when Workflow offers Retry', async (
   await screen.pressByTestIdAsync('machine-setup-app-retry:0.0');
   expect(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0])
     .toBe(`/workflows/runs/run-app?invocationId=failed-app&serverId=${encodeURIComponent(serverId)}`);
+});
+
+it('shows the agent Apply approval\'s readable Team script by its body and only unopened copies by number', async () => {
+  const home = await harness.addHome({ name: 'Approval setup', serverUrl: 'https://approval-setup.example',
+    serverIdentityId: 'srv_approval_setup', accountId: 'owner', currentAccount: true });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  // The live approval.request.get request (TS-QA-AGENT-3/4, Machine 287c) plus the host review's resolvedSources:
+  // retained copies stay null; the newly attached Team preset carries its projection, here Plain so no key material
+  // is needed to open it in this test.
+  const recorded = structuredClone(recordedAgentApply);
+  const target = recorded.actionArgs.targets[0]!;
+  const teamIndex = recorded.preview.deploymentReview.scripts[0]!.review.presetUpdateEffects.scripts.at(-1)!.sourceIndex;
+  const team = { ...target.sources[teamIndex]!, contentEncryptionMode: 'plain' };
+  const sources = target.sources.map((source, index) => index === teamIndex ? team : source);
+  const actionArgs = { ...recorded.actionArgs, targets: [{ ...target, sources }] };
+  const resolvedSources = sources.map((source, index) => index === teamIndex
+    ? { ...team, presetContent: { content: { t: 'plain', v: { v: 1, name: 'cut50-hunt finite tools',
+      setup: { scripts: [{ body: 'printf HUNT_TEAM_TOOLS_REPAIR' }] } } }, recipientEnvelope: null } }
+    : source.kind === 'accountPresetOpaque' ? null : source);
+  const preview = { ...recorded.preview, actionArgs, deploymentReview: { ...recorded.preview.deploymentReview,
+    scripts: [{ ...recorded.preview.deploymentReview.scripts[0]!, resolvedSources }] } };
+  const { ApprovalPreviewCard } = await import('@/components/approvals/ApprovalPreviewCard');
+  const screen = await renderScreen(<ApprovalPreviewCard preview={preview} serverId={serverId}
+    request={{ actionId: recorded.actionId, actionArgs }} />);
+  onTestFinished(() => screen.unmount());
+
+  await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('$ printf HUNT_TEAM_TOOLS_REPAIR'));
+  const text = screen.getTextContent();
+  for (let index = 1; index <= 32; index++) expect(text).toContain(`Script ${index}`);
+  expect(text).not.toContain('Script 33');
 });
 
 it('opens an opaque saved setup source from the exact plan projection without fetching a current preset', async () => {

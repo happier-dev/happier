@@ -4,12 +4,14 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema, MachineSetupResolvedSourceEntryV1Schema,
+    type MachineSetupApplyTargetV1, type MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupChangeGroupRow } from '@/components/settings/machines/managed/MachineSetupChangeGroupRow';
 import { groupMachineSetupChanges } from '@/components/settings/machines/managed/machineSetupReviewChanges';
-import { reviewMachineSetupPlanScripts, type MachineSetupPlanScriptReviewFacts,
+import { openMachineSetupPlanScriptReview, reviewMachineSetupPlanScripts, type MachineSetupPlanScriptReviewFacts,
     type MachineSetupTargetSourcePresentations } from '@/components/settings/machines/managed/machineSetupReview';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { presentUnresolvedMachineSetupSources } from '@/sync/ops/machines/managedMachinePresetCustody';
 import { MachineSetupReviewedStepV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { TEAM_SETUP_RUN_ACTION_ID_V1, TeamSetupBatchInputV1Schema } from '@happier-dev/protocol/teams';
@@ -110,25 +112,62 @@ function readMachineSetupRecipeTargets(request?: ApprovalSummaryInput) {
     return [];
 }
 
-/**
- * The admitting host's preview carries each target Plan's script review; the shared Setup Review owner projects it
- * over the copies this viewer can open. Scripts it cannot place read as not known, never as no change.
- */
-function readMachineSetupApprovalScripts(targets: ReturnType<typeof readMachineSetupRecipeTargets>, preview: unknown) {
-    // The host's prepared review reaches the approval as `request.preview.deploymentReview`.
+type MachineSetupApprovalTarget = ReturnType<typeof readMachineSetupRecipeTargets>[number];
+type MachineSetupApprovalEntry = Readonly<{ target: MachineSetupApplyTargetV1; review?: MachineSetupPlanScriptReviewFacts;
+    resolvedSources?: NonNullable<MachineSetupPlanResultV1['resolvedSources']> }>;
+
+/** The admitting host's prepared review for each Apply target, as delivered at `request.preview.deploymentReview`. */
+function readMachineSetupApprovalEntries(targets: readonly MachineSetupApprovalTarget[], preview: unknown): MachineSetupApprovalEntry[] {
     const scripts = readRecord(readRecord(preview).deploymentReview).scripts;
-    const reviews = Array.isArray(scripts) ? scripts as unknown[] : [];
-    return targets.flatMap((target, targetIndex): MachineSetupTargetSourcePresentations[] => {
+    const reviews = Array.isArray(scripts) ? scripts.map(readRecord) : [];
+    return targets.flatMap((target, targetIndex) => {
         if (!('recipePlans' in target)) return [];
-        const entry = reviews.map(readRecord).find(candidate => candidate.targetIndex === targetIndex
+        const entry = reviews.find(candidate => candidate.targetIndex === targetIndex
             && candidate.homeId === target.homeId && candidate.machineId === target.machineId);
         const review = readMachineSetupPlanScriptReviewFacts(entry?.review);
-        const presentations = presentUnresolvedMachineSetupSources(target.sources);
-        const reviewed = reviewMachineSetupPlanScripts(review, presentations, false);
-        return [{ homeId: target.homeId, machineId: target.machineId, ...(reviewed.ok
-            ? { sources: reviewed.presentations, ...(reviewed.scripts ? { scripts: reviewed.scripts } : {}) }
-            : { sources: presentations, scripts: [{ label: t('machinePresets.setup.review.unknown') }] }) }];
+        const resolved = Array.isArray(entry?.resolvedSources) ? entry.resolvedSources.map(source =>
+            source === null ? { success: true as const, data: null } : MachineSetupResolvedSourceEntryV1Schema.safeParse(source)) : null;
+        const resolvedSources = resolved?.every(source => source.success) ? resolved.map(source => source.data!) : undefined;
+        return [{ target, ...(review ? { review } : {}), ...(resolvedSources ? { resolvedSources } : {}) }];
     });
+}
+
+/** One target's reviewed scripts from the shared Setup Review owner; a Plan it cannot place reads as not known. */
+function presentMachineSetupApprovalScripts(entry: MachineSetupApprovalEntry,
+    reviewed: ReturnType<typeof reviewMachineSetupPlanScripts>): MachineSetupTargetSourcePresentations {
+    const { homeId, machineId, sources } = entry.target;
+    return { homeId, machineId, ...(reviewed.ok
+        ? { sources: reviewed.presentations, ...(reviewed.scripts ? { scripts: reviewed.scripts } : {}) }
+        : { sources: presentUnresolvedMachineSetupSources(sources), scripts: [{ label: t('machinePresets.setup.review.unknown') }] }) };
+}
+
+/**
+ * The approval reviews scripts exactly as Setup Review does: it opens this viewer's copies from the host review's
+ * recipient projections, so a readable copy shows its body and only an unopened copy shows its step number. Until
+ * the copies open, the same review reads them as unopened.
+ */
+function useMachineSetupApprovalScripts(entries: readonly MachineSetupApprovalEntry[], serverId: string | null) {
+    const initial = React.useMemo(() => entries.map(entry => presentMachineSetupApprovalScripts(entry,
+        reviewMachineSetupPlanScripts(entry.review, presentUnresolvedMachineSetupSources(entry.target.sources), false))), [entries]);
+    const opens = entries.some(entry => entry.resolvedSources !== undefined);
+    const { binding } = useServerCredentialAccountScopeBinding(opens ? serverId : null);
+    const [opened, setOpened] = React.useState<Readonly<{ binding: typeof binding; entries: typeof entries;
+        value: MachineSetupTargetSourcePresentations[] }> | null>(null);
+    React.useEffect(() => {
+        if (!binding || !opens) return;
+        const abort = new AbortController();
+        const retirement = binding.onRetire(() => abort.abort());
+        void Promise.all(entries.map(async entry => presentMachineSetupApprovalScripts(entry, await openMachineSetupPlanScriptReview({
+            serverId: binding.scope.serverId, accountId: binding.scope.accountId, signal: abort.signal, requireAddresses: false,
+            plan: { sources: entry.target.sources, ...(entry.resolvedSources ? { resolvedSources: entry.resolvedSources } : {}),
+                ...(entry.review ? { review: entry.review } : {}) },
+        })))).then(value => {
+            if (!abort.signal.aborted && binding.isCurrent()) setOpened({ binding, entries, value });
+        // An unopened copy keeps its step number; a failed open never reads as no change.
+        }, () => undefined);
+        return () => { abort.abort(); retirement.dispose(); };
+    }, [binding, entries, opens]);
+    return opened?.binding === binding && opened.entries === entries ? opened.value : initial;
 }
 
 function readMachineSetupPlanScriptReviewFacts(value: unknown): MachineSetupPlanScriptReviewFacts | undefined {
@@ -145,11 +184,13 @@ function readMachineSetupPlanScriptReviewFacts(value: unknown): MachineSetupPlan
 
 /** The same change groups the Setup tab's review shows (P-M6), so an agent's setup reads the same everywhere. */
 function MachineSetupRecipePreview(props: Readonly<{ request?: ApprovalSummaryInput; preview: unknown; serverId: string | null }>) {
-    const targets = readMachineSetupRecipeTargets(props.request);
+    const targets = React.useMemo(() => readMachineSetupRecipeTargets(props.request), [props.request]);
+    const entries = React.useMemo(() => readMachineSetupApprovalEntries(targets, props.preview), [targets, props.preview]);
+    const scripts = useMachineSetupApprovalScripts(entries, props.serverId);
     const machines = useMachineListForServer(props.serverId ?? '', targets.length > 0 && props.serverId !== null);
     const nameOf = React.useCallback((machineId: string) =>
         getMachineDisplayName(machines?.find(machine => machine.id === machineId)) ?? t('common.unknown'), [machines]);
-    const groups = groupMachineSetupChanges(targets, readMachineSetupApprovalScripts(targets, props.preview));
+    const groups = groupMachineSetupChanges(targets, scripts);
     return groups.length > 0 ? <>{groups.map(group => (
         <MachineSetupChangeGroupRow key={group.kind} group={group} testID={`approvals.preview.${group.kind}`}
             nameOf={nameOf} targetCount={targets.length} />

@@ -211,7 +211,7 @@ export function createManagedMachinePresetReadCustodyV1(params: Readonly<{
 export async function openManagedMachineSetupPlanSourcesV1(params: Readonly<{
     serverId?: string;
     accountId?: string;
-    plan: MachineSetupPlanResultV1;
+    plan: Pick<MachineSetupPlanResultV1, 'sources' | 'resolvedSources'>;
     signal?: AbortSignal;
 }>): Promise<readonly ManagedMachineSetupSourcePresentationV1[]> {
     const { plan } = params;
