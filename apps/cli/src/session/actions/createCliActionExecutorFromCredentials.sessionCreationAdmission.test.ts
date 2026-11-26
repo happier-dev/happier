@@ -387,6 +387,76 @@ describe('paired terminal Action admission', () => {
         });
     });
 
+    it.each(['execute', 'prepare'] as const)('preserves finite service restart %s approval through its Account Home and exact Machine', async method => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-service-restart-ingress-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const actionId = 'localServices.actions.restartManaged';
+            const input = getActionSpec(actionId).inputSchema.parse({ requestId: 'restart', action: 'restart_managed',
+                target: { kind: 'managed_service', machineId: 'own-machine', managedServiceId: 'service' }, force: false });
+            const expected = { ok: true, result: { kind: 'approval_request_created', actionId, artifactId: 'restart-review' } };
+            const keys = nacl.sign.keyPair();
+            const machine = { id: 'own-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                installationId: 'installed', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+                dataEncryptionKey: null, runnerContentKeyBinding: null,
+                access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'owner', displayName: 'Owner' },
+                    role: 'manage', resourceMode: 'plain', accessState: 'ready' }) };
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (url.endsWith('/v1/machines/own-machine')) return { status: 200, data: { machine } };
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            const admittedInvocations: unknown[] = [];
+            const homePost = vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                expect(request.envelope.target).toEqual({ kind: 'machine', machineId: machine.id });
+                expect(request.envelope).toMatchObject({ v: 1, input });
+                if (url.endsWith('/execution-authorization')) {
+                    expect(request.machineId).toBe(machine.id);
+                    return { status: 200, data: { v: 1, token: 'restart-root', binding: {
+                        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 0 },
+                        accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: machine.id, installationId: machine.installationId,
+                        actionId, requestId: request.envelope.requestId, target: request.envelope.target,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
+                }
+                expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
+                const opened = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: machine.id, installationId: machine.installationId,
+                    serverIdentityId: 'srv_home', installationPrivateKey: keys.secretKey, includeInvocation: true });
+                expect(opened?.credentials).toEqual({ token });
+                admittedInvocations.push(opened?.invocation);
+                return { status: 200, data: { v: 1, actionId, requestId: request.envelope.requestId, execution: expected } };
+            });
+            const loopbackExecutions: unknown[] = [];
+            vi.stubGlobal('fetch', async (url: unknown) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
+                loopbackExecutions.push(url);
+                throw new Error('Restart requires original Account Home admission before Machine execution');
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }),
+                    getAccountSettings: () => accountSettingsParse({}) } });
+            const result = method === 'execute' ? await executor.execute(actionId, input, { surface: 'cli' })
+                : await (async () => {
+                    const prepared = await executor.prepare(actionId, input, { surface: 'cli' });
+                    return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+                })();
+            expect(result).toEqual(expected);
+            expect(homePost.mock.calls.map(([url]) => url)).toEqual([
+                `https://home.test/v1/actions/${actionId}/execution-authorization`,
+                `https://home.test/v1/actions/${actionId}`,
+            ]);
+            expect(admittedInvocations).toHaveLength(1);
+            expect(admittedInvocations[0]).toMatchObject({ surface: 'cli', authority: 'present_user', caller: { kind: 'host' } });
+            expect(loopbackExecutions).toEqual([]);
+        });
+    });
+
     it.each([false, true])('routes protected CLI input through its existing Session custody before the native runtime is ready (other local daemon: %s)', async otherLocalDaemon => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-cli-starting-session-input-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 4,
