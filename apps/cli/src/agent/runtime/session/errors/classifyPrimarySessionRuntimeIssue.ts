@@ -13,6 +13,7 @@ import {
 import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
 import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
+import { ProviderProcessExitError } from './ProviderProcessExitError';
 
 export type PrimarySessionRuntimeIssueCause =
   | 'status_error'
@@ -435,6 +436,8 @@ export function classifyPrimarySessionRuntimeIssue(
     ? runtimeAuthSource
     : input.cause === 'process_exit' && providerProcessExitAfterSwitch
     ? 'provider_process_exit_after_switch'
+    : input.error instanceof ProviderProcessExitError
+    ? 'provider_process_exit'
     : input.cause === 'status_error' || input.cause === 'session_error'
     ? refineProviderFailureSource(input, causeSourceMap[input.cause])
     : causeSourceMap[input.cause ?? 'unknown'] ?? 'unknown';

@@ -138,6 +138,7 @@ import {
 } from './connection/sdkContractDisposition';
 import type { PermissionResult } from '@/agent/permissions/permissionResult';
 import type { PermissionMode } from '@/api/types';
+import { ProviderProcessExitError } from '@/agent/runtime/session/errors/ProviderProcessExitError';
 import { AcpPlanProjection, type NormalizedAcpPlanSnapshot } from './plans';
 
 function makeAbortError(message: string): Error {
@@ -1683,10 +1684,14 @@ export class AcpBackend implements AgentBackend {
 
 	      if (!this.disposed && (hasSignal || hasNonZeroCode || hasUnknownExit)) {
 	        logger.debug(`[AcpBackend] Process exited with code ${code}, signal ${signal}`);
-	        const detail = hasSignal ? `Signal: ${signal}` : `Exit code: ${typeof code === 'number' ? code : 1}`;
+	        const exitError = new ProviderProcessExitError({
+	          exitCode: typeof code === 'number' ? code : null,
+	          signal: hasSignal ? signal : null,
+	        });
+	        const detail = exitError.message;
 	        this.lastProcessExitDetail = detail;
-	        this.failPendingResponseWait(new Error(detail));
-	        this.emit({ type: 'status', status: 'error', detail });
+	        this.failPendingResponseWait(exitError);
+	        this.emit({ type: 'status', status: 'error', detail, error: exitError });
 	      }
 
 	      void this.stderrAppender?.close().catch(() => {});
@@ -3866,12 +3871,12 @@ export class AcpBackend implements AgentBackend {
           if (this.toolCalls.activeSize > 0) return;
           const exitCode = this.process?.exitCode;
           if (typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0) {
-            this.failPendingResponseWait(new Error(`Exit code: ${exitCode}`));
+            this.failPendingResponseWait(new ProviderProcessExitError({ exitCode, signal: null }));
             return;
           }
           const signalCode = this.process?.signalCode;
           if (typeof signalCode === 'string' && signalCode.trim().length > 0) {
-            this.failPendingResponseWait(new Error(`Signal: ${signalCode}`));
+            this.failPendingResponseWait(new ProviderProcessExitError({ exitCode: null, signal: signalCode }));
             return;
           }
           this.emitIdleStatus();

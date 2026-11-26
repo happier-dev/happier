@@ -1839,7 +1839,10 @@ local custody still refuses a changed target; transport failures remain retryabl
 
 On Linux, new daemon-spawned runners use a systemd user scope when the provisioned
 `happier-jobs.slice` policy is available. Otherwise the runner launches directly
-and inherits the launching process's cgroup. The installed daemon service uses
+and inherits the launching process's cgroup. The scope sets `OOMPolicy=continue`:
+when the kernel OOM-kills one process inside it, such as a tool command, only that
+process fails and the runner and its agent keep running. With systemd's default
+`stop`, one such kill stopped the whole Session. The installed daemon service uses
 `KillMode=process` so direct children can survive a daemon restart. Reattachment
 tracks existing sessions in their current cgroups.
 
