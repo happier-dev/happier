@@ -19,6 +19,7 @@ import { ExecutionRunPublicStateSchema} from '@happier-dev/protocol/execution/ru
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionMessagesPageV1Schema, SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ReviewWalkthroughResponseSchema } from '@happier-dev/protocol/reviews/reviewNarration';
@@ -232,6 +233,8 @@ let listedRuns: Run[];
 let listResult: Promise<unknown> | null;
 let emittedStarts: Array<Record<string, unknown>>;
 let externalStartBoundary: ((input: unknown) => Promise<unknown>) | undefined;
+let transcriptMessagesBoundary: ((request: ServedHomeRequest) => Response) | undefined;
+let reviewTranscriptAvailable = false;
 let emittedWorkflowStarts: Array<ReturnType<typeof WorkflowRunStartRequestV1Schema.parse>>;
 let emittedHumanReviewerRequests: Array<ReturnType<typeof ReviewReviewersSetInputV1Schema.parse>>;
 let refuseWorkflowStart = false;
@@ -453,6 +456,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         listResult = null;
         emittedStarts = [];
         externalStartBoundary = undefined;
+        transcriptMessagesBoundary = undefined;
+        reviewTranscriptAvailable = false;
         emittedWorkflowStarts = [];
         emittedHumanReviewerRequests = [];
         refuseWorkflowStart = false;
@@ -624,7 +629,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                             ? buildBackendTargetKeyV2({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[engineId] }) : engineId,
                         label: engineId, enabled: backends[engineId]!.available,
                         ...(!backends[engineId]!.available ? { available: false, unavailableCode: 'notInstalled', readiness: 'notInstalled' } : {}),
-                        capabilities: { structuredNarration: true },
+                        capabilities: { structuredNarration: true, sessionTranscript: reviewTranscriptAvailable },
                         ...(reviewProfileIds[engineId] ? { profileId: reviewProfileIds[engineId] } : {}),
                         ...reviewRunners[engineId],
                         ...(engineId === reviewCostEngineId && reviewCostConsent ? { costConsent: reviewCostConsent } : {}),
@@ -680,6 +685,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                         id: session.id, active: session.active, seq: session.seq, metadata: session.metadata,
                     }) }));
                 }
+                if (request.path === '/v1/sessions/session_1/messages' && transcriptMessagesBoundary) return transcriptMessagesBoundary(request);
                 if (request.path.includes('/execution-runs/') && request.path.endsWith('/pending')) {
                     if (request.method === 'GET') return Response.json({ pending: [], discarded: [], pendingVersion: 1, pendingCount: 0 });
                     outbound.push(request);
@@ -2095,6 +2101,53 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await act(async () => toggle.props.onValueChange(true));
         await send();
         expect(emittedStarts[0]).toMatchObject({ notifyParentOnCompletion: true });
+    });
+    it.each(['unselected', 'selected', 'denied'] as const)('reads optional Review transcript through the mounted Action and Session authority (%s)', async mode => {
+        reviewTranscriptAvailable = true;
+        const pages: URL[] = [];
+        const sourceTexts = ['The build passed.', 'The integration command was skipped.'];
+        const rows = sourceTexts.map((text, index) => SessionMessageV1Schema.parse({
+            id: `transcript-${index + 1}`, seq: index + 1, localId: null, messageRole: 'agent', sidechainId: null,
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text } } }, createdAt: index + 1,
+        }));
+        // Only the authenticated Home HTTP boundary is substituted. The Action, captured
+        // Account/Session authority, envelope reader and transcript pagination run for real.
+        transcriptMessagesBoundary = request => {
+            expect([request.home, request.accountId]).toEqual(['home', 'account_1']);
+            const url = new URL(request.url);
+            pages.push(url);
+            if (mode === 'denied') return Response.json({ error: 'forbidden' }, { status: 403 });
+            const second = url.searchParams.get('afterSeq') === '1';
+            return Response.json(SessionMessagesPageV1Schema.parse({ messages: [rows[second ? 1 : 0]],
+                hasMore: !second, nextBeforeSeq: null, nextAfterSeq: second ? null : 1 }));
+        };
+        await mount({ intent: 'review', initialActionInput: { scope: 'repository' } });
+        await reviewers(['claude']);
+        if (mode !== 'unselected') await screen.pressByTestIdAsync('review-start-step:0:transcript');
+        expect(pages).toEqual([]);
+        await send('Inspect the change');
+        if (mode === 'denied') {
+            expect(pages).toHaveLength(1);
+            expect(emittedStarts).toEqual([]);
+            expect(emittedWorkflowStarts).toEqual([]);
+            expect(reviewRouterPush).not.toHaveBeenCalled();
+            expect(input().props.value).toBe('Inspect the change');
+            expect(screen.findByTestId('execution-run-conversation-error')).not.toBeNull();
+            expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+        } else {
+            expect(emittedStarts).toHaveLength(1);
+            const instructions = emittedStarts[0]?.instructions;
+            expect(instructions).toContain('Inspect the change');
+            if (mode === 'selected') {
+                expect(pages.map(url => [url.searchParams.get('scope'), url.searchParams.get('afterSeq')]))
+                    .toEqual([['main', null], ['main', '1']]);
+                for (const text of sourceTexts) expect(instructions).toContain(text);
+                expect(instructions).toContain('Session transcript (complete coverage)');
+            } else {
+                expect(pages).toEqual([]);
+                for (const text of sourceTexts) expect(instructions).not.toContain(text);
+            }
+        }
     });
     it('keeps a single native reviewer refusal and opens its Review after choosing the Agent default', async () => {
         startResults.push(childChoiceRefusal('agent:claude'), started('review-retried'));

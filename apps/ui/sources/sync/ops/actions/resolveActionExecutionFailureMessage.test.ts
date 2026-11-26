@@ -271,9 +271,13 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionErrorMessage({ code }, 'Could not read the network'))
             .toBe(t(key));
     });
-    it.each(['access_denied', 'permission_denied', 'denied', RPC_ERROR_CODES.FORBIDDEN])('preserves the %s denial from a Machine Resource read', code => {
+    it.each(['access_denied', 'permission_denied', 'session_access_denied', 'denied', RPC_ERROR_CODES.FORBIDDEN])('preserves the %s denial from a Resource read', code => {
         expect(resolveActionExecutionErrorMessage({ code, message: 'Resource is unavailable' }, 'Could not read services'))
             .toBe(t('errors.permissionDenied'));
+        expect(presentActionExecutionFailure({ ok: false, errorCode: code, error: code })).toMatchObject({
+            reason: t('errors.permissionDenied'),
+            technicalDetails: expect.arrayContaining([expect.objectContaining({ key: 'code', value: code })]),
+        });
     });
     it('uses the surface fallback for projected adapter errors rather than treating their diagnostic message as authored repair', () => {
         const fallback = t('machineDetailPage.security.staleFailed');
