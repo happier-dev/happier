@@ -290,8 +290,7 @@ import type {
     QualifiedConnectedAccountEstablishedRuntimeOwner,
 } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import {
-    createStableImmutablePluginResourcesOwner,
-    createStableRetainedPluginResourcesOwner,
+    createRetainedRunnerPluginResources,
     createStablePluginResourcesOwner,
     type ResolveSessionResourceAccess,
     type ResourceGeneration,
@@ -8016,49 +8015,23 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 activatedRegistry.activatedPluginIds,
             );
             activePluginIds.add(binding.pluginId);
-            const retainedResourcesOwner =
-                (manifest.contributes.resources ?? []).length > 0
-                    ? verified.sourceKind === 'managed'
-                        ? await createStableImmutablePluginResourcesOwner({
-                        generationId: binding.sourceCustody.kind === 'managed'
-                            ? binding.sourceCustody.immutableGenerationId
-                            : verified.cacheIdentity,
-                        pluginId: binding.pluginId,
-                        rootPath: verified.rootPath,
-                        files: (await readPreparedImmutablePluginGeneration({
-                            paths: storePaths,
-                            immutableGenerationId:
-                                binding.sourceCustody.kind === 'managed'
-                                    ? binding.sourceCustody.immutableGenerationId
-                                    : verified.cacheIdentity,
-                        })).record.files,
-                        declarations:
-                            manifest.contributes.resources ?? [],
-                        ...(manifest.brand?.iconResourceId === undefined
-                            ? {}
-                            : { brandIconResourceId: manifest.brand.iconResourceId }),
-                        ...(manifest.brand?.monochrome === undefined
-                            ? {}
-                            : { brandMonochrome: manifest.brand.monochrome }),
-                        isOccurrenceCurrent:
-                            agentParams.isOccurrenceCurrent,
-                    })
-                        : await createStableRetainedPluginResourcesOwner({
-                            sourceIdentity: verified.cacheIdentity,
-                            pluginId: binding.pluginId,
-                            rootPath: verified.rootPath,
-                            declarations:
-                                manifest.contributes.resources ?? [],
-                            ...(manifest.brand?.iconResourceId === undefined
-                                ? {}
-                                : { brandIconResourceId: manifest.brand.iconResourceId }),
-                            ...(manifest.brand?.monochrome === undefined
-                                ? {}
-                                : { brandMonochrome: manifest.brand.monochrome }),
-                            isSourceCurrent:
-                                agentParams.isOccurrenceCurrent,
-                        })
-                    : null;
+            const sourceIdentity = binding.sourceCustody.kind === 'managed'
+                ? binding.sourceCustody.immutableGenerationId : verified.cacheIdentity;
+            const retainedResources = (manifest.contributes.resources ?? []).length > 0
+                ? await createRetainedRunnerPluginResources({
+                    sourceIdentity,
+                    pluginId: binding.pluginId,
+                    rootPath: verified.rootPath,
+                    declarations: manifest.contributes.resources ?? [],
+                    ...(manifest.brand?.iconResourceId === undefined ? {} : { brandIconResourceId: manifest.brand.iconResourceId }),
+                    ...(manifest.brand?.monochrome === undefined ? {} : { brandMonochrome: manifest.brand.monochrome }),
+                    ...(verified.sourceKind === 'managed' ? { files: (await readPreparedImmutablePluginGeneration({
+                        paths: storePaths, immutableGenerationId: sourceIdentity,
+                    })).record.files } : {}),
+                    isSourceCurrent: agentParams.isOccurrenceCurrent,
+                    ...(currentOccurrenceId && resourcesOwner ? { liveOwner: resourcesOwner } : {}),
+                })
+                : null;
             const services = invocationServiceOwners.createOperationServices(
                 seed,
                 {
@@ -8103,7 +8076,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     ]),
                     eventDeclarationsByPluginId,
                     activePluginIds,
-                    resources: retainedResourcesOwner,
+                    resources: retainedResources?.owner ?? null,
                     // Exact G HostAccess scopes and the live daemon turn
                     // authority fence the stable binary-safe transport.
                     // Request interception is installation-wide current-global
@@ -8124,22 +8097,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     ),
                 },
             );
-            const resourceDescriptors: Record<
-                string,
-                ReturnType<PluginServices['resources']['describe']>
-            > = {};
-            if (
-                services.availability('resources').status
-                    === 'available'
-            ) {
-                for (
-                    const resource
-                    of manifest.contributes.resources ?? []
-                ) {
-                    resourceDescriptors[resource.id] =
-                        services.resources.describe(resource.id);
-                }
-            }
+            const resourceDescriptors = retainedResources && services.availability('resources').status === 'available'
+                ? retainedResources.describe(services.resources) : {};
             const eventSubscriptions = Object.freeze(
                 (manifest.contributes.events ?? []).flatMap(
                     (entry): PluginContributionRef[] => {

@@ -13,6 +13,7 @@ import type { ImmutablePluginGenerationRecord } from '@/plugins/store/registry/g
 
 import {
     MAX_PLUGIN_RESOURCE_BYTES,
+    createRetainedRunnerPluginResources,
     createStablePluginResourcesOwner,
     createStableRetainedPluginResourcesOwner,
 } from './resources';
@@ -527,6 +528,43 @@ describe('dynamic plugin resources (EU-4b §3.6.1)', () => {
         const service = owner.bind({ pluginId: 'acme.long-metadata', signal: new AbortController().signal, isOccurrenceCurrent: () => true });
         expect(service.describe('live')).toMatchObject({ contentType });
         expect(new TextDecoder().decode((await service.read('live')).bytes)).toBe('visible bytes');
+    });
+
+    it('uses the admitted global dynamic producer in retained runner services on demand', async () => {
+        const pluginId = 'acme.retained-resource';
+        const localId = 'live';
+        const contribution = dynamicContribution(pluginId, localId);
+        let reads = 0;
+        const liveOwner = await createStablePluginResourcesOwner({
+            registry: registry([contribution]),
+            generations: new Map(),
+            dynamicOccurrenceIdsByPluginId: new Map([[pluginId, 'admitted-occurrence']]),
+            dynamicProducers: [{ pluginId, localId, runtime: {
+                read: () => JSON.stringify({ revision: ++reads }),
+                observe: () => ({ dispose() {} }),
+            } }],
+        });
+        const retained = await createRetainedRunnerPluginResources({
+            pluginId, rootPath: contribution.pluginRootPath!,
+            sourceIdentity: 'retained-source',
+            declarations: [{ id: localId, source: 'dynamic', kind: 'config', scope: 'global',
+                contentType: 'application/json' }],
+            liveOwner,
+        });
+        if (!retained) throw new Error('Expected Resource service for the admitted dynamic declaration');
+        const controller = new AbortController();
+        try {
+            const service = retained.owner.bind({
+                pluginId, signal: controller.signal, isOccurrenceCurrent: () => true,
+            });
+            expect(retained.describe(service)[localId]).toMatchObject({ id: localId, contentType: 'application/json' });
+            expect(reads).toBe(1);
+            expect(new TextDecoder().decode((await service.read(localId)).bytes)).toBe('{"revision":2}');
+            liveOwner.retirePlugin(pluginId);
+            await expect(service.read(localId)).rejects.toMatchObject({ code: 'plugin_generation_stale' });
+        } finally {
+            controller.abort();
+        }
     });
 
     it('admits independent global producers without an unrelated four-read throttle', async () => {

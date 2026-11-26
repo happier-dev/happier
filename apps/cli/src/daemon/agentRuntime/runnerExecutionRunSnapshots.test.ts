@@ -76,6 +76,20 @@ describe('runner execution-run snapshot SCM preparation', () => {
       });
       try {
         const signal = new AbortController().signal;
+        const prepare = runtime.registry.createRetainedRunnerAgentInvocationServices;
+        if (!prepare) throw new Error('Missing retained Runner PluginServices');
+        const prepareRetainedServices = (agentBinding: typeof binding, correlationId: string) => prepare({
+          binding: agentBinding, sessionId, correlationId, cwd: runtime.happyHomeDir,
+          environment: {}, providerBindingActive: false, signal, isOccurrenceCurrent: () => true,
+        });
+        const immutable = await prepareRetainedServices(retainedAgent, 'immutable-agent-services');
+        expect(immutable.resourceDescriptors['agent-mark']).toMatchObject({ kind: 'asset', contentType: 'image/svg+xml' });
+        const retained = await prepareRetainedServices(binding, 'review-agent-services');
+        expect(retained.resourceDescriptors['review-prompt-resource']).toMatchObject({ kind: 'prompt', contentType: 'text/markdown' });
+        expect(retained.resourceDescriptors).not.toHaveProperty('review-presentation');
+        await expect(retained.services.resources.read('review-prompt-resource')).resolves.toMatchObject({
+          kind: 'prompt', contentType: 'text/markdown',
+        });
         const engine = await leaf.factory({
           plugin: { id: binding.pluginId, version: binding.pluginVersion },
           agent: { id: binding.localAgentId }, signal,

@@ -1124,6 +1124,67 @@ export async function createStableRetainedPluginResourcesOwner(
     });
 }
 
+/**
+ * A retained runner has a context-free Resource service. Its packaged files
+ * stay bound to the attested source, and its daemon-global dynamic Resources
+ * use the producer and observation already admitted for that exact occurrence.
+ */
+export async function createRetainedRunnerPluginResources(
+    params: Parameters<typeof createStableRetainedPluginResourcesOwner>[0] & Readonly<{
+        files?: ImmutablePluginGenerationRecord['files'];
+        liveOwner?: StablePluginResourcesOwner;
+    }>,
+) {
+    const packaged = params.declarations.filter(declaration => !isDynamicPluginResourceContributionV2(declaration));
+    const liveOwner = params.liveOwner?.hasPlugin(params.pluginId) ? params.liveOwner : undefined;
+    const dynamicIds = new Set(liveOwner ? params.declarations.flatMap(declaration => (
+        isDynamicPluginResourceContributionV2(declaration) && declaration.scope === 'global'
+            && (declaration.execution?.target ?? 'daemon') === 'daemon' ? [declaration.id] : []
+    )) : []);
+    if (packaged.length === 0 && dynamicIds.size === 0) return null;
+
+    const filesOwner = params.files
+        ? await createStableImmutablePluginResourcesOwner({
+            ...params, generationId: params.sourceIdentity, files: params.files,
+            declarations: packaged, ...(params.isSourceCurrent ? { isOccurrenceCurrent: params.isSourceCurrent } : {}),
+        })
+        : await createStableRetainedPluginResourcesOwner({ ...params, declarations: packaged });
+
+    const owner: StablePluginResourcesOwner = liveOwner && dynamicIds.size > 0 ? Object.freeze({
+        ...filesOwner,
+        bind(binding: BindPluginResources): PluginResourcesService {
+            const files = filesOwner.bind(binding);
+            const dynamic = liveOwner.bind({
+                ...binding,
+                isOccurrenceCurrent: () => filesOwner.hasPlugin(binding.pluginId) && binding.isOccurrenceCurrent(),
+            });
+            return Object.freeze({
+                ...files,
+                describe: (id: string) => (dynamicIds.has(id) ? dynamic : files).describe(id),
+                read: (id, options) => (dynamicIds.has(id) ? dynamic : files).read(id, options),
+                watch: (id, listener) => (dynamicIds.has(id) ? dynamic : files).watch(id, listener),
+            } satisfies PluginResourcesService);
+        },
+    }) : filesOwner;
+    return {
+        owner,
+        describe(service: PluginResourcesService): Record<string, PluginResourceDescriptor> {
+            const descriptors: Record<string, PluginResourceDescriptor> = {};
+            for (const { id } of packaged) descriptors[id] = service.describe(id);
+            for (const id of dynamicIds) {
+                try {
+                    descriptors[id] = service.describe(id);
+                } catch (error) {
+                    // Cold or failed dynamic observations have no descriptor.
+                    // A demand read still settles through the canonical producer.
+                    if (!isPluginError(error) || error.code === 'plugin_generation_stale' || error.code === 'plugin_resource_aborted') throw error;
+                }
+            }
+            return descriptors;
+        },
+    };
+}
+
 async function createStablePluginResourcesOwnerFromNormalized(
     params: Readonly<{
         contributions: readonly NormalizedResourceContribution[];

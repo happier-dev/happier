@@ -287,6 +287,15 @@ keeps its private family origins list for the existing final outbound destinatio
 check. Native adapters that require a
 Bearer token extract it from the returned header map at their own codec boundary.
 
+## Retained runner Resources (unreleased 0.3)
+
+Runner service preparation binds packaged Resources to the attested Plugin
+source. It uses the daemon Resource owner's existing global dynamic producers
+when that owner holds the same source occurrence. Global descriptors reflect
+observed bytes, and explicit reads use the producer's ordinary demand path.
+Session and surface Resource reads require their original context and continue
+through the daemon Resource owner.
+
 ## Input options Resource queries (unreleased 0.3)
 
 `action.options.resolve` remains the options discovery owner. Its partial
