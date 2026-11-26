@@ -578,7 +578,7 @@ const V3_PAIRING = {
   expiresAtMs: Date.now() + 15 * 60_000,
 };
 
-it.each(['acquire', 'retry', 'wrong-machine'] as const)('uses the prepared SSH guest service during %s', async (action) => {
+it.each(['acquire', 'retry', 'wrong-machine', 'confirmed', 'ready-wrong-machine'] as const)('uses the prepared SSH guest service during %s', async (action) => {
   const controller = new AbortController();
   const machineId = 'prepared-machine';
   const profileId = 'prepared-home';
@@ -587,6 +587,8 @@ it.each(['acquire', 'retry', 'wrong-machine'] as const)('uses the prepared SSH g
     resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'snapshot-guest' } } };
   const enrollmentIdentity = { kind: 'dedicatedDaemonUser' as const, username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'preauthorized' };
   let serviceActive = false;
+  const confirmsReadiness = action === 'confirmed' || action === 'ready-wrong-machine';
+  const enrolling = action === 'acquire' || confirmsReadiness;
   const steps: string[] = [];
   const installRemoteCli = vi.fn(async () => {});
   const status = async ({ label, parsed, timeoutMs, signal }: Parameters<RemoteSshBootstrapMachineDeps['runRemoteCommand']>[0]) => {
@@ -599,12 +601,14 @@ it.each(['acquire', 'retry', 'wrong-machine'] as const)('uses the prepared SSH g
       throw new SystemTaskExecutionError('ssh_command_failed', 'SSH timed out before the prepared guest returned daemon status.');
     }
     return { ok: true, data: { service: { installed: serviceActive }, daemon: { running: serviceActive, healthy: serviceActive },
-      auth: { needsAuth: false, machineId }, server: { activeServerId: profileId } } };
+      auth: { needsAuth: false, machineId: action === 'ready-wrong-machine' ? 'another-machine' : machineId,
+        ...(confirmsReadiness ? { credentialState: 'valid', machineRegistrationState: 'server-confirmed' } : {}) },
+      server: { activeServerId: profileId } } };
   };
   const task = createProductionRemoteSshBootstrapMachineTaskKind({
     resolveHostTrust: async () => ({ status: 'trusted' }), installRemoteCli,
     assertManagedEnrollmentCurrent: async () => {},
-    ...(action === 'acquire' ? {} : { resumeMachineId: machineId }),
+    ...(enrolling ? {} : { resumeMachineId: machineId }),
     approveLocalAuthRequest: async () => {},
     createRemoteEnrollmentExecutor: () => ({
       runHappierJson: async (args) => {
@@ -613,7 +617,7 @@ it.each(['acquire', 'retry', 'wrong-machine'] as const)('uses the prepared SSH g
           serverUrl: HOME_TARGET.canonicalAuthUrl, homeServerIdentityId: HOME_TARGET.homeServerIdentityId }] } };
       },
       runHappierText: async (_args, options) => {
-        if (action !== 'acquire') throw new Error('Registered Machine must not pair again');
+        if (!enrolling) throw new Error('Registered Machine must not pair again');
         const request = { kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
           publicKey: Buffer.alloc(32, 1).toString('base64'), homeServerIdentityId: correlation.homeId,
           pairing: { secretB64Url: Buffer.alloc(32, 2).toString('base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 15 * 60_000 },
@@ -629,8 +633,15 @@ it.each(['acquire', 'retry', 'wrong-machine'] as const)('uses the prepared SSH g
       if (params.label === 'daemon.status') return status(params);
       if (params.label === 'daemon.service.list') return { ok: true, data: { services: [] } };
       if (params.label === 'daemon.service.install') { serviceActive = true; return { ok: true, data: {} }; }
-      if (params.label === 'auth.status') return { ok: true, data: { authenticated: true, credentialState: 'valid',
-        machineRegistrationState: 'server-confirmed', machineId: action === 'wrong-machine' ? 'another-machine' : machineId } };
+      if (params.label === 'auth.status') {
+        if (confirmsReadiness && serviceActive) {
+          throw new SystemTaskExecutionError('ssh_command_failed', 'SSH did not return the post-readiness auth status.');
+        }
+        return { ok: true, data: { authenticated: serviceActive || !enrolling,
+          credentialState: enrolling && !serviceActive ? 'missing' : 'valid',
+          machineRegistrationState: enrolling && !serviceActive ? 'no-local-id' : 'server-confirmed',
+          ...(enrolling && !serviceActive ? {} : { machineId: action === 'wrong-machine' ? 'another-machine' : machineId }) } };
+      }
       throw new Error(`Unexpected command: ${params.label}`);
     },
   });
@@ -641,11 +652,14 @@ it.each(['acquire', 'retry', 'wrong-machine'] as const)('uses the prepared SSH g
   if (action === 'wrong-machine') {
     await expect(result).rejects.toMatchObject({ code: 'machine_identity_mismatch' });
     expect(serviceActive).toBe(false);
+  } else if (action === 'ready-wrong-machine') {
+    await expect(result).rejects.toMatchObject({ code: 'machine_identity_mismatch' });
+    expect(serviceActive).toBe(true);
   } else {
     await expect(result).resolves.toMatchObject({ machineId });
     expect(steps).toContain('daemon.service.verify');
   }
-  expect(installRemoteCli).toHaveBeenCalledTimes(action === 'acquire' ? 1 : 0);
+  expect(installRemoteCli).toHaveBeenCalledTimes(enrolling ? 1 : 0);
 });
 
 function createV3AuthRequestData(overrides: Record<string, unknown> = {}) {

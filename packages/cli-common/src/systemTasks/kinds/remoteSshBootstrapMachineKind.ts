@@ -1197,7 +1197,11 @@ async function runRemoteMachineBootstrapRecipe({
       }
 
       if (parsedRemote.homeTarget) {
-        const confirmed = resolveEnrollMachineReadiness(await flowExecutor.readAuthStatus());
+        // Daemon status already reads the active Home's credential and registration owner.
+        // Standalone enrollment and older daemon status replies still need auth status.
+        const confirmed = daemonStatus?.credentialState !== undefined && daemonStatus.machineRegistrationState !== undefined
+          ? daemonStatus
+          : resolveEnrollMachineReadiness(await flowExecutor.readAuthStatus());
         if (
           confirmed.credentialState !== 'valid'
           || confirmed.machineRegistrationState !== 'server-confirmed'
