@@ -140,6 +140,7 @@ export type HomeAccountChangeEvent = Readonly<{
     usageQueryAffects?: boolean;
     /** Exact material record scope from a consumed page; absence retains full quota recovery. */
     providerAccountUsageRecordIds?: readonly string[];
+    providerAccountUsageBindingServiceKeys?: readonly string[];
     /** Known accepted-history and summary changes for the paired quota record. */
     providerAccountUsageDayChange?: ProviderAccountUsageDayChangeV1;
     /** False only when the focused planner proves no server accounting change since its page cursor. */
@@ -195,6 +196,7 @@ type HomeAccountChangeDetails = Readonly<{
     savedSecretCatalogAffects?: boolean;
     usageQueryAffects?: boolean;
     providerAccountUsageRecordIds?: readonly string[];
+    providerAccountUsageBindingServiceKeys?: readonly string[];
     providerAccountUsageDayChange?: ProviderAccountUsageDayChangeV1;
     /** False only when the focused planner proves no server accounting change since its page cursor. */
     usageAccountingAffects?: boolean;
@@ -661,6 +663,8 @@ export function publishHomeAccountChangeForRouting(
         ...(!coarse && usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
         ...(!coarse && details?.providerAccountUsageRecordIds !== undefined
             ? { providerAccountUsageRecordIds: Object.freeze([...details.providerAccountUsageRecordIds]) } : {}),
+        ...(!coarse && details?.providerAccountUsageBindingServiceKeys?.length
+            ? { providerAccountUsageBindingServiceKeys: Object.freeze([...details.providerAccountUsageBindingServiceKeys]) } : {}),
         ...(!coarse && details?.providerAccountUsageDayChange !== undefined
             ? { providerAccountUsageDayChange: details.providerAccountUsageDayChange } : {}),
         ...(usageAccountingAffects !== undefined ? { usageAccountingAffects } : {}),

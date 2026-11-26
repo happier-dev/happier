@@ -1170,7 +1170,7 @@ export async function getAddressedProviderAccountUsageRecord(
     opts: ProviderAccountUsageSnapshotReadOptions,
 ): Promise<ProviderAccountUsageRecord | null> {
     const id = parseRecordId(recordId);
-    return await readProviderSnapshotWithOwner(credentials, id, { ...opts, retry: 'none' },
+    return await readProviderSnapshotWithOwner(credentials, id, opts,
         undefined, response => readSnapshotRecord(response, id));
 }
 

@@ -1,5 +1,6 @@
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import type { Profile } from '@/sync/domains/profiles/profile';
+import { readUsageAppCallsEnvironmentIds } from '@/sync/domains/usage/usageAppCallsSource';
 import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readRegisteredStorageState, subscribeRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
@@ -44,7 +45,9 @@ export function readUsageQuotaChangedRecordIds(event: HomeAccountChangeEvent): r
 
 /** A service publication identifies the bindings to verify, without asserting that they changed. */
 export function readUsageQuotaBindingServiceKeys(event: HomeAccountChangeEvent): readonly string[] | undefined {
-    if (event.source === 'connected' || !isUsageQuotaHomeAccountChange(event)) return undefined;
+    if (event.source === 'connected' || event.source === 'snapshot') return undefined;
+    if (event.feedPageConsumed) return event.providerAccountUsageBindingServiceKeys;
+    if (!isUsageQuotaHomeAccountChange(event)) return undefined;
     const keys: string[] = [];
     for (const entityId of event.entityIds ?? []) {
         const change = readConnectedServicesAccountChangeV1({ kind: 'account', entityId });
@@ -76,6 +79,8 @@ export function readUsageAccountingChangeScope(event: HomeAccountChangeEvent): U
 export function usageAccountingChangeAffectsQueries(queries: readonly UsageQuery[], change: UsageAccountingChangeScope): boolean {
     const sessionIds = new Set(change.sessionIds);
     return queries.some(query => query.includeAccounting
+        // A scoped Session ledger change cannot invalidate App collector facts.
+        && readUsageAppCallsEnvironmentIds(query.sources) === null
         && (query.session === null || (typeof query.session === 'string' ? sessionIds.has(query.session)
             : query.session.some(id => sessionIds.has(id))))
         && (change.observedFromMs === undefined
@@ -88,7 +93,8 @@ export function isUsageProjectionHomeAccountChange(event: HomeAccountChangeEvent
     // A mounted Usage owner already observes its material inputs and the
     // focused durable catch-up. A secondary socket reconnect changes neither.
     // An actual snapshot/reset cannot name changes and still demands once.
-    if (recordIds !== undefined && !recordIds.some(id => usageQuotaRecordChangeAffects(id, readUsageQuotaChangedRecordIds(event)))) return false;
+    if (recordIds !== undefined && !recordIds.some(id => usageQuotaRecordChangeAffects(id, readUsageQuotaChangedRecordIds(event)))
+        && readUsageQuotaBindingServiceKeys(event) === undefined) return false;
     return event.source === 'snapshot' || !observesMaterialInputs && event.source === 'connected' || event.usageQueryAffects !== false
         && ((!observesMaterialInputs && event.entityIds === undefined) || event.entityIds?.some(isProviderAccountUsageChangeEntityIdV1) === true
             || (event.changeKinds === undefined || event.changeKinds.includes('account'))
@@ -222,23 +228,23 @@ export function getUsageQueryPoolMachineSelection(machines: Readonly<Record<stri
     return selectUsagePoolMachine(readUsageMachineFacts(machines, nowMs, scope), machineIds);
 }
 
-function consumedMachineKey(facts: ReturnType<typeof readUsageMachineFacts>, consumers: UsageQueryMachineConsumers,
-    readMissingReadiness?: (machineId: string) => ReturnType<typeof readUsageWorkMachineReadiness>): string {
+function readConsumedMachineFacts(facts: ReturnType<typeof readUsageMachineFacts>, consumers: UsageQueryMachineConsumers,
+    readMissingReadiness?: (machineId: string) => ReturnType<typeof readUsageWorkMachineReadiness>) {
     const byId = new Map(facts.map(machine => [machine.id, machine]));
-    return JSON.stringify([
+    return [
         consumers.includeMachineNames === false ? [] : facts.map(machine => [machine.id, machine.name]),
         consumers.poolMachineFilters.map(ids => selectUsagePoolMachine(facts, ids)),
         [...new Set(consumers.sessionMachineIds)].sort().map(id => {
             const machine = byId.get(id);
             return [id, machine?.replaced, machine?.readiness ?? readMissingReadiness?.(id)];
         }),
-    ]);
+    ] as const;
 }
 
 export function getUsageQueryMachineInvalidationKey(machines: Readonly<Record<string, Machine>>, nowMs = Date.now(),
     scope?: ServerAccountScope | null, consumers: UsageQueryMachineConsumers = NO_MACHINE_CONSUMERS): string {
-    return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers,
-        id => readUsageWorkMachineReadiness(scope, id, undefined, nowMs));
+    return JSON.stringify(readConsumedMachineFacts(readUsageMachineFacts(machines, nowMs, scope), consumers,
+        id => readUsageWorkMachineReadiness(scope, id, undefined, nowMs)));
 }
 
 type QuotaAccount = Profile['connectedAccountsV4'][number];
@@ -262,7 +268,7 @@ function changedQuotaSourceKeys(before: readonly QuotaAccount[], after: readonly
         !sameStrictJsonValue(previous.get(key), current.get(key)));
 }
 
-export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-pool-inputs' | 'quota-projection-inputs' | 'material-inputs' | 'projection-inputs';
+export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-pool-inputs' | 'quota-projection-inputs' | 'material-inputs' | 'projection-inputs' | 'session-evidence';
 
 /** State invalidation for the Account-owned Usage Resource; not a second data reader. */
 export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQueryStateInvalidation, quotaSourceKeys?: readonly string[]) => void,
@@ -306,27 +312,19 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
                 : !sameStrictJsonValue(input, observedInputs[index])));
         const consumers = !machineFactsCurrent ? readMachineConsumers(inputs[3] ?? {}) : undefined;
         const previousConsumers = !machineFactsCurrent && !sameMachineRows ? readMachineConsumers(observedInputs[3] ?? {}) : consumers;
-        const changed = !machineFactsCurrent && consumedMachineKey(machineFacts.facts, consumers!)
-            !== consumedMachineKey(observedMachineFacts.facts, previousConsumers!)
-            // Profile/Settings hydration can replace these small admitted inputs
-            // without changing Usage evidence. Compare only changed references;
-            // ordinary store churn still exits before any projection work.
-            || changedInputs.some(Boolean);
-        // Presentation preferences do not change admitted allowance facts.
-        // Quotas use the server feature bit only; experiments and local feature
-        // toggles can change Usage presentation but never that decision.
-        const machineAdmissionChanged = !machineFactsCurrent
-            && consumedMachineKey(machineFacts.facts, { ...consumers!, includeMachineNames: false })
-                !== consumedMachineKey(observedMachineFacts.facts, { ...previousConsumers!, includeMachineNames: false });
-        const sessionMachineAdmissionChanged = machineAdmissionChanged
-            && consumedMachineKey(machineFacts.facts, { includeMachineNames: false, poolMachineFilters: [],
-                sessionMachineIds: consumers!.sessionMachineIds })
-                !== consumedMachineKey(observedMachineFacts.facts, { includeMachineNames: false, poolMachineFilters: [],
-                    sessionMachineIds: previousConsumers!.sessionMachineIds });
-        // Session targets and Account scopes also serve quota-free Work.
-        // Connected accounts, groups and pool selectors serve allowance demand.
-        const materialInputsChanged = [0, 4].some(index => changedInputs[index]) || sessionMachineAdmissionChanged;
-        const quotaPoolInputsChanged = [1, 2].some(index => changedInputs[index]) || machineAdmissionChanged;
+        let machineNamesChanged = false;
+        let poolMachineChanged = false;
+        let workMachineChanged = false;
+        if (consumers && previousConsumers) {
+            const [names, pools, work] = readConsumedMachineFacts(machineFacts.facts, consumers);
+            const [previousNames, previousPools, previousWork] = readConsumedMachineFacts(observedMachineFacts.facts, previousConsumers);
+            machineNamesChanged = !sameStrictJsonValue(names, previousNames);
+            poolMachineChanged = !sameStrictJsonValue(pools, previousPools);
+            workMachineChanged = !sameStrictJsonValue(work, previousWork);
+        }
+        const scopeChanged = changedInputs[0] || changedInputs[4];
+        const quotaPoolInputsChanged = changedInputs[1] || changedInputs[2] || poolMachineChanged;
+        const presentationInputsChanged = machineNamesChanged || changedInputs.slice(5).some(Boolean);
         const quotaAccounts = changedInputs[1] ? readUsageQuotaAccounts(inputs[1] ?? []) : observedQuotaAccounts;
         const quotaSourceKeys = quotaPoolInputsChanged ? changedQuotaSourceKeys(observedQuotaAccounts, quotaAccounts) : undefined;
         observedInputs = inputs;
@@ -335,8 +333,11 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         // A synchronous Resource invalidation can re-enter admission. Those
         // reads already consume these facts, including this request revision.
         observedReachabilityRevision = reachabilityRevision;
-        if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaPoolInputsChanged ? 'quota-pool-inputs'
-            : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs', materialInputsChanged ? undefined : quotaSourceKeys);
+        if (scopeChanged) invalidate('material-inputs');
+        else if (workMachineChanged && (quotaPoolInputsChanged || presentationInputsChanged)) invalidate('material-inputs', quotaSourceKeys ?? []);
+        else if (workMachineChanged) invalidate('session-evidence');
+        else if (quotaPoolInputsChanged) invalidate('quota-pool-inputs', quotaSourceKeys);
+        else if (presentationInputsChanged) invalidate(changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
     };
     const reconcileMissedInputs = () => reconcile(readMachineRequestReachabilityRevision() !== observedReachabilityRevision);
     const dispose = observe(() => {

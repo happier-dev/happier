@@ -2662,8 +2662,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // Wakes can change Work's admitted inputs, but their routing
                 // hints do not prove a change. Compare the newly admitted facts.
                 const reuseWork = admission?.settled === true && !retained.error
-                    && !readDemand.some(demand => demand.authorityChanged || demand.reuseWorkOnWake === false)
-                    && (readDemand.some(demand => demand.reuseWorkOnWake === true)
+                    && !readDemand.some(demand => demand.authorityChanged || demand.reuseWorkOnWake === false && !retryRequested)
+                    && (retryRequested || readDemand.some(demand => demand.reuseWorkOnWake === true)
                         || (admission.inputs[0] === readInputs[0] && admission.inputs[1] === readInputs[1]
                             && readInputs.slice(2).some((identity, index) => identity !== admission.inputs[index + 2])));
                 const seedWorkInputs = new Map<string, UsageWorkMachineInput>();
@@ -2775,7 +2775,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 };
                 const contentFor = async (batch: UsageQueryBatchResult): Promise<ResourceContent> => {
                     assertProjectionCurrent();
-                    requireCurrent(sharedContext, options?.signal);
                     if (withdrawn) batch = { ...batch, results: batch.results.map(slice => {
                         const refusal = withdrawn?.get(slice.key);
                         return refusal ? withdrawUsageQuerySlice(slice, refusal.errorCode) : slice;
@@ -2904,7 +2903,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                                     && prior.machineKey === input.machineKey
                                     && hasSameUsageQueryWorkEvidenceMembership({ query, admittedTurns: turns, previousAdmittedTurns: prior.turns })
                                     ? prior.source : undefined;
-                                return { retained, settle: source => acquiredWorkInputs.set(queryKey, { ...input, turns, source }) };
+                                return {
+                                    retained: retryRequested && retained && canRetryUsageCoverageFailure({ ...retained, source: 'work' })
+                                        ? undefined : retained,
+                                    settle: source => acquiredWorkInputs.set(queryKey, { ...input, turns, source }),
+                                };
                             },
                             retainedProjection,
                             retryAccountingFailuresOnly: retryRequested && admission !== undefined,
@@ -3120,7 +3123,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         woken = true;
                         if (!readsAllowance) return;
                         allowanceReadDemand = true; allowanceTargets = undefined; allowanceDayChange = undefined;
-                        projectionOnly = false; allowanceOnlyDemand = false; woken = true;
+                        projectionOnly = false; allowanceOnlyDemand = false;
                     },
                     isAllowanceReadPending() {
                         return allowanceReadDemand === true || activeReadDemand !== undefined
@@ -3212,18 +3215,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 : { reusable: false, currentSnapshot: undefined }, (reference, entry) => {
             if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'usage.query') return usagePresentationReady;
             const queries = normalizeUsageQueryBatchInput(reference.input).queries;
-            const { readInputs, reusable } = readUsageAdmission(reference, queries);
+            const { reusable } = readUsageAdmission(reference, queries);
             const initial = entry.getSnapshot();
-            const initialAdmission = initial.value && decodedValues.get(initial.value)?.admission;
-            const matches = (admission: typeof initialAdmission) => !!admission
-                && admission.inputs.length === readInputs.length
-                && admission.inputs.every((identity, index) => identity === readInputs[index]);
             // A retained Resource value is already admitted to this Account.
             // Present it immediately while its replacement is acquired, including
             // before physical issuance. Cold/superset accounting still waits for
             // its own admission; readiness never skips the replacement read.
-            let ready = initial.value !== undefined || reusable || queries.every(query => !query.includeAccounting)
-                || initial.subscription === 'live' && initial.pending !== 'idle' && matches(initialAdmission);
+            let ready = initial.value !== undefined || reusable || queries.every(query => !query.includeAccounting);
             if (!ready && sharedContext.readTransport && admittedAccounting?.answers.size) ready = queries.every(query => resolveUsagePageAccountingReads([query],
                 accountingInputs.get(accountingInputKey(query))?.nowMs ?? Date.now()).every(read => {
                 const demand = resolveUsageAccountingDemand(sharedContext, read.query, read.period);
@@ -3239,7 +3237,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const admission = snapshot.value && decodedValues.get(snapshot.value)?.admission;
                 // This entry's producer and Resource store already guard
                 // currentness and retirement before publishing a new admission.
-                ready = !!admission && admission !== initialAdmission
+                ready = !!admission
                     || snapshot !== initial && snapshot.pending === 'idle' && !!snapshot.error;
                 return ready;
             };

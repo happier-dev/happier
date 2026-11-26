@@ -3590,15 +3590,31 @@ describe('usage query captured Resource adapter', () => {
     } finally { held.resolve(); release(); account.dispose(); }
   });
 
-  it('refreshes quota-free Work after an authenticated Machine reconnect', async () => {
+  it.each([false, true])('refreshes only Work after an authenticated Machine reconnect (quota: %s)', async includeQuota => {
     let daemonReachable = false;
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'unrelated-allowance' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const now = Date.now();
+    const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'weekly', label: 'Weekly', usedPct: 40, utilizationPct: 40, used: null, limit: null, unit: 'count', status: 'ok',
+        resetsAt: now + 3_600_000, windowDurationMs: 7 * 86_400_000 }] });
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json({ ...value,
         contributions: [workContribution, { ...workContribution, id: 'sibling-cost', sessionId: 'work-sibling' }] });
+      if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json(ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json(ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({
+        source, recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: record.fetchedAtMs, staleAfterMs: 600_000 });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({ content: { t: 'plain', v: record },
+        metadata: { fetchedAt: record.fetchedAtMs, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
       return createPlainMachineReadHttpResponseFixture(request.path, {
         method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
       }, 'account-a', { active: daemonReachable, activeAt: daemonReachable ? Date.now() : 1, presenceProtocolVersion: 1 }) ?? undefined;
-    });
+    }, { connectedAccountsV4: includeQuota ? [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] : [] });
     const scope = captured.accountLifetime.scope;
     const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } });
     await publishMachineInventoryForTest(scope, [machine]);
@@ -3619,11 +3635,13 @@ describe('usage query captured Resource adapter', () => {
         sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [], pullRequestsRead: true,
       })) });
     });
-    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota, includeQuotaHistory: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, workProjection: 'summary', includeComparison: false });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
     const release = entry.subscribe(() => {}, true);
-    const work = () => entry.getSnapshot().value && decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.workSummary;
+    const slice = () => entry.getSnapshot().value && decodeUsageQueryResource(entry.getSnapshot().value!).results[0];
+    const work = () => slice()?.workSummary;
+    const allowanceRequests = () => home!.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/'));
     try {
       await entry.refresh();
       await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
@@ -3632,6 +3650,9 @@ describe('usage query captured Resource adapter', () => {
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources).toContainEqual(expect.objectContaining({
         source: 'work', status: 'unknown', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 2 },
       }));
+      if (includeQuota) expect(slice()?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(40);
+      const quotaReads = allowanceRequests().length;
+      if (includeQuota) expect(quotaReads).toBeGreaterThan(0);
       const accountingReads = home!.requests.filter(request => request.path === '/v2/usage/query').length;
       scmTransport.mockClear();
       daemonReachable = true;
@@ -3639,15 +3660,15 @@ describe('usage query captured Resource adapter', () => {
         machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
       // Presence does not retire a failed request; the authenticated reconnect does.
       clearMachineRequestReachabilityForMachine(scope, machine.id);
-      expect(entry.isAllowanceReadPending(), 'Machine recovery has no allowance consumer').toBe(false);
+      expect.soft(entry.isAllowanceReadPending(), 'Work Machine recovery leaves allowance settled').toBe(false);
       await expect.poll(() => work()?.mergedPrCount).toBe(1);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(scmTransport, 'one recovered Machine carries both admitted Session selectors in one batch').toHaveBeenCalledTimes(1);
       expect(scmTransport.mock.calls[0]?.[0].payload.sessions.map((session: { sessionId: string }) => session.sessionId).sort())
         .toEqual(['work-session', 'work-sibling']);
       expect(home!.requests.filter(request => request.path === '/v2/usage/query'), 'Machine recovery keeps admitted accounting').toHaveLength(accountingReads);
-      expect(home!.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')),
-        'Machine recovery acquires only consumed Work evidence').toHaveLength(0);
+      expect.soft(allowanceRequests(), 'Work Machine recovery leaves an unrelated account allowance admitted').toHaveLength(quotaReads);
+      if (includeQuota) expect(slice()?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(40);
     } finally { release(); }
   });
 
@@ -10767,6 +10788,59 @@ describe('usage query Work composition', () => {
       clearMachineRequestReachabilityForMachine(scope, machineId);
     }
   });
+
+  it.each(['readable', 'refused'] as const)(
+    'retries failed Work without replaying its %s slice in the same batch', async sibling => {
+      const sessionIds = { failed: 'retry-work-failed', settled: 'retry-work-settled' };
+      const machineId = 'retry-work-machine';
+      const captured = await context(request => {
+        if (request.path !== '/v2/usage/query') return undefined;
+        const query = UsageAnalyticsQueryRequestSchema.parse(request.body);
+        const id = query.filters?.sessionIds?.[0]!;
+        return Response.json({ ...value, contributions: [{ ...workContribution, id: `usage-${id}`, sessionId: id, machineId }] });
+      });
+      const scope = captured.accountLifetime.scope;
+      storage.getState().applySessions(Object.values(sessionIds).map(id => createSessionFixture({ id, serverId: scope.serverId,
+        metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' },
+      })));
+      await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+        id: machineId, accountId: scope.accountId, machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+      })]);
+      const attempts: string[][] = [];
+      let retry = false;
+      scmTransport.mockImplementation(async (request: { payload: ScmWorkEvidenceReadRequest }) => {
+        const ids = request.payload.sessions.map(session => session.sessionId);
+        attempts.push(ids);
+        if (ids.includes(sessionIds.failed) && !retry) return workBatch(request, { status: 'error', errorCode: 'read_failed' });
+        if (ids.includes(sessionIds.settled) && sibling === 'refused') return workBatch(request, { status: 'error', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        return workBatch(request, { status: 'partial', evidence: [], pullRequestsRead: true });
+      });
+      const queryFor = (id: string) => normalizeUsageQuery({ session: [id], period: { startMs: 0, endMs: 1000 },
+        includeQuota: false, includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+        includeComparison: false, includeWorkEvidence: true, includeCoach: false, workProjection: 'detail' });
+      const failed = queryFor(sessionIds.failed);
+      const settled = queryFor(sessionIds.settled);
+      const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [failed, settled] }) });
+      const workState = (query: typeof failed) => decodeUsageQueryResource(entry.getSnapshot().value!).results
+        .find(slice => slice.key === getUsageQueryKey(query))?.sources.find(source => source.source === 'work');
+      const stop = entry.subscribe(() => {}, true);
+      try {
+        await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+        expect(new Set(attempts.flat())).toEqual(new Set(Object.values(sessionIds)));
+        expect(workState(failed)).toMatchObject({ status: 'error', unreadSessions: { failed: 1 } });
+        const prior = workState(settled);
+        expect(prior).toMatchObject(sibling === 'refused'
+          ? { status: 'error', unreadSessions: { not_entitled: 1 } }
+          : { status: 'partial', asOfMs: expect.any(Number) });
+        attempts.length = 0;
+        retry = true;
+        await entry.refresh({ failedOnly: true });
+        expect.soft(attempts).toEqual([[sessionIds.failed]]);
+        expect.soft(workState(settled)).toEqual(prior);
+        expect(workState(failed)).toMatchObject({ status: 'partial' });
+      } finally { stop(); }
+    });
 
   it('shares an unavailable Machine verdict across concurrent disjoint Work slices without reusing Session results', async () => {
     const sessionIds = ['cold-work-a', 'cold-work-b', 'cold-work-c'];

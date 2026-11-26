@@ -16,7 +16,7 @@ import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } 
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { EMPTY_PROJECT_AUTHORING_SESSION_INPUTS } from '@/sync/store/domains/projectAuthoringSessions';
-import { readProviderAccountUsageChangedRecordIdsV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { readProviderAccountUsageChangeScopeV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import {
     publishHomeAccountChange,
     publishHomeAccountChangeWake,
@@ -13854,6 +13854,7 @@ class Sync {
                                 // filtered-list decision instead of asking the list
                                 // to reinterpret AccountChange hints or reacting a
                                 // second time to the earlier content-free wake.
+                                const usageQuotaScope = readProviderAccountUsageChangeScopeV1(changes);
                                 publishHomeAccountChange(plannedServerId, changedEntityIds, {
                                     feedPageConsumed: true,
                                     sessionFollowSourceIds: plannedSessionFollowSourceIds(publishedPlan),
@@ -13885,7 +13886,8 @@ class Sync {
                                     accountSettingsAffects: materialization?.workflowRunsMaterialized ? false : publishedPlan.invalidate.settings || publishedPlan.unsupportedChanges.length > 0,
                                     usageQueryAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageQuery(publishedPlan),
                                     usageAccountingAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageAccounting(publishedPlan),
-                                    providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(changes),
+                                    providerAccountUsageRecordIds: usageQuotaScope?.recordIds,
+                                    providerAccountUsageBindingServiceKeys: usageQuotaScope?.bindingServiceKeys,
                                     providerAccountUsageDayChange: readProviderAccountUsageDayChangeV1(changes),
                                 });
                             }

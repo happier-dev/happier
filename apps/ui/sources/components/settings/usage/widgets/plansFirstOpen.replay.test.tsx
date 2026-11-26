@@ -305,9 +305,11 @@ it.each([
       ];
       const bindingTargets = records.slice(16);
       const beforeProfile = structuredClone(servedProfile.connectedAccountsV4);
-      const originalBindings = bindingTargets.map(row => row.snapshot!.recordId);
       const rebound = bindingTargets[0]!;
-      for (const cause of ['equal profile', 'equal binding', 'changed binding'] as const) {
+      for (const cause of ['equal profile', 'equal binding', 'changed binding', 'equal binding on mixed page', 'changed binding on mixed page'] as const) {
+        const bindingInPage = cause === 'equal binding on mixed page' || cause === 'changed binding on mixed page';
+        const rebinds = cause === 'changed binding' || cause === 'changed binding on mixed page';
+        const beforeBindings = bindingTargets.map(row => row.snapshot!.recordId);
         nowMs++;
         accountingHold = createDeferred<void>();
         const before = traffic.length;
@@ -318,21 +320,24 @@ it.each([
           // An unchanged Profile may be materialized while an accounting read is still outstanding.
           await act(async () => refreshProfile());
         } else {
-          if (cause === 'changed binding') {
+          if (rebinds) {
             const previous = rebound.snapshot!;
-            const recordKey = { ...previous.recordKey, accountSubjectId: 'fixture-rebound' };
+            const subject = bindingInPage ? 'fixture-rebound-mixed' : 'fixture-rebound';
+            const recordKey = { ...previous.recordKey, accountSubjectId: subject };
             rebound.snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...previous, recordKey,
-              recordId: buildProviderAccountUsageRecordId(recordKey), accountSubject: { kind: 'providerSubject', id: 'fixture-rebound' } });
+              recordId: buildProviderAccountUsageRecordId(recordKey), accountSubject: { kind: 'providerSubject', id: subject } });
             rebound.record = { ...rebound.record!, content: { t: 'plain', v: rebound.snapshot } };
             rebound.observations = [rebound.snapshot];
           }
-          await consume([buildConnectedServicesAccountChangeV1(rebound.source.ref.service)]);
+          if (!bindingInPage) await consume([buildConnectedServicesAccountChangeV1(rebound.source.ref.service)]);
         }
         // The named observation changed those records' day coverage. The
         // two service-binding operands receive no new observation.
         for (const index of [0, 1, 2, 4]) acceptObservation(records[index]!, nowMs - 1);
         machine = { ...machine, active: !machine.active, activeAt: nowMs, updatedAt: nowMs };
-        await consume(mixedPage);
+        await consume(bindingInPage
+          ? [...mixedPage, buildConnectedServicesAccountChangeV1(rebound.source.ref.service)]
+          : mixedPage);
         await act(async () => accountingHold.resolve());
         await expect.poll(() => traffic.slice(before).filter(row => row.route === 'record').length).toBeGreaterThanOrEqual(named.length);
         await expect.poll(() => slices.every(slice => !slice.pending)).toBe(true);
@@ -343,9 +348,9 @@ it.each([
         expect(servedProfile.connectedAccountsV4).toEqual(beforeProfile);
         expect(storage.getState().profile.connectedAccountsV4).toEqual(beforeProfile);
         const bindings = bindingTargets.map(row => row.snapshot!.recordId);
-        expect(bindings).toEqual(cause === 'changed binding' ? [rebound.snapshot!.recordId, originalBindings[1]] : originalBindings);
+        expect(bindings).toEqual(rebinds ? [rebound.snapshot!.recordId, beforeBindings[1]] : beforeBindings);
         const expectedRecords = cause === 'equal profile' ? named : [...named, ...bindings];
-        const expectedHistory = cause === 'changed binding' ? [...named, rebound.snapshot!.recordId] : named;
+        const expectedHistory = rebinds ? [...named, rebound.snapshot!.recordId] : named;
         expect.soft(mixed.filter(row => row.route === 'resolve').map(row => JSON.stringify(row.ref)).sort()).toEqual(
           cause === 'equal profile' ? [] : bindingTargets.map(row => JSON.stringify(row.source.ref)).sort());
         for (const route of ['record', 'day-summaries']) {

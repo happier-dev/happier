@@ -1,4 +1,5 @@
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageRecordIdSchema } from '../connect/providerAccountUsagePrimitives.js';
+import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1, readConnectedServicesAccountChangeV1 } from './index.js';
@@ -61,12 +62,6 @@ export function buildProviderAccountUsageMaterialChangesV1(recordId: string,
  * The quota read admits the Account’s own credentials. Team directory and
  * shared credential publications do not change those bindings.
  */
-function isProviderAccountUsageAuthorityChangeV1(entityId: string): boolean {
-  return entityId === 'self'
-    || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1
-    || readConnectedServicesAccountChangeV1({ kind: 'account', entityId }) !== null;
-}
-
 type UsageChangeRow = Readonly<{ kind: string; entityId: string; cursor: number; hint?: unknown }>;
 
 export function isPairedProviderAccountUsageChangeV1(global: UsageChangeRow, exact: UsageChangeRow): boolean {
@@ -96,21 +91,45 @@ export function readProviderAccountUsageDayChangeV1(changes: readonly UsageChang
       ? { publication } : {}) };
 }
 
-/** Undefined is unknown/full. A split page or a predecessor key cannot prove a narrow scope. */
-export function readProviderAccountUsageChangedRecordIdsV1(
+type ProviderAccountUsageChangeScopeV1 = Readonly<{
+  recordIds: readonly string[];
+  bindingServiceKeys: readonly string[];
+}>;
+
+/** A consumed page can name records and qualified service bindings independently. */
+export function readProviderAccountUsageChangeScopeV1(
   changes: readonly UsageChangeRow[],
-): readonly string[] | undefined {
+): ProviderAccountUsageChangeScopeV1 | undefined {
   const records = new Set<string>();
+  const bindings = new Set<string>();
   for (const change of changes) {
     if (change.kind !== 'account') continue;
     const id = readProviderAccountUsageChangeRecordIdV1(change.entityId);
-    if (id !== null) records.add(id);
-    else if (isProviderAccountUsageAuthorityChangeV1(change.entityId)) return undefined;
+    if (id !== null) {
+      records.add(id);
+      continue;
+    }
+    if (change.entityId === 'self' || change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return undefined;
+    const bindingAddress = readConnectedServicesAccountChangeV1({ kind: 'account', entityId: change.entityId });
+    if (bindingAddress === null) continue;
+    // An invalid durable hint or an Account-wide binding publication still requires recovery.
+    const binding = readConnectedServicesAccountChangeV1(change);
+    if (binding?.scope !== 'service') return undefined;
+    bindings.add(buildQualifiedPluginContributionKey(binding.ref));
   }
   for (const change of changes) {
     if (change.kind !== 'account' || change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1) continue;
     const exact = changes.find(row => row.cursor === change.cursor + 1);
     if (!exact || !isPairedProviderAccountUsageChangeV1(change, exact)) return undefined;
   }
-  return records.size ? [...records] : undefined;
+  // A split page or a predecessor key cannot prove a narrow scope.
+  return records.size || bindings.size ? { recordIds: [...records], bindingServiceKeys: [...bindings] } : undefined;
+}
+
+/** Existing record-only readers still treat any binding invalidation as broad. */
+export function readProviderAccountUsageChangedRecordIdsV1(
+  changes: readonly UsageChangeRow[],
+): readonly string[] | undefined {
+  const scope = readProviderAccountUsageChangeScopeV1(changes);
+  return scope && scope.bindingServiceKeys.length === 0 ? scope.recordIds : undefined;
 }

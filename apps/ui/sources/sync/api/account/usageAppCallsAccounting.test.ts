@@ -9,6 +9,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
 
 // HTTP serves the Account, its deployments, prices and the collector Machine's Action; Socket.IO cannot connect.
@@ -153,7 +155,7 @@ describe('Usage "Your apps" accounting', () => {
     const credentials = (await TokenStorage.getCredentialsForServerUrl(
       focused.serverUrl,
     ))!;
-    const { captureUiUsageQueryAccountContext, readUiUsageQueryBatch } =
+    const { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, readUiUsageQueryBatch } =
       await import('./usageQueryResource');
     const context = captureUiUsageQueryAccountContext(credentials)!;
     const query = normalizeUsageQuery({
@@ -182,6 +184,27 @@ describe('Usage "Your apps" accounting', () => {
       }),
     ]);
     expect(slice.accounting?.totals.eventCount).toBe(4);
+
+    const entry = getUsageQueryResourceStore(context).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    const deploymentGets = () => home!.requests.filter(request => request.path === '/v1/deployments/environments').length;
+    const tariffGets = () => home!.requests.filter(request => request.path === '/v1/account/usage/prices').length;
+    try {
+      await entry.refresh({ supersede: false });
+      await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+      await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
+      const before = [deploymentGets(), collector.reads.length, tariffGets()];
+      const previous = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting;
+      publishHomeAccountChange(focused.id, [], { changeKinds: ['account'], usageQueryAffects: true,
+        usageAccountingChange: { sessionId: 'agent-ledger-fixture', observedFromMs: Date.now() - 1000 } });
+      await entry.refresh({ supersede: false });
+      await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
+      expect([deploymentGets(), collector.reads.length, tariffGets()], 'App collector must stay independent of an Agent ledger arrival').toEqual(before);
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting).toBe(previous);
+    } finally {
+      release();
+    }
     // the priced operand (3 calls, 1M input + 1M output tokens) at the shared catalog: $2 + $4; the unlisted model keeps its tokens, never $0.
     expect(slice.costFactTotals).toEqual(
       expect.arrayContaining([
