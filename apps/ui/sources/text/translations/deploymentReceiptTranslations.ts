@@ -1,3 +1,5 @@
+import { DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN } from '@happier-dev/deployment-protocol/v1';
+
 import type { SupportedLanguage } from '../_all';
 
 type ReceiptCopy = Readonly<{
@@ -77,15 +79,15 @@ export const deploymentReceiptTranslations = {
     policyDescription: "Choose what happens to Machines that already updated.",
     missingSecrets: ({ names }) => "Required secrets have no value: {names}. Set them in Variables before deploying.".replace('{names}', names),
     cancelStopped: "The previous service has stopped. Cancelling leaves it down until you roll back.",
-    headlinePromoting: ({ sha }) => "Promoting {sha}".replace('{sha}', sha),
-    headlinePromoted: ({ sha }) => "Promoted {sha}".replace('{sha}', sha),
-    headlinePromoteFailed: ({ sha }) => "Promotion of {sha} failed".replace('{sha}', sha),
-    headlinePromoteCancelled: ({ sha }) => "Promotion of {sha} cancelled".replace('{sha}', sha),
-    headlineRemoving: ({ sha }) => "Removing {sha}".replace('{sha}', sha),
-    headlineRemoved: ({ sha }) => "Removed {sha}".replace('{sha}', sha),
-    headlineRemoveFailed: ({ sha }) => "Couldn’t remove {sha}".replace('{sha}', sha),
-    headlineRemoveCancelled: ({ sha }) => "Removal of {sha} cancelled".replace('{sha}', sha),
-    headlineRollbackCancelled: ({ sha }) => "Rollback to {sha} cancelled".replace('{sha}', sha),
+    headlinePromoting: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlinePromoting'],
+    headlinePromoted: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlinePromoted'],
+    headlinePromoteFailed: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlinePromoteFailed'],
+    headlinePromoteCancelled: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlinePromoteCancelled'],
+    headlineRemoving: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlineRemoving'],
+    headlineRemoved: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlineRemoved'],
+    headlineRemoveFailed: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlineRemoveFailed'],
+    headlineRemoveCancelled: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlineRemoveCancelled'],
+    headlineRollbackCancelled: DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN['projects.deployments.receipt.headlineRollbackCancelled'],
     failurePromote: "This promotion failed",
     failurePromoteAdmission: "The promotion couldn’t start",
     failureRemove: "Removing it didn’t finish",

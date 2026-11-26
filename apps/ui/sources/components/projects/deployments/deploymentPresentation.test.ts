@@ -4,6 +4,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { DeploymentReceiptMetadataV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { projectDeploymentReceiptSourceFactsV1 } from '@happier-dev/deployments';
+import { deploymentReceiptTitleV1 } from '@happier-dev/deployment-protocol/v1';
 import { t } from '@/text';
 import { deploymentDeployAvailability, deploymentFailureTitle, deploymentReceiptTitle, deploymentRevisionLabel, deploymentStateLabel, deploymentHistoryLead, deploymentStateNotice, deploymentRailState, deploymentEnvironmentAttention, DEPLOYMENT_ENVIRONMENT_ATTENTION_ORDER, deploymentAttentionLeaves, deploymentEnvironmentRowState, deploymentHealthFact, deploymentSettledStateLabel } from './deploymentPresentation';
 
@@ -105,6 +106,12 @@ describe('receipt titles name the operation the receipt records', () => {
     it.each(['running', 'succeeded', 'failed', 'cancelled'] as const)('%s: every operation reads differently', (state) => {
         const titles = operations.map(operation => headline(operation, state));
         expect(new Set(titles).size).toBe(operations.length);
+    });
+
+    it.each(operations)('gives %s evidence the same title as the failed Receipt', (operation) => {
+        const receipt = createDeploymentReceiptHeaderV1({ operation, state: 'failed' });
+        expect(deploymentReceiptTitleV1(receipt, label)).toBe(deploymentReceiptTitle(receipt, label));
+        expect(deploymentReceiptTitleV1(receipt, null)).toBe(deploymentReceiptTitle(receipt, null));
     });
 
     it.each([undefined, 'admission'] as const)('failed (%s): every operation names its own failure', (phase) => {

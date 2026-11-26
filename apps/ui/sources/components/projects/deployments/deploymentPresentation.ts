@@ -15,7 +15,8 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION, type PublishTargetRecommendationInput } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
-export { deploymentRevisionLabel };
+import { deploymentReceiptTitleV1, deploymentSettledReceiptStateV1 as deploymentSettledReceiptState } from '@happier-dev/deployment-protocol/v1';
+export { deploymentRevisionLabel, deploymentSettledReceiptState };
 
 /** Read failures carry Home transport and authority codes from their owners. */
 export function deploymentReadIssue(code: string | null | undefined): 'homeUnreachable' | 'withdrawn' | 'readFailed' {
@@ -81,11 +82,6 @@ export function readDeploymentPromotionTarget(
   }
   return isNativeDeploymentPromotionSourceV1({ state: deployment.state, hasImages: content.images.length > 0 })
     ? { kind: 'ownServer' as const } : null;
-}
-
-/** Historical rows describe the completed operation. Current health is read from the active runtime. */
-export function deploymentSettledReceiptState(state: ReceiptState): ReceiptState {
-  return state === 'running_unverified' ? 'succeeded' : state;
 }
 
 /** A receipt's state through the one Work status owner: the glyph and tone every Work row uses. */
@@ -220,65 +216,16 @@ export function deploymentHistoryLead(
   return deploymentRailState(deploymentSettledReceiptState(receipt.state));
 }
 
-/**
- * One receipt's title from its operation, state and version label, for the receipt page and every History row
- * (a History row carries the version as its `source`). Without a version label its state is the title.
- */
+const receiptTitleCopy = {
+  headline: t,
+  state: deploymentStateLabel,
+};
+
 export function deploymentReceiptTitle(
   receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
-  sha: string | null,
+  revisionLabel: string | null,
 ): string {
-  if (sha === null) return deploymentStateLabel(deploymentSettledReceiptState(receipt.state));
-  switch (receipt.state) {
-    case 'queued':
-      return t('projects.deployments.headlineQueued', { sha });
-    case 'outcome_unknown':
-      return t('projects.deployments.headlineUnknown', { sha });
-    // The unverified notice carries the state (lab d3 `unverified`); the title says what was done.
-    case 'running_unverified':
-      return operationHeadline(receipt.operation, 'succeeded', sha);
-    case 'running':
-    case 'succeeded':
-    case 'failed':
-    case 'cancelled':
-      return operationHeadline(receipt.operation, receipt.state, sha);
-  }
-}
-
-/** Each operation's words for each settled or running state; the protocol's operation vocabulary keys it. */
-const OPERATION_HEADLINES = {
-  deploy: {
-    running: 'projects.deployments.headlineDeploying',
-    succeeded: 'projects.deployments.headlineDeployed',
-    failed: 'projects.deployments.headlineFailed',
-    cancelled: 'projects.deployments.headlineCancelled',
-  },
-  rollback: {
-    running: 'projects.deployments.headlineRollingBack',
-    succeeded: 'projects.deployments.headlineRolledBack',
-    failed: 'projects.deployments.headlineRollbackFailed',
-    cancelled: 'projects.deployments.receipt.headlineRollbackCancelled',
-  },
-  promote: {
-    running: 'projects.deployments.receipt.headlinePromoting',
-    succeeded: 'projects.deployments.receipt.headlinePromoted',
-    failed: 'projects.deployments.receipt.headlinePromoteFailed',
-    cancelled: 'projects.deployments.receipt.headlinePromoteCancelled',
-  },
-  teardown: {
-    running: 'projects.deployments.receipt.headlineRemoving',
-    succeeded: 'projects.deployments.receipt.headlineRemoved',
-    failed: 'projects.deployments.receipt.headlineRemoveFailed',
-    cancelled: 'projects.deployments.receipt.headlineRemoveCancelled',
-  },
-} as const satisfies Record<ReceiptOperation, Record<'running' | 'succeeded' | 'failed' | 'cancelled', string>>;
-
-function operationHeadline(
-  operation: ReceiptOperation,
-  state: keyof (typeof OPERATION_HEADLINES)[ReceiptOperation],
-  sha: string,
-): string {
-  return t(OPERATION_HEADLINES[operation][state], { sha });
+  return deploymentReceiptTitleV1(receipt, revisionLabel, receiptTitleCopy);
 }
 
 /** The one sentence a non-settled or uncertain receipt owes the person; healthy settled receipts say nothing. */

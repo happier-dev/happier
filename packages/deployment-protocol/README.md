@@ -13,7 +13,10 @@ body before returning the opened content. The host supplies the opened Artifact.
 
 Host runtime, stored-content transports and secret grants belong to the host
 deployment and Protocol owners. The read controller and host presentation
-projections live in `@happier-dev/deployments`.
+projections live in `@happier-dev/deployments`. The shared
+`deploymentReceiptTitleV1` formats an admitted Receipt and its revision label
+for host pages or plugin evidence. It uses canonical English copy by default
+and accepts the host’s localized copy when available.
 
 ## Evolving the ABI
 

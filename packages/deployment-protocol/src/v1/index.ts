@@ -2,6 +2,8 @@ export * from './artifacts.js';
 export * from './correlations.js';
 export { isDeploymentCredentialRefusalV1 } from './credentialRefusals.js';
 export * from './review.js';
+export { deploymentReceiptTitleV1, deploymentSettledReceiptStateV1,
+    DEPLOYMENT_RECEIPT_HEADLINE_COPY_EN, DEPLOYMENT_RECEIPT_STATE_COPY_EN } from './receiptTitle.js';
 export * from './semanticInput.js';
 export * from './telemetry.js';
 export { createDeploymentTargetVariableSyncV1, projectDeploymentTargetVariablesV1, type DeploymentTargetObservedVariableV1 } from './variables.js';
