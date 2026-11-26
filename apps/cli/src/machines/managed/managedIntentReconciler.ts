@@ -2,7 +2,7 @@ import { type SupportedNativeIntent } from '@happier-dev/protocol/machines/manag
 import { MachineProvisionerCleanupObservationV1Schema, MachineProvisionerDestroyResultV1Schema, MachineProvisionerRebuildResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedActivityBridgeResultV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedDeleteTailnetWarningV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MANAGED_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedPolicyPurposeV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -172,11 +172,12 @@ function publishActivity(options: ManagedMachineReconciliationInput['options'], 
 /** Policy preparation shares the same selected timer, actual guest inventory and drain owner. */
 export async function prepareManagedRetentionPolicy(params: Readonly<{
     input: ManagedMachineReconciliationInput['input']; options: ManagedMachineReconciliationInput['options'];
-    machine: ManagedMachineFullV1; purpose: Extract<ManagedPolicyPurposeV1, { kind: 'retention' }>;
+    machine: ManagedMachineFullV1; structuralMachine: ManagedMachineV1;
+    purpose: Extract<ManagedPolicyPurposeV1, { kind: 'retention' }>;
     renew?: (deadlineAt?: number) => Promise<MachineProvisionerRenewResultV1>;
 }>): Promise<{ purpose: ManagedPolicyPurposeV1; bridge?: ManagedGuestActivityTransport; nativeExpiry?: number;
     onActivityChange?: () => Promise<boolean> }> {
-    const { machine, input, options, purpose } = params;
+    const { machine, structuralMachine, input, options, purpose } = params;
     if (machine.retention.kind === 'until-delete' && !params.renew) throw new ManagedMachineControllerError('intent_changed');
     const continuesRetention = hasSubmittedManagedRetentionEffect(machine, options.retentionContinuationRequestId);
     if (!canPrepareManagedRetentionPolicy(machine, options.retentionContinuationRequestId)) {
@@ -205,11 +206,12 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
     const isCurrent = async () => {
         if (!input.readPolicyCurrent) throw new ManagedMachineControllerError('admission_unavailable');
         const current = await input.readPolicyCurrent(machine.id, options.signal);
-        const verified = Boolean(current && current.homeId === machine.homeId && current.intentRevision === machine.intentRevision
-            && isDeepStrictEqual(current.controller, machine.controller) && isDeepStrictEqual(current.resource, machine.resource)
-            && isDeepStrictEqual(current.retention, machine.retention) && current.creationState === 'active');
+        // The Home census omits native resource content from sealed preset rows.
+        const verified = Boolean(current && current.homeId === structuralMachine.homeId && current.intentRevision === structuralMachine.intentRevision
+            && isDeepStrictEqual(current.controller, structuralMachine.controller) && isDeepStrictEqual(current.resource, structuralMachine.resource)
+            && isDeepStrictEqual(current.retention, structuralMachine.retention) && current.creationState === 'active');
         if (verified && current) options.context?.operationOwnerUpdate?.update({ domainRef: { kind: 'managedMachine', id: current.id,
-            controller: current.controller, ...(current.resource ? { resource: current.resource } : {}) } });
+            controller: current.controller, ...(machine.resource ? { resource: machine.resource } : {}) } });
         if (!verified) throw new ManagedRetentionWaitSuperseded();
         return verified;
     };

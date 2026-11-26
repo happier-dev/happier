@@ -3556,6 +3556,20 @@ describe('managed native intent through the accepted Action', () => {
             await work?.catch(() => undefined);
         }
     });
+    it('retains the unused policy when Home returns the same opaque preset row', async () => {
+        const test = setup();
+        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 0, effect: 'delete' } });
+        const machine = { ...test.readMachine(), preset: { id: 'sealed', revision: 1, contentEncryptionMode: 'e2ee' as const } };
+        const { launch: _launch, resource: _resource, ...opaque } = machine;
+        const structuralMachine = ManagedOpaquePresetMachineV1Schema.parse(opaque);
+        const prepared = await prepareManagedRetentionPolicy({ input: { ...test.driverInput, readPolicyCurrent: async () => structuralMachine },
+            options: test.options, machine, structuralMachine, purpose: { kind: 'retention' },
+        });
+        expect(prepared.purpose).toMatchObject({ kind: 'retention', evidence: {
+            managedTarget: { managedId: machine.id, expectedRevision: machine.intentRevision },
+            decision: { kind: 'idle' },
+        } });
+    });
     it('issues zero controller currentness reads for unrelated own-Machine, Team and Account reconnect changes while idle', async () => {
         const test = setup({ kind: 'busy', reasons: ['finite'] });
         test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 60_000, effect: 'delete' } });
@@ -3573,7 +3587,7 @@ describe('managed native intent through the accepted Action', () => {
         let publish: Parameters<NonNullable<ManagedMachineAcquisitionDriverInput['subscribeManagedMachineChanges']>>[0] | undefined;
         const lifetime = new AbortController();
         let waiting = false;
-        const work = prepareManagedRetentionPolicy({ machine, purpose: { kind: 'retention' },
+        const work = prepareManagedRetentionPolicy({ machine, structuralMachine: machine, purpose: { kind: 'retention' },
             input: { ...test.driverInput, serverUrl: `http://127.0.0.1:${address.port}`, managedGuestActivity: undefined,
                 subscribeManagedMachineChanges: listener => { publish = listener; return () => { publish = undefined; }; } },
             options: { requestId: 'retention', signal: lifetime.signal,

@@ -1006,7 +1006,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 ? createManagedNativeInvocation({ input, options, machine, action: 'machines.managed.power.set',
                     client: createManagedMachineControllerClient(input, options, 'machines.managed.power.set', hydrator), nativePolicyAdmission: true }, () => machine) : undefined;
             const prepared = purpose.kind === 'retention'
-                ? await prepareManagedRetentionPolicy({ input, options, machine, purpose,
+                ? await prepareManagedRetentionPolicy({ input, options, machine, structuralMachine, purpose,
                     ...(nativeLifetime ? { renew: async (deadlineAt?: number) => MachineProvisionerRenewResultV1Schema.parse(
                         await nativeLifetime.invoke('renew', { resource: machine.resource!.value,
                             ...(deadlineAt === undefined ? {} : { deadlineAt }) })) } : {}) })

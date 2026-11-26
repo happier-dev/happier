@@ -251,7 +251,7 @@ describe('Automation observation and managed unused retention', () => {
         let preparation: ReturnType<typeof prepareManagedRetentionPolicy> | undefined;
         try {
             expect(await bridge.read()).toMatchObject({ kind: 'idle', since: owner.since });
-            preparation = prepareManagedRetentionPolicy({ machine, purpose: { kind: 'retention' },
+            preparation = prepareManagedRetentionPolicy({ machine, structuralMachine: machine, purpose: { kind: 'retention' },
                 options: { requestId: 'unused-stop', signal: cancellation.signal },
                 input: { token: 'disposable-harness', credentials: { token: 'disposable-harness', encryption: null },
                     serverUrl: owner.origin, homeId: machine.homeId, controller,
