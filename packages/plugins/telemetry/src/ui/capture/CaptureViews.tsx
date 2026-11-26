@@ -151,8 +151,6 @@ function CaptureList<Item>(
      */
     tableMinWidth?: number;
     detail?: CaptureListDetail<Item>;
-    /** The list's section heading, where it shares a page with other sections (LLM calls under its cards). */
-    title?: string;
   }>,
 ) {
   const { items, keyOf, onOpen, detail } = props;
@@ -194,9 +192,6 @@ function CaptureList<Item>(
       <Collection
         testID={props.testID}
         accessibilityLabel={props.label}
-        {...(props.title
-          ? { title: props.title, titleKind: 'section' as const, header: (slots: { title: React.ReactNode }) => slots.title }
-          : {})}
         model={model}
         anatomy={props.anatomy}
         presentation={props.presentation ?? 'list'}
@@ -537,7 +532,6 @@ export function CaptureAppLlmCalls(
     <CaptureList
       testID="telemetry.capture.llmCalls"
       label={text('plugins.telemetry.capture.llmCalls', 'LLM calls')}
-      title={text('plugins.telemetry.capture.calls', 'Calls')}
       items={props.items}
       loading={props.loading}
       keyOf={summaryKey}

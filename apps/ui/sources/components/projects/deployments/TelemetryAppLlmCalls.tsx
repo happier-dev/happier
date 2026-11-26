@@ -225,12 +225,15 @@ export function TelemetryAppLlmCalls(
           {t('deploymentTelemetry.measurement.partial')}
         </Text>
       ) : null}
-      <CaptureAppLlmCalls
-        items={calls?.value ?? []}
-        loading={reading}
-        locale={locale}
-        onOpen={onOpenCall}
-      />
+      {/* The retained calls are a card of their own, titled like the cards above them (design review D5). */}
+      <TelemetryCard testID="project-deployments.telemetry.llm.calls.frame" title={t('deploymentTelemetry.llm.calls')}>
+        <CaptureAppLlmCalls
+          items={calls?.value ?? []}
+          loading={reading}
+          locale={locale}
+          onOpen={onOpenCall}
+        />
+      </TelemetryCard>
       <View style={styles.note}>
         <Text variant="meta" style={[styles.quiet, styles.noteText]}>
           {t('deploymentTelemetry.llm.note')}

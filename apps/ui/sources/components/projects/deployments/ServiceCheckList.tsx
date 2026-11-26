@@ -390,12 +390,17 @@ const CheckRowBars = React.memo(function CheckRowBars(
  * measure), the colour of a failing result, the window and limit it was judged on, and what the line beside it shows —
  * a Key flow's separately windowed collector history, or the check's own retained responses.
  */
+/** Whether the measured value is the failure itself (a Key flow over its limit), not a status failure beside it (D8). */
+function valueIsTheFailure(facts: ServiceCheckListFacts): boolean {
+  // Only a Key flow has a rule; its measured value is what the rule judged.
+  return facts.ruleText !== null && facts.valueText !== null;
+}
+
 function useCheckResult(facts: ServiceCheckListFacts) {
   const { theme } = useUnistyles();
   const value = facts.valueText ?? (facts.latencyMs === null ? null : formatServiceCheckLatency(facts.latencyMs));
   // Only a failing rule that measures the response tones it; a status failure (a 502) leaves a normal latency ink (D8).
-  const measured = facts.collectorTrend !== null && facts.valueText !== null;
-  const tone = !measured ? null : facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
+  const tone = !valueIsTheFailure(facts) ? null : facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
     : facts.lastTone === 'warning' ? theme.colors.state.warning.textForeground : null;
   const history = facts.collectorTrend ? t(`${m}.collectorHistory24h`) : t(`${m}.columnResponse24h`);
   return { value, tone, history, readout: [value, facts.ruleText, history].filter(Boolean).join(' · ') };
@@ -582,8 +587,9 @@ const CheckByline = React.memo(function CheckByline(
       ? t(`${m}.staleByline`, { machine: observer })
       : failing
         ? [
-            // With the value in its column, line 2 names the rule the way a healthy Key flow names itself (D9).
-            props.resultInColumn && facts.valueText !== null
+            // With a Key flow's value in its column, line 2 names the rule the way a healthy Key flow names itself
+            // (D9); any other failure says its cause, its title already naming its kind.
+            props.resultInColumn && valueIsTheFailure(facts)
               ? [facts.kind, facts.ruleText ?? facts.causeText].filter(Boolean).join(' · ') : facts.causeText,
             facts.failingSince === null
               ? null
@@ -644,9 +650,9 @@ const CheckByline = React.memo(function CheckByline(
   // Why a check fails is the row's message: in the table it takes a second line rather than ending mid-cause
   // ("checked fr…", PAGE-ACCEPT-176 R2-D13); what a healthy check is stays one line. A narrow list's line follows its
   // state word on the same line, so it stays one line there.
-  // A failure the Response column does not state (a 502, a timeout) speaks here, in its tone; a Key flow's measured
-  // value carries the tone in its column instead (D8).
-  const causeTone = failing && !(props.resultInColumn && facts.valueText !== null)
+  // A failure the Response column does not state (a 502, a timeout) speaks here, in its tone; only a Key flow's
+  // measured value, which is its failure, carries the tone in its column instead (D8, as `useCheckResult` decides).
+  const causeTone = failing && !(props.resultInColumn && valueIsTheFailure(facts))
     ? facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
       : facts.lastTone === 'warning' ? theme.colors.state.warning.textForeground : null : null;
   return line ? (

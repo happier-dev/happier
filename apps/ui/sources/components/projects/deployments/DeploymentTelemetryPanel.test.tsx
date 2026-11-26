@@ -1178,8 +1178,8 @@ describe('Environment Telemetry capability views', () => {
         expect.objectContaining({ input: expect.objectContaining({ source, appLlmCalls: { serviceName: 'billing-api', serviceVersion: 'v1.43' } }) }),
       ]);
       await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
-      // The retained calls are a titled list of their own.
-      expect(textIn('telemetry.capture.llmCalls')).toContain('Calls');
+      // The retained calls are a titled card of their own.
+      expect(textIn('project-deployments.telemetry.llm.calls.frame')).toContain('Model calls');
       await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
       await settle();
       expect(calls.at(-1)).toEqual(expect.objectContaining({ input: expect.objectContaining({ source, traceId: 'trace-1' }) }));

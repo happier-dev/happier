@@ -231,7 +231,8 @@ export function TelemetryMetrics(props: Readonly<{
 const styles = StyleSheet.create((theme) => ({
     body: { gap: theme.space.s16 },
   selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
-  charts: { gap: theme.space.s16 },
+  // An untitled card is the footprint of what it holds: the charts open a step below its edge, as its sides do.
+  charts: { gap: theme.space.s16, paddingTop: theme.space.s8 },
   chartsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   chart: { minWidth: 0, gap: theme.space.s8 },
   chartHalf: { flexBasis: TELEMETRY_CHART_MIN_WIDTH_PX - theme.space.s16 * 2, flexGrow: 1 },
