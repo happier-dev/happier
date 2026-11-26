@@ -110,6 +110,15 @@ it from the same original. Earlier daemons omitting it settle as before. Matchin
 0.3 readers are required for typed failed reply custody; earlier strict readers
 cannot read the extended failure outcome. No database migration is needed.
 
+## Stopped Session Send after Machine access withdrawal (unreleased 0.3)
+
+Home can include the existing `access_removed` Action cause and its request
+ID on a Pending input admission refusal. Home discloses the cause to the
+present user who owns a stopped Session with a retained binding to that
+Machine. HTTP status and refusal code remain the same. Updated composers
+accept earlier Home responses without the optional fields. The Session
+transcript and Pending records retain their existing formats.
+
 ## Exact original input publication refusal (unreleased 0.3)
 
 The exact committed message read by local ID can include optional

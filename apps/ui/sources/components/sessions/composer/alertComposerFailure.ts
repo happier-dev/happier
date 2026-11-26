@@ -1,8 +1,10 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 
 import { presentApprovalFailure } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import { readRestartResultBodyKey } from '@/components/sessions/sessionRunner/staleSessionRunnerNoticePresentation';
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveMachineAccessWithdrawalCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { t } from '@/text';
 import { alertActionFailure, readSafeFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
 import { HappyError } from '@/utils/errors/errors';
@@ -13,16 +15,26 @@ import { getErrorMessage } from '@/utils/errors/getErrorMessage';
  * its safe details only behind the app's Technical details. Never the producer's prose, payloads or secrets.
  */
 
+function showComposerSendFailure(error: Readonly<{
+    details?: unknown; failureCause?: unknown; requestId?: unknown;
+}>, reason: string, code: string | null): void {
+    const cause = ActionFailureCauseV1Schema.safeParse(error.failureCause);
+    const withdrawal = cause.success && resolveMachineAccessWithdrawalCopy(cause.data.errorCode);
+    alertActionFailure({
+        reason: withdrawal ? `${withdrawal} ${t('session.pendingMessages.admissionRejected.machineAccessRestore')}` : reason,
+        code,
+        context: { ...readSafeFailureDetails(error.details),
+            ...(cause.success ? { causePhase: cause.data.phase, causeCode: cause.data.errorCode } : {}) },
+        requestId: typeof error.requestId === 'string' ? error.requestId : undefined,
+    });
+}
+
 /** A thrown Send or Action failure; the HappyError keeps the Action's `errorCode` and `details`. */
 export function alertComposerError(error: unknown): void {
     const fallback = getErrorMessage(error) || t('errors.failedToSendMessage');
     const message = resolveActionExecutionErrorMessage(error, fallback, { closedCodesOnly: true });
     const { reason, code } = presentApprovalFailure(error, message, t('common.requestFailed'));
-    alertActionFailure({
-        reason,
-        code,
-        context: error instanceof HappyError ? readSafeFailureDetails(error.details) : undefined,
-    });
+    showComposerSendFailure(error instanceof HappyError ? error : {}, reason, code);
 }
 
 /** A settled Action or Session submit refusal, with the producer's typed cause. */
@@ -33,12 +45,7 @@ export function alertComposerActionResultFailure(result: unknown): void {
         ? resolveActionExecutionErrorMessage(record, fallback, { closedCodesOnly: true })
         : resolveActionExecutionFailureMessage(result, fallback) ?? fallback;
     const { reason, code } = presentApprovalFailure(record, message, fallback);
-    alertActionFailure({
-        reason,
-        code,
-        context: readSafeFailureDetails(record.details),
-        requestId: typeof record.requestId === 'string' ? record.requestId : undefined,
-    });
+    showComposerSendFailure(record, reason, code);
 }
 
 /** A runner restart the daemon did not complete; its status and reason code are closed vocabularies. */

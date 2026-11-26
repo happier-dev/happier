@@ -1,3 +1,4 @@
+import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx, type MachineAdmissionFacts } from "@/app/machines/machineAccess";
@@ -107,9 +108,16 @@ async function readRequesterMachineAvailabilityInTx(
         actorAccountId: binding.accountId, machineId: binding.machineId,
     });
     if (admission.kind === "admitted") return "available";
-    // The exact retained key proves this Account previously had access for its Session.
-    if (hasRetainedAccessKey && machine && admission.code === "access_denied") return "access_removed";
-    return "missing";
+    return projectSessionMachineAccessWithdrawal(admission, hasRetainedAccessKey && machine !== null) ?? "missing";
+}
+
+/** A denied current grant only proves withdrawal alongside an exact retained binding to a known Machine. */
+export function projectSessionMachineAccessWithdrawal(
+    admission: MachineAdmission,
+    hasRetainedBindingToMachine: boolean,
+): 'access_removed' | undefined {
+    if (hasRetainedBindingToMachine && admission.kind === 'denied' && admission.code === 'access_denied') return 'access_removed';
+    return undefined;
 }
 
 export async function readSessionMachineAccessKeyInTx(

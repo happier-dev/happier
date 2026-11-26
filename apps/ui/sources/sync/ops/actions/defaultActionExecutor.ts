@@ -1524,7 +1524,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (ownedAccount) assertExpectedActionAccount(ownedAccount, request.context);
         const refusal = await prepareUiManagedProvisionerAdmission(request, account);
         if (refusal) return refusal;
-        const wake = await prepareUiManagedMachineWake(request, account);
+        const wake = await prepareUiManagedMachineWake(request, account, opts?.sessionMessageAuthoringInput !== undefined);
         if (wake) {
           const execute = !('ok' in wake) ? wake.executeAdmittedAction : undefined;
           return ownedAccount && execute ? { ...wake, executeAdmittedAction: (execution: Parameters<typeof execute>[0]) =>

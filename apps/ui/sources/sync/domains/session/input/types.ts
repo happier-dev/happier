@@ -1,3 +1,4 @@
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
@@ -67,6 +68,8 @@ export type SubmitSessionUserMessageResult = Readonly<{
     }>;
     errorCode?: string;
     errorMessage?: string;
+    failureCause?: ActionFailureCauseV1;
+    requestId?: string;
     details?: unknown;
     errorDetail?: SpawnSessionErrorDetail;
     /** A send could not resume a stopped Session: the row stays queued behind the hold. */

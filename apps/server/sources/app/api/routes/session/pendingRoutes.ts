@@ -430,7 +430,8 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 if (authenticationStatus) return reply.code(authenticationStatus).send({ error: res.error });
                 const code = getOptionalErrorCode(res);
                 const payload = { error: res.error, ...(code ? { code } : {}),
-                    ...('failureCause' in res && res.failureCause ? { failureCause: res.failureCause } : {}) };
+                    ...('failureCause' in res && res.failureCause ? { failureCause: res.failureCause } : {}),
+                    ...('requestId' in res && res.requestId ? { requestId: res.requestId } : {}) };
                 if (res.error === "invalid-params") {
                     return reply.code(400).send(payload);
                 }

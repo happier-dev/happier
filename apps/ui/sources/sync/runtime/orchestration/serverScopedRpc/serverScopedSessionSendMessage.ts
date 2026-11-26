@@ -1,3 +1,4 @@
+import { parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readIngressComposerAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -39,7 +40,7 @@ type ScopedSessionEncryptionLike = Readonly<{
 
 export type ServerScopedSessionSendMessageResult =
   | Readonly<{ ok: true; ack?: unknown }>
-  | Readonly<{ ok: false; errorCode: string; error: string }>;
+  | ActionExecuteFailure;
 
 /** One Action projection of the Session sender's transport/admission receipt. */
 export function projectServerScopedSessionSendMessageResult(
@@ -322,7 +323,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<ServerScoped
             : undefined,
         );
         if (rejection.success) {
-          return { ok: false, errorCode: rejection.data, error: rejection.data };
+          return parseActionExecuteFailure(error) ?? { ok: false, errorCode: rejection.data, error: rejection.data };
         }
         throw error;
       } finally {

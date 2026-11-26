@@ -92,7 +92,10 @@ export async function submitUiSessionMessage(port: SessionSubmitPort, options: S
             });
             if (submitted.wakeFailureReceipt) return submitted.wakeFailureReceipt;
             if (submitted.type === 'send_failed' || submitted.type === 'wake_failed' || submitted.type === 'rejected') {
-                throw new HappyError(submitted.errorMessage ?? submitted.type, false, { code: submitted.errorCode ?? submitted.type });
+                throw new HappyError(submitted.errorMessage ?? submitted.type, false, {
+                    code: submitted.errorCode ?? submitted.type, details: submitted.details,
+                    failureCause: submitted.failureCause, requestId: submitted.requestId,
+                });
             }
             return projectServerScopedSessionSendMessageResult({ ok: true, ack: {
                 localId: submitted.localId,

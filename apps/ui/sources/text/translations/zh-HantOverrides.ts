@@ -7737,6 +7737,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     archived: '此工作階段已封存，不再接受輸入。',
                     unauthorized: '你沒有向此工作階段傳送訊息的權限。',
                     steerAccessRequired: '你無法傳送訊息。請向工作階段擁有者申請「可指揮」權限。',
+                    machineAccessRestore: '請讓這台機器的擁有者恢復你的存取權限。',
                     modelNotGranted: '不允許使用所選模型。',
                     permissionModeNotGranted: '不允許使用所選權限模式。',
                     targetUnavailable: '所選代理對話已無法使用。未傳送任何內容。',

@@ -7,6 +7,7 @@ import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTok
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { SESSION_PERMISSION_MODES } from '@happier-dev/protocol/sessions/metadata/sessionPermissionModes';
 import type { Tx } from '@/storage/inTx';
+import { projectSessionMachineAccessWithdrawal } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { resolveMachineAdmissionInTx, resolveMachineTargetAdmissionsInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
@@ -17,10 +18,20 @@ import { resolveDbSqlDialect } from '@/config/databaseProvider';
 /** A Machine admission the caller already decided in this request for one exact actor and Machine. */
 type AdmittedMachine = Extract<MachineAdmission, { kind: 'admitted' }>;
 
+type PlacementOptions = Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>;
+type PlacementTuple = Readonly<{ accountId: string; sessionId: string; machineId: string }>;
+type PlacementResolutionOptions = PlacementOptions | Readonly<{ discloseToSessionOwner: true }>;
+type PlacementResolution = SessionInputMachineTargetV1 | 'access_removed' | undefined;
+
 /** Exact placement uses the requester tuple; new work also passes current C41 admission. */
-export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: Readonly<{
-    accountId: string; sessionId: string; machineId: string;
-}>, options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
+export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: PlacementTuple,
+    options?: PlacementOptions): Promise<SessionInputMachineTargetV1 | undefined> {
+    const result = await resolveSessionInputMachineTargetInTx(tx, input, options);
+    return result === 'access_removed' ? undefined : result;
+}
+
+async function resolveSessionInputMachineTargetInTx(tx: Tx, input: PlacementTuple, options?: PlacementOptions,
+    discloseForSessionOwner?: SessionInputMachineTargetV1): Promise<PlacementResolution> {
     const admittedWork = options !== undefined && 'admittedWork' in options;
     const binding = { accountId: input.accountId, sessionId: input.sessionId, machineId: input.machineId };
     const key = await tx.accessKey.findUnique({ where: { accountId_machineId_sessionId: binding },
@@ -38,7 +49,14 @@ export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: Re
         const supplied = options !== undefined && 'admitted' in options && options.admitted.actorAccountId === input.accountId
             && options.admitted.machineId === input.machineId ? options.admitted : null;
         const admission = supplied ?? await resolveMachineAdmissionInTx(tx, { actorAccountId: input.accountId, machineId: input.machineId });
-        if (admission.kind !== 'admitted') return undefined;
+        if (admission.kind !== 'admitted') {
+            if (!discloseForSessionOwner || admission.code !== 'access_denied') return undefined;
+            const machine = await tx.machine.findUnique({ where: { id: input.machineId },
+                select: { installationId: true, revokedAt: true, replacedByMachineId: true } });
+            return projectSessionMachineAccessWithdrawal(admission,
+                machine !== null && machine.installationId === discloseForSessionOwner.installationId
+                && classifyMachineAvailabilityState(machine) === 'available');
+        }
         installationId = admission.installationId;
     }
     const homeId = await readCurrentServerIdentityId(process.env, tx);
@@ -145,9 +163,20 @@ export async function readCurrentCommittedSessionInputMachineTargetInTx(tx: Tx, 
 export async function readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx: Tx,
     session: Parameters<typeof readStoredCommittedSessionInputMachineTarget>[0],
     options?: Readonly<{ admittedWork: true }> | Readonly<{ admitted: AdmittedMachine }>): Promise<SessionInputMachineTargetV1 | undefined> {
+    const result = await resolveCommittedSessionInputMachineTargetInTx(tx, session, options);
+    return result === 'access_removed' ? undefined : result;
+}
+
+/** Pending account admission may present withdrawal to the already-authenticated Session owner. */
+export async function resolveCommittedSessionInputMachineTargetInTx(tx: Tx,
+    session: Parameters<typeof readStoredCommittedSessionInputMachineTarget>[0],
+    options?: PlacementResolutionOptions): Promise<PlacementResolution> {
     const stored = readStoredCommittedSessionInputMachineTarget(session);
     if (!stored) return undefined;
-    const current = await readCurrentSessionInputMachineTargetInTx(tx, stored, options);
+    const current = options && 'discloseToSessionOwner' in options
+        ? await resolveSessionInputMachineTargetInTx(tx, stored, undefined, stored)
+        : await resolveSessionInputMachineTargetInTx(tx, stored, options);
+    if (current === 'access_removed') return current;
     return current && sameMachineTarget(current, stored) ? stored : undefined;
 }
 

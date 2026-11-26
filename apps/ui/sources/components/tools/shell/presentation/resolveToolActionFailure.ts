@@ -4,6 +4,7 @@ import { readHappierActionToolFailure } from '@happier-dev/protocol/actions/happ
 import type { ActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionCurrentSessionScopeFailureDetailsV1 } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 
+import { resolveMachineAccessWithdrawalCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { t } from '@/text';
 import { formatApprovalDecisionFailureLabel } from '@/components/approvals/approvalStatusLabel';
 
@@ -45,7 +46,8 @@ const SCOPE_CAUSE_KIND: Readonly<Record<ScopeCause, 'outside' | 'unverified'>> =
 function resolveCauseSummary(cause: string | null): string | null {
     if (cause === null) return null;
     if (cause === 'machine_manage_required') return t('toolView.actionOutcome.cause.machineManageRequired');
-    if (cause === 'access_removed') return t('session.accessWithdrawnBody', { machine: t('machine.thisMachineInSentence') });
+    const withdrawal = resolveMachineAccessWithdrawalCopy(cause);
+    if (withdrawal) return withdrawal;
     if (cause === 'external_authorization_refused') return t('toolView.actionOutcome.cause.authorizationRefused');
     const scope = Object.hasOwn(SCOPE_CAUSE_KIND, cause) ? SCOPE_CAUSE_KIND[cause as ScopeCause] : null;
     if (scope === 'outside') return t('toolView.actionOutcome.cause.outsideAgentSessions');

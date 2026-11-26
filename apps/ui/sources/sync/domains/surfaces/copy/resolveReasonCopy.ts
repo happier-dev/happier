@@ -10,6 +10,10 @@ import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailure
 import type { LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text/i18n';
 
+export function resolveMachineAccessWithdrawalCopy(code: unknown): string | null {
+    return code === 'access_removed' ? t('session.accessWithdrawnBody', { machine: t('machine.thisMachineInSentence') }) : null;
+}
+
 /**
  * The surface family a reason code is rendered into. Each kind selects the
  * vocabulary and the generic fallback so a surface never borrows another

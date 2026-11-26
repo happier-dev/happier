@@ -834,6 +834,65 @@ describe('requester Session input through the custodian Machine socket', () => {
             delivered: { transcriptSeq: 0, turn: sourceTurn } }] });
     });
 
+    it('names withdrawn Machine access only to the owner of the exact retained Session binding', async () => {
+        const guest = await db.account.create({ data: { encryptionMode: 'e2ee' } });
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'e2ee' } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: custodian.id, installationId: randomUUID(), active: false,
+            metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const session = await db.session.create({ data: { accountId: guest.id, tag: randomUUID(),
+            metadata: 'encrypted', encryptionMode: 'e2ee', active: false } });
+        const binding = { accountId: guest.id, machineId: machine.id, sessionId: session.id };
+        const grant = { actorAccountId: custodian.id, machineId: machine.id,
+            principal: { kind: 'account' as const, accountId: guest.id } };
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { ...grant, level: 'view' }))).toMatchObject({ kind: 'saved' });
+        await db.accessKey.create({ data: { ...binding, data: 'encrypted' } });
+        const runtimeMachineTarget = { ...binding, installationId: machine.installationId!, homeId: await getOrCreateServerIdentityId() };
+        await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget } });
+        const unbound = await db.session.create({ data: { accountId: outsider.id, tag: randomUUID(),
+            metadata: 'encrypted', encryptionMode: 'e2ee', active: false } });
+        await db.session.update({ where: { id: unbound.id }, data: { runtimeMachineTarget: {
+            ...runtimeMachineTarget, accountId: outsider.id, sessionId: unbound.id,
+        } } });
+
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const send = (actor: string, sessionId: string, localId: string) => app.inject({
+                method: 'POST', url: `/v2/sessions/${sessionId}/pending`,
+                headers: { 'x-test-user-id': actor },
+                payload: { localId, targetMachineId: machine.id, ciphertext: 'encrypted',
+                    requestedAction: { v: 1, kind: 'enqueue' } },
+            });
+            const offline = await send(guest.id, session.id, 'offline-control');
+            expect(offline.statusCode).toBe(200);
+            expect(offline.json()).toMatchObject({ pending: { localId: 'offline-control' } });
+            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, grant))).toMatchObject({ kind: 'removed' });
+
+            const outsiderSend = await send(outsider.id, session.id, 'outsider');
+            const absentSend = await send(outsider.id, 'missing-session', 'outsider');
+            expect(outsiderSend.statusCode).toBe(404);
+            expect(outsiderSend.json()).toEqual(absentSend.json());
+            const unboundSend = await send(outsider.id, unbound.id, 'unbound');
+            expect(unboundSend.statusCode).toBe(403);
+            expect(unboundSend.json()).toEqual({ error: 'forbidden', code: 'session_input_machine_binding_unavailable' });
+
+            const withdrawn = await send(guest.id, session.id, 'withdrawn');
+            expect(withdrawn.statusCode).toBe(403);
+            const refusal = withdrawn.json();
+            expect(refusal).toMatchObject({ error: 'forbidden', code: 'session_input_machine_binding_unavailable',
+                requestId: expect.any(String),
+                failureCause: { phase: 'session.input.committed_machine_binding', errorCode: 'access_removed' } });
+            expect(refusal.requestId).not.toBe('');
+        });
+        expect(await db.sessionPendingMessage.findMany({ where: { sessionId: { in: [session.id, unbound.id] } },
+            select: { localId: true } })).toEqual([{ localId: 'offline-control' }]);
+    });
+
     it('admits the hosted requester tuple, refuses another source Machine, and rechecks grant loss', async () => {
         const requester = await db.account.create({ data: { publicKey: `requester-${randomUUID()}` } });
         const custodian = await db.account.create({ data: { publicKey: `custodian-${randomUUID()}`, encryptionMode: 'plain' } });

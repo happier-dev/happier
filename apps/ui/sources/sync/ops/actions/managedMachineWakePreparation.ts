@@ -7,7 +7,7 @@ import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runti
 import { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
-import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
+import { readActionMachineAtHome } from '@/sync/api/externalActionAccountTransport';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { executeUiManagedMachineRuntimeDemand } from './managedMachineWake';
 import { readUiManagedProvisioners } from './managedProvisionerAction';
@@ -18,6 +18,7 @@ import { openManagedMachineReadSnapshots } from '@/sync/ops/machines/machinePres
 export async function prepareUiManagedMachineWake(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     account: LazyActionAccountContext | undefined,
+    composerSend = false,
 ): Promise<HostReviewedChildrenDomainPreparationV1> {
     if (!request.machineRuntimeDemand) return null;
     // The installed controller prepares retained native wake in the signed
@@ -28,15 +29,27 @@ export async function prepareUiManagedMachineWake(
     const captureTarget = request.actionId === 'session.message.send' ? (read: SessionTargetRead) => {
         facts = projectSessionMessageTarget(read);
     } : undefined;
-    const prepared = await prepareManagedMachineWakeChildren(request, createUiManagedMachineWakeReads(account, captureTarget),
+    let hiddenMachineId: string | undefined;
+    const stoppedSendVisibility = composerSend && captureTarget && request.context.surface === 'ui' && request.approvalReplay !== true
+        && request.machineRuntimeDemand.activation === 'accepted-input'
+        ? {
+            applies: () => facts?.stopped === true && !facts.archived && !facts.isRecipient,
+            captureHidden: (machineId: string) => { hiddenMachineId = machineId; },
+        } : undefined;
+    const result = await prepareManagedMachineWakeChildren(request,
+        createUiManagedMachineWakeReads(account, captureTarget, stoppedSendVisibility),
         execution => executeUiManagedMachineRuntimeDemand(execution, account));
-    if (!facts || prepared && 'ok' in prepared) return prepared;
+    const hiddenByHome = hiddenMachineId !== undefined && hiddenMachineId === facts?.machineId;
+    if (!facts || result && 'ok' in result && !hiddenByHome) return result;
+    // An exact inventory miss cannot distinguish withdrawal. Send may ask Home's
+    // existing input admission owner using the retained Session target.
+    const prepared = result && !('ok' in result) ? result : null;
     const executeWake = prepared?.executeAdmittedAction;
     // Input-owned wakes happen after delivery. An explicit wake runs before delivery
     // and may change the Session host, so its continuation must resolve fresh facts.
     if (executeWake && prepared?.children.some(child => child.role === 'managed-wake')) return prepared;
     const { serverId, accountId, endpointUrl, credentialAuthorityKind } = account;
-    const targetFacts = { facts, serverId, accountId, endpointUrl, credentialAuthorityKind };
+    const targetFacts = { facts, serverId, accountId, endpointUrl, credentialAuthorityKind, hiddenByHome };
     return {
         children: prepared?.children ?? [],
         ...prepared,
@@ -57,17 +70,23 @@ type SessionTargetRead = Awaited<ReturnType<typeof readMachineControlTargetForSe
 
 /** Preparation resolves the captured Home's exact Session target once. */
 export function createUiManagedMachineWakeReads(account: LazyActionAccountContext,
-    captureTarget?: (read: SessionTargetRead) => void): ManagedWakePreparationReads {
+    captureTarget?: (read: SessionTargetRead) => void,
+    stoppedSendVisibility?: Readonly<{ applies: () => boolean; captureHidden: (machineId: string) => void }>,
+): ManagedWakePreparationReads {
     return {
         readMachineTarget: async (machineId, context) => {
             try {
                 const machine = await getSyncSingleton().ensureMachineInventoryTarget({ serverId: account.serverId, machineId });
                 account.assertCurrent();
                 let managedMachineRef = machine?.managedMachineRef;
-                if (managedMachineRef === undefined) {
-                    const target = await readOriginalAccountActionMachine(account, machineId, context.signal);
-                    if (!target) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                    managedMachineRef = target.managedMachineRef;
+                const checkStoppedSendVisibility = stoppedSendVisibility?.applies() === true;
+                if (managedMachineRef === undefined || checkStoppedSendVisibility) {
+                    const { row, notFound } = await readActionMachineAtHome(account, machineId, context.signal);
+                    if (!row) {
+                        if (notFound && checkStoppedSendVisibility) stoppedSendVisibility?.captureHidden(machineId);
+                        return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                    }
+                    managedMachineRef = row.managedMachineRef;
                 }
                 account.assertCurrent();
                 return { reachable: Boolean(machine && isMachineReachable(account.accountLifetime.scope, machine)),

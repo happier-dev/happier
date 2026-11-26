@@ -4,7 +4,7 @@ import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { PENDING_TRANSACTION_RETRY_AFTER_MS } from './pendingTransactionRetry';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { DiscussionMessageAddressingV1Schema, type DiscussionAddressingV1 } from '@happier-dev/protocol/discussions/references';
-import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetForSessionInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx, SessionInputPermissionModesDisjointError } from "@/app/session/messages/sessionInputAdmission";
+import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer, readCurrentSessionInputMachineTargetInTx, resolveCommittedSessionInputMachineTargetInTx, readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx, areCurrentSessionInputMachineTargetsInTx, SessionInputPermissionModesDisjointError } from "@/app/session/messages/sessionInputAdmission";
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor, type SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
@@ -693,6 +693,7 @@ export type EnqueuePendingMessageResult =
         code?: EncryptionPolicyRejectionCode | "session_access_forbidden";
         admissionRejectionCode?: SessionInputAdmissionRejectionCodeV1;
         failureCause?: ActionFailureCauseV1;
+        requestId?: string;
       }
     | { ok: false; error: "transaction-unavailable"; retryAfterMs: number; correlationId?: string };
 
@@ -1007,12 +1008,22 @@ async function enqueuePendingMessageWithAdmission(
             const requiresMachineTarget = deliveryMode !== "external_handoff";
             // The target this transaction admitted under the census lock of its controllers.
             let transactionAdmittedTarget: SessionInputMachineTargetV1 | undefined;
+            const discloseWithdrawal = acknowledgesManagedActivation && admission.authentication.authority === 'present_user'
+                && !session.active && requestedAction.kind === 'enqueue';
             const committedTarget = !requiresMachineTarget || session.runtimeMachineTarget == null ? undefined
-                : await readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx, { ...session, id: sessionId });
-            const bindingUnavailable = admission.kind === 'account' && access.access.level === 'owner' && targetExecutionRunId === null
+                : await resolveCommittedSessionInputMachineTargetInTx(tx, { ...session, id: sessionId },
+                    discloseWithdrawal ? { discloseToSessionOwner: true } : undefined);
+            const bindingUnavailable = acknowledgesManagedActivation
                 ? { error: 'forbidden', admissionRejectionCode: 'session_input_machine_binding_unavailable' } as const
                 : { error: 'session-not-found', admissionRejectionCode: 'session_input_target_unavailable',
                     failureCause: projectActionFailureCauseV1(undefined, 'session.input.committed_machine_binding') } as const;
+            if (committedTarget === 'access_removed') {
+                return { ok: false, ...bindingUnavailable,
+                    failureCause: { phase: 'session.input.committed_machine_binding', errorClass: 'HttpStatusError',
+                        errorCode: committedTarget, httpStatus: 403 },
+                    ...(params.diagnosticCorrelationId ? { requestId: params.diagnosticCorrelationId } : {}),
+                } as const;
+            }
             if (requiresMachineTarget && session.runtimeMachineTarget != null && !committedTarget) {
                 return { ok: false, ...bindingUnavailable } as const;
             }

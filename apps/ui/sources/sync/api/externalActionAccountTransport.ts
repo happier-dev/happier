@@ -171,7 +171,7 @@ function createTelemetryCollectorKeyPinPorts(account: LazyActionAccountContext, 
 }
 
 /** Home's exact read; `notFound` is its answer that this Account sees no such Machine. */
-async function readActionMachineAtHome(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
+export async function readActionMachineAtHome(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
     const readTransport = account.readTransport;
     if (!readTransport) return { row: null, notFound: false };
     const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({

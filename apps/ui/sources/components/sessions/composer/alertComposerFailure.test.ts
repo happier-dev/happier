@@ -97,6 +97,26 @@ describe('the composer failure presenter', () => {
         });
     });
 
+    it.each(['thrown', 'settled'] as const)('presents withdrawn Machine access with the Home references for %s Send', delivery => {
+        const errorCode = 'credential_scope_denied';
+        const requestId = 'send-after-withdrawal';
+        const failureCause = { phase: 'session.authorization.mint', errorClass: 'HttpStatusError',
+            errorCode: 'access_removed', httpStatus: 403 } as const;
+        if (delivery === 'thrown') alertComposerError(new HappyError(errorCode, false, { code: errorCode, requestId, failureCause }));
+        else alertComposerActionResultFailure({ type: 'send_failed', errorCode, requestId, failureCause });
+        expect(openedAlert()).toMatchObject({
+            message: expect.stringContaining(t('session.accessWithdrawnBody', { machine: t('machine.thisMachineInSentence') })),
+            offersTechnicalDetails: true,
+            disclosed: { code: errorCode, causeCode: 'access_removed', causePhase: failureCause.phase, requestId },
+        });
+    });
+
+    it('keeps the generic message for an unrecognized Send refusal', () => {
+        alertComposerActionResultFailure({ type: 'send_failed', errorCode: 'unrecognized_send_failure' });
+        expect(openedAlert()).toMatchObject({ message: t('common.requestFailed'),
+            disclosed: { code: 'unrecognized_send_failure' } });
+    });
+
     it('keeps the readable message of an untyped Send failure and offers no empty details', () => {
         alertComposerError(new Error('Session is archived'));
         const alert = openedAlert();

@@ -28,6 +28,7 @@ export function projectSessionMessageTarget({ session, target }: Awaited<ReturnT
   const processStartTime = metadata?.hostProcessStartTimeMs;
   const processFingerprint = metadata?.hostProcessInstanceFingerprint;
   return { sessionId: session.id, machineId: target?.machineId ?? null, archived: session.archivedAt != null,
+    stopped: session.active === false,
     isRecipient: isSessionAccessRecipient(session.access, session.accessLevel),
     hostOccurrence: [metadata?.hostPid ?? null, typeof processStartTime === 'number' ? processStartTime : null,
       typeof processFingerprint === 'string' ? processFingerprint : null] as const };
@@ -41,6 +42,7 @@ export type SessionMessageTargetContext = ActionExecutorContext & {
     endpointUrl: string;
     credentialAuthorityKind: LazyActionAccountContext['credentialAuthorityKind'];
     facts: ReturnType<typeof projectSessionMessageTarget>;
+    hiddenByHome: boolean;
   }>;
 };
 
@@ -106,12 +108,13 @@ export function createSessionMessageDelivery(params: Readonly<{
       account.assertCurrent();
       throwIfAborted(signal);
       const { [preparedSessionMessageTarget]: prepared, ...actionContext } = args.context as SessionMessageTargetContext;
+      const currentPreparation = prepared?.facts.sessionId === sessionId
+        && prepared.serverId === account.serverId && prepared.accountId === account.accountId
+        && prepared.endpointUrl === account.endpointUrl && prepared.credentialAuthorityKind === account.credentialAuthorityKind
+        ? prepared : undefined;
       let target: ReturnType<typeof projectSessionMessageTarget>;
       try {
-        target = prepared?.facts.sessionId === sessionId
-          && prepared.serverId === account.serverId && prepared.accountId === account.accountId
-          && prepared.endpointUrl === account.endpointUrl && prepared.credentialAuthorityKind === account.credentialAuthorityKind
-          ? prepared.facts : projectSessionMessageTarget(await readAccountSessionControlTarget(account, sessionId, signal));
+        target = currentPreparation?.facts ?? projectSessionMessageTarget(await readAccountSessionControlTarget(account, sessionId, signal));
       } catch (error) {
         if (error instanceof SessionSnapshotReadError && error.errorCode === 'not_found') {
           return buildUnavailableSessionInputTargetFailureV1();
@@ -126,7 +129,9 @@ export function createSessionMessageDelivery(params: Readonly<{
         && args.requestedAction?.kind !== 'reset_start';
       const pendingWhileOffline = args.requestedAction?.kind === 'enqueue' && machine?.managedMachineRef === null
         && resolveMachineReachability(account.accountLifetime.scope, machine) === 'unreachable';
-      if ((isRecipient || pendingDuringStart || pendingWhileOffline)
+      const hiddenByHome = currentPreparation?.hiddenByHome === true;
+      const pendingForHiddenMachine = hiddenByHome && args.requestedAction?.kind === 'enqueue';
+      if ((isRecipient || pendingDuringStart || pendingWhileOffline || pendingForHiddenMachine)
         && account.credentialAuthorityKind === 'account'
         && (!args.actionCaller || args.actionCaller.kind === 'host')
         && args.context.authority !== 'account_automation'
@@ -134,7 +139,7 @@ export function createSessionMessageDelivery(params: Readonly<{
         && !args.context.externalActionExecutionAuthorization && !args.context.actionRequestAttributionV1
         && !args.sessionInputSource && !composerSubmission?.legacyAttachments
         && 'message' in args.authoredInput
-        && (!(pendingDuringStart || pendingWhileOffline) || args.authoredInput.forgeEvidence === undefined)
+        && (!(pendingDuringStart || pendingWhileOffline || pendingForHiddenMachine) || args.authoredInput.forgeEvidence === undefined)
         && supportsAccountPendingForSessionInput({ ...args.authoredInput, request: args.inputAdmission?.request })) {
         // Home owns exact placement and activation for guest Start and ordinary
         // offline enqueue. Managed sleep and immediate input keep their Action routes.
@@ -142,7 +147,7 @@ export function createSessionMessageDelivery(params: Readonly<{
           deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal },
             pendingDuringStart ? true : pendingWhileOffline ? offlineResumeWhenAvailable : undefined));
       }
-      if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      if (!machineId || hiddenByHome) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       if (requiresReplyCustody) {
         const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({
           readTransport: account.readTransport, request: (path, init) => account.request(path, { ...init, signal: ownedSignal }),

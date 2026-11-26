@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
@@ -60,7 +61,7 @@ import { readSessionInputContextDisplayTextV1 } from '@happier-dev/protocol/sess
 import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema, type SessionStoredMessageContent, type StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionAccessErrorCodeV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
-import { isPreDispatchInputRejectionCodeV1, SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
+import { isPreDispatchInputRejectionCodeV1, SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import {
     admitMentionRefsV1ForText,
@@ -696,29 +697,24 @@ function createPendingTargetConflictError(): Error & { code: string } {
     });
 }
 
-function createPendingAdmissionRejectionError(
-    code: SessionInputAdmissionRejectionCodeV1,
-): Error & { code: SessionInputAdmissionRejectionCodeV1 } {
-    return Object.assign(new Error(code), { code });
-}
-
-async function readPendingAdmissionRejectionCode(
-    response: Response,
-): Promise<SessionInputAdmissionRejectionCodeV1 | null> {
+async function readPendingAdmissionRejectionError(response: Response) {
     const body = await response.clone().json().catch(() => null) as unknown;
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
-    const parsed = SessionInputAdmissionRejectionCodeV1Schema.safeParse(
-        (body as Readonly<Record<string, unknown>>).code,
-    );
-    return parsed.success ? parsed.data : null;
+    if (!isPlainObject(body)) return null;
+    const code = SessionInputAdmissionRejectionCodeV1Schema.safeParse(body.code);
+    if (!code.success) return null;
+    const cause = ActionFailureCauseV1Schema.safeParse(body.failureCause);
+    return createActionExecuteFailureError({ ok: false, errorCode: code.data, error: code.data,
+        ...(cause.success ? { failureCause: cause.data } : {}),
+        ...(typeof body.requestId === 'string' && body.requestId ? { requestId: body.requestId } : {}),
+    });
 }
 
 async function throwPendingEnqueueResponseError(
     response: Response,
     recipient: PendingMessage['recipient'],
 ): Promise<never> {
-    const code = await readPendingAdmissionRejectionCode(response);
-    if (code) throw createPendingAdmissionRejectionError(code);
+    const rejection = await readPendingAdmissionRejectionError(response);
+    if (rejection) throw rejection;
     if (recipient && (response.status === 404 || response.status === 405 || response.status === 501)) {
         throw createPendingTargetUpdateRequiredError();
     }
@@ -3224,8 +3220,8 @@ export async function updatePendingMessageV2(params: {
             body: JSON.stringify(writeBody),
         });
         if (!response.ok) {
-            const code = await readPendingAdmissionRejectionCode(response);
-            if (code) throw createPendingAdmissionRejectionError(code);
+            const rejection = await readPendingAdmissionRejectionError(response);
+            if (rejection) throw rejection;
             await assertPendingResponseOk(response, 'Failed to update pending message');
         }
         const recordAcceptance = capturePendingSnapshotAcceptance(params.outboxScope, sessionId, recipient);
