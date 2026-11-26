@@ -1,17 +1,21 @@
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import nacl from 'tweetnacl';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
-import * as machineRpc from '@/session/transport/rpc/machineRpc';
-import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { isWidgetAdmissionUndecidableHereV1 } from '@happier-dev/protocol/widgets/executeWidgetInstanceActionV1';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HomeHubLayoutV1Schema } from '@happier-dev/protocol/home';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createCliActionDeps } from './createCliActionDeps';
 import { createCounterWidgetFixture } from './widgetApproval.testkit';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
+beforeEach(() => { installAxiosRequestMethodAdapter(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('reads the exact public declaration without saved layout or Artifact inventory reads and rejects a retired capture', async () => {
@@ -70,11 +74,16 @@ describe('CLI widget Session input scope', () => {
   const sessionId = 'c111111111111111111111111';
   const homeIdentity = 'srv_widget_session_home';
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'viewer' })).toString('base64url')}.signature`;
+  const sessionFixture = () => {
+    const fields = buildSessionMetadataEnvelopeFields({ credentials: { token, encryption: null }, accountEncryptionMode: 'plain',
+      storedContentMode: 'plain', metadata: { path: '/repo', host: 'host', machineId: 'machine' }, agentState: null });
+    return createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', share: null, metadataVersion: 0,
+      metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata, displayProjectionV1: fields.displayProjectionV1 });
+  };
 
   it('admits the Session the options resolver offers for the portable Home identity', async () => {
-    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadataLayoutVersion: 1, share: null,
-      dataEncryptionKey: null, metadata: JSON.stringify({ v: 1 }),
-      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: { path: '/repo', host: 'host', machineId: 'machine' } }) });
+    const session = sessionFixture();
     // Only Home HTTP is substituted; Action dispatch, scope admission and the widget input owner stay real.
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = String(url);
@@ -85,10 +94,15 @@ describe('CLI widget Session input scope', () => {
       if (path.includes('/v1/artifacts/')) return { status: 404, data: { error: 'not_found' } };
       throw new Error(`Unexpected Home read: ${url}`);
     });
-    // Machine RPC is the process boundary that serves the Machine's plugin projection; Built-in widgets stay host-owned.
-    vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ protocolVersion: 1, projection: createCounterWidgetFixture().projection });
-    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId, mode: 'plain', ctx: null,
-      serverId: 'local-profile', serverIdentityId: homeIdentity, serverHttpBaseUrl: home });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(String(url)).toBe(`${home}/v1/artifacts/read`);
+      return artifactReadResponse(body, () => null);
+    });
+    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'local-profile', serverIdentityId: homeIdentity, serverHttpBaseUrl: home,
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async () => ({
+        protocolVersion: 1, projection: createCounterWidgetFixture().projection,
+      }) } });
     const picked = { serverId: homeIdentity, sessionId };
     const resolved = await deps.widgetInputs!.resolve({
       ref: { surface: { serverId: homeIdentity, accountId: 'viewer', owner: { kind: 'home' } }, instanceId: 'summary' },
@@ -98,50 +112,67 @@ describe('CLI widget Session input scope', () => {
     expect(resolved, JSON.stringify(resolved)).toEqual({ status: 'ready', input: { session: picked } });
   });
 
-  /**
-   * An agent's Session caller executes with the Home-minted authorization of its root Action. Home admits
-   * a signed read only for that root (or a few named preparation effects), so the Session read of the
-   * admission answers "not authenticated" for a Session that is real and owned. Admission must hand that
-   * to the approved execution instead of refusing the pick.
-   */
-  it('reports a Session read that its root authorization cannot make as undecidable here, not as a refusal', async () => {
-    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadataLayoutVersion: 1, share: null,
-      dataEncryptionKey: null, metadata: JSON.stringify({ v: 1 }),
-      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: { path: '/repo', host: 'host', machineId: 'machine' } }) });
-    const rootActionId = 'widgets.item.add';
-    // Home verifies a signed effect against the root authorization and refuses any other effect; the
-    // daemon's own bearer reads (no effect header) are not signed and stay admitted.
-    const signedOtherEffect = (config?: { headers?: Record<string, string> }) => {
-      const effect = config?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER];
-      return effect !== undefined && effect !== rootActionId;
-    };
+  it.each([true, false])('uses requester authority for Session input admission (requester can read: %s)', async canRead => {
+    const session = sessionFixture();
+    const rootActionId = 'widgets.item.inputs.validate';
+    const picked = { serverId: homeIdentity, sessionId };
+    const instance = { v: 1 as const, id: 'summary', definition: { kind: 'builtin' as const, id: 'session_summary' },
+      bindings: { session: { kind: 'value' as const, value: picked } } };
+    const layout = HomeHubLayoutV1Schema.parse({ v: 1, order: [instance.id], hidden: [], items: [{ kind: 'widget', instance }] });
+    const homeArtifactId = buildHomeHubArtifactIdV1('viewer');
+    const homeArtifact = { id: homeArtifactId, ownerAccountId: 'viewer', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      header: encodePlainArtifactStoredContent({ kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1 }),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(layout) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    const sessionReadAuthorities: Array<'requester' | 'daemon'> = [];
+    const isRequester = (config?: { headers?: Record<string, string> }) =>
+      config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === 'home-minted-authorization';
     const refusedEffect = { status: 401, data: { error: 'invalid_connection_credential' } };
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       const path = String(url);
       const headers = config as { headers?: Record<string, string> } | undefined;
-      if (path.endsWith('/v1/account/encryption/currentness')) return signedOtherEffect(headers) ? refusedEffect : { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
-      if (path.endsWith(`/v2/sessions/${sessionId}`)) return signedOtherEffect(headers) ? refusedEffect : { status: 200, data: { session } };
+      if (path.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+      if (path.endsWith(`/v2/sessions/${sessionId}`)) {
+        sessionReadAuthorities.push(isRequester(headers) ? 'requester' : 'daemon');
+        if (isRequester(headers)) {
+          expect(headers?.headers?.[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(rootActionId);
+          expect(headers?.headers?.Authorization).toBeUndefined();
+          return canRead ? { status: 200, data: { session } } : refusedEffect;
+        }
+        return { status: 200, data: { session } };
+      }
       if (path.endsWith('/v2/account/settings')) return { status: 200, data: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 }) };
-      if (path.includes('/v1/artifacts/')) return { status: 404, data: { error: 'not_found' } };
+      if (path.endsWith(`/v1/artifacts/${homeArtifactId}`)) return { status: 200, data: homeArtifact };
       throw new Error(`Unexpected Home read: ${url}`);
     });
-    vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ protocolVersion: 1, projection: createCounterWidgetFixture().projection });
-    const installation = { installationId: 'installation-1', privateKey: Buffer.alloc(64, 7).toString('base64url') };
-    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId, mode: 'plain', ctx: null,
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(String(url)).toBe(`${home}/v1/artifacts/read`);
+      return artifactReadResponse(body, id => id === homeArtifactId ? homeArtifact : null);
+    });
+    const installation = { installationId: 'installation-1', privateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey };
+    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'local-profile', serverIdentityId: homeIdentity, serverHttpBaseUrl: home,
+      machineActionDirectTargetTransport: { machineId: 'machine', invoke: async () => ({
+        protocolVersion: 1, projection: createCounterWidgetFixture().projection,
+      }) },
       externalActionMachineRequestPrivateKey: installation.privateKey, externalActionMachineInstallationId: installation.installationId });
     // Home mints this; the CLI only forwards its token, request id and Home identity into the signed headers.
-    const authorization = { v: 1, token: 'home-minted-authorization', binding: { actionId: rootActionId, requestId: 'req-1',
-      serverIdentityId: homeIdentity } } as unknown as ExternalActionExecutionAuthorizationV1;
-    const picked = { serverId: homeIdentity, sessionId };
-    const resolved = await deps.widgetInputs!.resolve({
-      ref: { surface: { serverId: homeIdentity, accountId: 'viewer', owner: { kind: 'home' } }, instanceId: 'summary' },
-      instance: { v: 1, id: 'summary', definition: { kind: 'builtin', id: 'session_summary' }, bindings: { session: { kind: 'value', value: picked } } },
-      admission: 'configuration',
-      context: { surface: 'cli', authority: 'account_automation', serverId: homeIdentity, serverIdentityId: homeIdentity,
-        externalActionExecutionAuthorization: authorization, externalActionTarget: { kind: 'machine', machineId: 'machine' } },
-    });
-    expect(resolved, JSON.stringify(resolved)).toMatchObject({ status: 'unavailable', fields: [{ path: 'session', reasonCode: 'not_authenticated' }] });
-    expect(isWidgetAdmissionUndecidableHereV1({ ok: false, errorCode: 'widget_inputs_invalid', error: 'widget_inputs_invalid', details: resolved })).toBe(true);
+    const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'home-minted-authorization', binding: {
+      actionId: rootActionId, requestId: 'req-1', serverIdentityId: homeIdentity,
+      accountId: 'requester', accountEncryptionMode: 'plain', authentication: { kind: 'account', tokenEpoch: 0 },
+      machineId: 'machine', custodianAccountId: 'viewer', installationId: installation.installationId,
+      requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    } };
+    const result = await createActionExecutor(deps).execute(rootActionId, {
+      ref: { surface: { serverId: homeIdentity, accountId: 'viewer', owner: { kind: 'home' } }, instanceId: instance.id },
+      bindings: instance.bindings,
+    }, { surface: 'cli', authority: 'account_automation', serverId: homeIdentity, serverIdentityId: homeIdentity,
+      bypassApprovals: true, externalActionExecutionAuthorization: authorization, externalActionTarget: { kind: 'machine', machineId: 'machine' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: canRead
+      ? { status: 'ready', input: { session: picked } }
+      : { status: 'unavailable', fields: [{ path: 'session', reasonCode: 'not_authenticated' }] } });
+    expect(sessionReadAuthorities).toContain('requester');
+    expect(sessionReadAuthorities).not.toContain('daemon');
   });
 });
