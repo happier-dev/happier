@@ -43,7 +43,7 @@ describe('Session startup operation custody', () => {
     { code: 'mcp_tool_catalog_unavailable', message: '', expectedCode: 'mcp_tool_catalog_unavailable', reason: 'unclassified_provider_error' },
     { code: 'agent_session_error', message: 'Authentication required PRIVATE_DEVICE_CODE', expectedCode: 'provider_endpoint_auth_required', reason: 'authentication_required' },
     { code: 'agent_session_error', message: 'FX requires an access token with a known, current expiry. Refresh the Connected Account and retry. PRIVATE_TOKEN', expectedCode: 'provider_endpoint_auth_required', reason: 'auth_expired' },
-    { code: 'model_selection_required', message: 'The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', expectedCode: 'agent_startup_model_reconciliation_failed', reason: 'model_selection_required' },
+    { code: 'model_selection_required', message: 'The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', expectedCode: 'model_selection_required', reason: 'unclassified_provider_error' },
     { code: 'agent_session_error', message: 'OpenCode model "PRIVATE_MODEL" is not selectable', expectedCode: 'agent_startup_model_reconciliation_failed', reason: 'model_selection_required' },
   ] as const)(
     'settles and retires rejected construction ($code → $expectedCode/$reason)', async ({ code, message, expectedCode, reason }) => {
@@ -239,10 +239,10 @@ describe('Session startup operation custody', () => {
     const retired: number[] = [];
     const physical = createStopSession({ trackedSessionsByKey: tracked,
       // OS liveness/exit and terminal files are boundaries; no actual PID is signalled.
-      areTrackedRunnersExited: async ({ trackedPids }) => { selected.push([...trackedPids]); return true; },
-      waitForTrackedRunnersExit: async ({ trackedPids }) => {
+      areTrackedRunnersExited: async ({ runners }) => { selected.push(runners.map(({ pid }) => pid)); return true; },
+      waitForTrackedRunnersExit: async ({ runners }) => {
         expect(operations.store.get(scope, 'refused-startup')).toMatchObject({ state: 'running' });
-        retired.push(...trackedPids);
+        retired.push(...runners.map(({ pid }) => pid));
         return true;
       },
       readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
@@ -330,6 +330,8 @@ describe('Session startup operation custody', () => {
       const sessionId = 'refused-fork-child';
       const failureMessage = failureKind === 'construction'
         ? expect.any(String) : 'native_agent_session_mode_unavailable';
+      const failureCode = failureKind === 'construction'
+        ? 'agent_session_error' : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
       const scope = { machineId: 'machine', accountId: 'account' };
       const operations = createHostActionOperationRuntime({ ...scope, resolveAccountId: async () => scope.accountId,
         generateOperationId: () => 'refused-fork-startup', supportsCoreCancellation: () => true });
@@ -349,12 +351,12 @@ describe('Session startup operation custody', () => {
       const exitOperationStates: (string | undefined)[] = [];
       const physical = createStopSession({ trackedSessionsByKey: tracked,
         // OS liveness/exit and terminal files are boundaries; no fake PID is signalled.
-        areTrackedRunnersExited: async ({ trackedPids }) => { selected.push([...trackedPids]); return true; },
-        waitForTrackedRunnersExit: async ({ trackedPids }) => {
+        areTrackedRunnersExited: async ({ runners }) => { selected.push(runners.map(({ pid }) => pid)); return true; },
+        waitForTrackedRunnersExit: async ({ runners }) => {
           exitOperationStates.push(operations.store.get(scope, 'refused-fork-startup')?.state);
           if (scenario === 'stop-throws') throw new Error('OS exit observation failed');
           if (scenario === 'stop-incomplete') return false;
-          retired.push(...trackedPids);
+          retired.push(...runners.map(({ pid }) => pid));
           return true;
         },
         readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null });
@@ -420,10 +422,10 @@ describe('Session startup operation custody', () => {
               if (!result || result.ok) throw new Error('Expected native fork refusal');
               return { ok: false, errorCode: result.errorCode, error: result.errorMessage };
             } });
-          expect(response).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+          expect(response).toMatchObject({ ok: false, errorCode: failureCode,
             error: failureMessage });
           expect(operations.store.get(scope, 'refused-fork-startup')).toMatchObject({ state: 'failed',
-            error: { errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, error: failureMessage } });
+            error: { errorCode: failureCode, error: failureMessage } });
           expect(retired, scenario).toEqual(scenario === 'current' ? [refused.pid] : []);
           expect(selected, scenario).toEqual(scenario === 'replacement' || scenario === 'changed-birth' ? [] : [[refused.pid]]);
           expect(exitOperationStates, scenario).toEqual(scenario === 'replacement' || scenario === 'changed-birth' ? [] : ['running']);

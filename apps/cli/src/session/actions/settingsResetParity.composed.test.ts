@@ -4,7 +4,7 @@ import { AccountSettingsV2UpdateRequestSchema, accountSettingsParse, type Accoun
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { SettingsDeclarationActionOutputSchemasV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { createCliSettingsCatalogServices } from './settingsCatalogServices';
 import { createSignedInSummaryCatalogFixture } from './settingsCatalog.test-support';
 import { emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -67,13 +67,19 @@ describe('public Settings reset parity', () => {
     expect(host.readStoredSettings()).toEqual({ favoriteMachines: ['unrelated'] });
   });
   const values = {
-    explainChanges: false, summaryModel: '', outputLanguage: 'fr', prepareAfterTurn: true,
+    explainChanges: false, summaryModel: null as Record<string, unknown> | null, outputLanguage: 'fr', prepareAfterTurn: true,
+    reviewQualityAggregation: 'median',
+    aiSuggestionsEnabled: true, aiSuggestionsProvider: 'pc_local', aiSuggestionsModel: 'suggestions-model',
+    aiSuggestionsNextEdit: true, aiSuggestionsNextEditModel: 'next-edit-model', aiSuggestionsMode: 'onRequest',
+    aiSuggestionsDelay: 'relaxed', aiSuggestionsExcluded: ['private/**'], aiSuggestionsDisabledLanguages: ['markdown'],
     investigateSurroundingFiles: true, commitStrategy: 'git_staging', commitMessageGenerator: false,
-    commitMessageAgent: 'codex', commitMessageInstructions: 'Use a concise subject.', includeCoAuthoredBy: false,
-    confirmBeforePulling: false, confirmBeforePushing: false, pushRejection: 'manual', pullRequestPlacement: 'details',
+    commitMessageAgent: { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' } as Record<string, unknown>, commitMessageInstructions: 'Use a concise subject.', includeCoAuthoredBy: false,
+    confirmBeforePulling: false, confirmBeforePushing: false, pushRejection: 'manual', pullRequestPlacement: 'details', resourceOpenLocation: 'github',
     diffRenderer: 'happier', diffLayout: 'split', syntaxHighlighting: 'advanced', changedFilesDensity: 'compact',
     gitPaneLayout: 'tabs', changedFilesLayout: 'tree', showLineNumbersInDiffs: false,
     showLineNumbersInToolViews: true, wrapLinesInDiffs: true, editorAutoSave: true, markdownEditMode: 'raw',
+    editorFormatOnSave: true, editorInlayHints: 'all', editorSemanticHighlighting: false,
+    askWithoutSessionTarget: 'session',
     gitRouting: 'happier.scm.backend.sapling/sapling',
     backendDefaultDiff: { backendId: 'happier.scm.backend.git/git', mode: 'pending' },
   };
@@ -83,8 +89,13 @@ describe('public Settings reset parity', () => {
     admitted = await createSignedInSummaryCatalogFixture();
     const catalog = await services.readScmDiffSummaryCatalog!(accountSettingsParse({}), '');
     const model = catalog?.profiles.find(profile => profile.costTier === 'low' && profile.structuredOutput === 'supported');
-    if (!model) throw new Error('Admitted Agent must produce a supported low-cost model');
-    values.summaryModel = model.catalogId;
+    if (!model?.modelSelector) throw new Error('Admitted Agent must produce a supported low-cost model selector');
+    const selector = model.modelSelector;
+    values.summaryModel = { v: 1,
+      modelSelection: selector.modelSelection ?? { agentTargetKey: selector.backendTargetKey, providerConnectionId: null, modelId: selector.modelId ?? 'default' },
+      ...(selector.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}),
+      ...(selector.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: selector.sessionConfigOptionOverrides } : {}),
+    };
   });
   afterAll(async () => { await admitted?.dispose(); vi.unstubAllEnvs(); });
 
@@ -100,7 +111,8 @@ describe('public Settings reset parity', () => {
     if (!capture.ok) throw new Error(JSON.stringify(capture));
     const { reversal } = SettingsDeclarationActionOutputSchemasV1['settings.set'].parse(capture.result);
     if (!reversal) throw new Error('Missing App receipt');
-    expect(host.readStoredSettings().voice).toMatchObject({ happierVoiceSettingsV1: true });
+    expect(host.readStoredSettings().voiceSettingsV1).toMatchObject({ dictation: { language: 'fr' } });
+    expect(host.readStoredSettings()).not.toHaveProperty('voice');
     host.changeUnrelatedSetting();
     expect(await app.execute('settings.set', { anchor, value: 'fr', reversal: { kind: 'restore', ...reversal } }, context))
       .toMatchObject({ ok: true });
@@ -109,16 +121,35 @@ describe('public Settings reset parity', () => {
 
   it('covers the authored Source control catalog and keeps saved results at their Machine owner', async () => {
     const uiHost = uiHarness.createSettingsResetParityHost({ initial: {}, mutationSnapshot: {}, mutationServices: services });
-    expect([...Object.keys(values), 'savedWalkthroughs'].map(id => `sourceControl.${id}`).sort())
+    const anchorFor = (id: string) => id === 'askWithoutSessionTarget' ? `files.${id}` : `sourceControl.${id}`;
+    expect([...Object.keys(values).map(anchorFor), 'sourceControl.savedWalkthroughs', 'sourceControl.aiSuggestionsUsage',
+      'files.trackAgentEdits', 'files.imageBackground'].sort())
       .toEqual([...uiHost.sourceControlAnchors].sort());
     const cli = executor(createCliSettingsDeclarationAction({}));
+    const authoredAnchors = new Set(uiHost.sourceControlAnchors);
+    const catalogs: SettingsDeclarationDescriptorV1[][] = [];
     for (const [owner, surface] of [[cli, 'cli'], [executor(uiHost.settingsDeclarationAction), 'ui']] as const) {
       const list = await owner.execute('settings.list', { pageId: 'sourceControl' }, { surface });
       if (!list.ok) throw new Error(JSON.stringify(list));
       const listed = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(list.result);
-      expect(listed.items.map(item => item.anchor).sort()).toEqual([...uiHost.sourceControlAnchors].sort());
+      const authored = listed.items.filter(item => authoredAnchors.has(item.anchor));
+      expect(authored.map(item => item.anchor).sort()).toEqual([...authoredAnchors].sort());
+      catalogs.push(authored);
       expect(await owner.execute('settings.get', { anchor: 'sourceControl.savedWalkthroughs' }, { surface }))
         .toMatchObject({ ok: false, errorCode: 'setting_not_bound' });
+      expect(await owner.execute('settings.get', { anchor: 'sourceControl.aiSuggestionsUsage' }, { surface }))
+        .toMatchObject({ ok: false, errorCode: 'setting_not_bound' });
+    }
+    // CLI also exposes Account preferences used outside authored Settings rows.
+    // Localized copy and availability belong to the answering host; structural declaration metadata agrees.
+    const metadata = ({ readable: _readable, writable: _writable, unavailableReason: _unavailableReason,
+      title: _title, description: _description, allowedValues: _allowedValues,
+      ...declaration }: SettingsDeclarationDescriptorV1) => declaration;
+    for (const item of catalogs[0]) {
+      const appItem = catalogs[1].find(candidate => candidate.anchor === item.anchor);
+      if (!appItem) throw new Error(`Missing authored App setting: ${item.anchor}`);
+      expect(metadata(item), JSON.stringify({ cli: metadata(item), app: metadata(appItem) })).toEqual(metadata(appItem));
+      if (item.readable && appItem.readable) expect(item.allowedValues, item.anchor).toEqual(appItem.allowedValues);
     }
   });
 
@@ -152,7 +183,7 @@ describe('public Settings reset parity', () => {
     const token = `test.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.test`;
     const cli = executor(createCliSettingsDeclarationAction({ credentials: { token, encryption: null }, serverId: scope.serverId }));
       const value = values[id];
-      const anchor = `sourceControl.${id}`;
+      const anchor = id === 'askWithoutSessionTarget' ? `files.${id}` : `sourceControl.${id}`;
       const rawBefore = content.t === 'plain' ? content.v : {};
       const rowHost = uiHarness.createSettingsResetParityHost({ initial: rawBefore, mutationSnapshot: rawBefore,
         mutationServices: services });

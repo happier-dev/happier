@@ -43,18 +43,26 @@ import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } f
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema } from '@happier-dev/protocol';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
+import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 
 it('arms an after-Action trigger for an installed Account Action from the retained CLI executor', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-action-trigger-'));
     const app = fastify();
     const accountId = 'account-action-trigger-owner';
     const serverId = 'account-action-trigger-home';
+    const machineId = 'workflow-machine';
     const serverHttpBaseUrl = 'http://account-action-trigger.test';
     const homeFeatures = registerAccountHomeHttp(app, { accountId, serverId });
     const authored = await registerAuthoredAccountActionRelease(app, accountId, {
         includeBundledPluginIds: [DATABASE_PLUGIN_ID_V1],
     });
     const saved = new Map<string, ReturnType<typeof AutomationDefinitionDetailSchema.parse>>();
+    app.get(`/v1/machines/${machineId}`, async () => ({ machine: MachinePublishedRowV1Schema.parse({
+        id: machineId, managedMachineRef: null, storageMode: 'plain', metadata: '{}', metadataVersion: 1,
+        daemonState: null, daemonStateVersion: 0,
+        access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+    }) }));
     app.get('/v3/automations', async () => ({ automations: [], nextCursor: null }));
     app.post('/v3/automations', async request => {
         const input = AutomationDefinitionCreateRequestSchema.parse(request.body);
@@ -79,10 +87,13 @@ it('arms an after-Action trigger for an installed Account Action from the retain
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const executor = createCliActionExecutor({ token, credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
             happyHomeDir, sessionId: 'cli-global', mode: 'plain', ctx: null, serverId, serverHttpBaseUrl,
+            actionsSettingsProvider: { getActionsSettings: () => setActionApprovalOverride({
+                settings: ActionsSettingsV1Schema.parse({ v: 1 }), actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID,
+                surface: 'cli', approvalRequired: false,
+            }) },
             resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated',
                 features: { ...homeFeatures, features: { ...homeFeatures.features, automations: { enabled: true }, workflows: { enabled: true } } } }),
         });
-        const machineId = 'workflow-machine';
         const accountAction = (localId: string) => formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId });
         const arm = (actionId: string, subject?: unknown) => executor.execute(WORKFLOW_TRIGGER_ADD_ACTION_ID, {
             project: { machineId, directory: '/workspace' },
@@ -92,8 +103,7 @@ it('arms an after-Action trigger for an installed Account Action from the retain
             trigger: { kind: 'action', enabled: true, phase: 'after',
                 actionIds: [actionId], ...(subject === undefined ? {} : { subject }) },
         }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
-            externalActionTarget: { kind: 'machine', machineId },
-            presentUserConfirmation: { actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID } });
+            externalActionTarget: { kind: 'machine', machineId } });
         expect(await arm(accountAction('echo'))).toMatchObject({ ok: true, result: { set: { triggers: [
             { kind: 'action', phase: 'after', actionIds: [formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId: 'echo' })] },
         ] } } });
@@ -126,6 +136,7 @@ it.each(['plain', 'e2ee'] as const)('routes declared and host-attached Session s
         machineKey: accountKeys.secretKey, publicKey: accountKeys.publicKey } : null, credentialProvenance: 'stored_session' };
     if (encryptionMode === 'plain') registerAccountHomeHttp(app, { accountId, serverId: 'session-source-home' });
     else {
+        app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         app.get('/v1/account/encryption', async () => ({ mode: encryptionMode, updatedAt: 1 }));
         app.get('/v1/account/encryption/currentness', async () => ({ mode: encryptionMode, version: 1,
             signingKeyFingerprint: 'fixture-signing', contentKeyFingerprint: 'fixture-content', updatedAt: 1 }));

@@ -3,6 +3,7 @@ import fastify from 'fastify';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 
 import { reloadConfiguration } from '@/configuration';
 import { writeCredentialsTokenOnly, readStoredCredentials } from '@/persistence';
@@ -13,6 +14,7 @@ import { createAccountEncryptionCurrentnessFixture, createSessionListResponseFix
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 import { executeExternalSessionCandidatesListAction as list } from './discoveryLinkActions';
 
 /** A physical external Agent, admitted through the real durable plugin store. */
@@ -62,13 +64,13 @@ export const externalSessions = {
             return { ok: true, value: { candidates: match
                 ? [{ ...match, title: 'Title ' + match.remoteSessionId }] : [], nextCursor: null } };
         }
-        // This native source prepares two pages. The host owns their indexed
-        // generation, continuity and completed-page hydration.
-        return { ok: true, value: request.cursor
-            ? { candidates: corpus.slice(2), nextCursor: null,
-                preparation: { kind: 'building_candidate_index', scanned: 3, total: 3 } }
-            : { candidates: corpus.slice(0, 2), nextCursor: 'native-page-2',
-                preparation: { kind: 'building_candidate_index', scanned: 2, total: 3 } } };
+        // An activity-ordered source: newest first, one page per request.
+        const ordered = [...corpus].sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+            .map(row => ({ ...row, title: 'Title ' + row.remoteSessionId }));
+        const offset = request.cursor ? Number(request.cursor.slice('after:'.length)) : 0;
+        const page = ordered.slice(offset, offset + request.maxItems);
+        const next = offset + page.length;
+        return { ok: true, value: { candidates: page, nextCursor: next < ordered.length ? 'after:' + next : null } };
     },
     async resolveLinkIdentity(request) { return { ok: true, value: {
         remoteSessionId: request.remoteSessionId, source: request.source, linkData: request.linkData ?? {},
@@ -94,7 +96,7 @@ export function activate(api) {
 }
 
 describe('external Session candidate annotation through admitted source custody', () => {
-    it('annotates a complete candidate generation but never a partial preparation page', async () => {
+    it('annotates every served Browse page through admitted source custody', async () => {
         await withTempDir('happier-annotation-composed-', async (fixtureRoot) => {
             const homeDir = join(fixtureRoot, 'home');
             const pluginRoot = join(fixtureRoot, 'authored-agent');
@@ -121,11 +123,16 @@ describe('external Session candidate annotation through admitted source custody'
                         requests.push(request.url);
                     });
                     app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture());
+                    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request =>
+                        absentAccountPluginAvailabilityHttpResponse(`${origin}${request.url}`, request.body)?.data);
+                    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async request =>
+                        absentAccountPluginAvailabilityHttpResponse(`${origin}${request.url}`, request.body)?.data);
                     for (const path of ['/v2/sessions', '/v2/sessions/archived']) {
                         app.get(path, async () => createSessionListResponseFixture([]));
                     }
-                    // Fastify's genuine missing-route 404 makes the real tag owner
-                    // select its released bounded-page compatibility path.
+                    // Fastify's genuine missing-route 404 is a server without the
+                    // indexed tag lookup: annotation reports itself incomplete
+                    // instead of scanning Account pages.
                     await app.ready();
                     restoreHttp = installAxiosFastifyAdapter({ app, origin });
                     await writeAnnotationAgentFixture(pluginRoot);
@@ -142,23 +149,16 @@ describe('external Session candidate annotation through admitted source custody'
                     requests.length = 0;
                     const request = { machineId: 'machine-1', agentId: 'acme.annotation-fixture/annotation',
                         source: { kind: 'annotationCorpus' }, limit: 2 } as const;
-                    await expect(list(request)).resolves.toMatchObject({
-                        ok: true, candidates: [], preparation: { kind: 'building_candidate_index' },
-                    });
-                    expect(await list(request)).toMatchObject({
-                        ok: true, candidates: [{ remoteSessionId: 'newest' }, { remoteSessionId: 'middle' }],
-                        preparation: { kind: 'building_candidate_index' }, annotationsIncomplete: true,
-                    });
-                    expect(requests).toEqual([]);
                     const complete = await list(request);
                     expect(complete).not.toHaveProperty('preparation');
+                    expect(complete).toMatchObject({ annotationsIncomplete: true });
                     expect(complete).toMatchObject({ ok: true,
                         candidates: [{ remoteSessionId: 'newest', title: 'Title newest' },
                             { remoteSessionId: 'middle', title: 'Title middle' }],
                     });
                     expect(requests.filter(path => path === '/v1/account/encryption/currentness')).toHaveLength(1);
-                    expect(requests).toContain('/v2/sessions?limit=200');
-                    expect(requests).toContain('/v2/sessions/archived?limit=200');
+                    expect(requests).toContain('/v2/sessions/lookup-by-tags');
+                    expect(requests.filter(path => path.startsWith('/v2/sessions?') || path.startsWith('/v2/sessions/archived'))).toEqual([]);
                 } finally {
                     await admittedRuntime?.dispose();
                     restoreHttp?.();

@@ -58,8 +58,8 @@ vi.mock('undici', async importOriginal => {
 
 afterEach(() => { vi.mocked(undici.fetch).mockReset(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
 
-// The trusted UI host, factory, approval Artifact, Account runtime and purpose
-// owner stay real. Only Home/provider HTTP and temporary OS custody vary.
+// Own-UI review and CLI durable approval share the real factory, Account runtime
+// and purpose owner. Only Home/provider HTTP and temporary OS custody vary.
 it.each(['compact repository', 'compact repository build running', 'compact repository accepted read', 'compact repository refused admission', 'compact repository provider refusal', 'compact repository missing ref', 'compact repository missing requester executor', 'generic', 'qualified', 'changed candidate', 'registry retired', 'transition refused', 'encrypted'] as const)(
 'reviews the actual Account deployment before reserving (%s)', async scenario => {
     const compactRepository = scenario.startsWith('compact repository');
@@ -102,8 +102,8 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
         const action = { pluginId: authored.pluginId, localId: 'deploy' };
         const requiredActionId = scenario === 'qualified' || compactRepository ? formatQualifiedPluginActionId(action) : 'action.invoke';
         const settings = { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
-            approvalWaivedSurfaces: { 'deployments.deploy': ['ui'] },
-            actions: { [requiredActionId]: { approvalRequiredSurfaces: ['ui'] } },
+            approvalWaivedSurfaces: { 'deployments.deploy': ['ui', 'cli'] },
+            actions: { [requiredActionId]: { approvalRequiredSurfaces: ['ui', 'cli'] } },
         }) };
         const settingsContent = prepareAccountSettingsV2Content({ credentials, raw: settings,
             envelopeKind: encryptionMode === 'e2ee' ? 'encrypted' : 'plain', randomBytes: tweetnacl.randomBytes });
@@ -176,7 +176,7 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
             serverIdentity: { serverIdentityId: serverId }, connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } };
         app.get('/v1/features', async () => features); app.get('/v1/features/authenticated', async () => features);
         app.get(`/v1/deployments/environments/${environment.environment.id}`, async () => DeploymentEnvironmentGetResultV1Schema.parse({
-            ok: true, environment: environment.environment, targetLinks: [link.targetLink] }));
+            ok: true, environment: environment.environment, secretScope: environment.secretScope, targetLinks: [link.targetLink] }));
         let reservations = 0;
         let receipt: ReturnType<typeof createDeploymentReceiptHeaderV1> | undefined;
         app.post(`/v1/deployments/environments/${environment.environment.id}/deploy`, async request => {
@@ -186,7 +186,7 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
             if (scenario === 'compact repository accepted read') {
                 // Home's accepted-receipt read retains custody, not permission
                 // to admit another deployment (deploymentEnvironmentService).
-                environment.environment.capabilities = { role: 'reader', read: true, deploy: false,
+                environment.environment.capabilities = { role: 'reader', read: true, deploy: false, editData: false,
                     manage: false, manageBindings: false, manageTargets: false, delete: false };
             }
             if (scenario === 'compact repository refused admission') link.targetLink.createdByAccountId = 'another-account';
@@ -359,6 +359,20 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
             expect(sourceReads).toBe(1);
             branchHead = 'b'.repeat(40);
         }
+        const writesBeforeReview = artifactWrites;
+        const nativeProposal = await execute('deployments.deploy', candidate.input);
+        expect(nativeProposal, JSON.stringify(nativeProposal)).toMatchObject({ ok: false,
+            errorCode: 'action_interactive_review_required', details: {
+                reviewDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+                review: { actionArgs: candidate.input,
+                    preview: { actionId: 'deployments.deploy',
+                        hostReviewedChildren: { children: expect.arrayContaining([{ action, role: 'deploy' }]) } } },
+            } });
+        expect(artifactWrites).toBe(writesBeforeReview);
+        expect(reservations).toBe(0); expect(providerSends).toBe(0);
+        // A CLI request retains the durable review and replay lifecycle; the
+        // person's own UI request above carries its review without a self-Artifact.
+        context = { ...context, surface: 'cli', actionRequestId: 'platform-cli-request' };
         const proposal = await execute('deployments.deploy', candidate.input);
         note('root-proposed');
         expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
@@ -371,7 +385,7 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
             expect(request.summary).toContain(sourceRef);
             expect(request.summary).toContain(reviewedSha.slice(0, 7));
         }
-        expect(request.executionOriginV1).toMatchObject({ authority: 'present_user', surface: 'ui', accountId, machineId });
+        expect(request.executionOriginV1).toMatchObject({ authority: 'present_user', surface: 'cli', accountId, machineId });
         expect(request.preview).toMatchObject({ hostReviewedChildren: { children: expect.arrayContaining([{ action, role: 'deploy' }]) } });
         if (scenario === 'changed candidate') {
             const row = artifacts.read(candidate.input.contentArtifactId);

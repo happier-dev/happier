@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema, type ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
+import { projectActionDefinitionForExternalDiscovery } from '@happier-dev/protocol/actions/actionCatalog';
 import * as control from '@/daemon/controlClient';
 import * as publication from '@/daemon/multiDaemon';
 import type { StoredCredentials } from '@/persistence';
@@ -9,18 +10,14 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 afterEach(() => vi.restoreAllMocks());
 
 describe('original terminal Settings transport', () => {
-  it('preserves explicit daemon ingress for prepared contributed input-type choices', async () => {
+  it('preserves daemon placement for prepared contributed input-type choices', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', provenance: {
       v: 1, kind: 'account', authority: 'present_user',
     } })).toString('base64url')}.signature`;
-    // OS publication and daemon HTTP are the system boundaries; preparation,
-    // consuming-field admission and the options callback stay real.
-    vi.spyOn(publication, 'resolveLiveDaemonControlTargetForServer').mockResolvedValue({
-      pid: 123, httpPort: 4321, accountId: 'account-1', machineId: 'machine-1',
-    });
+    // Daemon HTTP is the system boundary; preparation and the plugin placement owner stay real.
     const definition = ActionDefinitionV1Schema.parse({
       kindVersion: 1, id: 'com.acme.inputs/actions/read', title: 'Read repository', description: 'Read repository',
-      safety: 'safe', placements: [], slash: null, bindings: null, examples: null,
+      safety: 'safe', executionPlacement: 'machine', placements: [], slash: null, bindings: null, examples: null,
       surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
       inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'select',
         inputType: { pluginId: 'com.acme.inputs', localId: 'repository' } }] },
@@ -30,10 +27,11 @@ describe('original terminal Settings transport', () => {
     const requests: unknown[] = [];
     const result = { actionId: definition.id, fieldPath: 'repository', optionsSourceId: null,
       options: [{ value: 'repo-one', label: 'One' }] };
-    vi.spyOn(control, 'requestDaemonSignedRootActionExecution').mockImplementation(async (request, options) => {
-      expect(options?.target).toMatchObject({ accountId: 'account-1', machineId: 'machine-1' });
-      requests.push(request);
-      return { ok: true, result };
+    vi.spyOn(control, 'requestDaemonPluginActionExecution').mockImplementation(async request => {
+      requests.push({ actionId: request.actionId, input: request.input, surface: request.surface });
+      if (request.actionId === 'action.spec.get') return { matched: true,
+        result: { ok: true, result: { actionSpec: projectActionDefinitionForExternalDiscovery(definition) } } };
+      return { matched: true, result: { ok: true, result } };
     });
     const owner = createCliActionExecutorFromCredentials({
       credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
@@ -43,9 +41,14 @@ describe('original terminal Settings transport', () => {
     });
     const prepared = await owner.prepare('action.options.resolve', input, { surface: 'cli' });
     if (prepared.kind !== 'ready') throw new Error(JSON.stringify(prepared));
+    expect(requests).toEqual([]);
     const actual = await prepared.invocation.run();
     expect(actual, JSON.stringify(actual)).toMatchObject({ ok: true, result });
-    expect(requests).toEqual([{ actionId: 'action.options.resolve', input }]);
+    expect(await prepared.invocation.run()).toEqual(actual);
+    expect(requests).toEqual([
+      { actionId: 'action.spec.get', input: { id: definition.id }, surface: 'cli' },
+      { actionId: 'action.options.resolve', input, surface: 'cli' },
+    ]);
   });
   it.each(['terminal', 'account'] as const)('captures the own daemon route when a stored %s caller prepares a device setting read', async kind => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', provenance: {
@@ -79,19 +82,22 @@ describe('original terminal Settings transport', () => {
     expect(requests).toEqual([{ actionId: 'settings.get', input: { anchor: 'appearance.themeMode' },
       actionRequestId: 'device-setting-read' }]);
   });
-  it.each(['signed_out', 'account_changed'] as const)('does not issue a captured device read after its credentials retire: %s', async retirement => {
+  it.each(['signed_out', 'account_changed'] as const)('finishes an admitted device read with its captured credential after %s, then refuses a new request on the old executor', async retirement => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', provenance: {
       v: 1, kind: 'terminal', authority: 'account_automation',
     } })).toString('base64url')}.signature`;
     const credentials: StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
     let current: StoredCredentials | null = credentials;
-    vi.spyOn(publication, 'resolveLiveDaemonControlTargetForServer').mockResolvedValue({
+    const publicationBoundary = vi.spyOn(publication, 'resolveLiveDaemonControlTargetForServer').mockResolvedValue({
       pid: 123, httpPort: 4321, accountId: 'account-1', machineId: 'machine-1',
     });
     const requests: unknown[] = [];
-    vi.spyOn(control, 'requestDaemonSignedRootActionExecution').mockImplementation(async request => {
+    const routedAccounts: (string | undefined)[] = [];
+    const result: ActionExecuteResult = { ok: true, result: { anchor: 'appearance.themeMode', value: 'dark' } };
+    vi.spyOn(control, 'requestDaemonSignedRootActionExecution').mockImplementation(async (request, options) => {
       requests.push(request);
-      return { ok: true, result: { anchor: 'appearance.themeMode', value: 'dark' } };
+      routedAccounts.push(options?.target?.accountId);
+      return result;
     });
     const owner = createCliActionExecutorFromCredentials({
       credentials, readCredentials: async () => current,
@@ -105,8 +111,12 @@ describe('original terminal Settings transport', () => {
       token: `header.${Buffer.from(JSON.stringify({ sub: 'account-2', provenance: {
         v: 1, kind: 'terminal', authority: 'account_automation',
       } })).toString('base64url')}.signature` };
-    expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
-    expect(requests).toEqual([]);
+    expect(await prepared.invocation.run()).toEqual(result);
+    expect(requests).toEqual([{ actionId: 'settings.get', input: { anchor: 'appearance.themeMode' } }]);
+    publicationBoundary.mockResolvedValue({ pid: 456, httpPort: 9876, accountId: 'account-2', machineId: 'machine-2' });
+    const next = await owner.prepare('settings.get', { anchor: 'appearance.themeMode' }, { surface: 'cli' });
+    expect(next).toEqual({ kind: 'settled', result: { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' } });
+    expect(routedAccounts).toEqual(['account-1']);
   });
   it.each(['signed_out', 'account_changed', 'cancelled', 'current'] as const)(
     'retains the captured device read scope across own-Machine endpoint discovery: %s', async scope => {
@@ -159,26 +169,20 @@ describe('original terminal Settings transport', () => {
       if (scope === 'cancelled') controller.abort();
       controlTarget.mockResolvedValue({ ...capturedTarget, pid: 456, httpPort: 9876 });
       releaseDiscovery();
-      const expected = scope === 'current' ? result : {
-        ok: false, errorCode: scope === 'cancelled' ? 'cancelled' : 'credential_scope_retired',
-      };
+      const expected = scope === 'cancelled' ? { ok: false, errorCode: 'cancelled' } : result;
       expect(await running).toMatchObject(expected);
       expect(await prepared.invocation.run()).toMatchObject(expected);
-      expect(requests).toEqual(scope === 'current' ? [{
+      expect(requests).toEqual(scope !== 'cancelled' ? [{
         actionId: 'settings.get', input: { anchor: 'appearance.themeMode' },
         target: { kind: 'machine', machineId: 'machine-1' }, actionRequestId: 'device-setting-read',
       }] : []);
     },
   );
-  it('does not issue a captured device read cancelled while its scope check is pending', async () => {
+  it('does not issue an admitted device read cancelled before execution', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', provenance: {
       v: 1, kind: 'terminal', authority: 'account_automation',
     } })).toString('base64url')}.signature`;
     const credentials: StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
-    let waitForScopeCheck = false;
-    let releaseScopeCheck: () => void = () => { throw new Error('Scope check was not pending'); };
-    let scopeCheckStarted: () => void = () => { throw new Error('Scope check was not initialized'); };
-    const started = new Promise<void>(resolve => { scopeCheckStarted = resolve; });
     vi.spyOn(publication, 'resolveLiveDaemonControlTargetForServer').mockResolvedValue({
       pid: 123, httpPort: 4321, accountId: 'account-1', machineId: 'machine-1',
     });
@@ -188,13 +192,7 @@ describe('original terminal Settings transport', () => {
       return { ok: true, result: { anchor: 'appearance.themeMode', value: 'dark' } };
     });
     const owner = createCliActionExecutorFromCredentials({
-      credentials, readCredentials: async () => {
-        if (waitForScopeCheck) {
-          scopeCheckStarted();
-          await new Promise<void>(resolve => { releaseScopeCheck = resolve; });
-        }
-        return credentials;
-      },
+      credentials, readCredentials: async () => credentials,
       serverId: 'home-1', serverApiUrl: 'https://home.example.test', serverIdentityId: 'srv_home',
       externalActionClient: true,
       actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
@@ -202,15 +200,8 @@ describe('original terminal Settings transport', () => {
     const controller = new AbortController();
     const prepared = await owner.prepare('settings.get', { anchor: 'appearance.themeMode' }, { surface: 'cli', signal: controller.signal });
     if (prepared.kind !== 'ready') throw new Error('Device setting read did not prepare');
-    waitForScopeCheck = true;
-    const running = prepared.invocation.run();
-    expect(await Promise.race([
-      started.then(() => 'scope_check'),
-      running.then(() => 'settled_without_scope_check'),
-    ])).toBe('scope_check');
     controller.abort();
-    releaseScopeCheck();
-    expect(await running).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect(requests).toEqual([]);
   });
   it.each(['terminal', 'account'] as const)('lists declarations locally for a stored %s credential even with an own daemon', async kind => {
