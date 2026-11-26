@@ -1,10 +1,17 @@
 import * as React from 'react';
 import { randomUUID } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ReviewCommentGetResponseV1Schema, ReviewCommentTransitionResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
+import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createClawpatchExecutionRunFactory } from '../../../../../../packages/plugins/review-slices/src/agent/reviews/execution';
+import { createClawpatchProcessFixture } from '../../../../../../packages/plugins/review-slices/src/agent/reviews/run.testkit';
 import { db } from '@/storage/db';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createTrustedMachineInstallation } from '@/testkit/pluginInstallationPublisherTestkit';
@@ -15,7 +22,9 @@ import { registerReviewReadRoutes } from '../readRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { registerReviewCommentRoutes } from './routes';
 import { normalizeStrictJsonReviewOutput } from '../../../../../cli/src/agent/reviews/normalize/normalizeStrictJsonReviewOutput';
-import { createReviewRunCommentService } from '../../../../../cli/src/agent/executionRuns/profiles/review/reviewComments';
+import { createReviewRunCommentService, projectReviewRunTriage } from '../../../../../cli/src/agent/executionRuns/profiles/review/reviewComments';
+import { resolveExecutionRunRuntimeBackendTarget, resolveExecutionRunRuntimeBackendId } from '../../../../../cli/src/agent/runtime/bridges/executionRun/backendTargets';
+import { materializeReviewFindings } from '../../../../../cli/src/agent/runtime/bridges/executionRun/materializeReviewFindings';
 import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../cli/src/agent/reviews/comments/executor';
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '../../../../../cli/src/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '../../../../../cli/src/api/client/serverHttpBaseUrl';
@@ -139,6 +148,106 @@ it('retains captured scope through persisted comments and detail without treatin
                 await vi.waitFor(() => expect(screen.findByTestId(`review-finding-seen-link:${conflictId}:${earlier.commentIds[0]}`)).not.toBeNull());
                 expect(textOf(`review-finding:${conflictId}`)).not.toContain(t('reviewWalkthrough.detail.preExisting'));
             } finally { await screen.unmount(); standardCleanup(); await fixture.dispose(); }
+        });
+    }, { authentication: 'real' });
+});
+
+it('preserves the actual human dismissal and revision through native Stop and a fresh retry', async () => {
+    const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const machineId = randomUUID(), installationId = randomUUID(), keyPair = tweetnacl.sign.keyPair();
+    await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+    const native = await createClawpatchProcessFixture();
+    await writeFile(join(native.directory, 'slice-a.ts'), 'one();\ntwo();\nthree();\nlost write\nfive();\nsix();\n');
+    const context = { agent: { id: 'clawpatch' }, signal: native.controller.signal,
+        services: { exec: native.exec, fs: { getPluginDataDirectory: async () => native.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
+    const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: randomUUID(), cwd: native.directory,
+        profile: { pluginId: 'happier.review.clawpatch', localId: 'review' }, input: { text: 'Find lost writes', structuredInput: {
+            scope: 'repository', engines: { clawpatch: { provider: 'mock' } },
+            scmReviewScope: { scope: 'repository', status: 'supported', worktreeRoot: native.directory },
+        } } };
+    const target = resolveExecutionRunRuntimeBackendTarget({ kind: 'agent', identity: { pluginId: 'happier.review.clawpatch', localId: 'clawpatch' } });
+    if (!target) throw new Error('Clawpatch runtime target unavailable');
+    const attempt = async (runId: string, stop = false) => {
+        const started = stop ? native.pauseNextReview() : undefined;
+        const runtime = await createClawpatchExecutionRunFactory().open({ ...request, runId }, context);
+        const events: AgentExecutionRunEvent[] = [];
+        const terminal = new Promise<void>(resolve => { runtime.watch(event => {
+            events.push(event);
+            if (event.kind === 'run-complete' || event.kind === 'run-failed' || event.kind === 'run-cancelled') resolve();
+        }); });
+        try {
+            if (stop) { await started; expect(await runtime.stop()).toEqual({ status: 'requested' }); }
+            await terminal;
+            expect(events.at(-1)?.kind).toBe(stop ? 'run-cancelled' : 'run-complete');
+            const output = events.find(event => event.kind === 'output-delta' && event.channel === 'assistant');
+            if (stop) { expect(output).toBeUndefined(); return null; }
+            if (!output || output.kind !== 'output-delta') throw new Error('Native attempt did not publish findings');
+            return output.text;
+        } finally { await runtime.dispose(); }
+    };
+    await withAuthenticatedTestApp(app => {
+        registerReviewCommentRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app);
+    }, async app => {
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
+                createCredentialedAccountArtifactStore({ token, encryption: null })));
+            const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null },
+                resolvePrincipalSigningContext: async () => ({ machineId, installationId,
+                    privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
+            const comments = createReviewRunCommentService({ cwd: native.directory,
+                scope: { workspace: { machineId, path: native.directory } }, execute, reviewRecords: records });
+            const reviewId = randomUUID();
+            const start = (newRound = false) => records.start({ reviewId, title: 'Native cancellation and retry',
+                subjectKind: 'repository', sourceKind: 'direct', reviewerIds: ['clawpatch'], startedAt: Date.now(), newRound });
+            const runFor = (binding: Awaited<ReturnType<typeof start>>, runId: string): ExecutionRunState => ({
+                    runId, callId: runId, sidechainId: runId, sessionId: null, depth: 0,
+                    intent: 'review', backendTarget: target, backendId: resolveExecutionRunRuntimeBackendId(target),
+                    instructions: 'Find lost writes', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+                    runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: Date.now(),
+                    intentInput: { reviewRound: binding, reviewReviewerId: 'clawpatch', reviewRoundSettlement: 'execution' } });
+            const materialize = async (binding: Awaited<ReturnType<typeof start>>, runId: string, rawText: string | null) => {
+                if (!rawText) throw new Error('Completed native run has no output');
+                const run = runFor(binding, runId);
+                const normalized = normalizeStrictJsonReviewOutput({ ...run, finishedAtMs: Date.now(), rawText });
+                expect(normalized.status).toBe('succeeded');
+                const payload = ReviewFindingsV2Schema.parse(normalized.structuredMeta?.payload);
+                expect(payload.findings.map(finding => finding.id)).toEqual(['clawpatch-1', 'clawpatch-2']);
+                const projected = await materializeReviewFindings({ run, toolResult: { output: normalized.toolResultOutput },
+                    structuredMeta: normalized.structuredMeta, expectFindings: true, reviewComments: comments });
+                expect(projected.materialization).toMatchObject({ status: 'materialized', failures: [] });
+                if (!projected.materialization) throw new Error('Review materialization unavailable');
+                await comments.settleRound({ ...run, status: 'succeeded', finishedAtMs: Date.now(), structuredMeta: projected.structuredMeta });
+                return projected.materialization;
+            };
+            const first = await start(), firstRunId = randomUUID();
+            const initial = await materialize(first, firstRunId, await attempt(firstRunId));
+            const finding = initial.comments[0]!.comment;
+            const human = ReviewCommentTransitionResponseV1Schema.parse(await execute('reviews.comments.transition',
+                buildReviewTriageTransitionRequestV1({ comment: finding, decision: 'reject',
+                    note: 'Inspected and rejected by the person.', clientMutationId: randomUUID() }))).comment;
+            expect(human).toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject', serverRevision: finding.serverRevision + 1 });
+            expect(human.transitions.at(-1)).toMatchObject({ transitionedBy: { kind: 'user', userId: account.id },
+                toState: 'dismissed', reviewTriageStatus: 'reject', reason: 'Inspected and rejected by the person.' });
+            const cancelled = await start(true);
+            const cancelledRunId = randomUUID();
+            expect(await attempt(cancelledRunId, true)).toBeNull();
+            await comments.settleRound({ ...runFor(cancelled, cancelledRunId), status: 'cancelled', finishedAtMs: Date.now() });
+            const read = async () => ReviewCommentGetResponseV1Schema.parse(await execute('reviews.comments.get', { reviewId, commentId: finding.id })).comment;
+            expect(await read()).toEqual(human);
+            const retry = await start(true), retryRunId = randomUUID();
+            const repeated = await materialize(retry, retryRunId, await attempt(retryRunId));
+            expect(repeated.commentIds).toEqual(initial.commentIds);
+            const final = await read();
+            const decisionOf = (comment: typeof human) => ({ state: comment.state, reviewTriageStatus: comment.reviewTriageStatus,
+                serverRevision: comment.serverRevision, bodyVersion: comment.bodyVersion, transitions: comment.transitions });
+            expect(decisionOf(final)).toEqual(decisionOf(human));
+            expect(final.appearances).toEqual([...human.appearances ?? [],
+                { roundOrdinal: retry.roundOrdinal, runId: retryRunId, reviewerId: 'clawpatch', machineId }]);
+            expect(projectReviewRunTriage([final])).toEqual({ findings: [{ id: 'clawpatch-1', status: 'reject', comment: 'Inspected and rejected by the person.' }] });
+            expect(JSON.parse(await readFile(join(native.state, 'findings', 'one.json'), 'utf8'))).toMatchObject({ status: 'open' });
+            expect((await records.read(reviewId))?.rounds.map(round => round.state)).toEqual(['completed', 'cancelled', 'completed']);
         });
     }, { authentication: 'real' });
 });
