@@ -2,12 +2,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { flushHookEffects, installBrowserStorageLockBoundary, standardCleanup } from '@/dev/testkit';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { createDeferred, flushHookEffects, installBrowserStorageLockBoundary, standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ScmWorkingEntrySchema } from '@happier-dev/protocol/scm/workingSnapshot';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -31,7 +29,7 @@ const { createWorkspaceFileDetailsTab } = await import('@/components/appShell/pa
 const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { useRouter } = await import('expo-router');
-const { getSharedBlockingApprovalCoordinator } = await import('@happier-dev/protocol/actions/blockingApprovalCoordinator');
+const { Modal } = await import('@/modal');
 const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
 const { WorkspaceProvider } = await import('@/components/appShell/workspace/WorkspaceProvider');
 const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
@@ -47,6 +45,8 @@ let settingsVersion: number;
 let pane!: ReturnType<typeof useAppPaneScope>;
 let command!: ReturnType<typeof useKeyboardCommand>;
 let terminal: MockInstance<typeof scopeActions.invokeScopeAction>;
+let holdConfirmations = false;
+let confirmations: ReturnType<typeof createDeferred<boolean>>[] = [];
 const filePath = 'source.txt';
 let scenario = 0;
 let scopeId: string;
@@ -76,16 +76,25 @@ async function setPolicy(action: 'shell.column.set' | 'file.view.set', mode: 'of
     serverSettings = settingsParse({ ...serverSettings, actionsSettingsV1: policy });
     settingsVersion += 1;
     await act(async () => fixture.storage.getState().applySettingsForScope({ serverId: fixture.scope.serverId, accountId: 'alice' }, serverSettings, settingsVersion));
+    holdConfirmations = mode === 'ask';
 }
-async function waitForApproval(index: number) {
-    await act(async () => { await vi.waitFor(() => {
-        const id = fixture.artifacts.list()[index]?.id;
-        expect(id).toBeDefined();
-        // The Home persists before the requester receives its ACK; decide only after its live wait is ready.
-        expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(id!)).toBe(1);
-    }); });
+async function waitForConfirmation(index: number) {
+    await act(async () => { await vi.waitFor(() => expect(confirmations[index]).toBeDefined()); });
+    expect(fixture.artifacts.list()).toHaveLength(0);
+}
+async function answerConfirmation(index: number, accepted: boolean) {
+    await act(async () => { confirmations[index]!.resolve(accepted); await flushHookEffects(); });
 }
 beforeEach(async () => {
+    holdConfirmations = false;
+    confirmations = [];
+    // Modal is the native presentation boundary; admission and confirmation binding stay real.
+    vi.mocked(Modal.confirm).mockReset().mockImplementation(async () => {
+        if (!holdConfirmations) return true;
+        const answer = createDeferred<boolean>();
+        confirmations.push(answer);
+        return answer.promise;
+    });
     scopeId = `session:action-ingress-${++scenario}`;
     policy = { v: 1, actions: {} };
     serverSettings = settingsParse({ actionsSettingsV1: policy });
@@ -99,6 +108,7 @@ beforeEach(async () => {
         : request.method === 'scm.diff.file' ? { success: true, diff }
         : request.method === 'scm.change.discard' ? { success: true, entries: [{ path: filePath, status: 'restored',
             hashBefore: 'a'.repeat(64), hashAfter: 'b'.repeat(64), previous: { inlineBase64: Buffer.from('after\n').toString('base64') } }] }
+        : request.method === 'daemon.filesystem.writeFile' ? { success: true, hash: 'c'.repeat(64) }
         : { success: true, exists: true, kind: 'file', sizeBytes: 6 } });
     fixture.storage.getState().applyLocalSettings({ paneArrangement: 'session', uiMultiPanePanelsEnabled: true }, { source: 'ui' });
     fixture.storage.getState().updateWorkspaceScmSnapshot(fixture.scope, fileViewSnapshot({ capabilities: { readBlame: true }, entries: [
@@ -114,7 +124,7 @@ describe('explicit File and pane Action ingress', () => {
     it.each([
         ...(['side-key', 'main-key', 'hide', 'restore', 'fallback-restore'] as const).map(ingress => ({ ingress, close: false })),
         { ingress: 'side-key' as const, close: true },
-    ])('retained plugin page keeps $ingress approval alive through real workspace navigation (close: $close)', async ({ ingress, close }) => {
+    ])('retained plugin page keeps $ingress confirmation alive through real workspace navigation (close: $close)', async ({ ingress, close }) => {
         const restoreLocks = installBrowserStorageLockBoundary();
         const pluginId = 'acme.column-approval';
         const localId = 'inspector-page';
@@ -185,24 +195,26 @@ describe('explicit File and pane Action ingress', () => {
                 else if (hiddenInitially) screen.findByTestId('pane-main-restore-chip')!.props.onPress();
                 else expect(command(ingress === 'side-key' ? 'panes.side.toggle' : 'panes.main.toggle')).toBe(true);
             });
+            await waitForConfirmation(0);
+            expect(screen.findAllByType('ApprovalDestinationProbe')).toHaveLength(0);
+            // A person's own Ask stays inline. Explicit navigation retains its originating page.
+            const retainedPush = navigation.navigationForTab(pluginTabId).pushRetainingCurrent;
+            expect(retainedPush).toEqual(expect.any(Function));
+            await act(async () => { retainedPush!('/inbox'); });
             await vi.waitFor(() => expect(screen.findAllByType('ApprovalDestinationProbe')).toHaveLength(1));
             await flushHookEffects({ cycles: 20 });
-            const artifactId = fixture.artifacts.list()[0]!.id;
-            expect(StoredApprovalRequestSchema.parse(JSON.parse(fixture.artifacts.readPlainBody(artifactId)!)).status).toBe('open');
-            expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(1);
             expect(read()).toBe(initial);
             expect(navigation.state.tabs[pluginTabId]).toBeDefined();
             if (close) {
                 const group = Object.values(navigation.state.groups).find(candidate => candidate.tabIds.includes(pluginTabId))!;
                 await act(async () => { navigation.closeTab(group.id, pluginTabId); });
-                await vi.waitFor(() => expect(StoredApprovalRequestSchema.parse(JSON.parse(fixture.artifacts.readPlainBody(artifactId)!)).status).toBe('canceled'));
-                expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifactId)).toBe(0);
+                // A stale native answer after the originating page closes cannot dispatch.
+                await answerConfirmation(0, true);
                 expect(read()).toBe(initial);
                 expect(terminal.mock.calls.filter(([id]) => id === 'shell.column.set')).toHaveLength(0);
                 return;
             }
-            const decision = await decideApprovalAsInbox(fixture.scope.serverId, artifactId, 'approve');
-            expect(decision).toMatchObject({ ok: true });
+            await answerConfirmation(0, true);
             await vi.waitFor(() => expect(read()).toBe(!initial));
             expect(terminal.mock.calls.filter(([id]) => id === 'shell.column.set')).toHaveLength(1);
         } finally { await screen.unmount(); restoreLocks(); }
@@ -215,14 +227,17 @@ describe('explicit File and pane Action ingress', () => {
             <FilePagePluginViewerHeader scope={fixture.scope} filePath={filePath} onEdit={() => { edits += 1; }} />
         </SurfaceStateSizeProvider>);
         const run = () => screen.findByType(FilePageHeader).props.edit.onPress();
-        await setPolicy('file.view.set', 'off'); await act(async () => { void run(); });
+        await setPolicy('file.view.set', 'off');
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => { void run(); });
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
         expect(edits).toBe(0);
         await setPolicy('file.view.set', 'ask'); await act(async () => { void run(); });
-        await waitForApproval(0);
-        await decideApprovalAsInbox(fixture.scope.serverId, fixture.artifacts.list()[0]!.id, 'reject');
+        await waitForConfirmation(0);
+        await answerConfirmation(0, false);
         expect(edits).toBe(0);
-        await act(async () => { void run(); }); await waitForApproval(1);
-        await decideApprovalAsInbox(fixture.scope.serverId, fixture.artifacts.list()[1]!.id, 'approve');
+        await act(async () => { void run(); }); await waitForConfirmation(1);
+        await answerConfirmation(1, true);
         await vi.waitFor(() => expect(edits).toBe(1));
         await setPolicy('file.view.set', 'default'); await act(async () => { void run(); });
         await vi.waitFor(() => expect(edits).toBe(2));
@@ -244,20 +259,22 @@ describe('explicit File and pane Action ingress', () => {
                 else expect(command(ingress === 'main-key' ? 'panes.main.toggle' : 'panes.side.toggle')).toBe(true);
             });
         };
-        await setPolicy('shell.column.set', 'off'); await run();
+        await setPolicy('shell.column.set', 'off');
+        vi.mocked(Modal.alert).mockClear();
+        await run();
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
         expect(read()).toBe(initial); expect(fixture.artifacts.list()).toHaveLength(0);
         expect(terminal.mock.calls.filter(([id]) => id === 'shell.column.set')).toHaveLength(0);
         await setPolicy('shell.column.set', 'ask'); await run();
-        await waitForApproval(0);
+        await waitForConfirmation(0);
         expect(read()).toBe(initial);
-        await decideApprovalAsInbox(fixture.scope.serverId, fixture.artifacts.list()[0]!.id, 'reject');
+        await answerConfirmation(0, false);
         expect(read()).toBe(initial);
         await run();
-        await waitForApproval(1);
-        // Opening the Inbox approval retains this destination but removes its keyboard/global-column ownership.
+        await waitForConfirmation(1);
+        // Explicit navigation retains the destination while removing keyboard/global-column ownership.
         await screen.update(fixture.wrap(<Scene focused={false} fallback={fallback} />));
-        const decision = await decideApprovalAsInbox(fixture.scope.serverId, fixture.artifacts.list()[1]!.id, 'approve');
-        expect(decision).toMatchObject({ ok: true });
+        await answerConfirmation(1, true);
         await vi.waitFor(() => expect(read()).toBe(!initial));
         expect(terminal.mock.calls.filter(([id]) => id === 'shell.column.set')).toHaveLength(1);
         await screen.update(fixture.wrap(<Scene fallback={fallback} />));
@@ -272,7 +289,7 @@ describe('explicit File and pane Action ingress', () => {
         // The raw Action terminal must not dispatch another Action, including restore.
         await run();
         await vi.waitFor(() => expect(read()).toBe(!initial));
-        expect(fixture.artifacts.list()).toHaveLength(2);
+        expect(fixture.artifacts.list()).toHaveLength(0);
         expect(terminal.mock.calls.filter(([id]) => id === 'shell.column.set')).toHaveLength(1);
         expect(readShellColumnActionOwner('main')?.present).toBe(true);
     });
@@ -309,23 +326,25 @@ describe('explicit File and pane Action ingress', () => {
         const run = ingress === 'mode' ? () => runMode() : ingress === 'scope' ? runScope : ingress === 'edit' ? runEdit : runBlame;
         const changed = ingress === 'mode' ? () => read()?.mode === 'changes'
             : ingress === 'scope' ? () => read()?.changesScope?.kind === 'session' : ingress === 'edit' ? () => read()?.mode === 'edit' : () => read()?.blame === true;
-        await setPolicy('file.view.set', 'off'); await act(async () => { void run(); });
+        await setPolicy('file.view.set', 'off');
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => { void run(); });
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
         if (retainedUndo) expect(readPresentationNotice()).toBe(retainedUndo);
         expect(changed()).toBe(false);
         expect(terminal.mock.calls.filter(([id]) => id === 'file.view.set')).toHaveLength(0);
-        const before = fixture.artifacts.list().length;
+        const before = confirmations.length;
         await setPolicy('file.view.set', 'ask'); await act(async () => { void run(); });
-        await waitForApproval(before);
+        await waitForConfirmation(before);
         expect(changed()).toBe(false);
-        await decideApprovalAsInbox(fixture.scope.serverId, fixture.artifacts.list()[before]!.id, 'reject');
+        await answerConfirmation(before, false);
         if (retainedUndo) expect(readPresentationNotice()).toBe(retainedUndo);
         expect(changed()).toBe(false);
         await act(async () => { void run(); });
-        await waitForApproval(before + 1);
-        const decision = await decideApprovalAsInbox(fixture.scope.serverId, fixture.artifacts.list()[before + 1]!.id, 'approve');
-        expect(decision).toMatchObject({ ok: true });
+        await waitForConfirmation(before + 1);
+        await answerConfirmation(before + 1, true);
         await vi.waitFor(() => expect(changed()).toBe(true));
-        if (retainedUndo) expect(readPresentationNotice()).toBeNull();
+        if (retainedUndo) expect(screen.findByType(FileChangesSection).props.review.undoAvailable).toBe(false);
         expect(terminal.mock.calls.filter(([id]) => id === 'file.view.set')).toHaveLength(1);
         await setPolicy('file.view.set', 'default');
         await act(async () => { expect(await invokeScopeAction('file.view.set', initialView)).toEqual({ ok: true }); });
@@ -333,38 +352,39 @@ describe('explicit File and pane Action ingress', () => {
         terminal.mockClear();
         await act(async () => { void run(); });
         await vi.waitFor(() => expect(changed()).toBe(true));
-        expect(fixture.artifacts.list()).toHaveLength(2);
+        expect(fixture.artifacts.list()).toHaveLength(0);
         expect(terminal.mock.calls.filter(([id]) => id === 'file.view.set')).toHaveLength(1);
     });
 
-    it('reviews a Save held by an explicit Ask over the editor instead of leaving the Session', async () => {
+    it('keeps a declined Save dirty and applies a confirmed Save over the editor without an Inbox artifact', async () => {
         fixture.storage.getState().applySettingsLocal({ featureToggles: { ...serverSettings.featureToggles, 'files.editor': true } });
         policy = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'daemon.filesystem.writeFile': { approvalRequiredSurfaces: ['ui'] } } });
         serverSettings = settingsParse({ ...fixture.storage.getState().settings, actionsSettingsV1: policy });
         settingsVersion += 1;
         await act(async () => fixture.storage.getState().applySettingsForScope({ serverId: fixture.scope.serverId, accountId: 'alice' }, serverSettings, settingsVersion));
         const { FileEditorPanel } = await import('../file/editor/FileEditorPanel');
-        const { FileEditorNoticeLine } = await import('../file/editor/FileEditorNoticeLine');
-        const { Modal } = await import('@/modal');
         const screen = await fixture.render(<Scene file />);
         await vi.waitFor(() => expect(screen.findByType(FilePageHeader).props.edit).toBeTruthy());
         await act(async () => { await screen.findByType(FilePageHeader).props.edit.onPress(); });
         await vi.waitFor(() => expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1));
         await act(async () => { screen.findByType(FileEditorPanel).props.onChange('after, edited\n'); });
-        vi.mocked(Modal.show).mockClear();
-        const save = [...screen.findAllByType(FilePageHeader), ...screen.findAllByType(FilePageToolbar)]
-            .map(node => node.props.onSaveEditingFile).find(onSave => typeof onSave === 'function');
+        const save = () => [...screen.findAllByType(FilePageHeader), ...screen.findAllByType(FilePageToolbar)]
+            .map(node => node.props.onSaveEditingFile).find(onSave => typeof onSave === 'function')();
+        const writes = () => fixture.requests.filter(request => request.method === 'daemon.filesystem.writeFile');
+        holdConfirmations = true;
         await act(async () => { void save(); });
-        await vi.waitFor(() => expect(fixture.artifacts.list()).toHaveLength(1));
-        const artifactId = fixture.artifacts.list()[0]!.id;
-        const reviews = () => vi.mocked(Modal.show).mock.calls.map(([config]) => config)
-            .filter(config => (config.props as { artifactId?: string } | undefined)?.artifactId === artifactId);
-        await vi.waitFor(() => expect(reviews()).toHaveLength(1));
-        // Closing without an answer leaves the waiting line, whose Review reopens it in place.
-        await act(async () => { reviews()[0]!.onRequestClose?.(); });
-        const reopen = screen.findByType(FileEditorNoticeLine).props.onOpenApproval;
-        expect(reopen).toEqual(expect.any(Function));
-        await act(async () => { reopen(); });
-        await vi.waitFor(() => expect(reviews()).toHaveLength(2));
+        await waitForConfirmation(0);
+        expect(writes()).toHaveLength(0);
+        await answerConfirmation(0, false);
+        expect(writes()).toHaveLength(0);
+        expect(screen.findByType(FilePageHeader).props.editor.status).toBe('dirty');
+        await act(async () => { void save(); });
+        await waitForConfirmation(1);
+        await answerConfirmation(1, true);
+        await vi.waitFor(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0]!.payload).toMatchObject({ path: `${fixture.scope.rootPath}/${filePath}`, content: Buffer.from('after, edited\n').toString('base64') });
+        await vi.waitFor(() => expect(screen.findByType(FilePageHeader).props.editor.status).toBe('clean'));
+        expect(screen.findAllByType(FileEditorPanel)).toHaveLength(1);
+        expect(fixture.artifacts.list()).toHaveLength(0);
     });
 });
