@@ -9,6 +9,7 @@ import type { FormProps } from '../components/Form.js';
 import type { PropertyListProps } from '../components/PropertyList.js';
 import { createContext, createElement, useContext, type ReactElement, type ReactNode, type RefObject } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 import type { ScmFileViewedRequest, ScmFileViewedSource } from '@happier-dev/plugin-sdk/scm';
 import type { PluginUiActionControl, PluginUiActionControlPresentation, PluginUiHostApi, PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { NavigationListDestination } from '../components/NavigationList.js';
@@ -510,6 +511,11 @@ export type PluginUiPresentationHost = Readonly<{
   renderExecutableParticipantPicker?(input: ExecutableParticipantPickerProps): ReactNode;
   /** Shared Review runner rows; admission and the selected model/account controls stay with their owners. */
   renderReviewRunnerPicker?(input: ReviewRunnerPickerProps): ReactNode;
+  renderReviewFindingExtensions?(input: Readonly<{
+    reviewId: string;
+    commentId: string;
+    extensions: NonNullable<ReviewFinding['extensions']>;
+  }>): ReactNode;
   /** The existing purpose-target chooser returns references, never credentials. */
   renderConnectedAccountPurposeTargetChooser?(input: ConnectedAccountPurposeTargetChooserProps): ReactNode;
   /** The one secret value text and its reveal/Copy controls; the author's own value and callbacks, no host secret. */

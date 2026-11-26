@@ -7,6 +7,7 @@ import { useShareGrantRowPresentation } from '@/components/sharing/sharePresenta
 import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
 import { PluginAutomationSubjectPicker } from './PluginAutomationSubjectPicker';
 import { renderReviewRunnerPicker } from '@/components/sessions/runs/launcher/ReviewRunnerPickerPresentation';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 import { PluginConnectedAccountPurposeTargetChooser } from './PluginConnectedAccountPurposeTargetChooser';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -138,6 +139,11 @@ import {
     type InstalledPluginBrandPresentation,
     type InstalledPluginBrandPresentationInput,
 } from '@/components/plugins/shared/installedPluginBrandPresentation';
+
+// The finding host mounts PluginSurfaceHost, which supplies this presentation host.
+const LazyReviewFindingPluginContent = retryableLazy(async () => ({
+    default: (await import('@/components/reviews/plugins/ReviewPluginContent')).ReviewFindingPluginContent,
+}));
 
 type PluginPageLentMenu = import('./pluginPageHeaderActions').PluginPageLentMenu;
 
@@ -808,6 +814,7 @@ export function createPluginUiPrivatePresentationHost(
     });
     const pluginId = options?.pluginId;
     const automations = options?.automations;
+    const markdownWorkspace = options?.markdownWorkspace;
     return Object.freeze({
         ...presentationRenderers,
         ...(automations ? {
@@ -830,9 +837,16 @@ export function createPluginUiPrivatePresentationHost(
         renderDetailsPaneOpenAsPageButton(input: import('@happier-dev/plugin-ui/components').DetailsPaneOpenAsPageButtonProps) {
             return <DetailsPaneOpenAsPageIconButton {...input} />;
         },
-        ...(options?.markdownWorkspace ? { renderMarkdown(input: HappierMarkdownRenderInput) {
-            return <PluginUiMarkdown input={input} workspace={options.markdownWorkspace} />;
-        } } : {}),
+        ...(markdownWorkspace ? {
+            renderMarkdown(input: HappierMarkdownRenderInput) {
+                return <PluginUiMarkdown input={input} workspace={markdownWorkspace} />;
+            },
+            renderReviewFindingExtensions(input: Parameters<NonNullable<PluginUiPresentationHost['renderReviewFindingExtensions']>>[0]) {
+                return <React.Suspense fallback={null}>
+                    <LazyReviewFindingPluginContent {...input} serverId={markdownWorkspace.serverId} />
+                </React.Suspense>;
+            },
+        } : {}),
         ...(pluginId === undefined ? {} : { panelSizing: {
             useWidth(resizeKey: string) {
                 return useCollectionRailWidth(`plugin:${JSON.stringify([pluginId, resizeKey])}`);

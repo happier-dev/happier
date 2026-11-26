@@ -465,6 +465,7 @@ export function renderSurface(context) { return React.createElement(FindingEvide
     const { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
     const { ReviewDetail, readReviewDetailInput } = await import('../../../../../../packages/plugins/triage/src/reviews/detail');
     const { createBoundPluginSurfaceController } = await import('../../../../../ui/sources/components/plugins/surfaces/boundPluginSurfaceController');
+    const { createPluginUiPrivatePresentationHost } = await import('../../../../../ui/sources/components/plugins/surfaces/pluginUiPrivatePresentationHost');
     const { createCanonicalPluginReactNativeHostApiAdapter } = await import('../../../../../ui/sources/components/plugins/reactNative/hostApi');
     const { createPluginSurfaceContextFixture } = await import('../../../../../ui/sources/dev/testkit/fixtures/pluginSurfaceContextFixture');
     const { captureActiveServerAccountScopeLifetime } = await import('../../../../../ui/sources/sync/domains/scope/activeServerAccountScope');
@@ -602,13 +603,24 @@ export function renderSurface(context) { return React.createElement(FindingEvide
                 const input = readReviewDetailInput({ ...triage, observation: { ...triage.observation,
                     entryRef: { ...triage.observation.entryRef, source: REVIEW_TRIAGE_SOURCE_V1, ...reviewTriageLocalRefV1(reviewId) } } });
                 const context = { plugin: { id: pluginId, version: selected.manifest.version }, surface, hostApi: native.api, signal: new AbortController().signal };
-                const screen = await fixture.render(React.createElement(PluginUiProvider, { hostApi: native.api, context: surface },
+                const screen = await fixture.render(React.createElement(PluginUiProvider, { hostApi: native.api, context: surface,
+                    presentationHost: createPluginUiPrivatePresentationHost(undefined, { pluginId,
+                        markdownWorkspace: { target: surface.target, serverId: lifetime.scope.serverId } }) },
                     placement === 'PR' ? React.createElement(GithubHappierReviewSummary, { reviewId })
                         : React.createElement(ReviewDetail, { context, input })));
                 try {
                     await vi.waitFor(() => expect(screen.findHostByTestId(`review-summary:row:${initial.id}`), screen.getTextContent()).not.toBeNull());
                     await screen.pressByTestIdAsync(`review-summary:row:${initial.id}`);
                     expect(screen.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull();
+                    if (extensionEnabled) {
+                        await vi.waitFor(() => expect(screen.getTextContent()).toContain(evidence));
+                        await screen.pressByTestIdAsync('plugin-evidence:inspect');
+                        await vi.waitFor(() => expect(screen.findHostByTestId('plugin-evidence:read')).not.toBeNull());
+                        expect(screen.getTextContent()).toContain(initial.id);
+                    } else {
+                        expect(screen.getTextContent()).toContain(initialFinding.title);
+                        expect(screen.findHostByTestId('plugin-evidence:inspect')).toBeNull();
+                    }
                     const open = screen.findAllByType(Button).find(button => button.props.title === 'Open review');
                     if (!open) throw new Error('The entry has no Open review control');
                     await act(async () => { await open.props.onPress(); });
@@ -627,6 +639,7 @@ export function renderSurface(context) { return React.createElement(FindingEvide
                     await vi.waitFor(() => expect(screen.getTextContent()).toContain(evidence));
                     await screen.pressByTestIdAsync('plugin-evidence:inspect');
                     await vi.waitFor(() => expect(screen.findHostByTestId('plugin-evidence:read')).not.toBeNull());
+                    expect(screen.getTextContent()).toContain(initial.id);
                     await screen.pressByTestIdAsync(`review-finding-triage:${initial.id}:reject`);
                     await vi.waitFor(async () => expect(await db.reviewComment.findUnique({ where: { id: initial.id } }))
                         .toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject' }));
@@ -682,6 +695,8 @@ export function renderSurface(context) { return React.createElement(FindingEvide
                         credentials: { token, encryption: null } })('reviews.comments.get', { reviewId, commentId: initial.id }));
                     expect(retained.comment?.extensions?.[namespace]).toEqual({ reproduction: evidence });
                 } finally { await fallback.unmount(); }
+                await openEmbedded('PR');
+                await openEmbedded('Inbox');
             } finally { standardCleanup(); await fixture.dispose(); }
         });
     }, { authentication: 'real' });

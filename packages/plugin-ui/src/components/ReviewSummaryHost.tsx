@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 import { useLivePluginResourceProjection, type PluginUiResourceProjection, type PluginUiResourceProjectionSnapshot } from '../hostApi/index.js';
 import { usePluginHostApi } from '../hostApi/context.js';
+import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { reviewDetailProjection } from '../hostApi/reviewDetailProjection.js';
 import { HappierReviewSummary, projectHappierReviewGlance } from '../presentation/work/ReviewSummary.js';
 import { HappierPageSheet } from '../presentation/layout/PageSection.js';
@@ -62,6 +63,7 @@ export const HappierReviewSummaryHost = React.forwardRef<HappierReviewSummaryHan
 function HappierReviewSummaryHost({ reviewId, leadsPage, reviewedAt }, ref) {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
+  const presentationHost = useOptionalPluginUiPresentationHost();
   const { palette } = resolveHappierWorkTheme(usePluginTheme());
   const detailResource = useLivePluginResourceProjection({ hostRead: 'review.get', input: { reviewId } }, reviewDetailProjection, select);
   const findingResource = useLivePluginResourceProjection({ hostRead: 'reviews.comments.list', input: { reviewId } }, findingsProjection, select);
@@ -138,6 +140,9 @@ function HappierReviewSummaryHost({ reviewId, leadsPage, reviewedAt }, ref) {
           decision={{ value: decision, label: decisionWord(decision) }} decisionEditable={false}
           expanded onToggleExpanded={() => setOpened(null)}>
           <HappierReviewFindingBody rowId={row.rowId} finding={row.finding}
+            extensions={row.finding.extensions ? presentationHost?.renderReviewFindingExtensions?.({
+              reviewId, commentId: row.rowId, extensions: row.finding.extensions,
+            }) : undefined}
             currentBodyMarkdown={readReviewFindingRevisedBodyV1(row.comment)}
             labels={{ where: text('happier.plugin-ui.review.where', 'Where'),
               suggestedFix: text('happier.plugin-ui.review.suggestedFix', 'Suggested fix'),
