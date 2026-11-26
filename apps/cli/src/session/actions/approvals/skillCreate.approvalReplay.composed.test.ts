@@ -41,7 +41,8 @@ import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1
 describe('Session skill creation through durable approval replay', () => {
   let sqlite: Awaited<ReturnType<typeof createLightSqliteHarness>>;
   beforeAll(async () => {
-    sqlite = await createLightSqliteHarness({ tempDirPrefix: 'happier-d26-replay-', initAuth: true, initEncrypt: true });
+    sqlite = await createLightSqliteHarness({ tempDirPrefix: 'happier-d26-replay-', initAuth: true, initEncrypt: true,
+      env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
   }, 0);
   afterAll(async () => { if (sqlite) await sqlite.close(); });
 
@@ -104,10 +105,7 @@ describe('Session skill creation through durable approval replay', () => {
           onTestFinished(() => http.mockRestore());
         }
         const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: session.id, mode: 'plain', ctx: null,
-          serverHttpBaseUrl: url, ...(origin ? {
-            externalActionMachineInstallationId: origin.machine.installationId,
-            externalActionMachineRequestPrivateKey: origin.installation.secretKey,
-          } : {}) });
+          serverHttpBaseUrl: url });
         const executor = createActionExecutor(deps);
         const pending = executor.execute('skills.install', { source: { kind: 'upload', files: [
           skillFileFromBytesV1('SKILL.md', new TextEncoder().encode('---\nname: replay-skill\n---\nA harmless fixture.'), 0o644),
