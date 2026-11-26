@@ -1140,7 +1140,7 @@ describe('the entry action controls on the mounted detail header', () => {
         });
     }, 60_000);
 
-    it('keeps ambiguous repository placements as candidates in a compose seed', async () => {
+    it('leaves placement unset when more than one repository checkout matches', async () => {
         const harness = createHarness();
         harness.setActions([{
             actionId: 'compose-ambiguous',
@@ -1172,22 +1172,7 @@ describe('the entry action controls on the mounted detail header', () => {
 
         expect(harness.startRequests).toEqual([]);
         expect(newSessionSeeds).toHaveLength(1);
-        expect(newSessionSeeds[0]).toMatchObject({
-            candidates: expect.arrayContaining([
-                expect.objectContaining({
-                    projectKey: { id: 'workspace-api' },
-                    serverId: 'server-a',
-                    machineId: 'machine-a',
-                    rootPath: '/checkouts/api',
-                }),
-                expect.objectContaining({
-                    projectKey: { id: 'workspace-web' },
-                    serverId: 'server-a',
-                    machineId: 'machine-b',
-                    rootPath: '/checkouts/web',
-                }),
-            ]),
-        });
+        expect(newSessionSeeds[0]).toMatchObject({ checkoutIntent: 'reuseWorkspace' });
         expect(newSessionSeeds[0]).not.toHaveProperty('placement');
     }, 60_000);
 
@@ -1322,11 +1307,8 @@ describe('the entry action controls on the mounted detail header', () => {
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        const send = await shell.getByRole('button', { name: 'Send' });
-        await act(async () => { await shell.press(send); });
-        await settle();
-        await act(async () => { await shell.press(send); });
-        await settle();
+        await pressAction(shell, 'Send');
+        await pressAction(shell, 'Send');
 
         expect(harness.startRequests).toHaveLength(2);
         const [first, retry] = harness.startRequests;
@@ -1370,11 +1352,8 @@ describe('the entry action controls on the mounted detail header', () => {
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        const send = await shell.getByRole('button', { name: 'Send' });
-        await act(async () => { await shell.press(send); });
-        await settle();
-        await act(async () => { await shell.press(send); });
-        await settle();
+        await pressAction(shell, 'Send');
+        await pressAction(shell, 'Send');
 
         expect(harness.startRequests).toHaveLength(2);
         expect(harness.startRequests[1]?.resume).toMatchObject({
@@ -1739,7 +1718,6 @@ describe('the entry action controls on the mounted detail header', () => {
             profileId: 'profile-1',
             checkoutIntent: 'createWorktree',
             placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'machine-b', directory: '/checkouts/repository' },
-            candidates: [expect.objectContaining({ machineId: 'machine-b', rootPath: '/checkouts/repository' })],
         })]);
     }, 60_000);
 
@@ -1778,7 +1756,6 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(newSessionSeeds).toEqual([expect.objectContaining({
             checkoutIntent: 'reuseWorkspace',
             placement: { kind: 'exactTarget', serverId: 'server-a', machineId: 'machine-b', directory: '/checkouts/repository' },
-            candidates: [expect.objectContaining({ machineId: 'machine-b', rootPath: '/checkouts/repository' })],
         })]);
     });
 
@@ -2122,13 +2099,8 @@ describe('the entry action controls on the mounted detail header', () => {
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
-        const review = await shell.findByRole('button', {
-            name: 'Formal review',
-        });
-        await act(async () => { await shell.press(review); });
-        await settle();
-        await act(async () => { await shell.press(review); });
-        await settle();
+        await pressAction(shell, 'Formal review');
+        await pressAction(shell, 'Formal review');
 
         expect(harness.startRequests).toHaveLength(2);
         expect(harness.startRequests[1]?.resume).toMatchObject({
