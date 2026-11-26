@@ -9852,7 +9852,8 @@ Project census. Private, incomplete, ambiguous or unmatched facts stay absent;
 the host does not derive repository authority from the Session's displayed path.
 The existing `session.status.get` Action exposes the same optional proof when
 `includeAcceptedWorkspace: true` is requested. Ordinary status reads perform no
-Project-row acquisition. The daemon opens the invoking Account's private rows
+Project-row acquisition. An explicit UI status read uses the captured Home/Account's
+existing Project-row client, without changing the focused Home or Account. The daemon opens the invoking Account's private rows
 under its captured requester custody and applies the canonical Session checkout
 resolver; unavailable proof stays absent without changing the status envelope.
 `SessionAcceptedWorkspaceV1Schema` owns both projections' strict value shape.

@@ -37,6 +37,7 @@ import { readTeamCredentialResourceCatalogs } from '@/sync/store/teams/teamsSnap
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTargetKey } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionAcceptedWorkspaceContext } from '@/sync/domains/session/sessionAcceptedWorkspace';
+import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { resolveDisplayIdentityForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -86,7 +87,8 @@ export async function readUiSessionStatus(
       ...(system ? { systemPurpose: system.key ?? null } : {}),
       encryption: isDataKeyAuthCredentials(account.credentials) ? { type: 'dataKey' }
         : isLegacyAuthCredentials(account.credentials) ? { type: 'legacy' } : null });
-    const workspaceContext = includeAcceptedWorkspace === true ? readSessionAcceptedWorkspaceContext(session, account.accountLifetime.scope, storage.getState()) : undefined;
+    const workspaceContext = includeAcceptedWorkspace === true ? readSessionAcceptedWorkspaceContext(session,
+      account.accountLifetime.scope, await createUiProjectAccountRowsClient(account).read(signal)) : undefined;
     const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(metadata);
     const pending = listPendingRequests(readPendingRequestFactsFromSession(session), []);
     const pendingRequests = projectSessionStatusPendingRequestsV1(pending);

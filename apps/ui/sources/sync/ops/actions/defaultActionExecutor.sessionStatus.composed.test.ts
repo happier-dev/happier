@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, expect, it } from 'vitest';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
@@ -19,6 +19,8 @@ import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 const homes = createHomeGovernanceHarness();
 const httpBoundary = { ...homes, request: createSessionReadBatchFetchBoundary(homes.request) };
@@ -229,17 +231,58 @@ it('reads a Session for a Home the Action context names by profile id and the Ac
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { session: { id: session.id } } });
 });
 
+it.each(['accepted', 'personal', 'recipient', 'missing'] as const)('reads %s checkout context from the captured secondary Home without changing the focused Account', async scenario => {
+  const serverId = await homes.addHome({ name: 'Secondary checkout', serverUrl: 'https://secondary-checkout.test',
+    serverIdentityId: 'srv_secondary_checkout', accountId: 'alice', currentAccount: true, active: false });
+  const focusedScope = { serverId: 'focused-home', accountId: 'focused-other-account' };
+  getStorage().setState({ profileScope: focusedScope, projectAccountRows: null });
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' };
+  const checkout = { id: 'checkout', serverId: scope.serverId, machineId: 'checkout-machine', rootPath: '/work/project', createdAtMs: 1,
+    source: { sourceId: 'private-project-source', revision: 1 },
+    repositoryIdentity: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/private-project' } };
+  homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({ workspaceRefs: [checkout] }) });
+  const session = createSessionFixture({ id: 'secondary-checkout-session', encryptionMode: 'plain',
+    ownerAccountId: scenario === 'recipient' ? 'another-owner' : 'alice',
+    access: createSessionAccessFixture(scenario === 'recipient' ? 'view' : 'owner'),
+    metadata: { ...createSessionFixture().metadata!, flavor: 'codex', machineId: checkout.machineId,
+      path: scenario === 'personal' ? '/work/personal' : checkout.rootPath,
+      ...(scenario === 'personal' ? {} : { workspaceId: scenario === 'missing' ? 'missing-checkout' : checkout.id }) } });
+  homes.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+  const executor = createDefaultActionExecutor();
+  const context = { surface: 'ui' as const, serverId, expectedAccountId: 'alice' };
+  const ordinary = await executor.execute('session.status.get', { sessionId: session.id }, context);
+  expect(ordinary).toMatchObject({ ok: true, result: { session: { id: session.id } } });
+  expect(ordinary).not.toHaveProperty('result.projectContextSource');
+  expect(homes.requests.some(request => request.path.includes('/project-rows'))).toBe(false);
+  const result = await executor.execute('session.status.get', { sessionId: session.id, includeAcceptedWorkspace: true }, context);
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { projectContextSource: {
+    kind: scenario === 'accepted' ? 'source' : scenario === 'personal' ? 'personal' : 'unavailable',
+  } } });
+  if (scenario === 'accepted') expect(result).toMatchObject({ result: { projectContextSource: { sourceId: checkout.source.sourceId },
+    acceptedWorkspace: { checkout: { serverId: scope.serverId, workspaceId: checkout.id }, repository: checkout.repositoryIdentity } } });
+  else {
+    expect(result).not.toHaveProperty('result.acceptedWorkspace');
+    expect(JSON.stringify(result)).not.toContain(checkout.source.sourceId);
+    expect(JSON.stringify(result)).not.toContain(checkout.repositoryIdentity.repository);
+  }
+  expect(homes.requests.filter(request => request.path.includes('/project-rows'))).toMatchObject([{
+    serverId, serverUrl: 'https://secondary-checkout.test', token: createAccountTokenForTests('alice', { currentAccount: true }),
+  }]);
+  expect(getStorage().getState().profileScope).toEqual(focusedScope);
+  expect(getStorage().getState().projectAccountRows).toBeNull();
+  expect(network.requests).toHaveLength(0);
+});
+
 it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout proof only on an explicit status read', async scenario => {
   const serverId = await homes.addHome({ name: 'Checkout', serverUrl: 'https://checkout-status.test', accountId: 'alice', currentAccount: true });
-  const state = getStorage().getState();
   const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'alice' };
   getStorage().setState({ profileScope: scope });
   const checkout = { id: 'checkout', serverId: scope.serverId, machineId: 'checkout-machine', rootPath: '/work/project', createdAtMs: 1,
     source: { sourceId: 'project-source', revision: 1 },
     repositoryIdentity: { kind: 'github' as const, deployment: 'https://github.com', repository: 'acme/project' } };
-  state.activateProjectAccountRowsScope(scope);
-  getStorage().getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
-    workspaceRefs: scenario === 'unavailable' ? [] : [checkout], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+  homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({
+    workspaceRefs: scenario === 'unavailable' ? [] : [checkout],
+  }) });
   const session = createSessionFixture({ id: 'checkout-session', encryptionMode: 'plain', ownerAccountId: scenario === 'recipient' ? 'other' : 'alice',
     access: createSessionAccessFixture(scenario === 'recipient' ? 'view' : 'owner'),
     metadata: { ...createSessionFixture().metadata!, flavor: 'codex', machineId: checkout.machineId, path: checkout.rootPath, workspaceId: checkout.id } });
@@ -262,7 +305,7 @@ it.each(['accepted', 'recipient', 'unavailable'] as const)('projects %s checkout
     expect(result).not.toHaveProperty('result.acceptedWorkspace');
     expect(result).toMatchObject({ result: { projectContextSource: { kind: 'unavailable' } } });
   }
-  expect(homes.requests.filter(request => request.path.includes('/project-rows'))).toHaveLength(0);
+  expect(homes.requests.filter(request => request.path.includes('/project-rows'))).toHaveLength(1);
 });
 
 

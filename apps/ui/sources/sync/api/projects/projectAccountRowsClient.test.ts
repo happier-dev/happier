@@ -209,6 +209,10 @@ describe('Project visibility through the real UI row transport and store', () =>
       // HTTP is the genuine external boundary. Cipher, CAS intent and store stay real.
       request: async (path, init) => {
         if (path.endsWith('/list')) return new Response(JSON.stringify({ status: 'listed', coverage: 'complete', rows: [row] }));
+        if (path.endsWith('/read')) {
+          expect(ProjectAccountRowReadRequestV1Schema.parse(JSON.parse(String(init?.body))).key).toEqual(key);
+          return Response.json({ status: 'present', row });
+        }
         const request = ProjectAccountRowMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
         writes.push(request);
         const mutation = request.mutations[0]!;

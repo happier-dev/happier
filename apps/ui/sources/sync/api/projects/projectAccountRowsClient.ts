@@ -41,7 +41,7 @@ function mutationFailure(error: unknown, signal?: AbortSignal) {
 export function createUiProjectAccountRowsClient(account: Account) {
   async function createOwner() {
     const { accountMode } = await account.resolveAccountEncryption(); account.assertCurrent();
-    const scope = { serverId: account.serverId, accountId: account.accountId };
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(account.serverId), accountId: account.accountId };
     return createProjectAccountRowsSync({ scope,
       cipher: createProjectAccountRowCipherV1({ mode: accountMode,
         material: accountMode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(account.credentials), randomBytes: getRandomBytes }),
