@@ -26,7 +26,9 @@ import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } fro
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError, createActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { DEPLOYMENT_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
@@ -3643,6 +3645,11 @@ describe('installed deployment storage and target composition', () => {
                 });
                 // The owner knows the reservation was made but no provider Action ran.
                 expect(result).toMatchObject({ effectAttempted: false });
+                const refusal = ActionExecuteFailureSchema.parse(result);
+                for (const actionId of DEPLOYMENT_ACTION_IDS_V1) {
+                    const output = createActionExecuteResultSchema(getActionSpec(actionId).outputSchema);
+                    expect(output.parse(settleActionOutput(actionId, refusal)), actionId).toEqual(refusal);
+                }
                 expect(childInvocations).toBe(0);
                 expect(transitionWrites).toBe(0);
                 return;
