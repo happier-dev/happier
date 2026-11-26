@@ -3,6 +3,7 @@ import * as React from 'react';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { MachineProjectTerminalsSection } from '@/components/machines/MachineProjectTerminalsSection';
 import { MachineRunsSection } from '@/components/machines/runs/MachineRunsSection';
+import { MachineSharedWorkflowRunsSection } from '@/components/machines/runs/MachineSharedWorkflowRunsSection';
 import { MachineRecentSessionsSection } from '@/components/machines/sessions/MachineRecentSessionsSection';
 import { MachineVitalsOverview } from '@/components/machines/vitals/MachineVitalsOverview';
 import { MachineProjectWorkSection } from '@/components/projects/workers/MachineProjectWorkSection';
@@ -145,6 +146,7 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             <MachineProjectWorkSection serverId={props.serverId} machineId={props.machineId} machineName={target.machineSentenceName} />
             <MachineRunsSection machine={machine} serverId={props.serverId} online={target.online}
                 isServerSwitching={target.isServerSwitching} refreshKey={refreshKey} />
+            <MachineSharedWorkflowRunsSection machineId={props.machineId} lifetime={binding ?? null} refreshKey={refreshKey} />
             <MachineRecentSessionsSection machineId={props.machineId} serverId={props.serverId} />
             <MachineProjectTerminalsSection machineId={props.machineId} serverId={props.serverId} />
 

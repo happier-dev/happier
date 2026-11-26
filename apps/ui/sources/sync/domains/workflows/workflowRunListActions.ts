@@ -3,6 +3,8 @@ import {
     WorkflowRunListRequestV1Schema,
     type WorkflowRunListRequestV1,
     WorkflowRunListResultV1Schema,
+    WorkflowRunCancelRequestV1Schema,
+    WorkflowRunCancelResultV1Schema,
     WorkflowRunSummariesRequestV1Schema,
     WorkflowRunSourceSummariesResultV1Schema,
     type WorkflowRunSourceSummariesResultV1,
@@ -147,6 +149,45 @@ export async function listAllWorkflowRuns(params: Readonly<{
         cursor = page.nextCursor;
     } while (cursor !== undefined);
     return { runs, metadataByRunId, supportsAnotherRoundByRunId, callerAccessByRunId };
+}
+
+export type WorkflowMachineControlRun = NonNullable<ReturnType<typeof WorkflowRunListResultV1Schema.parse>['machineRuns']>[number];
+
+/**
+ * Other people's active Runs placed on a Machine this Account owns: one page of
+ * four content-free facts. The server decides ownership; anyone else reads an empty page.
+ */
+export async function listMachineControlWorkflowRuns(params: Readonly<{
+    machineId: string;
+    cursor?: string;
+    signal?: AbortSignal;
+    accountLifetime: ServerAccountScopeLifetime | null;
+}>): Promise<Readonly<{ runs: readonly WorkflowMachineControlRun[]; nextCursor: string | undefined }>> {
+    const result = await callWorkflowAction({
+        actionId: 'workflow.run.list',
+        input: WorkflowRunListRequestV1Schema.parse({ projection: 'machine_control', machineId: params.machineId,
+            ...(params.cursor === undefined ? {} : { cursor: params.cursor }) }),
+        parseResult: (value) => WorkflowRunListResultV1Schema.parse(value),
+        fallbackMessage: 'Workflow run list request failed',
+        accountLifetime: params.accountLifetime,
+        ...(params.signal === undefined ? {} : { signal: params.signal }),
+    });
+    return { runs: result.machineRuns ?? [], nextCursor: result.nextCursor };
+}
+
+/** Stop as the owner of the exact Machine the Run is placed on. The receipt carries only its intent. */
+export async function stopWorkflowRunAsMachineOwner(params: Readonly<{
+    runId: string;
+    machineId: string;
+    accountLifetime: ServerAccountScopeLifetime | null;
+}>) {
+    return await callWorkflowAction({
+        actionId: 'workflow.run.cancel',
+        input: WorkflowRunCancelRequestV1Schema.parse({ runId: params.runId, expectedRevision: 0, machineId: params.machineId }),
+        parseResult: (value) => WorkflowRunCancelResultV1Schema.parse(value),
+        fallbackMessage: 'Workflow run stop request failed',
+        accountLifetime: params.accountLifetime,
+    });
 }
 
 /** FIN §4.8: memory is the starter's newest accepted Run, not another preference store. */
