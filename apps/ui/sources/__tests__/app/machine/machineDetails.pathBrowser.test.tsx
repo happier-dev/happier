@@ -202,22 +202,28 @@ describe('Machine detail navigation and terminal entry', () => {
             .toMatchObject({ payload: { cwd: '/Users/tester' } }));
     });
 
-    it('says the terminal waits on the person and offers the Approvals shortcut when Ask first holds the open', async () => {
+    it('holds the selected Machine shell until its native Ask is answered', async () => {
         await home.requireUiApproval(serverId, 'machines.terminal.open');
         const screen = await render(<MachinePageScreen />);
+        const opens = () => boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE);
+        const reviews = () => vi.mocked(Modal.show).mock.calls.map(([dialog]) => dialog)
+            .filter(dialog => dialog.chrome?.testID === 'actions.confirmation-review.modal');
         await waitForHomeGovernance(() => expect(screen.findByTestId('machine-detail-open-terminal')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-detail-open-terminal');
         await act(async () => {
             for (const frame of screen.findAllByType(EmbeddedTerminalPaneFrame)) frame.props.controller.onReady(80, 24);
         });
-        await flushHookEffects({ cycles: 3, turns: 2 });
-        await waitForHomeGovernance(() => expect(screen.findAllByType(EmbeddedTerminalPaneFrame)[0]?.props.controller)
-            .toMatchObject({ approvalPending: true, approvalId: expect.any(String) }));
-        expect(screen.findByTestId('machine-terminal-state-line')).toBeTruthy();
-        const action = screen.findByTestId('machine-terminal-state-line-action');
-        expect(action).toBeTruthy();
-        await act(async () => action?.props.onPress());
-        expect(boundary.push).toHaveBeenCalledWith(expect.stringContaining('/inbox/approvals/'));
+        const approve = 'actions.confirmation-review.decision-approve';
+        await vi.waitFor(() => expect(screen.findByTestId(approve)).not.toBeNull());
+        expect(reviews()).toHaveLength(1);
+        expect(reviews()[0]?.props).toMatchObject({ actionId: 'machines.terminal.open', actionArgs: { machineId: 'machine-1' } });
+        expect(opens()).toHaveLength(0);
+        expect(home.artifacts(serverId).list()).toHaveLength(0);
+        await screen.pressByTestIdAsync(approve);
+        await waitForHomeGovernance(() => expect(opens()).toEqual([[expect.objectContaining({
+            machineId: 'machine-1', serverId: scopeServerId, accountId: 'account-a', payload: expect.objectContaining({ cwd: '/Users/tester' }),
+        })]]));
+        expect(reviews()).toHaveLength(1);
     });
 
     it.each([false, true])('opens the header shell through real Machine Action admission (Action disabled: %s)', async disabled => {
