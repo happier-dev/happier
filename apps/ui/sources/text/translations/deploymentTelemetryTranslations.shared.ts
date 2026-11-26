@@ -48,6 +48,10 @@ export type Copy = Readonly<{
     reportedNone: string;
     note: string;
     openUsage: string;
+    /** The LLM calls tab's daily cost card (Usage's daily body, App calls subject). */
+    dailyCost: string;
+    /** The LLM calls tab's ranking of the routes that spend it. */
+    byRoute: string;
     reading: string;
     unavailable: string;
   }>;
@@ -213,8 +217,10 @@ const en: Copy = {
     reported: 'Reported by the provider',
     reportedFor: ({ reported, calls }) => `for ${reported} of ${calls} calls`,
     reportedNone: 'Your SDK doesn’t report cost',
-    note: 'Your app’s own model calls. Usage prices them with your prices; what your agents use is never added to them.',
+    note: 'Your app’s own model calls, priced with your Usage prices. What your agents use is in Usage, and the two are never added together.',
     openUsage: 'Open Usage',
+    dailyCost: 'Daily cost',
+    byRoute: 'By route',
     reading: 'Reading model calls',
     unavailable: 'Model calls aren’t available right now',
   },

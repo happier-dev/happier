@@ -34,6 +34,7 @@ import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sd
 import { projectCapturedLogBody } from '@happier-dev/plugins-telemetry/capture-views';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import type { MachineResourceClientFactory } from '@/components/machines/resources/useMachineServiceResource';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -88,11 +89,32 @@ const invokeThroughFrontDoor: TelemetryCaptureInvoke = (request) =>
     },
   );
 
-/** Dev specimens and tests supply fixture collector answers here, as other collector reads do. */
+/** The viewer's Usage model prices for the App calls a collector reported (Usage's own `usage.prices.get`). */
+export type TelemetryUsagePricesRead = (
+  request: Readonly<{ scope: ServerAccountScope; modelIds: readonly string[]; signal?: AbortSignal }>,
+) => Promise<unknown>;
+
+const readPricesThroughFrontDoor: TelemetryUsagePricesRead = (request) =>
+  createFrontDoorUiActionExecutor(undefined, {
+    serverId: request.scope.serverId,
+    expectedAccountId: request.scope.accountId,
+  })(USAGE_PRICE_ACTION_IDS.get, { modelIds: [...request.modelIds] }, request.signal ? { signal: request.signal } : undefined);
+
+/** Dev specimens and tests supply fixture collector answers (and the Home's price catalog) here. */
 export const TelemetryCaptureTransportContext = React.createContext<Readonly<{
   invoke: TelemetryCaptureInvoke;
   createResourceClient?: MachineResourceClientFactory;
-}>>({ invoke: invokeThroughFrontDoor });
+  readPrices?: TelemetryUsagePricesRead;
+}>>({ invoke: invokeThroughFrontDoor, readPrices: readPricesThroughFrontDoor });
+
+export function useTelemetryUsagePricesRead(): TelemetryUsagePricesRead {
+  return React.useContext(TelemetryCaptureTransportContext).readPrices ?? readPricesThroughFrontDoor;
+}
+
+/** The costs read's bucket: hours for a day or less, so a day's chart has bars; days for longer windows. */
+export function telemetryCostsGranularity(windowMs: number): 'hour' | 'day' {
+  return windowMs > 2 * 86_400_000 ? 'day' : 'hour';
+}
 
 export function telemetryCaptureFailureCode(error: unknown): string {
   return (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable';
@@ -247,7 +269,7 @@ export function createTelemetryCaptureReads(
         hostRead: 'telemetry.capture',
         input: {
           action: parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1)!,
-          input: { source: source(environment), ...selection, granularity: 'day', groupByRoute: true },
+          input: { source: source(environment), ...selection, granularity: telemetryCostsGranularity(windowMs), groupByRoute: true },
         },
         windowMs,
       };

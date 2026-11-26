@@ -244,17 +244,47 @@ const LLM_CALLS = [
   llmCall('m-4', NOW - 12 * MINUTE, 3400, 'gpt-5-mini', 'openai', 14200, 2600, null),
   llmCall('m-5', NOW - 26 * MINUTE, 4100, 'llama-3.3-70b', 'groq', 6100, 1900, null),
 ];
-const costOperand = (modelId: string, provider: string, callCount: number, input: number, output: number, reported: number | null) => ({
-  bucketStartMs: NOW - 24 * HOUR, provider, modelId, requestedModel: modelId, operation: 'chat', callCount,
-  tokens: { input, output, total: input + output, reasoning: null, cacheRead: null, cacheWrite: null }, tokenCategories: null,
-  reportedCost: reported === null ? null : { amount: reported, currency: 'USD' }, firstSeenMs: NOW - 23 * HOUR, lastSeenMs: NOW - 40 * SECOND,
-});
-const COSTS = [
-  costOperand('gpt-5-mini', 'openai', 1852, 16_400_000, 3_700_000, null),
-  costOperand('claude-haiku-4.5', 'anthropic', 410, 5_200_000, 900_000, 61.2),
-  costOperand('text-embedding-3-small', 'openai', 45_900, 9_600_000, 0, null),
-  costOperand('llama-3.3-70b', 'groq', 48, 900_000, 300_000, null),
-];
+/**
+ * A day of the app's model calls (lab p7Cost-env), hour by hour and per route and model: summarize on two models, search
+ * embeddings, invoice explanations, and one translate route on a model the catalog has no price for.
+ */
+const COST_ROUTES = [
+  ['POST', '/api/assist/summarize', 'gpt-5-mini', 'openai', 1640, 15_000_000, 3_200_000, null],
+  ['POST', '/api/assist/summarize', 'claude-haiku-4.5', 'anthropic', 410, 5_200_000, 900_000, 61.2],
+  ['POST', '/api/search', 'text-embedding-3-small', 'openai', 45_900, 9_600_000, 0, null],
+  ['POST', '/api/invoices/:id/explain', 'gpt-5-mini', 'openai', 212, 1_400_000, 500_000, null],
+  ['POST', '/api/assist/translate', 'llama-3.3-70b', 'groq', 48, 900_000, 300_000, null],
+] as const;
+/** The day's hourly weight: quiet nights, a working-day swell and the evening's release. */
+const hourWeight = (hour: number) => 0.4 + 0.6 * Math.sin(Math.PI * Math.max(0, hour - 5) / 18) ** 2 + (hour >= 18 ? 0.25 : 0);
+const HOUR_WEIGHTS = Array.from({ length: 24 }, (_, hour) => hourWeight(hour));
+const HOUR_WEIGHT_TOTAL = HOUR_WEIGHTS.reduce((sum, weight) => sum + weight, 0);
+const COSTS = COST_ROUTES.flatMap(([method, path, modelId, provider, calls, input, output, reported]) =>
+  HOUR_WEIGHTS.map((weight, hour) => {
+    const share = weight / HOUR_WEIGHT_TOTAL;
+    const inTokens = Math.round(input * share), outTokens = Math.round(output * share);
+    const bucketStartMs = NOW - (24 - hour) * HOUR;
+    return {
+      bucketStartMs, route: { method, path }, provider, modelId, requestedModel: modelId, operation: 'chat',
+      callCount: Math.max(1, Math.round(calls * share)),
+      tokens: { input: inTokens, output: outTokens, total: inTokens + outTokens, reasoning: null, cacheRead: null, cacheWrite: null },
+      tokenCategories: null, reportedCost: reported === null ? null : { amount: Math.round(reported * share * 10_000) / 10_000, currency: 'USD' },
+      firstSeenMs: bucketStartMs + 2 * MINUTE, lastSeenMs: bucketStartMs + HOUR - 40 * SECOND,
+    };
+  }));
+const COST_CALLS = COST_ROUTES.reduce((sum, route) => sum + route[4], 0);
+const COST_REPORTED_CALLS = COST_ROUTES.reduce((sum, route) => sum + (route[7] === null ? 0 : route[4]), 0);
+
+/** The Home's price catalog for those models, as Usage reads it; the translate route's model has no price. */
+export const TELEMETRY_FIXTURE_PRICE_CATALOG = {
+  v: 1,
+  models: {
+    'gpt-5-mini': { inputUsdPerMillion: 0.25, outputUsdPerMillion: 2, cacheReadUsdPerMillion: 0.025, cacheWriteUsdPerMillion: 0.25 },
+    'claude-haiku-4.5': { inputUsdPerMillion: 1, outputUsdPerMillion: 5, cacheReadUsdPerMillion: 0.1, cacheWriteUsdPerMillion: 1.25 },
+    'text-embedding-3-small': { inputUsdPerMillion: 0.02, outputUsdPerMillion: 0, cacheReadUsdPerMillion: 0, cacheWriteUsdPerMillion: 0 },
+  },
+  provenance: { source: 'litellm', origin: 'fetched', asOfMs: NOW - 12 * 24 * HOUR, revision: 'catalog-fixture', fetchStatus: 'ready' },
+} as const;
 
 /** A day of the service's hourly intervals (lab p7Flows-metrics): request time stepping up after the 18:40 deploy. */
 function metricTrend(pick: (hour: number) => Readonly<Record<string, number>>) {
@@ -309,8 +339,8 @@ export function createTelemetryCaptureFixtureInvoke(
           : { metrics: Date.now() - MINUTE, appLlmCost: Date.now() - 3 * MINUTE, exceptions: null } };
     if (actionId.endsWith('/capture/costs/read'))
       return { ok: true, source, since: NOW - 24 * HOUR, until: NOW, items: waiting ? [] : COSTS,
-        coverage: { lostObservations: 0, reason: null, callCount: waiting ? 0 : 48_210, tokenCategoryCallCount: 0,
-          reportedCostCallCount: waiting ? 0 : 410 } };
+        coverage: { lostObservations: 0, reason: null, callCount: waiting ? 0 : COST_CALLS, tokenCategoryCallCount: 0,
+          reportedCostCallCount: waiting ? 0 : COST_REPORTED_CALLS } };
     if (actionId.endsWith('/capture/metrics/read')) {
       const selection = input as { view?: string; serviceName?: string; serviceVersion?: string };
       if (selection.view === 'overview') {
@@ -403,6 +433,7 @@ export function createTelemetryCaptureFixtureTransport(
   };
   return {
     createResourceClient,
+    readPrices: async () => TELEMETRY_FIXTURE_PRICE_CATALOG,
     invalidate() { for (const listener of listeners) listener({ kind: 'invalidated' }); },
     get watchers() { return listeners.size; },
   };

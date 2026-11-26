@@ -425,7 +425,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
     />
   ) : tab === 'llmCalls' && reads ? (
     <TelemetryAppLlmCalls key={JSON.stringify([lifetime?.scope, environment.id, collectorId])}
-      reads={reads} lifetime={lifetime} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} onOpenCall={openRequest}
+      reads={reads} environmentId={environment.id} lifetime={lifetime} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} onOpenCall={openRequest}
       selection={llmFilter?.reads === reads ? llmFilter.selection : ALL_LLM_CALLS}
       onSelect={selection => setLlmFilter({ reads, selection })} />
   ) : tab === 'metrics' && reads ? (

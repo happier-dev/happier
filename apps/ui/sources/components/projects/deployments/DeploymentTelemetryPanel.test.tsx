@@ -984,7 +984,8 @@ describe('Environment Telemetry capability views', () => {
       if (call_.actionId.endsWith('/capture/status'))
         return { ok: true, source, coverage: { lostObservations: 0, reason: null }, lastReceivedAt: now, capabilityLastSampleAt: sampled };
       if (call_.actionId.endsWith('/capture/costs/read'))
-        return { ok: true, source, since: now - 86_400_000, until: now, items: [{ bucketStartMs: now - 3_600_000, provider: 'openai',
+        return { ok: true, source, since: now - 86_400_000, until: now, items: [{ bucketStartMs: now - 3_600_000,
+          route: { method: 'POST', path: '/checkout' }, provider: 'openai',
           modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat', callCount: 2,
           tokens: { input: 1800, output: 680, total: 2480, reasoning: null, cacheRead: null, cacheWrite: null }, tokenCategories: null,
           reportedCost: { amount: 0.0042, currency: 'USD' }, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
@@ -1120,7 +1121,10 @@ describe('Environment Telemetry capability views', () => {
         expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source, since: expect.any(Number), until: expect.any(Number) }) }),
         expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source, appLlmCalls: {} }) }),
       ]);
-      expect(textIn('project-deployments.telemetry.llm.reported')).toContain('$0.0042');
+      // Priced with the viewer's Usage prices and drawn by Usage's own bodies: the provider's figure stays its own fact.
+      expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0042');
+      expect(screen.findByTestId('project-deployments.telemetry.llm.daily.drawn')).not.toBeNull();
+      expect(textIn('project-deployments.telemetry.llm.routes')).toContain('POST /checkout');
       const service = screen.findByTestId('project-deployments.telemetry.llm.service');
       const version = screen.findByTestId('project-deployments.telemetry.llm.version');
       expect(service).not.toBeNull();
@@ -1134,7 +1138,7 @@ describe('Environment Telemetry capability views', () => {
       const selectedReads = calls.filter(read => read.actionId.endsWith('/capture/costs/read') || read.actionId.endsWith('/capture/traces/list')).slice(-2);
       expect(selectedReads).toEqual([
         expect.objectContaining({ input: expect.objectContaining({ source, serviceName: 'billing-api', serviceVersion: 'v1.43',
-          granularity: 'day', groupByRoute: true }) }),
+          granularity: 'hour', groupByRoute: true }) }),
         expect.objectContaining({ input: expect.objectContaining({ source, appLlmCalls: { serviceName: 'billing-api', serviceVersion: 'v1.43' } }) }),
       ]);
       await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
@@ -1159,9 +1163,9 @@ describe('Environment Telemetry capability views', () => {
       expect(textIn('project-deployments.telemetry.metrics.heap')).toContain('doesn’t report heap use');
       await screen.pressByTestIdAsync('project-deployments.telemetry.metrics.version');
       await waitForHomeGovernance(() => {
-        expect(screen.findByTestId('project-deployments.telemetry.metrics.version.v1.43')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.telemetry.metrics.version:v1.43')).not.toBeNull();
       });
-      await screen.pressByTestIdAsync('project-deployments.telemetry.metrics.version.v1.43');
+      await screen.pressByTestIdAsync('project-deployments.telemetry.metrics.version:v1.43');
       await waitForHomeGovernance(() => {
         expect(calls.at(-1)?.input).toMatchObject({ view: 'overview', serverId: 'home', environmentId: 'production',
           serviceName: 'billing-api', serviceVersion: 'v1.43' });

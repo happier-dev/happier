@@ -17,6 +17,8 @@ import { useUsageWidgetModel } from './usageWidgetBatch';
 import { useUsageQueryActions } from './useUsageQueryActions';
 import { UsageDailyWidget, useUsageDailyChartShape } from './UsageDailyWidget';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageCostFactsReading, UsageCostFactsWidget } from './UsageCostFactsWidget';
@@ -85,12 +87,28 @@ const USAGE_QUERY_BODIES: Readonly<
 };
 
 
+/**
+ * Facts a host already holds and admitted (an Environment's own App calls read, priced by the viewer's Usage prices),
+ * drawn through the same bodies and lifecycle states instead of the page's query Resource.
+ */
+export type UsageWidgetSuppliedFacts = Readonly<{
+  /** The Account the facts were read for. */
+  authority: ServerAccountScope;
+  query: UsageQuery;
+  slice: UsageQueryResultSlice | null;
+  pending: boolean;
+  error: UsageWidgetBodyModel['error'];
+  refresh: () => Promise<void>;
+}>;
+
 export type UsageWidgetBodyInput = Readonly<{
   id: UsageBuiltinWidgetIdV1;
   /** The platform binder's resolved input (widget value → group → surface slot). */
   input: Readonly<Record<string, JsonValue>>;
   serverId: string;
   testID: string;
+  /** The host supplies the facts; the body reads no Usage query Resource of its own. */
+  facts?: UsageWidgetSuppliedFacts;
 }>;
 
 /**
@@ -119,6 +137,7 @@ export function UsageWidgetBody(
       <View style={memory.style === undefined ? styles.body : [styles.body, memory.style]} onLayout={memory.onLayout}>
         {props.id === 'usage_sources'
           ? <UsageSourcesWidget input={props.input} serverId={props.serverId} testID={props.testID} />
+          : props.facts ? <UsageSuppliedWidgetBody {...props} id={props.id} facts={props.facts} />
           : <UsageQueryWidgetBody {...props} id={props.id} />}
       </View>
     </UsageBodySettledReportContext.Provider>
@@ -133,6 +152,24 @@ function UsageQueryWidgetBody(
   const { model, query, acquireExactHistory } = useUsageWidgetModel(props.input, props.id);
   return <UsageExactHistoryDemandContext.Provider value={acquireExactHistory}>
     <UsageQueryWidgetActions {...props} query={model.slice?.shownQuery ?? query} slice={model.slice} />
+    <UsageQueryWidgetContent {...props} model={model} query={query} />
+  </UsageExactHistoryDemandContext.Provider>;
+}
+
+const NO_EXACT_HISTORY = () => () => {};
+
+/** Host-supplied facts take the same content path; there is no query Resource, period change or frame command. */
+function UsageSuppliedWidgetBody(
+  props: UsageWidgetBodyInput &
+    Readonly<{ id: Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>; facts: UsageWidgetSuppliedFacts }>,
+) {
+  const { authority, query, slice, pending, error, refresh } = props.facts;
+  const model = React.useMemo((): UsageWidgetBodyModel => {
+    const identity = { query, authority };
+    return { requestedQuery: identity, shownQuery: identity, slice, pending, error, freshness: 'fresh',
+      updatingPreviousPeriod: false, refreshing: false, refresh: async () => { await refresh(); } };
+  }, [authority, query, slice, pending, error, refresh]);
+  return <UsageExactHistoryDemandContext.Provider value={NO_EXACT_HISTORY}>
     <UsageQueryWidgetContent {...props} model={model} query={query} />
   </UsageExactHistoryDemandContext.Provider>;
 }

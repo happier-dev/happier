@@ -16,12 +16,10 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import {
@@ -40,6 +38,7 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 const METRICS_PROJECTION: PluginUiResourceProjection<ReturnType<typeof readTelemetryCaptureMetricsSnapshot>> = {
   decode: content => readTelemetryCaptureMetricsSnapshot(content.bytes),
 };
+/** The version chip's "All versions" choice; a reported version is never empty. */
 const ALL_VERSIONS = '';
 
 type Chart = Readonly<{
@@ -62,8 +61,6 @@ export function TelemetryMetrics(props: Readonly<{
   const { createResourceClient } = React.useContext(TelemetryCaptureTransportContext);
   const [selection, setSelection] = React.useState<TelemetryMetricsSelection>({});
   const [width, setWidth] = React.useState<number | null>(null);
-  const [menuOpen, setMenuOpen] = React.useState(false);
-  const [versionsOpen, setVersionsOpen] = React.useState(false);
   const reference = React.useMemo(() => reads.metricsReference(selection, windowMs), [reads, selection, windowMs]);
   const snapshot = useMachineServiceResource({
     accountLifetime: lifetime, reference, targetMachineId: reads.targetMachineId,
@@ -118,58 +115,28 @@ export function TelemetryMetrics(props: Readonly<{
   ];
   const twoUp = width !== null && width >= TELEMETRY_CHART_MIN_WIDTH_PX * 2;
   const color = theme.colors.text.secondary;
-  const serviceChoice =
-    read.services.some(service => service.serviceName !== serviceName) ? (
-      <DropdownMenu
-        open={menuOpen}
-        onOpenChange={setMenuOpen}
-        items={read.services.map((service) => ({
-          id: service.serviceName,
-          title: service.serviceName,
-          testID: `project-deployments.telemetry.metrics.service.${service.serviceName}`,
-        }))}
-        matchTriggerWidth={false}
-        placement="bottom"
-        popoverAccessibilityLabel={t('deploymentTelemetry.metrics.service')}
-        onSelect={(id) => {
-          setMenuOpen(false);
-          setSelection({ serviceName: id });
-        }}
-        trigger={({ toggle }) => (
-          <TextLinkButton
-            testID="project-deployments.telemetry.metrics.service"
-            label={serviceName}
-            size="meta"
-            onPress={toggle}
-          />
-        )}
-      />
-    ) : (
-      <Text variant="meta" style={styles.quiet}>
-        {serviceName}
-      </Text>
-    );
+  // What the overview shows, as the page's filter chips (lab p7Flows-metrics): the service, then its version.
+  const serviceChoice = (
+    <SelectionListFilterChip filter={{
+      id: 'project-deployments.telemetry.metrics.service', testID: 'project-deployments.telemetry.metrics.service',
+      label: t('deploymentTelemetry.metrics.service'), valueLabel: serviceName, selectedId: serviceName,
+      ...(read.services.length > 1 ? {
+        options: read.services.map(service => ({ id: service.serviceName, label: service.serviceName })),
+        onChange: (id: string) => setSelection({ serviceName: id }),
+      } : {}),
+    }} />
+  );
   const allVersions = t('deploymentTelemetry.metrics.allVersions');
   const versionChoice = versions.length > 0 || serviceVersion !== null ? (
-    <DropdownMenu open={versionsOpen} onOpenChange={setVersionsOpen}
-      items={[{ id: ALL_VERSIONS, title: allVersions }, ...versions.map(version => ({
-        id: version, title: version, testID: `project-deployments.telemetry.metrics.version.${version}`,
-      }))]}
-      matchTriggerWidth={false} placement="bottom" popoverAccessibilityLabel={t('common.version')}
-      onSelect={id => {
-        setVersionsOpen(false);
-        setSelection({ serviceName, ...(id === ALL_VERSIONS ? {} : { serviceVersion: id }) });
-      }}
-      trigger={({ toggle }) => <TextLinkButton testID="project-deployments.telemetry.metrics.version"
-        accessibilityLabel={t('common.version')} label={serviceVersion ?? allVersions} size="meta" onPress={toggle} />}
-    />
+    <SelectionListFilterChip filter={{
+      id: 'project-deployments.telemetry.metrics.version', testID: 'project-deployments.telemetry.metrics.version',
+      label: t('common.version'), valueLabel: serviceVersion ?? allVersions, selectedId: serviceVersion ?? ALL_VERSIONS,
+      options: [{ id: ALL_VERSIONS, label: allVersions }, ...versions.map(version => ({ id: version, label: version }))],
+      onChange: (id: string) => setSelection({ serviceName, ...(id === ALL_VERSIONS ? {} : { serviceVersion: id }) }),
+    }} />
   ) : null;
   return (
-    <ItemGroup
-      title={t('deploymentTelemetry.metrics.service')}
-      surface="none"
-      testID="project-deployments.telemetry.metrics"
-    >
+    <ItemGroup surface="none" testID="project-deployments.telemetry.metrics">
       <View style={styles.selection}>{serviceChoice}{versionChoice}</View>
       {failure || snapshot?.freshness === 'stale' ? (
         <SurfaceFreshnessLine reason={failure?.message ?? t('common.unavailable')}
@@ -257,7 +224,6 @@ export function TelemetryMetrics(props: Readonly<{
 
 const styles = StyleSheet.create((theme) => ({
   selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
-  quiet: { color: theme.colors.text.secondary },
   charts: { gap: theme.space.s16 },
   chartsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   chart: { minWidth: 0, gap: theme.space.s8 },
