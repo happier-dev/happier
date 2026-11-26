@@ -3,6 +3,8 @@ import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocat
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { resolveEffectiveActionInputFields } from '@happier-dev/plugin-sdk/actions';
 import { normalizePluginActionInputHintsV2, PluginActionInputHintsV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import * as entry from '../index.js';
 
 const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'selected-profile' };
@@ -11,6 +13,19 @@ const credentialPrincipal = { kind: 'account', accountId: 'owner', purpose: { co
 const draft = { credentialRef, credentialPrincipal, product: 'pages', providerIdentity: { providerAccountId: 'account' } };
 const json = (result: unknown, result_info?: unknown) => ({ status: 200, headers: {},
   body: new TextEncoder().encode(JSON.stringify({ success: true, result, ...(result_info ? { result_info } : {}) })) });
+
+it.each(['pages-create', 'workers-create'])('keeps %s Account options stable while editing unrelated draft fields', localId => {
+  const action = entry.manifest.contributes.actions?.find(value => value.id === localId);
+  const inputHints = normalizePluginActionInputHintsV2(PluginActionInputHintsV2Schema.parse(action?.inputHints));
+  const accountField = resolveEffectiveActionInputFields({ inputHints }, {}).find(field => field.path === 'providerAccountId');
+  const actionId = formatQualifiedPluginActionId({ pluginId: entry.manifest.id, localId });
+  const project = (input: Record<string, unknown>) =>
+    projectInputOptionsDependencies(input, undefined, actionId, accountField?.optionsDraftDependencies);
+  const original = { credentialRef, credentialPrincipal, resourceName: 'site', productionBranch: 'main', sourceMethod: 'upload' };
+  expect(project({ ...original, resourceName: 'site-next', productionBranch: 'preview', sourceMethod: 'gitIntegration' }))
+    .toEqual(project(original));
+  expect(accountField?.optionsDraftDependencies).toEqual([]);
+});
 
 it('keeps an empty Account discovery distinct from a missing draft dependency', async () => {
   const http = createPluginHttpFixture({ async request() { return json([]); } });

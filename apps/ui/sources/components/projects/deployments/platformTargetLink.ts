@@ -36,6 +36,7 @@ export type DeploymentPlatformTarget = Readonly<{
   targetKind: string;
   inspectLocalId: string;
   inspectActionId: string;
+  inspectInputSchema: NonNullable<PluginPortableReleaseManifestV1['contributes']['actions']>[number]['inputSchema'];
   purpose: string;
   service: Readonly<{ pluginId: string; localId: string }>;
   fields: readonly EffectiveActionInputField[];
@@ -91,7 +92,6 @@ export function readDeploymentPlatformTargets(
   declarations: readonly Declaration[],
 ): readonly DeploymentPlatformTarget[] {
   return declarations.flatMap(({ manifest }) => {
-    const contributes = manifest.contributes as unknown as UnknownRecord;
     const normalizedTargets = listDeploymentTargetsFromManifestsV1([{ manifest }]);
     const declaredInputTypes = manifest.contributes.inputTypes?.length
       ? { pluginId: manifest.id, definitions: manifest.contributes.inputTypes } : undefined;
@@ -100,9 +100,7 @@ export function readDeploymentPlatformTargets(
       const localId = target.source.contribution.localId;
       return (manifest.contributes.deploymentTargets ?? []).filter(declaration => declaration.id === localId);
     });
-    const actions = Array.isArray(contributes.actions)
-      ? contributes.actions
-      : [];
+    const actions = manifest.contributes.actions ?? [];
     return targets.flatMap((target): DeploymentPlatformTarget[] => {
       if (
         !record(target) ||
@@ -155,6 +153,7 @@ export function readDeploymentPlatformTargets(
             pluginId: manifest.id,
             localId: inspect,
           }),
+          inspectInputSchema: action.inputSchema,
           purpose,
           service: { pluginId: service.pluginId, localId: service.localId },
           fields: hints as EffectiveActionInputField[],

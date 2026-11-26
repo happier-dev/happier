@@ -20,9 +20,9 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
     input: AdmittedActionInputById['deployments.suggestions.catalog'] = {}): Promise<DeploySuggestionCatalogV1> {
     const catalog: DeploySuggestionCatalogV1 = { starters: [], apps: [], targets: [], stores: [], forges: [], machines: [], connectedAccounts: [], issues: [] };
     const issues = catalog.issues!;
-    async function read(id: ActionId, input: unknown, section: Section) {
+    async function read(id: ActionId, input: unknown, section: Section, sectionIssues = issues) {
         const answer = await execute(id, input);
-        if (!answer.ok) { issues.push({ section, code: answer.errorCode }); return null; }
+        if (!answer.ok) { sectionIssues.push({ section, code: answer.errorCode }); return null; }
         return answer.result;
     }
     async function list(kind: 'starter' | 'app', cursor?: string, sourceId?: string): Promise<RegistryListPageV1[]> {
@@ -72,24 +72,16 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
             }
         }));
     }
-    await Promise.all([completePages('starter', starterPages), completePages('app', appPages)]);
-    const items = (pages: readonly RegistryListPageV1[], section: 'starters' | 'apps') => pages.flatMap(page => {
-        if (page.status.state !== 'ok') issues.push({ section, code: page.status.state });
-        return page.items.filter(item => !item.problem);
-    });
-    catalog.starters = items(starterPages, 'starters').map(item => ({ id: JSON.stringify([item.sourceId, item.itemId]),
-        title: item.title, sourceId: item.sourceId, itemId: item.itemId, ...(item.starterDeploy ? { deploy: item.starterDeploy } : {}) }));
-    catalog.apps = items(appPages, 'apps').map(item => ({ id: JSON.stringify([item.sourceId, item.itemId]),
-        title: item.title, sourceId: item.sourceId, itemId: item.itemId }));
-    if (accountRows !== null) catalog.connectedAccounts = accountRows.map(row => ({ account: row.account.ref, health: row.health }));
-    if (machines !== null) catalog.machines = await Promise.all(machineRows.parse(machines).items.map(async machine => {
+    // Publish readiness issues after registry issues even when the readiness reads finish first.
+    const machineIssues: typeof issues = [];
+    const readMachineReadiness = () => machines === null ? [] : Promise.all(machineRows.parse(machines).items.map(async machine => {
         const online = machine.presence ? machine.presence === 'online' : machine.active === true;
         let readiness: DeploySuggestionCatalogV1['machines'][number]['readiness'] = 'unknown';
         const homeId = context.serverIdentityId ?? context.serverId;
         if (online && homeId) {
             const target = { homeId, machineId: machine.machineId };
             const readPlan = async (planTarget: MachineSetupPlanInputV1) => MachineSetupCombinedPlanResultV1Schema.safeParse(
-                await read('machines.setup.plan', { ...target, targets: [planTarget], selectedMachineId: machine.machineId }, 'machines'),
+                await read('machines.setup.plan', { ...target, targets: [planTarget], selectedMachineId: machine.machineId }, 'machines', machineIssues),
             );
             const current = await readPlan(target);
             if (current.success) {
@@ -102,6 +94,20 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
         return { machineId: machine.machineId, ...(machine.named === false ? {} : { label: machine.label }), online, readiness,
             ...(machine.homeDir ? { homeDir: machine.homeDir } : {}) };
     }));
+    const [, , readyMachines] = await Promise.all([
+        completePages('starter', starterPages), completePages('app', appPages), readMachineReadiness(),
+    ]);
+    const items = (pages: readonly RegistryListPageV1[], section: 'starters' | 'apps') => pages.flatMap(page => {
+        if (page.status.state !== 'ok') issues.push({ section, code: page.status.state });
+        return page.items.filter(item => !item.problem);
+    });
+    catalog.starters = items(starterPages, 'starters').map(item => ({ id: JSON.stringify([item.sourceId, item.itemId]),
+        title: item.title, sourceId: item.sourceId, itemId: item.itemId, ...(item.starterDeploy ? { deploy: item.starterDeploy } : {}) }));
+    catalog.apps = items(appPages, 'apps').map(item => ({ id: JSON.stringify([item.sourceId, item.itemId]),
+        title: item.title, sourceId: item.sourceId, itemId: item.itemId }));
+    if (accountRows !== null) catalog.connectedAccounts = accountRows.map(row => ({ account: row.account.ref, health: row.health }));
+    catalog.machines = readyMachines;
+    issues.push(...machineIssues);
     // Starters are package content an online Machine reads: with none online an empty list has that cause, the same
     // `needs_machine` a source reports when it cannot be read (AUTO-LIVE F2).
     if (machines !== null && catalog.starters.length === 0 && !catalog.machines.some(machine => machine.online)

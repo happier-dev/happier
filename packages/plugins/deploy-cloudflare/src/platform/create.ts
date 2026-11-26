@@ -141,6 +141,7 @@ const common = { execution: { target: 'account', account: { artifactId: 'account
   dangerLevel: 'writesRemote', readOnly: false,
 } as const;
 const accountHint = { path: 'providerAccountId', title: 'Cloudflare Account', widget: 'select', required: true,
+  optionsDraftDependencies: [],
   inputType: { pluginId: 'happier.deploy.cloudflare', localId: 'target-choice' } } as const;
 const sourceMethodHint = { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload',
   options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] } as const;

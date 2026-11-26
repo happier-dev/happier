@@ -1175,3 +1175,110 @@ it.each([
   expect(fields[0]?.options?.map(option => option.value)).toEqual([production]);
   expect(input.providerEnvironment).toEqual(production);
 });
+
+it('does not republish the modal footer after an unrelated editor render', async () => {
+  const serverId = await homes.addHome({ name: 'Footer', serverUrl: 'https://deployment-footer.test',
+    accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const { DeploymentPlatformTargetEditor } = await import('./DeploymentPlatformTargetSheet');
+  const setChrome = vi.fn();
+  const props = { environment: { definition: { kind: 'repository' as const }, projectSourceId: '' },
+    ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''),
+    onClose: () => {}, onApproval: () => {}, setChrome };
+  try {
+    const screen = await renderScreen(<DeploymentPlatformTargetEditor {...props} name="Site" />);
+    await waitForHomeGovernance(() => expect(setChrome).toHaveBeenCalled());
+    setChrome.mockClear();
+    await screen.update(<DeploymentPlatformTargetEditor {...props} name="Renamed site" />);
+    expect(setChrome).not.toHaveBeenCalled();
+    await screen.unmount();
+  } finally {
+    context.dispose();
+  }
+});
+
+it.each(['vercel', 'pages', 'workers'] as const)('reads only declared pre-Create notices for %s Upload', async provider => {
+  const plugin = provider === 'vercel' ? await import('../../../../../../packages/plugins/deploy-vercel/src/index')
+    : await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+  const { formatQualifiedPluginActionId } = await import('@happier-dev/protocol/plugins/actions/qualifiedActionId');
+  const { DeploymentPlatformTargetEditor } = await import('./DeploymentPlatformTargetSheet');
+  const target = plugin.manifest.contributes.deploymentTargets?.find(entry => entry.id === (provider === 'vercel' ? 'runtime' : provider));
+  if (target?.role !== 'runtime') throw new Error('Expected the provider target');
+  const accountId = `${provider}-notice-owner`;
+  const machineId = `${provider}-notice-machine`;
+  const installationId = `${provider}-notice-installation`;
+  const serverIdentity = { vercel: 'd', pages: 'e', workers: 'f' }[provider];
+  const account = { service: provider === 'vercel' ? { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }
+    : { pluginId: plugin.manifest.id, localId: 'cloudflare' }, accountId: 'notice-connection' };
+  const serverId = await homes.addHome({ name: 'Create notice', serverUrl: `https://${provider}-create-notice.test`,
+    serverIdentityId: `srv_${serverIdentity.repeat(32)}`, accountId, currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: plugin.activateAccount, accountLifetime: context.accountLifetime, publishProjection: true });
+  const qualified = (localId: string) => buildQualifiedPluginContributionKey({ pluginId: plugin.manifest.id, localId });
+  const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+    familiesById: { inputTypes: { family: 'inputTypes', entriesById: Object.fromEntries(
+      (plugin.manifest.contributes.inputTypes ?? []).map(definition => [qualified(definition.id), {
+        id: qualified(definition.id), pluginId: plugin.manifest.id, pluginVersion: plugin.manifest.version, definition,
+      }]),
+    ) } },
+    resourcesById: Object.fromEntries((plugin.manifest.contributes.resources ?? [])
+      .filter(resource => resource.source === 'dynamic')
+      .map(resource => [qualified(resource.id), { pluginId: plugin.manifest.id, id: resource.id, resourceKind: resource.kind,
+        scope: resource.scope, execution: resource.execution, accountRuntimeDeclared: true }])),
+  });
+  receiverRpc.call.mockResolvedValue({ protocolVersion: 1, projection });
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+  const inspectPlatformTarget = vi.fn<ReturnType<typeof createDeploymentActions>['inspectPlatformTarget']>(async (_id, input) => {
+    try { return { ok: true, value: await kit.invokeAction(target.actions.inspect, input as JsonValue) }; }
+    catch { return { ok: false, code: 'invalid_parameters' }; }
+  });
+  const prepared = vi.fn();
+  try {
+    await publishMachineInventoryForTest(context, [createMachineFixture({ id: machineId, installationId, activeAt: Date.now(), access: {
+      custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+    } })]);
+    await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.options.resolve', machineId, installationId,
+      tokenEpoch: 0, execute: async raw => {
+        const input = getActionSpec('action.options.resolve').inputSchema.parse(raw);
+        const value = input.fieldPath === 'providerAccountId' ? 'team_test'
+          : input.fieldPath === 'providerEnvironment.selection.scriptName' ? 'notice-site' : null;
+        return { actionId: input.actionId ?? null, fieldPath: input.fieldPath ?? null, optionsSourceId: input.optionsSourceId ?? null,
+          options: value ? [{ value, label: value }] : [] };
+      } });
+    const screen = await renderScreen(<DeploymentPlatformTargetEditor name="Site"
+      environment={{ projectSourceId: '', definition: { kind: 'repository' }, controllerMachineId: machineId, repositoryBranch: 'main' }}
+      ownerAccountId={accountId} lifetime={context.accountLifetime} initialTargetKey={qualified(target.id)}
+      actions={{ ...createDeploymentActions(context.accountLifetime, ''), inspectPlatformTarget }}
+      onPrepared={prepared} onClose={() => {}} onApproval={() => {}} />);
+    await waitForHomeGovernance(() => expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1));
+    await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account }, null));
+    const mode = screen.root.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
+    if (!mode) throw new Error('Expected the provider creation mode');
+    await act(async () => mode.props.onChange('create'));
+    const nameField = () => screen.root.findAllByType(ActionInputFields).find(node => node.props.fields[0]?.path === 'resourceName');
+    await waitForHomeGovernance(() => expect(nameField(), screen.getTextContent()).toBeDefined());
+    await act(async () => nameField()!.props.onPatch({ ...nameField()!.props.input, resourceName: 'notice-site' }));
+    await waitForHomeGovernance(() => expect(prepared).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'create',
+      providerCreate: expect.objectContaining({ sourceMethod: 'upload', resourceName: 'notice-site' }) })));
+    if (provider === 'vercel') {
+      expect(inspectPlatformTarget).not.toHaveBeenCalled();
+      expect(prepared).toHaveBeenLastCalledWith(expect.objectContaining({ reviewNotice: null }));
+    } else {
+      const { cloudflareReviewNotice } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/platform/reviewNotice');
+      await waitForHomeGovernance(() => expect(prepared).toHaveBeenLastCalledWith(expect.objectContaining({
+        reviewNotice: cloudflareReviewNotice(provider, 'upload'),
+      })));
+      expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith(
+        formatQualifiedPluginActionId({ pluginId: plugin.manifest.id, localId: target.actions.inspect }),
+        expect.not.objectContaining({ providerAccountId: expect.anything() }),
+        { externalActionTarget: { kind: 'machine', machineId } },
+      );
+    }
+    await screen.unmount();
+  } finally {
+    await kit.dispose();
+    await installed.dispose();
+    context.dispose();
+  }
+});

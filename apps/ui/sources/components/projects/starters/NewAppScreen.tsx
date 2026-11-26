@@ -417,6 +417,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         ...forgeOptionLine(forge.ownerOf(candidate.providerKind), repositoryName) }))}
       selectedId={forge.chosen}
       onSelect={forge.choose}
+      onOpenChange={(open) => { if (open) forge.probeAll(); }}
     />
   ) : null;
   const forgeFailure = forge.catalogFailure

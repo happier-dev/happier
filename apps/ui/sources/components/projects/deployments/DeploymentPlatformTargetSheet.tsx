@@ -5,6 +5,7 @@ import {
   type PublishTargetRecommendationInput,
 } from '@happier-dev/protocol/deployments/resolvePublishTargetRecommendation';
 import * as React from 'react';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { View } from 'react-native';
@@ -669,10 +670,13 @@ export function DeploymentPlatformTargetEditor(
   });
   const readCreateNotice = useEventCallback((key: string, isCurrent: () => boolean) => {
     if (!target || !account) return;
-    void actions.inspectPlatformTarget(target.inspectActionId, buildPlatformTargetDraft({ target,
+    const input = buildPlatformTargetDraft({ target,
       ownerAccountId: props.ownerAccountId, serverId: props.lifetime.scope.serverId, environment: {}, account,
       repository: null, values: providerEnvironment === undefined ? {} : { providerEnvironment },
-      ...(createSourceMethod ? { sourceMethod: createSourceMethod } : {}) }),
+      ...(createSourceMethod ? { sourceMethod: createSourceMethod } : {}) });
+    if (target.inspectInputSchema
+      && !isValidPluginJsonSchemaValue(compilePluginJsonSchema(target.inspectInputSchema), input)) return;
+    void actions.inspectPlatformTarget(target.inspectActionId, input,
       props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined)
       .then(result => {
         if (!isCurrent()) return;
@@ -698,23 +702,28 @@ export function DeploymentPlatformTargetEditor(
     });
   }, [onPrepared, create, createIntentReady, draft, reviewNotice, currentNotice, controllerLabel]);
   // Before Connect there is nothing to check or link: no disabled Check anywhere, the connection leads (DESIGN-ACCEPT C1).
-  const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
-    || !target || (create && props.onPrepared) || connectionNeeded ? null : {
-    testID: create ? 'project-deployments.platform.create'
-      : ready && !props.onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check',
-    loading: busy !== null,
-    disabled: busy !== null || !draft || !target || missing || !drawn.canCheck,
-    title: create ? t('projects.deployments.platformLink.create', { platform: target?.title ?? '' }) : ready && target && !props.onPrepared
-      ? t('projects.deployments.platformLink.link', { platform: target.title })
-      : outcome ? t('projects.deployments.platformLink.checkAgain') : t('projects.deployments.platformLink.check'),
-    onPress: () => { void (create ? createOrFinish() : ready && !props.onPrepared ? link() : check()); },
-  };
-  const footer = (
-    <ModalCardFooterActions {...(props.onPrepared || createdBranchOutcome ? {} : { cancel: { onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: busy !== null } })}>
-      {createdBranchOutcome ? <RoundButton testID="project-deployments.platform.done" size="normal" title={t('common.done')} onPress={onClose} />
+  const onPrimaryPress = useEventCallback(() => { void (create ? createOrFinish() : ready && !onPrepared ? link() : check()); });
+  const primaryTestID = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
+    || !target || (create && onPrepared) || connectionNeeded ? null
+    : create ? 'project-deployments.platform.create'
+      : ready && !onPrepared ? 'project-deployments.platform.link' : 'project-deployments.platform.check';
+  const primaryLoading = busy !== null;
+  const primaryDisabled = primaryLoading || !draft || !target || missing || !drawn.canCheck;
+  const primaryTitle = create ? t('projects.deployments.platformLink.create', { platform: target?.title ?? '' })
+    : ready && target && !onPrepared ? t('projects.deployments.platformLink.link', { platform: target.title })
+      : outcome ? t('projects.deployments.platformLink.checkAgain') : t('projects.deployments.platformLink.check');
+  const primary = React.useMemo(() => primaryTestID ? {
+    testID: primaryTestID, loading: primaryLoading, disabled: primaryDisabled, title: primaryTitle, onPress: onPrimaryPress,
+  } : null, [primaryTestID, primaryLoading, primaryDisabled, primaryTitle, onPrimaryPress]);
+  const showDone = createdBranchOutcome !== null;
+  const showCancel = !onPrepared && !showDone;
+  const doneTitle = showDone ? t('common.done') : null;
+  const footer = React.useMemo(() => (
+    <ModalCardFooterActions {...(showCancel ? { cancel: { onPress: onClose, testID: 'project-deployments.platform.cancel', disabled: primaryLoading } } : {})}>
+      {doneTitle !== null ? <RoundButton testID="project-deployments.platform.done" size="normal" title={doneTitle} onPress={onClose} />
         : primary ? <RoundButton size="normal" {...primary} /> : null}
     </ModalCardFooterActions>
-  );
+  ), [showCancel, onClose, primaryLoading, doneTitle, primary]);
   const { setChrome } = props;
   // Inside a page (the new-environment draft) the editor is one of the page's sections: its rows share the page's
   // edge, the platform names the section and its one action sits on the section title (lab d1r `platform`).
@@ -725,7 +734,7 @@ export function DeploymentPlatformTargetEditor(
   const hostInsets = usePageListInsets();
   React.useEffect(() => {
     setChrome?.({ kind: 'card', footer });
-  });
+  }, [setChrome, footer]);
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
 
   return (

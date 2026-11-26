@@ -1386,12 +1386,14 @@ it('F5: Code lives on offers only forges that pair with the target, describes ea
     vi.mocked(describeTargets).mockClear();
     await screen.pressByTestIdAsync('newApp.auto.useSetup');
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.forge')).toBeTruthy());
-    await waitForHomeGovernance(() => expect(vi.mocked(describeTargets)).toHaveBeenCalledTimes(2));
-    expect(vi.mocked(describeTargets).mock.calls.map((row) => (row[1] as { providerKind: string }).providerKind).sort())
-      .toEqual(['bitbucket', 'github']);
     expect(menu(screen, 'newApp.forge')?.props.items.map((item: { id: string }) => item.id)).toEqual(['github', 'bitbucket']);
     expect(menu(screen, 'newApp.forge')?.props.selectedId, 'GitHub is the default').toBe('github');
     await waitForHomeGovernance(() => expect(row(screen, 'newApp.repository')?.props.subtitle).toContain('github-team/'));
+    const describedKinds = () => vi.mocked(describeTargets).mock.calls.map(([, request]) =>
+      (request as { providerKind: string }).providerKind);
+    expect(describedKinds()).toEqual(['github']);
+    await act(async () => menu(screen, 'newApp.forge')!.props.onOpenChange(true));
+    expect(describedKinds()).toEqual(['github', 'bitbucket']);
     execute.mockClear();
     await act(async () => { menu(screen, 'newApp.forge')!.props.onSelect('bitbucket'); });
     expect(menu(screen, 'newApp.forge')?.props.selectedId).toBe('bitbucket');

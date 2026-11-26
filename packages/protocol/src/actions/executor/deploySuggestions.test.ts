@@ -47,10 +47,16 @@ describe('deploy suggestion read Actions', () => {
 
   it('composes one snapshot with one starter list, every app page, one account list, one Machine list and online readiness only', async () => {
     const calls: string[] = [];
+    const nextPage = Promise.withResolvers<void>();
+    const pagingStarted = Promise.withResolvers<void>();
     const executor = createActionExecutor({
       // These ports terminate at registry HTTP, Home account reads and the installed Machine.
       registryActionExecute: async ({ input }) => {
         const value = input as { kind: string; cursor?: string; sourceIds?: string[] };
+        if (value.cursor) {
+          pagingStarted.resolve();
+          await nextPage.promise;
+        }
         calls.push(`${value.kind}:${value.cursor ?? 'first'}`);
         if (value.kind === 'starter') return { pages: [{ sourceId: 'starters', status: { state: 'ok', fetchedAt: 1 }, nextCursor: null,
           items: [{ sourceId: 'starters', kind: 'starter', itemId: 'website', title: 'Website', starterDeploy: deploy }] }] };
@@ -69,7 +75,12 @@ describe('deploy suggestion read Actions', () => {
         calls.push('docker'); return { ok: false, errorCode: 'machine_unreachable', error: 'machine_unreachable' };
       },
     });
-    const result = await executor.execute('deployments.suggestions.catalog', {}, context);
+    const reading = executor.execute('deployments.suggestions.catalog', {}, context);
+    await pagingStarted.promise;
+    const readinessStartedWhilePaging = calls.includes('docker');
+    nextPage.resolve();
+    const result = await reading;
+    expect(readinessStartedWhilePaging).toBe(true);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { starters: [{ id: JSON.stringify(['starters', 'website']), deploy }],
       apps: [{ id: JSON.stringify(['apps', 'database']) }, { id: JSON.stringify(['apps', 'analytics']) }], targets,
       forges, machines: [

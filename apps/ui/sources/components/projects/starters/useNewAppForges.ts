@@ -33,8 +33,8 @@ const NO_FORGES: readonly NewAppForge[] = Object.freeze([]);
 /**
  * Code lives on (journey-deploy F5). The offered forges come from the catalog snapshot (`forges`): a suggested setup
  * keeps only forges its validator still admits with the suggested target; a starter picked by hand reads just the
- * publisher projection, since no target is chosen yet. Each offered forge is described once while
- * the step is open (where the repository would go, or what it needs); choosing a forge reads and writes nothing.
+ * publisher projection, since no target is chosen yet. Describe the chosen forge on entry, and the
+ * remaining offered forges when the picker opens.
  */
 export function useNewAppForges(
   params: Readonly<{
@@ -110,11 +110,11 @@ export function useNewAppForges(
   const probes = React.useRef(new Map<string, number>());
   // Facts are per Machine checkout and forge: another Machine describes its own, and switching back reuses them.
   const scopeKey = `${machineId ?? ''}\u0000${homeDir ?? ''}`;
-  const keyOf = (providerKind: string) => `${scopeKey}\u0000${providerKind}`;
+  const keyOf = React.useCallback((providerKind: string) => `${scopeKey}\u0000${providerKind}`, [scopeKey]);
 
   const describe = React.useCallback(
     (providerKind: ScmHostingProviderKind) => {
-      const key = `${scopeKey}\u0000${providerKind}`;
+      const key = keyOf(providerKind);
       if (!machineId || !homeDir) {
         setOwners((current) => ({
           ...current,
@@ -162,26 +162,26 @@ export function useNewAppForges(
         })
         .catch(() => settle(UNAVAILABLE));
     },
-    [homeDir, machineId, scopeKey],
+    [homeDir, keyOf, machineId],
   );
 
-  // Once per offered forge (and the default before the snapshot) while the step is open; a probed forge is skipped.
+  const probeOnce = React.useCallback((providerKind: ScmHostingProviderKind) => {
+    if (active && !probes.current.has(keyOf(providerKind))) describe(providerKind);
+  }, [active, describe, keyOf]);
   React.useEffect(() => {
-    if (!active) return;
-    const kinds = forges.length > 0 ? forges.map((forge) => forge.providerKind) : chosen ? [chosen] : [];
-    for (const providerKind of kinds) {
-      if (!probes.current.has(keyOf(providerKind)))
-        describe(providerKind);
-    }
-  }, [active, chosen, describe, forges, scopeKey]);
+    if (chosen) probeOnce(chosen);
+  }, [chosen, probeOnce]);
+  const probeAll = React.useCallback(() => {
+    for (const forge of forges) probeOnce(forge.providerKind);
+  }, [forges, probeOnce]);
 
   const markNeedsAccount = React.useCallback(() => {
     if (chosen)
       setOwners((current) => ({
         ...current,
-        [`${scopeKey}\u0000${chosen}`]: { kind: 'needsAccount', providerName: null },
+        [keyOf(chosen)]: { kind: 'needsAccount', providerName: null },
       }));
-  }, [chosen, scopeKey]);
+  }, [chosen, keyOf]);
   const recheck = React.useCallback(() => {
     if (chosen) describe(chosen);
   }, [chosen, describe]);
@@ -196,6 +196,7 @@ export function useNewAppForges(
       : UNAVAILABLE,
     ownerOf: (providerKind: string): ForgeOwnerFact | undefined => owners[keyOf(providerKind)],
     choose: setPicked,
+    probeAll,
     recheck,
     markNeedsAccount,
   };

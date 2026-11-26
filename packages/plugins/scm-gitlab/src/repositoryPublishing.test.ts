@@ -75,15 +75,25 @@ it('returns a typed permission refusal and does not replay a rejected creation',
 
 it('enumerates personal and subgroup publish targets over every namespace page', async () => {
   const next = `${provider.baseUrl}/api/v4/namespaces?page=2`;
-  vi.stubGlobal('fetch', async (url: string) => url.endsWith('/user') ? Response.json({ username: 'alice' })
-    : url === next ? Response.json([{ id: 42, kind: 'group', full_path: 'team/nested' }])
-    : Response.json([{ id: 1, kind: 'user', full_path: 'alice' }], { headers: { Link: `<${next}>; rel="next"` } }));
+  const first = `${provider.baseUrl}/api/v4/namespaces?per_page=100`;
+  const user = Promise.withResolvers<Response>();
+  const namespaces = Promise.withResolvers<Response>();
+  const fetcher = vi.fn((url: string) => url.endsWith('/user') ? user.promise
+    : url === next ? Promise.resolve(Response.json([{ id: 42, kind: 'group', full_path: 'team/nested' }]))
+    : namespaces.promise);
+  vi.stubGlobal('fetch', fetcher);
   const kit = await publishing();
   try {
-    await expect(kit.adapter.describePublishTargets({ provider, runtimeServices, defaultRepositoryName: 'app' })).resolves.toMatchObject({
+    const result = kit.adapter.describePublishTargets({ provider, runtimeServices, defaultRepositoryName: 'app' });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledWith(`${provider.baseUrl}/api/v4/user`, expect.anything()));
+    const startedBeforeResponse = fetcher.mock.calls.map(([url]) => url);
+    user.resolve(Response.json({ username: 'alice' }));
+    namespaces.resolve(Response.json([{ id: 1, kind: 'user', full_path: 'alice' }], { headers: { Link: `<${next}>; rel="next"` } }));
+    await expect(result).resolves.toMatchObject({
       auth: { state: 'authenticated', profileKind: 'connected_account' },
       targets: [{ owner: 'alice', ownerKind: 'user', isDefault: true }, { owner: 'team/nested', ownerKind: 'org' }],
     });
+    expect(startedBeforeResponse).toContain(first);
   } finally { await kit.dispose(); }
 });
 

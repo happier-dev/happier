@@ -33,26 +33,36 @@ function repository(provider: ScmHostingProviderRef, raw: unknown) {
 export const gitlabRepositoryPublishing: HostingProviderRepositoryPublishingCapability = {
   async describePublishTargets(input) {
     const auth = await authorizeGitlabHosting(input);
-    const user = (await requestGitlabHosting({ ...auth, url: buildGitlabApiUrl(auth.origin, '/user') })).body;
-    if (typeof user !== 'object' || user === null || !('username' in user) || typeof user.username !== 'string') {
-      throw new GitlabHostingError('GitLab returned an unreadable user.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, true);
-    }
+    const firstNamespaceUrl = buildGitlabApiUrl(auth.origin, '/namespaces', [['per_page', String(GITLAB_REST_MAX_PAGE_SIZE)]]);
+    const [username, firstPage] = await Promise.all([
+      requestGitlabHosting({ ...auth, url: buildGitlabApiUrl(auth.origin, '/user') }).then(({ body: user }) => {
+        if (typeof user !== 'object' || user === null || !('username' in user) || typeof user.username !== 'string') {
+          throw new GitlabHostingError('GitLab returned an unreadable user.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, true);
+        }
+        return user.username;
+      }),
+      // Preserve the user lookup's error precedence when both reads fail.
+      requestGitlabHosting({ ...auth, url: firstNamespaceUrl }).then(
+        response => ({ ok: true as const, response }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
+    ]);
+    if (!firstPage.ok) throw firstPage.error;
     const namespaces: Namespace[] = [];
-    let url = buildGitlabApiUrl(auth.origin, '/namespaces', [['per_page', String(GITLAB_REST_MAX_PAGE_SIZE)]]);
-    const seen = new Set<string>();
+    const seen = new Set([firstNamespaceUrl]);
+    let response = firstPage.response;
     while (true) {
-      if (seen.has(url)) throw new GitlabHostingError('GitLab repeated a namespace continuation.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, true);
-      seen.add(url);
-      const response = await requestGitlabHosting({ ...auth, url });
       if (!Array.isArray(response.body)) throw new GitlabHostingError('GitLab returned an unreadable namespace list.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, true);
       namespaces.push(...response.body.map(namespace));
       const next = selectGitlabNextPageUrl(response.headers, auth.origin.origin);
       if (next.kind === 'end') break;
       if (next.kind !== 'next') throw new GitlabHostingError('GitLab namespace pagination could not be completed.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, true);
-      url = next.url;
+      if (seen.has(next.url)) throw new GitlabHostingError('GitLab repeated a namespace continuation.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, true);
+      seen.add(next.url);
+      response = await requestGitlabHosting({ ...auth, url: next.url });
     }
     const summary = { state: 'authenticated', profileKind: 'connected_account' } as const;
-    return { auth: summary, targets: namespaces.filter(row => row.kind === 'group' || row.full_path === user.username).map(row => ({
+    return { auth: summary, targets: namespaces.filter(row => row.kind === 'group' || row.full_path === username).map(row => ({
       provider: input.provider, owner: row.full_path, ownerKind: row.kind === 'user' ? 'user' as const : 'org' as const,
       label: row.full_path, isDefault: row.kind === 'user', supportedVisibilities: ['private', 'internal', 'public'],
       supportedRemoteUrlKinds: ['https', 'ssh'], auth: summary,
