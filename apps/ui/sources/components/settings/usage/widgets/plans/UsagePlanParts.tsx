@@ -460,14 +460,16 @@ export function UsagePlansNothingRead(
   const reading = <UsageBodyReading testID={`${props.testID}.loading`} />;
   if (outstanding && pageHasDetail) return reading;
   if (outstanding) return <>{reading}{coverage}</>;
-  // Capacity owns the sign-in recovery. Other widgets explain what they show once a plan is connected.
+  // Settled with no account and nothing failed: nothing is connected. Capacity owns the cause and carries the one
+  // sign-in under its scene (58d AF1). The widgets derived from it say only what they will show, in one quiet line:
+  // the scene belongs to the cause, so a page with Limits never draws a second empty scene beside it.
   if (props.replacesContent !== false && !gaps.some((gap) => gap.status === 'error')) {
     return (
       <SurfaceStateCard
         testID={props.testID}
         kind="empty"
         replacesContent
-        {...(props.ownsCause ? { scene: 'connectAccount' as const } : {})}
+        {...(props.ownsCause ? { scene: 'connectAccount' as const } : { layout: 'inline' as const, size: 'line' as const })}
         title={props.ownsCause ? t('usage.board.plans.capacitySignInTitle') : props.promise}
         {...(props.ownsCause ? {
           reason: props.promise,
