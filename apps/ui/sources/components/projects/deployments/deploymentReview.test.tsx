@@ -2,11 +2,13 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, standardCleanup } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } from './deploymentPlatformTargetPlugin.testFixture';
@@ -48,13 +50,28 @@ describe('Environment Deploy review wiring', () => {
             ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
         });
         homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: environmentRead });
+        const deploymentSource = { id: scope.projectSourceId, revision: 1 };
+        if (sourceMethod === 'upload') {
+            homes.answer(serverId, `GET /v1/projects/sources/${encodeURIComponent(deploymentSource.id)}`, {
+                body: ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true, source: {
+                    ...deploymentSource, name: 'Review app', audience: [], createdByAccountId: accountContext.accountId,
+                    repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                        repository: { nameWithOwner: 'owner/app' }, protocol: 'https' },
+                } }),
+            });
+            homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture({
+                workspaceRefs: [{ id: 'review-checkout', serverId, machineId: detail.environment.controllerMachineId,
+                    rootPath: '/workspace/app', label: null, createdAtMs: 1, lastOpenedAtMs: null,
+                    source: { sourceId: deploymentSource.id, revision: deploymentSource.revision } }],
+            }) });
+        }
         // The installed controller's wire reply is the boundary; review navigation stays real.
         const approvalResult = ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created',
             actionId: 'deployments.deploy', artifactId: 'prepared-deploy-review' });
         let controllerRequest: Readonly<{ input: unknown; target: unknown }> | undefined;
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.deploy',
             machineId: detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
-            deploymentSource: { id: detail.environment.projectSourceId, revision: 1 },
+            deploymentSource,
             requesterInvocation: 'required', execute: (input, context) => {
                 controllerRequest = { input, target: context.target };
                 return approvalResult;
