@@ -6296,7 +6296,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -6546,7 +6546,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -6826,7 +6826,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -7117,7 +7117,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -7360,7 +7360,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -7452,7 +7452,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -7796,7 +7796,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -10228,7 +10228,7 @@ export type DeploymentsActionResultById = {
         unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -10320,7 +10320,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -10526,7 +10526,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -10713,7 +10713,7 @@ export type DeploymentsActionResultById = {
         installationId?: string | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -10805,7 +10805,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -12040,7 +12040,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -12181,7 +12181,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -12406,7 +12406,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -12513,7 +12513,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -12654,7 +12654,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -13078,7 +13078,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -13182,7 +13182,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -13304,7 +13304,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -13426,7 +13426,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -14628,7 +14628,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -14750,7 +14750,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -14878,7 +14878,7 @@ export type DeploymentsActionResultById = {
         revision: number;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -14984,7 +14984,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -15671,7 +15671,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -15921,7 +15921,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -16013,7 +16013,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -16325,7 +16325,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -16458,7 +16458,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
@@ -16929,7 +16929,7 @@ export type DeploymentsActionResultById = {
         })[] | undefined;
     } | {
         ok: false;
-        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'telemetry_bearer_in_use' | 'unsupported_action';
     } | {
         ok: false;
         error: 'deployment_in_progress';
