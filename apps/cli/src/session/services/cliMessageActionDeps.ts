@@ -5,6 +5,7 @@ import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@ha
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { isScmRefineInputPurposeV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { randomUUID } from 'node:crypto';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readAgentStartCallerWorkDepthV1, AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionBridgeLifecycleHookEventIdV1, ActionExecutorDeps, ActionExecutorContext, ComposerAttachmentInputV1, SessionMessageSendResultV1 } from '@happier-dev/protocol';
@@ -239,10 +240,16 @@ export function createCliMessageActionDeps(
       if (admittedCaller && (!admittedCaller.success || admittedCaller.data.sessionId !== sessionInputSource?.sourceSessionId)) {
         return { status: 'rejected' as const, code: 'session_input_untrusted_assertion' as const };
       }
-      const turnDepth = sessionInputSource ? params.getCurrentTurnWorkDepth?.(sessionInputSource.sourceTurnId) : undefined;
+      // An approved replay consumes the depths its original admission stamped;
+      // the source Turn's live witness has ended by the time a person decides.
+      const replayedCaller = admittedCaller?.success
+        && sameStrictJsonValue(context?.approvedActionReplay?.origin?.caller, actionCaller) ? admittedCaller.data : undefined;
+      const turnDepth = replayedCaller ? replayedCaller.turnDepth
+        : sessionInputSource ? params.getCurrentTurnWorkDepth?.(sessionInputSource.sourceTurnId) : undefined;
       // Credentialed daemon execution has an exact-turn reader but no bound
       // Session starter-depth getter. Agent admission consumes this same caller.
-      const starterDepth = sessionInputSource
+      const starterDepth = replayedCaller ? replayedCaller.starterDepth
+        : sessionInputSource
         ? params.getCurrentSessionWorkDepth ? params.getCurrentSessionWorkDepth()
           : admittedCaller?.success ? admittedCaller.data.starterDepth : undefined
         : undefined;

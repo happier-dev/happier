@@ -401,6 +401,43 @@ describe('CLI host Message admission', () => {
     expect(machineAdmissionTransport).not.toHaveBeenCalled();
   });
 
+  it('consumes the admitted caller for an approved replay after its source Turn ended', async () => {
+    const receiverSessionId = 'cmv3hostadmissionaaaaaaaaa';
+    const sourceSessionId = 'source-session';
+    const machineAdmissionTransport = vi.fn<NonNullable<Parameters<typeof createCliActionDeps>[0]['machineAdmissionTransport']>>(
+      async request => ({ status: 'accepted', localId: request.localId }),
+    );
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (url.endsWith(`/v2/sessions/${receiverSessionId}`)) return { status: 200, data: {
+        session: createSessionRecordFixture({ id: receiverSessionId, active: true,
+          encryptionMode: 'plain', machineId: 'machine-1', metadata: JSON.stringify({ machineId: 'machine-1' }) }),
+      } };
+      if (url.endsWith(`/v2/sessions/${sourceSessionId}`)) return { status: 200, data: {
+        session: createSessionRecordFixture({ id: sourceSessionId, share: null }),
+      } };
+      throw new Error('Unexpected host admission HTTP read');
+    });
+    // The exact-turn witness is gone once the source Turn ends; the replay runs later.
+    const deps = createCliActionDeps({ token: 'test-account-token', sessionId: sourceSessionId, mode: 'plain', ctx: null,
+      credentials: { token: 'test-account-token', encryption: null },
+      getCurrentSessionWorkDepth: () => 0, getCurrentTurnWorkDepth: () => undefined, machineAdmissionTransport });
+    const admittedCaller = { kind: 'session' as const, sessionId: sourceSessionId, starterDepth: 0, turnDepth: 0 };
+    const source = { sourceSessionId, sourceTurnId: 'ended-turn', sourceInputId: 'run-input', via: 'action' as const,
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const } };
+    const replay = { artifactId: 'approval-artifact', origin: { surface: 'agent' as const, caller: admittedCaller } };
+    const send = (actionCaller: typeof admittedCaller, approvedActionReplay?: typeof replay) => deps.sessionSendMessage({
+      sessionId: receiverSessionId, message: 'Apply the accepted findings', localId: 'approved-replay',
+      sessionInputSource: source, context: { surface: 'agent', runtimeRunId: 'run-id', ...(approvedActionReplay ? { approvedActionReplay } : {}) },
+      callerSurface: 'agent', actionCaller, requestedAction: { v: 1, kind: 'enqueue' } });
+    // Live input still needs its witness, and a replay never re-labels a different caller.
+    expect(await send(admittedCaller)).toMatchObject({ status: 'rejected', code: 'session_input_untrusted_assertion' });
+    expect(await send({ ...admittedCaller, starterDepth: 1 }, replay)).toMatchObject({ status: 'rejected', code: 'session_input_untrusted_assertion' });
+    expect(machineAdmissionTransport).not.toHaveBeenCalled();
+    await expect(send(admittedCaller, replay)).resolves.toMatchObject({ status: 'accepted', localId: 'approved-replay' });
+    expect(machineAdmissionTransport).toHaveBeenCalledOnce();
+  });
+
   it.each([{ surface: 'cli', partial: false }, { surface: 'voice', partial: false }, { surface: 'cli', partial: true }] as const)(
     'returns the exact typed inline outcome on $surface (stopped partial: $partial) after observation wins custody', async ({ surface, partial }) => {
     const sessionId = 'cmv3hostadmissionaaaaaaaaa';
