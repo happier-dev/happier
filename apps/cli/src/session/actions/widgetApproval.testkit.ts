@@ -208,16 +208,15 @@ export function createMachineApprovalReplayPreparer(input: MachineReceiverFixtur
     });
 }
 
-/** Home HTTP/socket substitutions from remoteDecider; registered receiver and private custody stay real. */
-export async function registerMachineActionHomeHttp(app: FastifyInstance, input: Readonly<{
-    accountId: string; machineId: string; serverId: string; serverIdentityId: string; serverHttpBaseUrl: string;
-    credentials: StoredCredentials;
-    installation: Awaited<ReturnType<typeof readOrCreateInstallationIdentity>>;
-    executor: ReturnType<typeof createCliActionExecutorHarness>['executor'];
+type MachineActionHomeFixtureInput = MachineReceiverFixtureInput & Readonly<{
+    accountId: string;
     retainedAction?: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
     actionId?: string;
     accountEncryptionMode?: 'plain' | 'e2ee';
-}>) {
+}>;
+
+/** Authenticated Home issuance and verification at the substituted HTTP boundary. */
+export function registerMachineActionAuthorizationHomeHttp(app: FastifyInstance, input: MachineActionHomeFixtureInput) {
     const provenance = readAuthTokenProvenance(decodeJwtPayload(input.credentials.token), { allowLegacyHome: false });
     if (provenance?.provenance.kind !== 'account') throw new Error('Expected the fixture Account credential');
     const principal = ExternalActionServerPrincipalV1Schema.parse({
@@ -225,22 +224,7 @@ export async function registerMachineActionHomeHttp(app: FastifyInstance, input:
         authentication: { kind: provenance.provenance.kind, tokenEpoch: readCredentialEpochFromToken(input.credentials.token) },
     });
     expect(principal.accountId).toBe(input.accountId);
-    const privateKey = decodeBase64(input.installation.privateKey, 'base64url');
     const publicKey = decodeBase64(input.installation.publicKey, 'base64url');
-    const lifetime = new AbortController();
-    const currentnessChannel = await createRequesterCurrentnessSocketHarness({ preserveScopedRpcOrigin: true });
-    onTestFinished(async () => { lifetime.abort(); await currentnessChannel.close(); });
-    const rpc = new RpcHandlerManager({ scopePrefix: input.machineId, encryptionMode: 'plain', logger: () => {} });
-    registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: input.executor });
-    const verifyExecutionAuthorization = createFixtureExecutionAuthorizationVerifier(input);
-    registerExternalActionRpcHandler(rpc, {
-        machineId: input.machineId, currentServerId: input.serverId, currentServerHttpBaseUrl: input.serverHttpBaseUrl,
-        resolveAccountId: async () => input.accountId, resolveInstallationId: () => input.installation.installationId,
-        externalActionMachineRequestPrivateKey: privateKey, verifyExecutionAuthorization,
-        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: input.credentials, serverApiUrl: input.serverHttpBaseUrl }),
-        executor: input.executor,
-        prepareRequesterAccountContext: createFixtureRequesterAccountContextPreparer(input, () => input.executor, lifetime.signal),
-    });
     const actionId = input.actionId ?? 'approval.request.decide';
     const issued = new Map<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>();
     const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
@@ -288,6 +272,29 @@ export async function registerMachineActionHomeHttp(app: FastifyInstance, input:
     if (input.retainedAction && input.retainedAction.binding.actionId !== actionId) {
         registerVerify(input.retainedAction.binding.actionId);
     }
+    return { actionId, principal, issue, issued };
+}
+
+/** Home HTTP/socket substitutions from remoteDecider; registered receiver and private custody stay real. */
+export async function registerMachineActionHomeHttp(app: FastifyInstance, input: MachineActionHomeFixtureInput & Readonly<{
+    executor: ReturnType<typeof createCliActionExecutorHarness>['executor'];
+}>) {
+    const { actionId, principal, issue, issued } = registerMachineActionAuthorizationHomeHttp(app, input);
+    const privateKey = decodeBase64(input.installation.privateKey, 'base64url');
+    const lifetime = new AbortController();
+    const currentnessChannel = await createRequesterCurrentnessSocketHarness({ preserveScopedRpcOrigin: true });
+    onTestFinished(async () => { lifetime.abort(); await currentnessChannel.close(); });
+    const rpc = new RpcHandlerManager({ scopePrefix: input.machineId, encryptionMode: 'plain', logger: () => {} });
+    registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: input.executor });
+    const verifyExecutionAuthorization = createFixtureExecutionAuthorizationVerifier(input);
+    registerExternalActionRpcHandler(rpc, {
+        machineId: input.machineId, currentServerId: input.serverId, currentServerHttpBaseUrl: input.serverHttpBaseUrl,
+        resolveAccountId: async () => input.accountId, resolveInstallationId: () => input.installation.installationId,
+        externalActionMachineRequestPrivateKey: privateKey, verifyExecutionAuthorization,
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: input.credentials, serverApiUrl: input.serverHttpBaseUrl }),
+        executor: input.executor,
+        prepareRequesterAccountContext: createFixtureRequesterAccountContextPreparer(input, () => input.executor, lifetime.signal),
+    });
     app.post(`/v1/actions/${actionId}`, async request => {
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
         const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(request.body);

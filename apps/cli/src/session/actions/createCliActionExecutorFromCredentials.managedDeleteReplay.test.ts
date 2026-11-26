@@ -18,12 +18,15 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
-import { registerAccountHomeHttp, registerAccountArtifactRoutes } from './widgetApproval.testkit';
+import { registerAccountHomeHttp, registerAccountArtifactRoutes, registerMachineActionAuthorizationHomeHttp } from './widgetApproval.testkit';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions';
+import { prepareExternalActionResponseV2, projectExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -61,6 +64,7 @@ it.each(([
         // approval read even when private execution authorization is absent.
         const preparedCreate = actionId === 'deployments.environments.create';
         const signedEnvironment = preparedCreate || actionId === 'deployments.environments.update';
+        const freshDecision = !signedEnvironment && !admissionRefused && createShape !== 'terminal-own-replay';
         const firstLink = detail.targetLinks[0]!;
         const actionArgs = preparedCreate ? { serverId: configuration.activeServerId,
             ...(createShape === 'new-project-first-link'
@@ -140,9 +144,14 @@ it.each(([
             if (request.method === 'POST' && request.url === '/v1/deployments/environments') environmentCreates.push(request.url);
             if (request.method === 'PATCH' && request.url.startsWith('/v1/deployments/environments/')) environmentPatches.push(request.url);
         });
+        const machineCodec = createMachineContentCodec(resource.mode === 'plain' ? { encryptionMode: 'plain' }
+            : { encryptionKey: resource.dataKey, encryptionVariant: 'dataKey' });
         const machine = { id: 'controller', kind: 'persistent', active: true,
             installationId: 'installation', installationPublicKey: encodeBase64(installationKeys.publicKey, 'base64'),
             revokedAt: null, replacedByMachineId: null, dataEncryptionKey: resource.dataEncryptionKey, runnerContentKeyBinding: null,
+            metadata: machineCodec.encodeStored(MachinePublishedMetadataV1Schema.parse({ host: 'controller', platform: 'linux',
+                happyCliVersion: '0.3', homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier',
+                installationPublicKey: encodeBase64(installationKeys.publicKey, 'base64url') })), metadataVersion: 1,
             access: { custodian: { accountId: admissionRefused ? 'foreign-machine-owner' : accountId, displayName: 'Owner' }, role: 'manage', resourceMode: encryptionMode, accessState: 'ready' } };
         app.get('/v1/machines/controller', async () => ({ machine }));
         app.get('/v1/machines', async () => [machine]);
@@ -154,6 +163,41 @@ it.each(([
             return reply.code(403).send({ error: 'credential_scope_denied' });
         });
         const origin = 'https://delete-home.test';
+        if (freshDecision) {
+            const { issued } = registerMachineActionAuthorizationHomeHttp(app, { accountId, machineId: 'controller',
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: origin,
+                credentials, accountEncryptionMode: encryptionMode,
+                installation: { version: 1, installationId: 'installation', createdAt: 1,
+                    publicKey: encodeBase64(installationKeys.publicKey, 'base64url'),
+                    privateKey: encodeBase64(installationKeys.secretKey, 'base64url') } });
+            // The remote receiver acknowledgement is a network boundary, as
+            // the legacy Socket.IO acknowledgement below is for retained roots.
+            app.post('/v1/actions/approval.request.decide', async request => {
+                expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
+                const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
+                expect(body.machineId).toBe('controller');
+                expect(body.envelope.target).toEqual(target);
+                expect(body.envelope.v).toBe(encryptionMode === 'e2ee' ? 2 : 1);
+                const admitted = ExternalActionExecutionAuthorizationV1Schema.parse(body.executionAuthorization);
+                expect(issued.get(admitted.token)?.binding).toEqual(admitted.binding);
+                expect(admitted.binding).toMatchObject({ accountId, custodianAccountId: accountId,
+                    serverIdentityId: 'srv_home', machineId: 'controller', installationId: 'installation',
+                    actionId: 'approval.request.decide', requestId: body.envelope.requestId, accountEncryptionMode: encryptionMode });
+                const execution = actionId === 'deployments.teardown'
+                    ? { ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', effectAttempted: false }
+                    : { ok: true, result: outcome };
+                if (body.envelope.v === 2) {
+                    if (!credentials.encryption) throw new Error('Encrypted Home response requires Account material');
+                    return prepareExternalActionResponseV2({
+                        material: credentials.encryption, randomBytes: nacl.randomBytes,
+                        binding: projectExternalActionEncryptionBindingV2(admitted.binding),
+                        request: body.envelope, executedMachineId: 'controller', execution,
+                    }).response;
+                }
+                return ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
+                    requestId: body.envelope.requestId, execution });
+            });
+        }
         const restore = installAxiosFastifyAdapter({ app, origin });
         const sockets = await createRequesterCurrentnessSocketHarness();
         type Call = Parameters<ClientToServerEvents[typeof SOCKET_RPC_EVENTS.CALL]>[0];
@@ -167,8 +211,6 @@ it.each(([
                 operation: { operationId: 'native-delete-operation' } };
         const outcome = { ok: true, status: 'executed', execution: { executedAtMs: 2,
             ok: true, effectAttempted: true, result: deleted } };
-        const machineCodec = createMachineContentCodec(resource.mode === 'plain' ? { encryptionMode: 'plain' }
-            : { encryptionKey: resource.dataKey, encryptionVariant: 'dataKey' });
         const rpcContent: SocketRpcContent = machineCodec.mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
             encryptRaw: async value => machineCodec.encodeRpc(value),
             decryptRaw: async value => machineCodec.decodeRpc(value),
@@ -212,10 +254,16 @@ it.each(([
                 });
                 return;
             }
+            if (freshDecision) {
+                expect(paths.filter(path => path.startsWith('/v1/actions/approval.request.decide'))).toEqual([
+                    '/v1/actions/approval.request.decide/execution-authorization', '/v1/actions/approval.request.decide',
+                ]);
+                expect(calls).toEqual([]);
+            }
             if (actionId === 'deployments.teardown') {
                 // #59: a relay admission refusal must settle the existing approval,
                 // without admitting a teardown receipt or advertising unknown effects.
-                expect(result).toMatchObject({ ok: true, result: { status: 'failed',
+                expect(result, JSON.stringify({ result, paths })).toMatchObject({ ok: true, result: { status: 'failed',
                     execution: { ok: false, effectAttempted: false, errorCode: 'RPC_FORBIDDEN' } } });
                 const persisted = await runWithServerHttpBaseUrl(origin, () =>
                     createCredentialedAccountArtifactStore(credentials).read('delete-approval'));
@@ -228,7 +276,7 @@ it.each(([
             }
             expect(result, JSON.stringify({ result, paths, calls })).toMatchObject({ ok: true, result: { ok: true, status: 'executed',
                 execution: { ok: true, effectAttempted: true, result: deleted } } });
-            expect(calls).toMatchObject([{ method: `controller:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}` }]);
+            if (!freshDecision) expect(calls).toMatchObject([{ method: `controller:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}` }]);
             if (createShape === 'terminal-own-replay') {
                 // Consent was committed by the local CLI decision owner. The
                 // paired credential delivers replay without minting a new reviewer.
