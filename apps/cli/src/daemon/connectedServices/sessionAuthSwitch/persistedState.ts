@@ -1,3 +1,4 @@
+import { resolveFailedFirstLaunchAccountSwitch } from '@/session/agentTransition/failedFirstLaunch';
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 import { resolveAgentIdFromSessionMetadata, resolveAgentNativeTranscriptPathFromSessionMetadata, resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
@@ -90,6 +91,7 @@ export async function resolveInactiveConnectedServiceSessionContext(
    */
   candidatePersistedSessionFile?: string;
   metadata?: Record<string, unknown> | null;
+  failedFirstLaunch?: 'retry_original_transition';
 }> | null> {
   const [rawSession, accountEncryptionCurrentness] = await Promise.all([
     fetchSessionByIdCompat({ reason: 'session-control',
@@ -106,7 +108,7 @@ export async function resolveInactiveConnectedServiceSessionContext(
         accountEncryptionMode: accountEncryptionCurrentness.mode,
       })
     : null;
-  if (!metadata) return null;
+  if (!rawSession || !metadata) return null;
   const agentId = resolveCatalogAgentId(
     resolveAgentIdFromSessionMetadata(metadata),
   );
@@ -125,6 +127,14 @@ export async function resolveInactiveConnectedServiceSessionContext(
   });
   return {
     agentId,
+    failedFirstLaunch: agentId ? await resolveFailedFirstLaunchAccountSwitch({
+      token: input.token,
+      sessionId: input.sessionId,
+      agentId,
+      active: rawSession.active,
+      metadataVersion: rawSession.metadataVersion,
+      pendingVersion: rawSession.pendingVersion,
+    }) : undefined,
     metadata,
     connectedServices: readConnectedServiceBindingsOrEmpty(
       metadata.connectedServices,

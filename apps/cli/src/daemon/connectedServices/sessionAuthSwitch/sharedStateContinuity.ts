@@ -36,6 +36,7 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
   signal?: AbortSignal;
   runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
   candidatePersistedSessionFile?: string | null;
+  failedFirstLaunch?: 'retry_original_transition';
   warnings?: readonly string[];
 }>): Promise<SessionConnectedServiceSwitchContinuity> {
   if (!input.accountSettings) {
@@ -61,6 +62,12 @@ export async function resolveSharedStateRequiredSwitchContinuity(input: Readonly
         errorCode: 'provider_state_sharing_unavailable',
         warnings: input.warnings ?? [],
       };
+    }
+
+    if (input.failedFirstLaunch === 'retry_original_transition'
+      && !asNonEmptyString(input.vendorResumeId)
+      && !asNonEmptyString(input.candidatePersistedSessionFile)) {
+      return { mode: 'restart_rematerialize', warnings: input.warnings ?? [] };
     }
 
     const serviceId = asNonEmptyString(input.serviceId);

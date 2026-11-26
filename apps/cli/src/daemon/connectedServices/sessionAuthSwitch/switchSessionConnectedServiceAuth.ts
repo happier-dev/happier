@@ -597,6 +597,7 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
     cwd?: string | null;
     /** Persisted vendor session-file hint (provider-derived by the caller) — reachability fast path. */
     candidatePersistedSessionFile?: string | null;
+    failedFirstLaunch?: 'retry_original_transition';
     metadata?: Record<string, unknown> | null;
   }> | null>;
   api: ConnectedServiceProfilesApi;
@@ -621,6 +622,7 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
      */
     cwd?: string | null;
     candidatePersistedSessionFile?: string | null;
+    failedFirstLaunch?: 'retry_original_transition';
     persistedSessionMetadata?: Record<string, unknown> | null;
   }>): Promise<SessionConnectedServiceSwitchContinuity>;
   materializeRuntimeAuthSelection?(
@@ -1763,6 +1765,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       }
       const continuity = await input.resolveContinuity({
         tracked: null,
+        failedFirstLaunch: inactive.failedFirstLaunch,
         sessionId: input.request.sessionId,
         agentId: inactiveAgentId,
         serviceId,

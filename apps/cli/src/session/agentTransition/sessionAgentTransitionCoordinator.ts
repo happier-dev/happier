@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+import { runFirstTransitionLaunch } from './failedFirstLaunch';
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
@@ -77,6 +79,7 @@ import {
   createLocalAgentNativeResumeRecordStore,
   readAgentNativeReturnAccountSettings,
   resolveAgentNativeReturnIdentity,
+  resolveAgentNativeReturnPlan,
   type LocalAgentNativeResumeRecordStore,
 } from './agentNativeReturn';
 import {
@@ -591,6 +594,7 @@ async function completeCommittedTransition(params: Readonly<{
   resolveAuthorizationHeaders?: Parameters<typeof sendSessionMessage>[0]['resolveAuthorizationHeaders'];
   admissionFence: Readonly<{ serviceId: string; groupId: string; epochId: string }> | null;
   inputAdmissionTimeoutMs: number;
+  firstLaunch?: Readonly<{ agentId: string; seed: ReplaySeedV1 | null }>;
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<SessionAgentTransitionResultV1> {
@@ -651,7 +655,8 @@ async function completeCommittedTransition(params: Readonly<{
   if (!targetMetadata) return committed.committed('target_start_failed');
 
   if (targetSession.rawSession.active !== true) {
-    const resumed = await deps.requestInactiveSessionResume({
+    const launch = (transitionLaunchNonce?: string) => deps.requestInactiveSessionResume({
+      ...(transitionLaunchNonce ? { transitionLaunchNonce } : {}),
       credentials,
       sessionId,
       localId,
@@ -661,6 +666,18 @@ async function completeCommittedTransition(params: Readonly<{
         executionAuthority: params.externalAction.context.authority }
         : params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     }).catch(() => null);
+    const firstLaunch = params.firstLaunch;
+    const resumed = firstLaunch && targetSession.rawSession.active === false
+      && typeof targetSession.rawSession.pendingVersion === 'number'
+      && resolveCurrentAgentId(targetMetadata) === firstLaunch.agentId
+      && isDeepStrictEqual(targetMetadata.replaySeedV1, firstLaunch.seed ?? undefined)
+      ? await runFirstTransitionLaunch({
+          sessionId, localId,
+          agentId: firstLaunch.agentId,
+          metadataVersion: targetSession.rawSession.metadataVersion,
+          pendingVersion: targetSession.rawSession.pendingVersion,
+        }, launch)
+      : await launch();
     if (!resumed?.ok) {
       const failure = resumed?.errorDetail ? projectSessionSpawnFailure({
         errorCode: resumed.spawnErrorCode ?? resumed.code,
@@ -1141,13 +1158,15 @@ export async function runSessionAgentTransition(
   // 10.1 risk spot 3 is exactly the inversion — choosing a narrower context
   // bound and only then discovering that native return is unavailable omits
   // history the fresh target needs, and nothing in the result would say so.
-  const nativeReturn = target.configuredBackend ? null : await resolveAgentNativeReturnIdentity({
+  const returnPlan = target.configuredBackend ? null : await resolveAgentNativeReturnPlan({
     store: deps.localAgentNativeResumeRecordStore,
     sessionId,
     targetAgentId: target.agentId,
     sourceMetadata: stoppedMetadata,
     accountSettings: deps.readAccountSettings(),
   });
+
+  const nativeReturn = returnPlan?.record;
 
   // Capture U once from the post-stop row. A no-dialog result means no prompt
   // text crossed the boundary; it does not erase the canonical transcript head
@@ -1303,5 +1322,6 @@ export async function runSessionAgentTransition(
     admissionFence: sourceFence,
     inputAdmissionTimeoutMs,
     committed: stopped.cutoverCommitted(),
+    ...(returnPlan?.noNativeReturnRecord ? { firstLaunch: { agentId: target.agentId, seed: brief.seed } } : {}),
   });
 }

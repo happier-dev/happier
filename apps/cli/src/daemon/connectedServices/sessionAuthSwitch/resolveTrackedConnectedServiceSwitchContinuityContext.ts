@@ -133,7 +133,11 @@ function resolveTrackedConnectedServiceResumeContext(input: Readonly<{
 
   return {
     vendorResumeId: explicitVendorResumeId,
-    candidatePersistedSessionFile: explicitCandidatePersistedSessionFile,
+    candidatePersistedSessionFile: explicitCandidatePersistedSessionFile
+      ?? (explicitVendorResumeId === null
+        ? resolveAgentNativeTranscriptPathFromSessionMetadata(input.agentId, persistedMetadata)
+          ?? resolveAgentNativeTranscriptPathFromSessionMetadata(input.agentId, trackedMetadata)
+        : null),
   };
 }
 

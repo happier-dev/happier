@@ -27,6 +27,7 @@ import {
     buildConnectedServiceCredentialSpawnErrorResult,
     buildConnectedServiceDiagnosticSpawnValidationErrorResult,
     buildConnectedServiceMaterializationSpawnErrorResult,
+    readConnectedServiceSpawnFailureLogFields,
 } from '../connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { buildConnectedServiceUxDiagnostic } from '../connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { ConnectedServiceMaterializationBlockedError, materializeConnectedServicesForSpawn } from '../connectedServices/materialize/materializeConnectedServicesForSpawn';
@@ -128,6 +129,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     prepareAgentIsolationMember?: PrepareAgentIsolationMember;
     signal?: AbortSignal;
     options: SpawnSessionOptions;
+    onCredentialPreflightRefused?: () => void;
     managedPurpose?: Pick<PreparedManagedPurposeLaunch, 'agentConnectedServices'>;
     normalizedExistingSessionId: string;
     requestedSessionId: string;
@@ -415,9 +417,11 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 error,
             });
             if (credentialError) {
+                if (!input.effectiveResume) input.onCredentialPreflightRefused?.();
                 logger.warn('[DAEMON RUN] Connected services credential preflight failed; failing closed before spawn', {
                     agentId: input.catalogAgentId,
-                    code: credentialError.errorMessage,
+                    code: credentialError.errorCode,
+                    ...readConnectedServiceSpawnFailureLogFields(credentialError),
                 });
                 return { ok: false, result: credentialError };
             }

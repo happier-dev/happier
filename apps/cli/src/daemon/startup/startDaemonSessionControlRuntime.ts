@@ -14584,6 +14584,7 @@ export async function startDaemonSessionControlRuntime(
                 vendorResumeId,
                 runtimeAuthSelection,
                 persistedSessionMetadata: inactivePersistedSessionMetadata,
+                failedFirstLaunch,
                 cwd: inactiveCwd,
                 candidatePersistedSessionFile:
                   inactiveCandidatePersistedSessionFile,
@@ -14609,6 +14610,7 @@ export async function startDaemonSessionControlRuntime(
                       inactiveCandidatePersistedSessionFile ?? null,
                   });
                 return await resolveSessionConnectedServiceSwitchContinuity({
+                  failedFirstLaunch,
                   sessionId,
                   agentId,
                   serviceId,

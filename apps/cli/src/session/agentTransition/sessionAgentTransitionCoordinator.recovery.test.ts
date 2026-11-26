@@ -216,7 +216,7 @@ describe('section 7.5 recovery projection', () => {
         machineRpcTransport: async () => ({ type: 'error', errorCode: 'agent_signed_out',
           agentId: 'codex', errorMessage: 'Sign in before starting a session.' }),
       }),
-    });
+    }, { sourceActive: false });
     harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
 
     expect(await runTransition(harness)).toMatchObject({
@@ -240,7 +240,7 @@ describe('section 7.5 recovery projection', () => {
         requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
           machineRpcTransport: async () => failure,
         }),
-      });
+      }, { sourceActive: false });
       harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
 
       expect(await runTransition(harness)).toMatchObject({
@@ -261,7 +261,7 @@ describe('section 7.5 recovery projection', () => {
       requestInactiveSessionResume: params => requestInactiveSessionResume({ ...params,
         machineRpcTransport: async () => spawnFailure,
       }),
-    });
+    }, { sourceActive: false });
     harness.setMetadata({ ...TARGET_CURRENT_METADATA, path: '/repo' });
 
     expect(await runTransition(harness)).toMatchObject({

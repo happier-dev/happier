@@ -2,7 +2,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import { formatAgentLikeIdForDisplay } from '@happier-dev/agents/presentation';
 import { readSessionStartupFailurePreview, readSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceCredentialReconnectCauseV1Schema, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
+import { isConnectedServiceUxDiagnosticSpawnErrorDetail, SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import type { ConnectedServiceUxDiagnosticV1, SpawnSessionResult } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -242,6 +242,26 @@ export function boundConnectedServiceMaterializationDiagnosticValue(
     maxLength: MAX_MATERIALIZATION_DIAGNOSTIC_VALUE_LENGTH,
   }).trim();
   return sanitized || null;
+}
+
+/**
+ * The identifying fields of a connected-service spawn failure, for the daemon log. The result's
+ * message is only the generic code, so without these a refusal caused by one account among several
+ * cannot be traced to it. Ids and reasons only; never credential material.
+ */
+export function readConnectedServiceSpawnFailureLogFields(
+  result: Extract<SpawnSessionResult, { type: 'error' }>,
+): Readonly<Record<string, string | null>> {
+  if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) return {};
+  const diagnostic = result.errorDetail.uxDiagnostic;
+  const details = readRecord(diagnostic.diagnostics);
+  return {
+    serviceId: readString(diagnostic.serviceId) || null,
+    profileId: readString(diagnostic.profileId) || null,
+    reason: readStringField(details, 'reason') || null,
+    refreshStatus: readStringField(details, 'refreshStatus') || null,
+    refreshCategory: readStringField(details, 'refreshCategory') || null,
+  };
 }
 
 export function buildConnectedServiceMaterializationSpawnErrorResult(input: Readonly<{

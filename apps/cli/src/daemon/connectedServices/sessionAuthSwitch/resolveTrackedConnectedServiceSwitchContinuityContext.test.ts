@@ -8,6 +8,16 @@ import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '../c
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from './resolveTrackedConnectedServiceSwitchContinuityContext';
 
 describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
+  it('preserves the target Agent transcript file after the resume id is lost', () => {
+    const file = '/tmp/previous-claude-session.jsonl';
+    expect(resolveTrackedConnectedServiceSwitchContinuityContext({
+      agentId: 'claude',
+      baseDir: '/tmp/connected-services',
+      tracked: null,
+      persistedSessionMetadata: { claudeTranscriptPath: file },
+    })).toMatchObject({ vendorResumeId: null, candidatePersistedSessionFile: file });
+  });
+
   it('threads the runtime-auth selection materialized target into the continuity context', () => {
     expect(resolveTrackedConnectedServiceSwitchContinuityContext({
       agentId: 'claude',

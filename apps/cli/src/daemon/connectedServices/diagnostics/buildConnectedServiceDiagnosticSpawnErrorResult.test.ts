@@ -10,6 +10,7 @@ import {
   buildConnectedServiceCredentialSpawnErrorResult,
   buildConnectedServiceCredentialRefreshSpawnErrorResult,
   buildConnectedServiceMaterializationSpawnErrorResult,
+  readConnectedServiceSpawnFailureLogFields,
 } from './buildConnectedServiceDiagnosticSpawnErrorResult';
 import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
@@ -312,5 +313,39 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
         reconnectCause: 'credential_missing',
       },
     });
+  });
+});
+
+describe('readConnectedServiceSpawnFailureLogFields', () => {
+  it('names the service, profile and reason that failed the credential preflight', () => {
+    // The daemon used to log only the generic reconnect-required code, so a spawn refused for one
+    // of several connected accounts could not be traced back to the account that caused it.
+    const result = buildConnectedServiceCredentialRefreshSpawnErrorResult({
+      agentId: 'claude',
+      error: {
+        name: 'ConnectedServiceSpawnCredentialRefreshError',
+        kind: 'reconnect_required',
+        serviceId: 'claude-subscription',
+        profileId: 'Claude2',
+        diagnostic: { reason: 'spawn_preflight', status: 'refresh_failed', category: 'invalid_grant' },
+      },
+    });
+    if (!result) throw new Error('expected a spawn error result');
+
+    expect(readConnectedServiceSpawnFailureLogFields(result)).toEqual({
+      serviceId: 'claude-subscription',
+      profileId: 'Claude2',
+      reason: 'spawn_preflight',
+      refreshStatus: 'refresh_failed',
+      refreshCategory: 'invalid_grant',
+    });
+  });
+
+  it('returns nothing for an error that carries no connected-service diagnostic', () => {
+    expect(readConnectedServiceSpawnFailureLogFields({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'something else',
+    })).toEqual({});
   });
 });

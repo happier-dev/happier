@@ -1,8 +1,10 @@
+import * as pending from '@/api/session/pendingQueueV2Transport';
+import { observeTransitionTargetSpawn, resolveFailedFirstLaunchAccountSwitch, runFirstTransitionLaunch } from '@/session/agentTransition/failedFirstLaunch';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -55,6 +57,45 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
         reachabilityMissReason: 'resume_reachability_inputs_missing',
       },
     });
+  });
+
+  it('only admits the original refused launch while its handoff and queued input stay current', async () => {
+    const attempt = { sessionId: 'first-launch', agentId: 'claude', localId: 'original-input', metadataVersion: 4, pendingVersion: 2 };
+    const current = { ...attempt, token: 'test-token', active: false };
+    const pendingEligibility = vi.spyOn(pending, 'readPendingQueueV2ActivationEligibilityFromServer');
+    try {
+      pendingEligibility.mockResolvedValue('eligible');
+      await runFirstTransitionLaunch(attempt, async nonce => {
+        const refused = observeTransitionTargetSpawn(attempt.sessionId, nonce);
+        refused?.();
+      });
+      const input = {
+        agentId: 'claude' as const,
+        accountSettings: accountSettingsParse({
+          connectedServicesProviderStateSharingSettingsV1: {
+            v: 1,
+            defaults: { configMode: 'linked', stateMode: 'shared' },
+          },
+        }),
+      };
+      await expect(resolveSharedStateRequiredSwitchContinuity({
+        ...input,
+        failedFirstLaunch: await resolveFailedFirstLaunchAccountSwitch(current),
+      })).resolves.toMatchObject({ mode: 'restart_rematerialize' });
+      expect(pendingEligibility).toHaveBeenLastCalledWith({
+        token: 'test-token', sessionId: 'first-launch', requestId: 'original-input',
+      });
+      expect(await resolveFailedFirstLaunchAccountSwitch({ ...current, metadataVersion: 5 })).toBeUndefined();
+      expect(await resolveFailedFirstLaunchAccountSwitch({ ...current, active: true })).toBeUndefined();
+      expect(await resolveFailedFirstLaunchAccountSwitch({ ...current, pendingVersion: 3 })).toBeUndefined();
+      pendingEligibility.mockResolvedValue('missing');
+      expect(await resolveFailedFirstLaunchAccountSwitch(current)).toBeUndefined();
+      pendingEligibility.mockResolvedValue('eligible');
+      observeTransitionTargetSpawn(attempt.sessionId, 'later-attempt');
+      expect(await resolveFailedFirstLaunchAccountSwitch(current)).toBeUndefined();
+    } finally {
+      pendingEligibility.mockRestore();
+    }
   });
 
   it('fails closed for Codex shared-state switches when resume reachability cannot be proven', async () => {

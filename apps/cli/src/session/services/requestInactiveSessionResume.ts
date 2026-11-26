@@ -205,6 +205,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   timeoutMs?: number;
   signal?: AbortSignal;
   waitForReady?: boolean;
+  transitionLaunchNonce?: string;
   approvedNewDirectoryCreation?: boolean;
   initialGoal?: SessionInitialGoalRequestV1;
   executionAuthority?: ActionExecutorContext['authority'];
@@ -316,9 +317,10 @@ export async function requestInactiveSessionResume(params: Readonly<{
     const method = options.modelSelection && isSessionModelRefSourceBound(options.modelSelection.ref)
       ? RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
       : RPC_METHODS.SPAWN_HAPPY_SESSION;
-    const request = buildMachineResumeRequest(options, params.sessionId, readinessSpawnNonce);
+    const spawnNonce = readinessSpawnNonce ?? params.transitionLaunchNonce;
+    const request = buildMachineResumeRequest(options, params.sessionId, spawnNonce);
     const response = params.spawnSession && !params.externalAction
-      ? await params.spawnSession({ ...options, ...(readinessSpawnNonce ? { spawnNonce: readinessSpawnNonce } : {}) })
+      ? await params.spawnSession({ ...options, ...(spawnNonce ? { spawnNonce } : {}) })
       : params.machineRpcTransport && !params.externalAction
       ? await params.machineRpcTransport(
           method,

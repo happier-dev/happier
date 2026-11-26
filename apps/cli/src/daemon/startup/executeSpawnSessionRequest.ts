@@ -1,3 +1,4 @@
+import { observeTransitionTargetSpawn } from '@/session/agentTransition/failedFirstLaunch';
 import { randomUUID } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { resolveSpawnTerminalPresentationHost } from '@/daemon/platform/windows/windowsSessionConsoleMode';
@@ -292,6 +293,9 @@ export async function executeSpawnSessionRequest(
     };
     recordPreparationPhase('entered');
     let options = params.options;
+    const recordCredentialPreflightRefusal = options.existingSessionId
+        ? observeTransitionTargetSpawn(options.existingSessionId, options.spawnNonce)
+        : undefined;
     const preparationSignal = options.projectSetupOperation?.signal;
     const requesterRuntime = options.requesterSessionBootstrap ? params.requesterSessionRuntimeContext : undefined;
     if (options.requesterSessionBootstrap) {
@@ -1146,6 +1150,7 @@ export async function executeSpawnSessionRequest(
                     isAccountRuntimeCurrent: requesterRuntime.bootstrap.savedSecretOperationContext.isCurrent,
                 } : {}),
                 options: launchOptions,
+                onCredentialPreflightRefused: recordCredentialPreflightRefusal,
                 managedPurpose: daemonProviderLaunch.managedPurpose,
                 normalizedExistingSessionId: launchExistingSessionId,
                 requestedSessionId,

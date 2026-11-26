@@ -40,6 +40,7 @@ export async function resolveSessionConnectedServiceSwitchContinuity(
     cwd?: string | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     candidatePersistedSessionFile?: string | null;
+    failedFirstLaunch?: 'retry_original_transition';
   }>,
 ): Promise<Awaited<ReturnType<typeof resolveSharedStateRequiredSwitchContinuity>>> {
   const connectedServiceMaterializationIdentityV1 =
@@ -85,6 +86,7 @@ export async function resolveSessionConnectedServiceSwitchContinuity(
   }
   if (continuity.mode === 'restart_shared_state_required') {
     return await resolveSharedStateRequiredSwitchContinuity({
+      failedFirstLaunch: input.tracked ? undefined : input.failedFirstLaunch,
       agentId: input.agentId,
       accountSettings: input.accountSettings,
       warnings: continuity.reason ? [continuity.reason] : [],
