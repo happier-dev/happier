@@ -35,7 +35,8 @@ export async function installPersonalHomeBootstrapNetworkBoundary(options: Reado
     seedWriteFails?: () => boolean;
     seedReadbackFails?: () => boolean;
 }>) {
-    const browser = await installBrowserRuntimeForTests({ url: 'https://personal-home-bootstrap.test/' });
+    // Model the desktop webview's local origin so HTTPS mixed-content rules do not reject the loopback Home.
+    const browser = await installBrowserRuntimeForTests({ url: 'http://tauri.localhost/' });
     const secureStorage = new Map<string, string>();
     const nativeBridge = {
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
@@ -156,7 +157,7 @@ export async function installPersonalHomeBootstrapNetworkBoundary(options: Reado
             const result = await options.authPing({ endpoint: options.serverUrl, token: authorization?.replace(/^Bearer /u, '') ?? '' });
             return Response.json({}, { status: result.status === 'ready' ? 200 : 401 });
         }
-        if (path === '/v1/account/encryption') return Response.json({ encryptionMode: 'plain' });
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 0 });
         return await options.request?.({ endpointUrl: options.serverUrl, serverId: options.serverIdentityId, path, authorization })
             ?? new Response(null, { status: 404 });

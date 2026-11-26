@@ -21,6 +21,7 @@ import { useLocalRuntimeActionExecution } from '@/components/approvals/useLocalR
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { createUiHomeRuntimeActionClient } from '@/sync/ops/actions/homeRuntimeActionClient';
 import { LOCAL_RELAY_RUNTIME_ACTION_IDS } from '@/sync/ops/actions/homeRuntimeTaskActions';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 type RelayRuntimeActionKind =
     | 'relay.runtime.installOrUpdate.v1'
@@ -285,6 +286,41 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
         }
     }, [mountedAction.requiresAction, mountedAction.runSignedOutDraft, runner, runtimeAction]);
 
+    // A bootstrap read can arrive during the credential owner's initial lookup or rebind.
+    // Use its next committed disposition before asking the Action executor to admit the read.
+    const resolvingStatusScope = !options.actionScope && mountedAction.resolution.kind === 'resolving';
+    const statusStarts = React.useRef(new Set<(start: typeof startTask | null) => void>());
+    const statusStart = isUnavailable ? null : startTask;
+    const statusAdmission = React.useRef({ resolving: resolvingStatusScope, start: statusStart });
+    React.useLayoutEffect(() => {
+        statusAdmission.current = { resolving: resolvingStatusScope, start: statusStart };
+        if (resolvingStatusScope && statusStart) return;
+        for (const settle of statusStarts.current) settle(statusStart);
+        statusStarts.current.clear();
+    }, [resolvingStatusScope, statusStart]);
+    React.useLayoutEffect(() => () => {
+        for (const settle of statusStarts.current) settle(null);
+        statusStarts.current.clear();
+    }, []);
+
+    const startAwaitedStatus = React.useCallback(async (taskOptions: LocalRelayRuntimeTaskOptions): Promise<SystemTaskStartOutcome> => {
+        const admission = statusAdmission.current;
+        if (!admission.start) return unavailableTaskStart();
+        if (!admission.resolving) return await admission.start('relay.runtime.status.v1', taskOptions);
+
+        const home = getActiveServerSnapshot();
+        const start = await new Promise<typeof startTask | null>((resolve) => { statusStarts.current.add(resolve); });
+        const currentHome = getActiveServerSnapshot();
+        if (!start || currentHome.serverId !== home.serverId || currentHome.serverUrl !== home.serverUrl) {
+            return {
+                status: 'failed',
+                code: 'action_account_scope_changed',
+                message: t('settings.writeContextChanged'),
+            };
+        }
+        return await start('relay.runtime.status.v1', taskOptions);
+    }, []);
+
     const refreshStatus = React.useCallback(async () => {
         if (isUnavailable) {
             return null;
@@ -321,14 +357,14 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
         if (kind !== 'relay.runtime.status.v1') {
             started = await runAction(kind, taskOptions);
         } else {
-            started = isUnavailable ? unavailableTaskStart() : await startTask(kind, taskOptions);
+            started = await startAwaitedStatus(taskOptions);
         }
         if (started.status !== 'started') {
             throw Object.assign(new Error(started.message), { code: started.code });
         }
         if (kind === 'relay.runtime.status.v1') setStatusTaskId(started.taskId);
         return await waitForSystemTaskResult(runner, started.taskId);
-    }, [isUnavailable, runAction, runner, startTask]);
+    }, [runAction, runner, startAwaitedStatus]);
 
     const readStatus = React.useCallback(async (): Promise<RelayRuntimeStatusData | null> => {
         const result = await runTaskAndWait('relay.runtime.status.v1');
