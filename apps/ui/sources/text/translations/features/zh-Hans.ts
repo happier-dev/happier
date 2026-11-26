@@ -9081,6 +9081,7 @@ const zhHans: typeof en = {
         uncertainBody: '重试前请先检查你的会话。',
         unavailableTitle: '无法开始调查',
         unavailableBody: '未启动任何内容。',
+        agentActionsDispatchFailed: '机器无法运行智能体操作目录。',
         alertInvestigateHint: '以此问题为证据打开会话。',
         investigateUnavailable: '此警报无法进行调查。',
         notSetUpTitle: '此操作尚未设置',

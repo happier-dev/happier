@@ -9187,6 +9187,7 @@ const ca: typeof en = {
         uncertainBody: 'Revisa les sessions abans de tornar-ho a provar.',
         unavailableTitle: 'No s’ha pogut iniciar la investigació',
         unavailableBody: 'No s’ha iniciat res.',
+        agentActionsDispatchFailed: 'La màquina no ha pogut executar el catàleg d’accions de l’agent.',
         alertInvestigateHint: 'Obre una sessió amb aquesta incidència com a evidència.',
         investigateUnavailable: 'Investigar no està disponible per a aquesta alerta.',
         notSetUpTitle: 'Aquesta acció no està configurada',

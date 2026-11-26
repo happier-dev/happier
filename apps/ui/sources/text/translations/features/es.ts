@@ -9082,6 +9082,7 @@ const es: typeof en = {
         uncertainBody: 'Revisa tus sesiones antes de volver a intentarlo.',
         unavailableTitle: 'No se pudo iniciar la investigación',
         unavailableBody: 'No se inició nada.',
+        agentActionsDispatchFailed: 'La máquina no pudo ejecutar el catálogo de acciones del agente.',
         alertInvestigateHint: 'Abre una sesión con esta incidencia como evidencia.',
         investigateUnavailable: 'Investigar no está disponible para esta alerta.',
         notSetUpTitle: 'Esta acción no está configurada',

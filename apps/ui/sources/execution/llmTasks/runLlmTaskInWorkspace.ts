@@ -106,7 +106,7 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
     continueObservationAfterTimeout?: boolean;
     /** Contextual title carried onto the underlying execution.run.start operation when surfaced in Activity/Inbox. */
     operationTitle?: string;
-    onStarted?: (runId: string) => void;
+    onStarted?: (runId: string, stop: () => Promise<ActionExecuteResult>) => void;
     signal?: AbortSignal;
     intent: 'task' | 'scm_commit_message';
     intentInput: Record<string, unknown>;
@@ -126,22 +126,28 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
         }
     };
     const accepted: { runId?: string; stop?: Promise<ActionExecuteResult> } = {};
-    const stopAcceptedRun = () => {
-        if (accepted.runId && !accepted.stop) {
-            accepted.stop = stopLlmTaskRun({ host: params.host, runId: accepted.runId });
-        }
+    const requestStop = (runId: string) => {
+        accepted.stop ??= stopLlmTaskRun({ host: params.host, runId }).then(result => {
+            if (!result.ok) delete accepted.stop;
+            return result;
+        });
+        return accepted.stop;
+    };
+    let abortedStop: Promise<ActionExecuteResult> | undefined;
+    const stopOnAbort = () => {
+        if (accepted.runId) abortedStop = requestStop(accepted.runId);
     };
     const context: ActionExecutorContext = { ...llmTaskActionContext(params.host),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(params.onStarted || params.signal || params.operationTitle ? { onExecutionRunStarted: (runId: string) => {
             accepted.runId = runId;
             registerOperationTitle(runId);
-            params.onStarted?.(runId);
-            if (params.signal?.aborted) stopAcceptedRun();
+            params.onStarted?.(runId, () => requestStop(runId));
+            if (params.signal?.aborted) stopOnAbort();
         } } : {}),
     };
     const sessionId = params.host.kind === 'session' ? params.host.sessionId : null;
-    params.signal?.addEventListener('abort', stopAcceptedRun, { once: true });
+    params.signal?.addEventListener('abort', stopOnAbort, { once: true });
     try {
         const startResult = await executeAction(
             'execution.run.start',
@@ -171,14 +177,15 @@ export async function runLlmTaskInWorkspace(params: Readonly<{
             && !result.ok && result.outcome === 'pending' && result.runId !== undefined) {
             result = await observePendingWorkspaceRun(params.host, result.runId, params.signal);
         }
-        if (!accepted.stop) return result;
+        const stop = abortedStop ?? accepted.stop;
+        if (!stop) return result;
 
-        const stopped = await accepted.stop;
+        const stopped = await stop;
         if (stopped.ok) return { ok: false, error: 'Task cancelled', errorCode: 'cancelled', runId: accepted.runId };
         if (result.ok || (result.runId !== undefined && result.outcome === undefined)) return result;
         return { ...readActionError(stopped), runId: accepted.runId, outcome: 'unknown', stopRefused: true };
     } finally {
-        params.signal?.removeEventListener('abort', stopAcceptedRun);
+        params.signal?.removeEventListener('abort', stopOnAbort);
     }
 }
 

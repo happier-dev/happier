@@ -9203,6 +9203,7 @@ const fr: typeof en = {
         uncertainBody: 'Vérifie tes sessions avant de réessayer.',
         unavailableTitle: 'Impossible de lancer l’enquête',
         unavailableBody: 'Rien n’a été lancé.',
+        agentActionsDispatchFailed: 'La machine n’a pas pu exécuter le catalogue d’actions de l’agent.',
         alertInvestigateHint: 'Ouvre une session avec ce problème comme preuve.',
         investigateUnavailable: 'Enquêter n’est pas disponible pour cette alerte.',
         notSetUpTitle: 'Cette action n’est pas configurée',

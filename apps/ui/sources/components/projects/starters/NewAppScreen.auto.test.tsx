@@ -474,6 +474,52 @@ it('a refused Stop keeps the run on screen with the refusal and Retry; it never 
   }
 });
 
+it('settles the same Suggest Run after a timed-out wait and refused Stop', async () => {
+  const settled = terminal({ recommendations: [recommendation] });
+  let finished = false;
+  const read = vi.fn(async () => finished ? settled : {
+    run: { ...settled.run, status: 'running', finishedAtMs: undefined },
+  });
+  suggestionBoundary({
+    executionRunWait: async () => ({ ok: true, status: 'running', disposition: 'observation_timeout',
+      runId: 'run_1', timeoutMs: 12_000, observedAtMs: 13_000, deadlineAtMs: 13_000 }),
+    executionRunGet: read,
+    executionRunStop: async () => ({ ok: false, errorCode: 'stop_refused', error: 'Stop refused' }),
+  });
+  const { fixture, screen } = await openDescribe('auto-stop-refused-after-timeout');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A booking page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(read).toHaveBeenCalledTimes(1));
+    await screen.pressByTestIdAsync('newApp.auto.stop');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.stopRefused.retry')).toBeTruthy());
+    expect(screen.findByTestId('newApp.auto.working')).toBeTruthy();
+
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { notifyExecutionRunActivity } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
+    const serverId = storage.getState().settingsScope?.serverId;
+    if (!serverId) throw new Error('Expected admitted Home Account');
+    const address = { serverId, machineId: 'devbox' };
+    finished = true;
+    await act(async () => notifyExecutionRunActivity(address, { runId: 'another-run' }));
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => notifyExecutionRunActivity(address, { runId: 'run_1' }));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    expect(screen.getTextContent()).toContain(recommendation.title);
+    expect(screen.findByTestId('newApp.auto.stopRefused')).toBeNull();
+    expect(calls('execution.run.start')).toHaveLength(1);
+    expect(calls('execution.run.stop')).toHaveLength(1);
+    await act(async () => notifyExecutionRunActivity(address, { runId: 'run_1' }));
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    await screen.unmount();
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it.each(['ready', 'needs_review'] as const)('opens a Dokploy suggestion without body reads and handles the selected %s template', async (state) => {
   const bodyReads: string[] = [];
   const registry = createRegistryHostV1({
@@ -1355,9 +1401,9 @@ it('a Session suggestion without the person\u2019s words opens with the descript
     suggestion={{ description: '', recommendation: recommendation as never, catalog }} />);
   try {
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
-    // The cards say a Session suggested them (DESIGN-ACCEPT-4 K4, lab jdF-autoRecs).
     const { t } = await import('@/text');
-    expect(screen.getTextContent()).toContain(t('newApp.auto.sourceSession'));
+    expect(screen.getTextContent()).toContain(t('newApp.auto.suggestedInSession'));
+    expect(screen.getTextContent()).not.toContain(t('newApp.auto.sourceSession'));
     await screen.pressByTestIdAsync('newApp.auto.useSetup');
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
     expect(screen.findByTestId('newApp.description')?.props.value, 'never the model\u2019s whatToBuild').toBe('');
@@ -1426,7 +1472,7 @@ it.each(['dialog', 'page'] as const)('opens the created Project with the build c
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('newApp.auto.useSetup');
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
-    await act(async () => screen.changeTextByTestId('newApp.nameField', 'Bakery'));
+    await act(async () => screen.changeTextByTestId('newApp.nameField', 'Replay 50 Reviewed Bakery'));
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(false));
     execute.mockClear();
     await screen.pressByTestIdAsync('newApp.create');
@@ -1435,6 +1481,7 @@ it.each(['dialog', 'page'] as const)('opens the created Project with the build c
     const { PlanChecklistCard } = await import('@/components/systemTasks/planChecklist/PlanChecklistCard');
     const making = screen.findAllByType(PlanChecklistCard).find((node) => node.props.testID === 'newApp.making');
     expect(making?.props.executionById).toMatchObject({ create: { status: 'done' }, open: { status: 'running' } });
+    expect(screen.getTextContent()).toContain('alice\u2060/\u2060replay\u201150\u2011reviewed\u2011bakery');
     await act(async () => openFirstMessage());
     expect(calls('projects.starters.create')).toHaveLength(1);
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining('/projects/workspace'));

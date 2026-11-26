@@ -1,3 +1,4 @@
+import { keepNewAppFactsTogether } from '../keepNewAppFactsTogether';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -68,7 +69,7 @@ export type NewAppAutoChosen = Readonly<{
 
 /**
  * Describe your app's state: the person's description and what the suggestion owner (`suggestDeploySetup`) last
- * reported. Stop and leaving the step abort the accepted run; the owner settles it once (Accepted imperfections:
+ * reported. Stop requests cancellation of the accepted Run; the owner settles it once (Accepted imperfections:
  * closing drops the run, the description stays while the dialog is open).
  */
 export function useNewAppAutoSuggestions(
@@ -92,7 +93,7 @@ export function useNewAppAutoSuggestions(
     connections: string;
   }> | null>(null);
   const connections = storage((state) => connectionsKey(state.profile.connectedAccountsV4), connectionKeys);
-  // The accepted Run's own Stop, for a Retry after its target refused the first one.
+  // The accepted Run owns Stop, including retries after a refusal.
   const runStop = React.useRef<RunStop | null>(null);
   const lastRecommendations = React.useRef<Extract<DeploySuggestionOutcome, { kind: 'recommendations' }> | null>(null);
 
@@ -102,17 +103,17 @@ export function useNewAppAutoSuggestions(
     // Nothing is running: a settled answer stays for when the person comes back to it (DESIGN-ACCEPT-2 K-BACK).
     if (!controller) return;
     setPhase((current) => (current.kind === 'working' ? { ...current, stop: 'stopping' } : current));
-    if (!controller.signal.aborted) {
+    const requestStop = runStop.current;
+    if (!requestStop) {
       controller.abort();
       return;
     }
-    const retry = runStop.current;
-    if (!retry) return;
-    void retry().then((result) => {
+    void requestStop().then((result) => {
       if (abort.current !== controller) return;
       if (result.ok) {
         abort.current = null;
         runStop.current = null;
+        controller.abort();
         setPhase({ kind: 'describe' });
         return;
       }
@@ -167,6 +168,7 @@ export function useNewAppAutoSuggestions(
       operationTitle: t('newApp.auto.suggest'),
       signal: controller.signal,
       onProgress: (progress) => {
+        if (abort.current !== controller) return;
         if (progress.kind === 'run') {
           runStop.current = progress.stop;
           runId = progress.runId;
@@ -255,7 +257,7 @@ export function useNewAppAutoSuggestions(
         kind: 'recommendations',
         source: phase.runner
           ? t('newApp.auto.sourceNote', { machine: phase.runner.label })
-          : phase.origin === 'session' ? t('newApp.auto.sourceSession') : null,
+          : null,
         cards: outcome.recommendations.map((recommendation, index) =>
           presentDeploySuggestionCard(
             recommendation,
@@ -374,10 +376,10 @@ function connectionsKey(rows: readonly Readonly<{ ref: Parameters<typeof buildQu
  * itself (DESIGN-ACCEPT-4 F2): its spaces and hyphens are the non-breaking ones, as the banner does for a command.
  */
 function runsOnLine(runner: Runner): string {
-  return t('newApp.auto.runsOn', {
+  return keepNewAppFactsTogether(t('newApp.auto.runsOn', {
     machine: runner.label,
     agent: runnerAgentTitle(runner),
-  }).split(' · ').map((fact) => fact.replace(/ /g, '\u00a0').replace(/-/g, '\u2011')).join(' · ');
+  }));
 }
 
 function workingSteps(phase: Extract<Phase, { kind: 'working' }>): SetupStep[] {

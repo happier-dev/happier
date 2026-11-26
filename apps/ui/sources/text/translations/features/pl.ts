@@ -9221,6 +9221,7 @@ const pl: typeof en = {
         uncertainBody: 'Sprawdź swoje sesje przed ponowną próbą.',
         unavailableTitle: 'Nie udało się rozpocząć badania',
         unavailableBody: 'Nic nie zostało uruchomione.',
+        agentActionsDispatchFailed: 'Maszyna nie mogła uruchomić katalogu akcji agenta.',
         alertInvestigateHint: 'Otwiera sesję z tym problemem jako dowodem.',
         investigateUnavailable: 'Badanie nie jest dostępne dla tego alertu.',
         notSetUpTitle: 'Ta akcja nie jest skonfigurowana',

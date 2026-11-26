@@ -21,7 +21,7 @@ import { getMachineSentenceName, isMachineDisplayHydrating } from '@/utils/sessi
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { readRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, stopLlmTaskRun, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
+import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
 
 const executeAction = createFrontDoorActionExecute();
 
@@ -173,7 +173,7 @@ export async function suggestDeploySetup(params: Readonly<{
                 ...(params.operationTitle ? { operationTitle: params.operationTitle } : {}),
                 intentInput: { input: input.data, resultSchema: zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' }) },
                 ...(params.signal ? { signal: params.signal } : {}),
-                onStarted: runId => params.onProgress?.({ kind: 'run', ...runner, runId, stop: () => stopLlmTaskRun({ host, runId }) }),
+                onStarted: (runId, stop) => params.onProgress?.({ kind: 'run', ...runner, runId, stop }),
             });
             if (!run.ok && run.stopRefused) return { kind: 'stopRefused', code: run.errorCode ?? 'execution_run_failed' };
             if (!run.ok) return params.signal?.aborted && run.errorCode === 'cancelled' && !run.runError

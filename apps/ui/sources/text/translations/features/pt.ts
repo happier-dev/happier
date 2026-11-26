@@ -9181,6 +9181,7 @@ const pt: typeof en = {
         uncertainBody: 'Verifique suas sessões antes de tentar novamente.',
         unavailableTitle: 'Não foi possível iniciar a investigação',
         unavailableBody: 'Nada foi iniciado.',
+        agentActionsDispatchFailed: 'A máquina não conseguiu executar o catálogo de ações do agente.',
         alertInvestigateHint: 'Abre uma sessão com este problema como evidência.',
         investigateUnavailable: 'Investigar não está disponível para este alerta.',
         notSetUpTitle: 'Esta ação não está configurada',

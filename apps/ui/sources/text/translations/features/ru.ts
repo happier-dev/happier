@@ -9223,6 +9223,7 @@ const ru: typeof en = {
         uncertainBody: 'Проверьте свои сессии перед повторной попыткой.',
         unavailableTitle: 'Не удалось начать расследование',
         unavailableBody: 'Ничего не запущено.',
+        agentActionsDispatchFailed: 'Машине не удалось запустить каталог действий агента.',
         alertInvestigateHint: 'Открывает сессию с этой проблемой в качестве данных.',
         investigateUnavailable: 'Расследование недоступно для этого оповещения.',
         notSetUpTitle: 'Это действие не настроено',

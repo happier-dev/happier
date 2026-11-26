@@ -83,10 +83,10 @@ export function presentDeploySuggestionCard(
   );
   // Own server runs on one of the person's Machines; when the snapshot has exactly one that can take it, that Machine is
   // where it runs, so the card names it. With several, Where it runs is still the person's choice.
-  const machines = targetRow?.targetClass === 'ownServer'
-    ? catalog.machines.filter((machine) => machine.online && machine.readiness === 'ready' && machine.label)
+  const readyOnlineMachines = targetRow?.targetClass === 'ownServer'
+    ? catalog.machines.filter((machine) => machine.online && machine.readiness === 'ready')
     : [];
-  const ownMachine = machines.length === 1 ? machines[0]!.label! : null;
+  const ownMachine = readyOnlineMachines.length === 1 ? readyOnlineMachines[0]?.label?.trim() || null : null;
   const target = ownMachine ?? targetRow?.title;
   const data = recommendation.data;
   const store = data.kind === 'store' ? catalog.stores.find((item) => item.id === data.storeId) : undefined;

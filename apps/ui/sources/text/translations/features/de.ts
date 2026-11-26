@@ -9198,6 +9198,7 @@ const de: typeof en = {
         uncertainBody: 'Prüfe deine Sitzungen, bevor du es erneut versuchst.',
         unavailableTitle: 'Untersuchung konnte nicht gestartet werden',
         unavailableBody: 'Es wurde nichts gestartet.',
+        agentActionsDispatchFailed: 'Die Maschine konnte den Katalog der Agentenaktionen nicht ausführen.',
         alertInvestigateHint: 'Öffnet eine Sitzung mit diesem Problem als Beleg.',
         investigateUnavailable: 'Untersuchen ist für diese Warnung nicht verfügbar.',
         notSetUpTitle: 'Diese Aktion ist nicht eingerichtet',

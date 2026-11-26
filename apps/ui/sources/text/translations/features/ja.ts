@@ -9141,6 +9141,7 @@ const ja: typeof en = {
         uncertainBody: '再試行する前にセッションを確認してください。',
         unavailableTitle: '調査を開始できませんでした',
         unavailableBody: '何も開始されていません。',
+        agentActionsDispatchFailed: 'マシンはエージェントのアクションカタログを実行できませんでした。',
         alertInvestigateHint: 'この問題を根拠としてセッションを開きます。',
         investigateUnavailable: 'このアラートでは調査を利用できません。',
         notSetUpTitle: 'このアクションは設定されていません',

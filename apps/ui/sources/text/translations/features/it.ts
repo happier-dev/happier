@@ -9194,6 +9194,7 @@ const it: typeof en = {
         uncertainBody: 'Controlla le sessioni prima di riprovare.',
         unavailableTitle: 'Impossibile avviare l’indagine',
         unavailableBody: 'Non è stato avviato nulla.',
+        agentActionsDispatchFailed: 'La macchina non è riuscita a eseguire il catalogo delle azioni dell’agente.',
         alertInvestigateHint: 'Apre una sessione con questo problema come prova.',
         investigateUnavailable: 'Indaga non è disponibile per questo avviso.',
         notSetUpTitle: 'Questa azione non è configurata',

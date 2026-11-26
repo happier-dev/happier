@@ -9081,6 +9081,7 @@ const zhHant: typeof en = {
         uncertainBody: '重試前請先檢查你的工作階段。',
         unavailableTitle: '無法開始調查',
         unavailableBody: '未啟動任何內容。',
+        agentActionsDispatchFailed: '機器無法執行代理程式的動作目錄。',
         alertInvestigateHint: '以此問題為證據開啟工作階段。',
         investigateUnavailable: '此警示無法進行調查。',
         notSetUpTitle: '此動作尚未設定',

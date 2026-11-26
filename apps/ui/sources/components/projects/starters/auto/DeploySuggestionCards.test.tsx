@@ -131,7 +131,7 @@ describe('a suggestion card’s data (PLAN Facts: stores are managed database ta
 });
 
 describe('a suggestion card on your own server (DESIGN-ACCEPT-4 K3)', () => {
-  const machine = (machineId: string, label: string, online = true) =>
+  const machine = (machineId: string, label: string | undefined, online = true) =>
     ({ machineId, label, online, homeDir: '/home/me', readiness: 'ready' as const });
   const onOwn = { ...site, targetId: 'own' };
   const runsOn = (machines: ReturnType<typeof machine>[]) => presentDeploySuggestionCard(onOwn,
@@ -140,6 +140,9 @@ describe('a suggestion card on your own server (DESIGN-ACCEPT-4 K3)', () => {
   it('names the one Machine it can run on, with that Machine’s mark', () => {
     expect(runsOn([machine('m1', 'bakery-box'), machine('m2', 'old-laptop', false)]))
       .toEqual({ key: 'runsOn', value: 'bakery-box', mark: 'machine-mark' });
+  });
+  it('keeps the target’s name when one of two online ready Machines has no label', () => {
+    expect(runsOn([machine('m1', 'bakery-box'), machine('m2', undefined)])).toEqual({ key: 'runsOn', value: 'Own server' });
   });
   it('keeps the target’s name while the person still chooses between Machines', () => {
     expect(runsOn([machine('m1', 'bakery-box'), machine('m2', 'studio-mini')])).toEqual({ key: 'runsOn', value: 'Own server' });

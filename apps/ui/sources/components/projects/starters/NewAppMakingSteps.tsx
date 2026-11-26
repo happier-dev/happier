@@ -5,6 +5,8 @@ import { projectReportedSteps } from '@/components/systemTasks/planChecklist/pro
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
+import { keepNewAppFactsTogether } from './keepNewAppFactsTogether';
+
 /**
  * Making (DESIGN-ACCEPT-4 M1): the Thinking step's checklist, on the page column, for the two phases New app awaits —
  * the create Action, then the first message opening. The Action reports no steps of its own, so none are drawn.
@@ -24,7 +26,7 @@ export const NewAppMakingSteps = React.memo(function NewAppMakingSteps(
           key: 'create',
           state: props.opening ? 'done' : 'running',
           title: t('newApp.makingCreate'),
-          ...(props.codeLivesOn ? { detail: props.codeLivesOn } : {}),
+          ...(props.codeLivesOn ? { detail: keepNewAppFactsTogether(props.codeLivesOn) } : {}),
         },
         {
           key: 'open',
