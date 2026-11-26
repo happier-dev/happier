@@ -252,6 +252,11 @@ describe('MachineDetailScreen (execution runs section)', () => {
         expect(String(redirects[0]!.props.href)).not.toContain('work');
     });
     it('does not leave the runs section loading when the machine goes offline before they arrive', async () => {
+        const machine = createMachineFixture({ activeAt: Date.now(), presenceProtocolVersion: 1 });
+        const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine });
+        homes.answer(serverA, '/v1/machines', { body: [row] });
+        homes.answer(serverA, `/v1/machines/${machine.id}`, { body: { machine: row } });
+        await sync.refreshMachines();
         runs = [createExecutionRun({ runId: 'run-1' }), createExecutionRun({ runId: 'run-done', callId: 'call-2', sidechainId: 'side-2', status: 'succeeded', finishedAtMs: 1_700_000_000_000 })];
         const screen = await renderRuns();
         await flushHookEffects();
@@ -266,11 +271,11 @@ describe('MachineDetailScreen (execution runs section)', () => {
         expect(runRows(screen, 'run-1')).toHaveLength(1);
         expect(filterDisabled()).toBe(true);
         await act(async () => {
-            const machine = createMachineFixture({ active: false, activeAt: 0 });
-            getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverA]: [machine], [serverB]: [machine] } });
+            getStorage().getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: machine.activeAt }], {
+                sourceServerId: serverA, sourceAccountId: 'account-a',
+            });
         });
-        await flushHookEffects();
-        expect(filterDisabled()).toBe(false);
+        await waitForHomeGovernance(() => expect(filterDisabled()).toBe(false));
         expect(runRows(screen, 'run-1')).toHaveLength(1);
     });
     it('wraps pull-to-refresh in refresh diagnostics', async () => {
