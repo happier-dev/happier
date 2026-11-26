@@ -2,7 +2,7 @@ import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants, tmpdir } from 'node:os';
-import { dirname, relative, resolve } from 'node:path';
+import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
@@ -11,7 +11,7 @@ import { readReferencedUiTypecheckProjects } from './deriveTypecheckProjects.mjs
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponents } from './ensureWorkspacePackagesBuilt.mjs';
-import { prepareWorkspaceSourceTypecheckProjects } from './workspaceSourceTypecheck.mjs';
+import { prepareWorkspaceSourceTypecheckProjects, withFiniteTypecheckProjectInputs } from './workspaceSourceTypecheck.mjs';
 import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckFailureDetail, typecheckPartitionFailure } from './typecheckDiagnostics.mjs';
 import {
   resolveTypeScriptCliInvocation,
@@ -177,8 +177,7 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
   // still stop the batch after the user cancels the containing operation.
   for (const [signal, handler] of cancellationHandlers) process.on(signal, handler);
   let failureStep = 'project-preparation';
-  try {
-    const projects = compilerProjects(args).map(project => ({ ...project, authoredProject: project.project, authoredArgs: project.args }));
+  async function checkProjects(projects) {
     const { prepareUiTypecheckProjects } = await import('../../apps/ui/scripts/deriveTypecheckProjects.mjs');
     const uiInventory = cancelled ? undefined : await prepareUiTypecheckProjects(projects, process.cwd());
     const { prepareCliTypecheckProjects } = await import('../../apps/cli/scripts/deriveTypecheckProjects.mjs');
@@ -292,13 +291,32 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
         // This optional hint cannot turn an inspection failure into a verdict.
       }
     }
+  }
+  try {
+    const cwd = process.cwd();
+    const projects = compilerProjects(args).map(project => ({ ...project, authoredProject: project.project, authoredArgs: project.args }));
+    // Finite batches and direct UI/CLI partitions share generated inputs.
+    // A CLI check can also regenerate UI projects and foreign memberships.
+    const sharesFiniteInputs = projects.length > 1 || projects.some(({ project }) =>
+      ['cli', 'ui'].includes(basename(project ? dirname(resolve(cwd, project)) : cwd)));
+    if (sharesFiniteInputs) {
+      failureStep = 'project-input-admission';
+      await withFiniteTypecheckProjectInputs(cwd, () => {
+        failureStep = 'project-preparation';
+        return checkProjects(projects);
+      }, { signal: preparation.signal });
+    } else {
+      await checkProjects(projects);
+    }
   } catch (error) {
-    process.stderr.write(`[typecheck-failure] ${typecheckDiagnosticFailureIdentifier(error, failureStep)}\n`);
-    process.stderr.write(`[typecheck-failure-detail] ${JSON.stringify(typecheckFailureDetail(error))}\n`);
-    if (Array.isArray(error?.cycle)) process.stderr.write(`[typecheck-reference-cycle] ${error.cycle.join(' -> ')}\n`);
-    result = { status: 1, signal: null };
+    if (!cancelledSignal) {
+      process.stderr.write(`[typecheck-failure] ${typecheckDiagnosticFailureIdentifier(error, failureStep)}\n`);
+      process.stderr.write(`[typecheck-failure-detail] ${JSON.stringify(typecheckFailureDetail(error))}\n`);
+      if (Array.isArray(error?.cycle)) process.stderr.write(`[typecheck-reference-cycle] ${error.cycle.join(' -> ')}\n`);
+      result = { status: 1, signal: null };
+    }
   } finally {
     for (const [signal, handler] of cancellationHandlers) process.off(signal, handler);
   }
-  exitWithCommandResult(result);
+  exitWithCommandResult(cancelledSignal ? { status: null, signal: cancelledSignal } : result);
 }

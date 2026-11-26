@@ -1,6 +1,7 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
+import { withFiniteTypecheckProjectInputs } from '../../../scripts/workspaces/workspaceSourceTypecheck.mjs';
 import { deriveTypecheckProjects, prepareDerivedTypecheckProjects } from '../../../scripts/workspaces/deriveTypecheckProjects.mjs';
 
 const sourceNames = ['foundation', 'services', 'core', 'source'];
@@ -32,7 +33,8 @@ export function prepareCliTypecheckProjects(projects, cwd) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
-  console.log(JSON.stringify(await deriveCliTypecheckProjects(packageDir, {
+  const inventory = await withFiniteTypecheckProjectInputs(packageDir, () => deriveCliTypecheckProjects(packageDir, {
     check: process.argv.includes('--check'), writeAuthored: process.argv.includes('--write-authored'),
-  })));
+  }));
+  console.log(JSON.stringify(inventory));
 }

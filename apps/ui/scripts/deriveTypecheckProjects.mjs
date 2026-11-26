@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { uiTypedRoutesDeclaration } from './uiTypedRoutesDeclaration.mjs';
 export { uiTypedRoutesDeclaration } from './uiTypedRoutesDeclaration.mjs';
 import { deriveTypecheckProjects, prepareDerivedTypecheckProjects } from '../../../scripts/workspaces/deriveTypecheckProjects.mjs';
-import { resolveTypecheckCacheDirectory } from '../../../scripts/workspaces/workspaceSourceTypecheck.mjs';
+import { resolveTypecheckCacheDirectory, withFiniteTypecheckProjectInputs } from '../../../scripts/workspaces/workspaceSourceTypecheck.mjs';
 
 const sourceNames = ['foundation', 'core', 'source'];
 const testNames = ['test-components', 'test-other'];
@@ -44,8 +44,9 @@ export async function prepareUiTypecheckProjects(projects, cwd) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
   const writeAuthored = process.argv.includes('--write-authored');
-  console.log(JSON.stringify(await deriveUiTypecheckProjects(packageDir, {
+  const inventory = await withFiniteTypecheckProjectInputs(packageDir, () => deriveUiTypecheckProjects(packageDir, {
     ...(!writeAuthored ? prepareUiTypedRoutes(packageDir) : {}),
     check: process.argv.includes('--check'), writeAuthored,
-  })));
+  }));
+  console.log(JSON.stringify(inventory));
 }

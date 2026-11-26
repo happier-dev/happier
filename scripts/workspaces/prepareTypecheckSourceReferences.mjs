@@ -162,8 +162,6 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     // implementation; preserve enables that import without choosing its JSX ABI.
     const compilerOptions = importedJsx && parsed.options.jsx === undefined
       ? { ...config.compilerOptions, jsx: 'preserve' } : config.compilerOptions;
-    // Another preparation can publish its roots before adding references.
-    // This invocation already chose the declaration owners above.
     sourceProjects.get(project).references = references;
     await writeJsonAtomic(project, { ...config, compilerOptions, references });
   };

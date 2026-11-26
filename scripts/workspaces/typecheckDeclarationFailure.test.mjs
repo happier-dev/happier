@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { createInterface } from 'node:readline';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -188,4 +190,113 @@ test('finite UI typecheck prepares only the workspace closure of its referenced 
   assert.match(await readFile(join(root, 'packages/via-used/dist/index.d.ts'), 'utf8'), /value/);
   await assert.rejects(readFile(join(root, 'packages/unused/dist/index.d.ts')), { code: 'ENOENT' });
   assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
+
+test('overlapping finite app checks keep their foreign declaration membership through compilation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-typecheck-overlap-'));
+  const ui = join(root, 'apps/ui');
+  const cli = join(root, 'apps/cli');
+  const appProjects = {
+    ui: ['foundation', 'core', 'source', 'test-components', 'test-other'],
+    cli: ['foundation', 'services', 'core', 'source', 'test', 'test-ui'],
+  };
+  const compilerOptions = { target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler',
+    strict: true, types: [], noEmit: true };
+  const files = {
+    'package.json': '{"private":true}',
+    'pnpm-lock.yaml': "lockfileVersion: '9.0'\nimporters: {}\n",
+    'pnpm-workspace.yaml': 'packages: [apps/*]',
+    'apps/server/package.json': '{"name":"@fixture/server"}',
+    'apps/server/tsconfig.json': JSON.stringify({ compilerOptions: {
+      ...compilerOptions, paths: { '@/*': ['./src/*'] },
+    }, include: ['src/**/*.ts'] }),
+    'apps/server/src/forUi.ts': 'export const forUi: number = 1;',
+    'apps/server/src/forCli.ts': 'export const forCli: string = "cli";',
+    'apps/ui/src/entry.ts': 'export { forUi } from "../../server/src/forUi";',
+    'apps/cli/src/entry.ts': 'export { forCli } from "../../server/src/forCli";',
+  };
+  for (const [app, projects] of Object.entries(appProjects)) {
+    files[`apps/${app}/package.json`] = JSON.stringify({ name: `@fixture/${app}` });
+    files[`apps/${app}/tsconfig.json`] = JSON.stringify({
+      compilerOptions: { ...compilerOptions, paths: { '@/*': ['./src/*'] } },
+      include: ['src/**/*.ts'],
+    });
+    files[`apps/${app}/src/entry.test.ts`] = 'export {};';
+    if (app === 'ui') files['apps/ui/tsconfig.test.json'] = '{"files":["src/entry.test.ts"],"include":[]}';
+    for (const [index, name] of projects.entries()) {
+      files[`apps/${app}/tsconfig.${name}.json`] = JSON.stringify({
+        extends: './tsconfig.json', files: [], include: [],
+        compilerOptions: name.startsWith('test') ? {} : {
+          noEmit: false, composite: true, emitDeclarationOnly: true, rootDir: '../..',
+          disableSourceOfProjectReferenceRedirect: true, outDir: `node_modules/.cache/tsc/${name}`,
+        },
+        references: index ? [{ path: `./tsconfig.${projects[Math.min(index - 1, projects.length - 3)]}.json` }] : [],
+      });
+    }
+  }
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await installUiTypecheckFixtureDependencies(t, ui);
+  const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1',
+    HAPPIER_STACK_CANONICAL_HOME_DIR: root, HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
+  delete env.HAPPIER_DEV_TARGET_EXECUTION;
+  delete env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED;
+  const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
+  const child = (app, preload) => spawn(process.execPath, [
+    ...(preload ? ['--import', preload] : []), runner, '--pretty', 'false',
+    ...appProjects[app].flatMap(name => ['-p', `tsconfig.${name}.json`]),
+  ], { cwd: join(root, 'apps', app), env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const observe = (process, milestone) => {
+    let output = '';
+    let reached;
+    const ready = new Promise(resolve => { reached = resolve; });
+    process.stdout.on('data', chunk => { output += chunk; });
+    createInterface({ input: process.stderr }).on('line', line => {
+      output += line + '\n';
+      if (milestone(line)) reached(line);
+    });
+    const done = once(process, 'close').then(([status]) => {
+      reached();
+      return { status, output };
+    });
+    return { ready, done };
+  };
+  // Pause the first foreground compiler at its process boundary, after both
+  // the declaration roots and consumer references have been prepared.
+  const preload = join(root, 'pause-compiler.mjs');
+  await writeFile(preload, `
+    import { readSync } from 'node:fs';
+    const write = process.stderr.write.bind(process.stderr);
+    let blocked = false;
+    process.stderr.write = (value, ...args) => {
+      const result = write(value, ...args);
+      if (!blocked && String(value).startsWith('[typescript] starting ')) {
+        blocked = true;
+        readSync(0, Buffer.alloc(1));
+      }
+      return result;
+    };
+  `);
+  const first = child('ui', preload);
+  const current = observe(first, line => line.startsWith('[typescript] starting '));
+  let next;
+  try {
+    const firstCompiler = await current.ready;
+    assert.ok(firstCompiler, firstCompiler ? undefined : (await current.done).output);
+    const { project } = JSON.parse(firstCompiler.slice('[typescript] starting '.length));
+    assert.equal(dirname(project), join(root, 'apps', 'server'));
+    const other = child('cli');
+    other.stdin.end();
+    next = observe(other, line => line.includes('waiting for finite project inputs'));
+    await next.ready;
+  } finally {
+    first.stdin.end();
+  }
+  const [firstResult, secondResult] = await Promise.all([current.done, next?.done]);
+  assert.equal(secondResult.status, 0, secondResult.output);
+  assert.equal(firstResult.status, 0, firstResult.output);
 });

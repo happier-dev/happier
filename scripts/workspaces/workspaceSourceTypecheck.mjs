@@ -5,6 +5,7 @@ import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { packageNameOfSpecifier, readWorkspacePackages, SOURCE_CONDITION, workspaceSourceCompilerPaths } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
 import { resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
+import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 
 export function resolveTypecheckCacheDirectory(packageDir, cacheSuffix = '', purpose = 'tsc') {
   const repoRoot = coerceHappyMonorepoRootFromPath(packageDir);
@@ -14,6 +15,26 @@ export function resolveTypecheckCacheDirectory(packageDir, cacheSuffix = '', pur
   return repoRoot
     ? resolve(repoRoot, '.project/tmp/typecheck-declarations/projects', relative(repoRoot, packageDir), `${purpose}${cacheSuffix}`)
     : resolve(packageDir, `node_modules/.cache/tsc${cacheSuffix}`);
+}
+
+export function withFiniteTypecheckProjectInputs(directory, check, { signal } = {}) {
+  const root = coerceHappyMonorepoRootFromPath(directory) ?? resolve(directory);
+  const lockPath = resolve(resolveTypecheckCacheDirectory(root, '', 'finite'), 'projects.lock');
+  let reportedWait = false;
+  return withWorkspaceBundleLock(async ({ assertOwned }) => {
+    const result = await check();
+    assertOwned();
+    return result;
+  }, {
+    lockPath,
+    signal,
+    timeoutMs: null,
+    onWait() {
+      if (reportedWait) return;
+      reportedWait = true;
+      process.stderr.write('[typescript] waiting for finite project inputs\n');
+    },
+  });
 }
 
 export async function readWorkspaceTypecheckSources(directory) {

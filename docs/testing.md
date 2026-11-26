@@ -1925,7 +1925,11 @@ refreshes those outputs and the required dependencies under publication custody 
 JavaScript; consumers release that custody before checking. Producer self imports
 still resolve to source. Finite checks retain their internal declaration partitions
 and cross-app private-alias project references, which check producers under their own
-options. Source discovery for those references still follows authored implementations.
+options. Finite checks hold the workspace's project-input lock from derivation
+through the last compiler. The lock also covers partition maintenance commands,
+so a second invocation cannot replace the first invocation's selected foreign
+file lists or declaration outputs. Separate checkouts have separate locks.
+Source discovery for those references still follows authored implementations.
 Explicit declaration aliases retain their authored targets. Consumer strictness and
 diagnostics remain intact; the compiler boundary removes foreign implementation
 checks rather than filtering their output.
