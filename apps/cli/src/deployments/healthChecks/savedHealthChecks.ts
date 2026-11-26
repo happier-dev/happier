@@ -1,10 +1,14 @@
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { TELEMETRY_COSTS_READ_ACTION_ID_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { deploymentUnavailableDiagnostic } from '../deploymentFailure';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { AccountSettings, ActionExecutorContext } from '@happier-dev/protocol';
 import type { SavedHealthCheckSourceRead } from './readSavedHealthCheckSource';
 import { HealthCheckSetupPreviewResultV1Schema, type HealthCheckSetupPreviewInputV1, type HealthCheckSetupPreviewResultV1, type HealthCheckSourceConfigV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
-import type { HealthChecksService, HealthCheckKindCatalogV1 } from '@happier-dev/plugin-sdk';
+import type { HealthChecksService, HealthCheckKindCatalogV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { z } from 'zod/mini';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
@@ -63,6 +67,9 @@ export type SavedMachineServiceHealthResult = Readonly<{
 }>;
 
 type AdmittedSavedHealthCheck = NonNullable<ActionExecutorContext['admittedSavedHealthCheck']>;
+type ReadCollectorTelemetry = NonNullable<HealthChecksService['readCollectorTelemetry']>;
+const metricsReadAction = parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1)!;
+const costsReadAction = parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1)!;
 type SavedHealthCheckServices = Readonly<{
     actions: ActionsService;
     http: HttpService;
@@ -82,6 +89,9 @@ export function createSavedHealthChecksHost(input: Readonly<{
     readSavedSource?(sourceInstanceId: string, signal: AbortSignal): Promise<SavedHealthCheckSourceRead>;
     readAccountSettings?(signal: AbortSignal): Promise<Readonly<{ accountId: string; settings: Pick<AccountSettings, 'deploymentDefaultsV1'> }>>;
     resolveSourceOwner?(): Readonly<{ caller: PluginMachineMaterializationRefV1; occurrenceId: string }> | null;
+    readCollectorTelemetry?(request: Readonly<{ accountId: string; serverId: string; machineId: string;
+        invocation: Readonly<{ action: typeof metricsReadAction; input: JsonValue }>;
+        requestId: string; signal: AbortSignal }>): Promise<import('@happier-dev/protocol').ActionExecuteResult>;
     readObserver(): Readonly<{ machineId: string; installationId: string }> | null;
     openDomainArtifact(artifactId: string, signal: AbortSignal): Promise<DeploymentArtifactDocumentV1 | null>;
     onServiceResult?(input: SavedMachineServiceHealthResult): Promise<void> | void;
@@ -298,6 +308,43 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         ...owner, sourceInstanceId: request.sourceInstanceId, signal });
                     return batch.kind === 'available' ? batch.source : unavailable(batch.reason);
                 },
+                ...(input.readCollectorTelemetry ? {
+                    async readCollectorTelemetry(request: Parameters<ReadCollectorTelemetry>[0], options?: Parameters<ReadCollectorTelemetry>[1]) {
+                        const { environmentId, measure, serviceVersion, ...window } = request;
+                        const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
+                        signal.throwIfAborted();
+                        const context = seed.approvalContext;
+                        const admitted = context?.admittedSavedHealthCheck;
+                        const actor = admitted?.accountId ?? context?.machineAdmission?.actorAccountId
+                            ?? context?.authenticatedLocalRootCustody?.accountId;
+                        const environment = admitted?.environment ?? (await readEnvironment(environmentId, signal)).environment;
+                        const machineId = environment.telemetryMachineId;
+                        const observer = admitted?.observer ?? input.readObserver();
+                        if (environment.id !== environmentId) return unavailable('health_check_subject_mismatch');
+                        if (!machineId || machineId === observer?.machineId) return { kind: 'local' as const };
+                        // The credential owner binds this admitted actor to the local Account before dispatch.
+                        if (!actor) return unavailable('admission_unavailable');
+                        const selection = { ...window, ...(serviceVersion ? { serviceVersion } : {}) };
+                        const invocation = measure.kind === 'spend'
+                            ? { action: costsReadAction, input: { ...selection, granularity: 'hour' as const,
+                                source: { kind: 'environment' as const, serverId: environment.serverId, environmentId } } }
+                            : { action: metricsReadAction, input: { ...selection, serverId: environment.serverId, environmentId, measure } };
+                        const result = await input.readCollectorTelemetry!({
+                            accountId: actor, serverId: environment.serverId, machineId, invocation,
+                            requestId: seed.requestId ?? seed.correlationId, signal,
+                        });
+                        if (!result.ok) {
+                            const details = StrictJsonValueSchema.safeParse(result.details);
+                            throw new PluginError({ code: result.errorCode, message: result.error,
+                                ...readPluginActionFailureAuthorPayload({
+                                    ...(details.success ? { details: details.data } : {}),
+                                    ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+                                    ...(result.effectAttempted === undefined ? {} : { effectAttempted: result.effectAttempted }),
+                                }) });
+                        }
+                        return { kind: 'remote' as const, result: result.result };
+                    },
+                } : {}),
                 async manageHeartbeat(request: Parameters<HealthChecksService['manageHeartbeat']>[0], options?: Parameters<HealthChecksService['manageHeartbeat']>[1]) {
                     const signal = options?.signal ? AbortSignal.any([seed.signal, options.signal]) : seed.signal;
                     signal.throwIfAborted();
@@ -336,10 +383,12 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         return check;
                     });
                     const sourceAccountId = input.sourceAccountId;
-                    const admittedActions = contributions.size && sourceAccountId ? services.bindAdmittedActions?.({
-                        sourceInstanceId: request.sourceInstanceId, source: batch.source, accountId: sourceAccountId, observer,
-                    }) : undefined;
-                    const readContributed = async (check: HealthCheckDefinitionV1) => {
+                    const bindAdmittedActions = (environment?: AdmittedSavedHealthCheck['environment']) =>
+                        contributions.size && sourceAccountId ? services.bindAdmittedActions?.({
+                            sourceInstanceId: request.sourceInstanceId, source: batch.source, accountId: sourceAccountId, observer,
+                            ...(environment ? { environment } : {}),
+                        }) : undefined;
+                    const readContributed = async (check: HealthCheckDefinitionV1, admittedActions: ActionsService | null | undefined) => {
                         if (!admittedActions) return unavailable('source_unavailable');
                         const kind = contributions.get(check.checkId)!;
                         const result = await admittedActions.execute({ pluginId: kind.pluginId, localId: kind.action }, {
@@ -402,8 +451,9 @@ export function createSavedHealthChecksHost(input: Readonly<{
                             } satisfies AdmittedHttpHealthCheckV1 };
                         }));
                         const context = { signal, http: services.http, now: input.now ?? Date.now };
+                        const admittedActions = bindAdmittedActions(environment.environment);
                         const results = await Promise.all(admitted.map(async item => item.kind === 'contributed'
-                            ? readContributed(item.check) : item.kind === 'endpoint'
+                            ? readContributed(item.check, admittedActions) : item.kind === 'endpoint'
                             ? readSavedEndpointCheck(item.value, context, readHeartbeat)
                             : { checkId: item.check.checkId, result: await (item.check.kind.localId === 'http'
                                 ? readHttpHealthCheckV1 : readCertificateHealthCheckV1)(item.value, context) }));
@@ -422,6 +472,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                         }
                         return results;
                     }
+                    const admittedActions = bindAdmittedActions();
                     const detail = await services.actions.execute('machines.services.detail', {
                         serverId: input.serverId, machineId: subject.machineId, serviceId: subject.serviceId,
                     }, { signal });
@@ -436,7 +487,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
                     // boundary. Cancellation remains live through the body.
                     const context = { signal, http: services.http, now: input.now ?? Date.now };
                     const results = await Promise.all(admitted.map(check => check.kind === 'contributed'
-                        ? readContributed(check.check) : readSavedEndpointCheck(check, context, readHeartbeat)));
+                        ? readContributed(check.check, admittedActions) : readSavedEndpointCheck(check, context, readHeartbeat)));
                     for (const observation of results) {
                         await input.onServiceResult?.({ serverId: input.serverId, sourceInstanceId: request.sourceInstanceId,
                             caller, occurrenceId: seed.occurrenceId, subject, generation: detail.service.generation,

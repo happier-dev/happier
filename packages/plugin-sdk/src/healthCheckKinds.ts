@@ -1,3 +1,4 @@
+import type { TelemetryMetricsReadInputV1 } from './database/telemetryMetrics.js';
 import type { ReadonlyAuthorDeclaration } from './definePlugin.js';
 import type { PluginJsonSchemaV2 } from './actions/actionTypeMap.generated.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
@@ -84,6 +85,9 @@ export interface HealthChecksService {
     listKinds(options?: PluginCancellationOptions): Promise<HealthCheckKindCatalogV1>;
     /** Read the current adopted source of the canonical saved-check observer. */
     readSource(input: Readonly<{ sourceInstanceId: string }>, options?: PluginCancellationOptions): Promise<HealthCheckSourceConfigV1>;
+    /** Read one selected Environment's retained telemetry when its collector is on another Machine. */
+    readCollectorTelemetry?(input: Omit<TelemetryMetricsReadInputV1, 'serverId'>,
+        options?: PluginCancellationOptions): Promise<Readonly<{ kind: 'local' } | { kind: 'remote'; result: unknown }>>;
     /** Control an exact saved heartbeat without disclosing its secret address. */
     manageHeartbeat(input: PluginWebhookHeartbeatManageInputV1, options?: PluginCancellationOptions): Promise<PluginWebhookHeartbeatManageResultV1>;
     /** Explicit setup enrolls declared capability endpoints; saved config retains only nonsecret identities. */

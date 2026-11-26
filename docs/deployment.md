@@ -67,9 +67,11 @@ Monitoring editor with the Environment, observing Machine, emitted service,
 HTTP method and route filled in. The editor starts with p95 selected. Choose
 the window and threshold before saving. The installed telemetry check kind
 validates the finished draft and the Monitoring source stores the saved check.
-The collector Machine must belong to the Account saving the check. When it
-belongs to another Account, Add check shows the ownership refusal before
-opening the editor.
+If the collector Machine belongs to the Account saving the check, it runs the
+check. If another Account owns the collector, **Check from** uses an available
+Machine on the saving Account. That Machine reads retained measurements from
+the selected collector through the Environment’s existing Home-authorized
+read. Connect a Machine on your Account if setup cannot find one.
 
 ## Browser exception setup (0.3 development)
 

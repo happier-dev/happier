@@ -5,6 +5,7 @@ import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/execut
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { readSavedBuiltinHealthCheckAction } from '../../../../../packages/plugins/machine-services/src/actionIds';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -55,13 +56,15 @@ import { createTargetActionInvocationRegistry, type TargetActionInvocationRegist
 import { createPluginInvocationServicesFactory, createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
-import { databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1, TELEMETRY_COSTS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { manifest as telemetryManifest } from '../../../../../packages/plugins/telemetry/src/index';
 import { telemetryHealthActions } from '../../../../../packages/plugins/telemetry/src/health';
 import { keyFlowConfigSchema } from '../../../../../packages/plugins/telemetry/src/healthSchemas';
 import { localCaptureBackground } from '../../../../../packages/plugins/telemetry/src/background';
+import { readCaptureCostWindow } from '../../../../../packages/plugins/telemetry/src/costs';
 import { captureMigrations } from '../../../../../packages/plugins/telemetry/src/store/capture';
 import { createCaptureSqliteFixture } from '../../../../../packages/plugins/telemetry/src/testing/sqlite';
 
@@ -294,10 +297,15 @@ describe('saved source finite native producer binding', () => {
             .rejects.toMatchObject({ code: 'health_check_kind_unavailable' });
     });
 
-    it('retains a priced Spend result under the saved Check Account on a scheduled collector tick', async () => {
+    it.each([
+        { placement: 'local', observerMachineId: 'collector', collectorAccountId: 'check-owner' },
+        { placement: 'cross-Account', observerMachineId: 'observer', collectorAccountId: 'collector-owner' },
+    ])('retains a priced Spend result on a scheduled $placement check', async ({ observerMachineId, collectorAccountId }) => {
         const accountId = 'check-owner';
-        const observerMachineId = 'collector';
-        const environment = createDeploymentEnvironmentHeaderV1({ id: 'env', serverId: 'server', controllerMachineId: 'app-machine' });
+        const collectorMachineId = 'collector';
+        const remote = accountId !== collectorAccountId;
+        const environment = createDeploymentEnvironmentHeaderV1({ id: 'env', serverId: 'server',
+            owner: { kind: 'account', accountId }, controllerMachineId: 'app-machine', telemetryMachineId: collectorMachineId });
         const kind = TELEMETRY_KEY_FLOW_HEALTH_KIND_V1;
         const localId = databaseActionLocalIdV1(TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1);
         const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
@@ -307,17 +315,30 @@ describe('saved source finite native producer binding', () => {
         };
         const f = await adopted(sourceConfig, observerMachineId);
         const resolveAdoptedDefinitionSet = vi.fn(() => f.owner);
-        const healthChecks = createSavedHealthChecksHost({
-            serverId: 'server', homeServerIdentityId: 'server', sourceAccountId: accountId,
-            resolveAdoptedDefinitionSet, readObserver: () => f.observer, openDomainArtifact: async () => null,
-            resolveSourceOwner: () => ({ caller: f.seed.resolveCurrentPluginMaterializationRef!()!, occurrenceId: f.seed.occurrenceId }),
-            readKinds: () => [{ pluginId: kind.pluginId, id: kind.localId, title: 'Key flow', action: localId,
-                configSchema: keyFlowConfigSchema.jsonSchema }],
-        });
         const sqlite = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(sqlite.db);
         const storage = { daemon: { database: async () => sqlite.db } } as unknown as BackgroundServiceContext['services']['storage'];
         const lease = await localCaptureBackground.acquireRuntime({ signal: f.seed.signal, services: { storage } });
+        // This fixture stands at the Home/Machine transport boundary. B's
+        // actual retained operands and A's scheduler and pricing remain real.
+        const transport = vi.fn(async (request: { accountId: string; serverId: string; machineId: string;
+            invocation: { action: { pluginId: string; localId: string }; input: unknown } }) => {
+            expect(request).toMatchObject({ accountId, serverId: 'server', machineId: collectorMachineId,
+                invocation: { action: { pluginId: kind.pluginId, localId: databaseActionLocalIdV1(TELEMETRY_COSTS_READ_ACTION_ID_V1) },
+                    input: { source: { kind: 'environment', serverId: 'server', environmentId: environment.id },
+                        serviceName: 'checkout', since: 0, until: 3600000, granularity: 'hour' } } });
+            const operands = await readCaptureCostWindow(lease.runtime, { worktree: `environment:${environment.id}`,
+                serviceName: 'checkout', since: 0, until: 3600000, granularity: 'hour' });
+            return { ok: true as const, result: { ok: true, source: { kind: 'environment', serverId: 'server', environmentId: environment.id }, ...operands } };
+        });
+        const healthChecks = createSavedHealthChecksHost({
+            serverId: 'server', homeServerIdentityId: 'server', sourceAccountId: accountId,
+            resolveAdoptedDefinitionSet, readObserver: () => f.observer, openDomainArtifact: async () => null,
+            readCollectorTelemetry: transport,
+            resolveSourceOwner: () => ({ caller: f.seed.resolveCurrentPluginMaterializationRef!()!, occurrenceId: f.seed.occurrenceId }),
+            readKinds: () => [{ pluginId: kind.pluginId, id: kind.localId, title: 'Key flow', action: localId,
+                configSchema: keyFlowConfigSchema.jsonSchema }],
+        });
         const producer = telemetryHealthActions[localId]!;
         const declaration = normalizePluginManifestV2(telemetryManifest).contributes.actions.find(action => action.id === localId)!;
         const occurrenceId = 'telemetry-occurrence' as TargetActionInvocationRegistration['occurrenceId'];
@@ -350,7 +371,7 @@ describe('saved source finite native producer binding', () => {
                 // Collector assignments and Account pricing are host boundaries. The collector
                 // store, Spend check, Action dispatch and scheduled result projection stay real.
                 return { ...services, actions: { ...services.actions, execute: pricing } as ActionsService,
-                    deploymentTelemetry: { ...services.deploymentTelemetry, readAssignments: async () => [{
+                    deploymentTelemetry: { ...services.deploymentTelemetry, readAssignments: async () => remote ? [] : [{
                         environmentId: environment.id, tokenHash: null,
                         capabilities: { metrics: false, appLlmCost: true, exceptions: false },
                     }] } };
@@ -412,7 +433,7 @@ describe('saved source finite native producer binding', () => {
             expect([...cursors.values()]).toEqual(expect.arrayContaining([expect.objectContaining({
                 value: expect.objectContaining({ current: expect.objectContaining({ checks: [expect.objectContaining({
                     checkId: 'spend', result: expect.objectContaining({ status: 'up',
-                        cause: expect.objectContaining({ observerMachineId }),
+                        cause: expect.objectContaining({ observerMachineId, vantage: remote ? 'outside' : 'sameMachine' }),
                         measurements: expect.objectContaining({ value: 0.0002, unit: 'USD', completeness: 'complete' }),
                         evidence: expect.objectContaining({ items: expect.arrayContaining([
                             expect.objectContaining({ text: expect.stringContaining(`Check Account ${accountId}`) }),
@@ -423,12 +444,41 @@ describe('saved source finite native producer binding', () => {
             expect(pricing.mock.calls.map(([id]) => id)).toEqual(expect.arrayContaining(['settings.get', 'usage.prices.get']));
             expect(resolveAdoptedDefinitionSet).toHaveBeenCalledTimes(1);
             expect(pricing).toHaveBeenCalledTimes(2);
+            expect(transport).toHaveBeenCalledTimes(remote ? 1 : 0);
         } finally {
             vi.useRealTimers();
             targets.dispose();
             await lease.release();
             sqlite.close();
         }
+    });
+
+    it('preserves the Home collector admission refusal for an Account outside the Environment', async () => {
+        const home = await createDeploymentSocketHome();
+        try {
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const token = await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user',
+                authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] });
+            const source = await inTx(tx => createProjectSourceInTx(tx, home.accountId, {
+                serverId: home.serverId, requestKey: randomUUID(), name: 'Private collector', audience: [],
+            }));
+            if (!source.ok) throw new Error(source.error);
+            const content = await home.createContentArtifact({}, 'deployment-environment.v1');
+            const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+                createdByAccountId: home.accountId, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: home.machineId, telemetryMachineId: home.machineId, ...content } });
+
+            const refusal = await dispatchOriginalAccountAction({
+                actionId: ACTION_INVOKE_ACTION_ID_V1,
+                input: { action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1),
+                    input: { view: 'overview', serverId: home.serverId, environmentId: environment.id, since: 1000, until: 2000 } },
+                target: { kind: 'machine', machineId: home.machineId },
+                requestId: randomUUID(), credentials: { token, encryption: null },
+                serverIdentityId: home.serverId, serverHttpBaseUrl: home.baseUrl, authority: 'account_automation',
+                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'account_automation' },
+            });
+            expect(refusal).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false });
+        } finally { await home.close(); }
     });
 
     it('executes generic Environment endpoint checks from its controller without a Domain or watched service', async () => {

@@ -1,3 +1,5 @@
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+
 import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
 import { prepareProjectLaunchEnvironment } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
@@ -3765,6 +3767,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
             })),
             resolveSourceOwner: resolveHealthCheckSourceOwner,
             readSavedSource: sourceInstanceId => automationAssembly.readHealthAlertSource(sourceInstanceId),
+            readCollectorTelemetry: async request => {
+                const credentials = await readHealthCheckCredentials();
+                if (!credentials || readAccountIdFromToken(credentials.token) !== request.accountId) {
+                    return { ok: false as const, errorCode: 'admission_unavailable', error: 'The saved check Account is unavailable.' };
+                }
+                const { dispatchOriginalAccountAction } = await import('@/api/externalActionExecutionAuthorization');
+                return dispatchOriginalAccountAction({ actionId: ACTION_INVOKE_ACTION_ID_V1, input: request.invocation,
+                    target: { kind: 'machine', machineId: request.machineId }, credentials, requestId: request.requestId,
+                    serverIdentityId: request.serverId, serverHttpBaseUrl: notificationServerHttpBaseUrl,
+                    signal: request.signal, authority: 'account_automation',
+                    invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'account_automation' } });
+            },
             readAccountSettings: async signal => {
                 const credentials = await readHealthCheckCredentials();
                 if (!credentials) throw new PluginError({ code: 'account_settings_unavailable', message: 'Account settings are unavailable' });

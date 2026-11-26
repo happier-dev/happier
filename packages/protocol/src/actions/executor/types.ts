@@ -817,6 +817,8 @@ export type ActionExecutorContext = Readonly<{
   admittedSavedHealthCheck?: Readonly<{
     sourceInstanceId: string;
     source: import('../../activity/usageNoticeArtifactV1.js').HealthCheckSourceConfigV1;
+    environment?: Pick<import('../../deployments/deploymentActionsV1.js').DeploymentEnvironmentHeaderV1,
+      'id' | 'serverId' | 'telemetryMachineId'>;
     accountId: string;
     observer: Readonly<{ machineId: string; installationId: string }>;
   }>;

@@ -14,7 +14,10 @@ import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionErro
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { useMachineListForServer, useMachineListStatusForServer, useServerScopedMachine } from '@/sync/store/hooks';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { sync } from '@/sync/sync';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -24,6 +27,9 @@ type Settlement = Parameters<
   >['onSettled']
 >[0];
 type Configured = Extract<Settlement, { kind: 'configured' }>;
+
+const NO_CHECK_MACHINE_CANDIDATES: readonly string[] = [];
+const readMachineOwnership = (machine: Machine | null) => machine ? !machine.isShared : null;
 
 /** The write owner's typed failure as this host says it: its reason sentence and whether the outcome is known. */
 function presentAddCheckWriteFailure(failure: PluginUiActionFailureV1) {
@@ -49,6 +55,7 @@ export function AddCheckSetup(
     lifetime: ServerAccountScopeLifetime;
     deploymentEnvironment: DeploymentEnvironmentRefV1;
     seed: PluginUiOpenAutomationEventRequestV1 | undefined;
+    collectorPlacement?: boolean;
     onClose: () => void;
     testID: string;
   }>,
@@ -88,7 +95,21 @@ export function AddCheckSetup(
   });
   const machineLabel = (machineName: string | null) =>
     machineName ?? t('machine.unnamedMachine');
-  const seed = props.seed;
+  const collectorId = props.collectorPlacement ? props.seed?.monitoringMachineId : undefined;
+  const serverId = props.lifetime.scope.serverId;
+  const ownedCollector = useServerScopedMachine(serverId, collectorId, readMachineOwnership);
+  const inventoryStatus = useMachineListStatusForServer(serverId);
+  const needsOwnedMachine = Boolean(collectorId) && ownedCollector !== true;
+  const inventory = useMachineListForServer(serverId, needsOwnedMachine, true, 'launch');
+  const ownedMachineIds = React.useMemo(() => inventory
+    ? inventory.filter(machine => !machine.isShared).map(machine => machine.id)
+    : NO_CHECK_MACHINE_CANDIDATES, [inventory]);
+  const presence = useMachinePresenceSummaries(serverId, ownedMachineIds, props.lifetime);
+  const fallbackMachineId = ownedMachineIds[presence.findIndex(machine => machine.reachability === 'reachable')];
+  const waitingForCollector = needsOwnedMachine && !fallbackMachineId && inventoryStatus === 'loading';
+  const seed = React.useMemo(() => props.seed && fallbackMachineId
+    ? { ...props.seed, monitoringMachineId: fallbackMachineId }
+    : props.seed, [props.seed, fallbackMachineId]);
   const writeFailure = unsettledWrite && presentAddCheckWriteFailure(unsettledWrite);
   return (
     <View testID={props.testID}>
@@ -103,6 +124,12 @@ export function AddCheckSetup(
           diagnosticDetail={writeFailure.presentation.technicalDetails
             .filter(line => line.key !== 'code').map(line => `${line.label} ${line.value}`).join('\n')}
           action={{ label: t('common.close'), onPress: props.onClose }}
+        />
+      ) : waitingForCollector ? (
+        <SurfaceStateCard
+          size="line"
+          kind="loading"
+          title={t('common.loading')}
         />
       ) : seed ? (
         <PluginEventAutomationEditor

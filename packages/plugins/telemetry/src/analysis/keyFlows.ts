@@ -113,7 +113,7 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
 
 /** Existing saved health lifecycle consumes this finite summary without telemetry-specific notices or state. */
 export function evaluateKeyFlow(measurements: KeyFlowMeasurements, threshold: KeyFlowConfig['threshold'] | undefined,
-    observedAt: number, observerMachineId: string): HealthCheckResultV1 {
+    observedAt: number, observerMachineId: string, vantage: 'sameMachine' | 'outside' = 'sameMachine'): HealthCheckResultV1 {
     const unknown = measurements.completeness === 'unknown' || measurements.value === undefined;
     const failed = !unknown && threshold !== undefined && (threshold.operator === 'above'
         ? measurements.value! > threshold.value : measurements.value! < threshold.value);
@@ -123,7 +123,7 @@ export function evaluateKeyFlow(measurements: KeyFlowMeasurements, threshold: Ke
     return { status, observedAt, measurements,
         ...((measurements.measure === 'p50' || measurements.measure === 'p95') && measurements.value !== undefined
             ? { latencyMs: measurements.value } : {}),
-        cause: { kind, observerMachineId, vantage: 'sameMachine', reason },
+        cause: { kind, observerMachineId, vantage, reason },
         evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'Key flow' }, author: { kind: 'process' },
             text: `Key flow check: ${status} (${reason}).` }] } };
 }

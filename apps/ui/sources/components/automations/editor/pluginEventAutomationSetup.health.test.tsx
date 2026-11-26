@@ -1279,7 +1279,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 
 // The alternate Machine can finish its first origin read after the native form opens.
 // R17-D3 (refusedInDraft): the open form keeps its draft until the write settles, and a refused write comes back to it.
-it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'refusedInDraft'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'refusedInDraft', 'noOwnedWatcher'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1295,6 +1295,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     const disposeLoader = await installRealActionExecutorModuleLoader();
     const telemetry = outcome === 'telemetryWatcherEstablishing';
+    const noOwnedWatcher = outcome === 'noOwnedWatcher';
     // The Plain R2 replay used one Machine for the Source controller and collector.
     const collectorMachineId = telemetry ? '3f180abc-ddbd-450b-9fa0-d1c32ae7bab9' : undefined;
     const accountId = 'native-add-check';
@@ -1305,6 +1306,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     const peerMachineId = 'eadc2422-b42b-478d-97b1-af9b530d5f09';
     let exactIntentRead: unknown;
     let savedWithoutReceipt = false;
+    let refusedByHome = 0;
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-add-check.test',
         serverIdentityId, accountId, machineId: collectorMachineId, peerMachineId: outcome === 'switched' ? peerMachineId : undefined, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
@@ -1314,6 +1316,10 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
                 return Response.json(createRootLayoutFeaturesResponse());
             if (outcome === 'replyLostAfterSave' && path.startsWith('/v3/automations/') && init?.method === 'DELETE') {
                 throw new TypeError('Connection unavailable for compensation');
+            }
+            if (noOwnedWatcher && path === '/v3/automations' && init?.method === 'POST') {
+                refusedByHome++;
+                return Response.json({ error: 'event_watcher_not_owned' }, { status: 400 });
             }
             const response = await workflows.handle(new URL(String(input)), init);
             if (outcome === 'replyLostAndCompensated' && path === '/v3/automations' && init?.method === 'POST' && response?.ok) {
@@ -1416,7 +1422,8 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         await publishMachineInventoryForTest(lifetime.scope,
-            [fresh.machineTarget.machine, ...(peer ? [peer.fresh.machineTarget.machine] : [])]);
+            [{ ...fresh.machineTarget.machine, ...(noOwnedWatcher ? { isShared: true } : {}) },
+                ...(peer ? [peer.fresh.machineTarget.machine] : [])]);
         const seed = subjectStarterEventSeed('addCheck', {
             subject: { ...subject, machineId }, controllerMachineId: machineId,
             ...(telemetry ? { newContributedCheck: {
@@ -1428,7 +1435,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
         if (!seed) throw new Error('Expected the Environment Add check seed');
         const onClose = vi.fn();
         const deploymentEnvironment = { serverId: serverIdentityId, projectSourceId: 'production-source', environmentId: subject.environmentId };
-        screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed} collectorPlacement={telemetry}
+        screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed} collectorPlacement={telemetry || noOwnedWatcher}
             deploymentEnvironment={deploymentEnvironment} onClose={onClose} />);
         const scope = { machineId, serverId: connection.serverId };
         const projectionEntry = () => readObservedDaemonMergedProjectionCacheEntry({
@@ -1601,6 +1608,20 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             expect(add.state?.disabled ?? false).toBe(false);
             expect(previews).toEqual([machineId]);
             await act(async () => { await alternate.press(add); });
+        } else if (noOwnedWatcher) {
+            const { t } = await import('@/text');
+            expect(refusedByHome).toBe(0);
+            const sheet = settleThroughSheet(0);
+            await act(async () => {
+                await expect(sheet({ kind: 'completed', input: setupInput })).rejects.toMatchObject({
+                    code: 'event_watcher_not_owned',
+                    message: t('projects.deployments.monitoring.addCheckCollectorOwnership'),
+                });
+            });
+            expect(refusedByHome).toBe(1);
+            expect(workflows.rows.size).toBe(0);
+            expect(onClose).not.toHaveBeenCalled();
+            return;
         } else if (outcome === 'refusedInDraft') {
             // A first Add check saves this Environment's source; a second with another address must edit that source.
             const first = settleThroughSheet(0);

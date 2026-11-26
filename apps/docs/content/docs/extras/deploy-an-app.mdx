@@ -272,7 +272,11 @@ retained a sample. Redeploy the app to apply the provider configuration.
 
 In the 0.3 development flow, teammates who can view an Environment can read
 its capture from the selected collector without a Machine grant. Withdrawing
-Environment access takes effect on the next read request.
+Environment access takes effect on the next read request. When you save a
+telemetry check, **Check from** uses the collector if it belongs to your Account.
+If another Account owns the collector, the check runs on an available Machine
+on your Account and reads the collector’s retained measurements. Connect one
+of your Machines if **Add check** asks for one.
 With end-to-end encryption, a read goes only to the collector that telemetry
 setup recorded in the Environment. If that collector is reinstalled, or the
 Environment's telemetry was set up before this check existed, reads stop with
