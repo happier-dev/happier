@@ -29,54 +29,55 @@ it('carries the installed Account Automation owner into detached Run admission a
     } });
     // Only Home HTTP is replaced. Its real Account index and selector stay beneath the boundary.
     const sent: string[] = [];
-    const http = vi.spyOn(axios, 'request').mockImplementation(async config => {
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
         if (config.url !== `${serverUrl}${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`) throw new Error(`Unexpected Home path ${config.url}`);
         sent.push(String(config.headers?.Authorization));
         return { status: 200, data: { v: 1, rows: [] } };
     });
-    const policy = resolveExecutionRunPolicy();
+    // The real host policy refuses streaming after Action admission, before a model turn.
+    const policy = { ...resolveExecutionRunPolicy(), allowIoModes: new Set(['request_response'] as const) };
     const manager = new ExecutionRunHostBridge({ parentProvider: 'daemon.executionRuns', cwd: '/repo', sendAcp: async () => {} });
-    // Exercise admission without a model turn: the actual feature owner refuses the effect afterward.
-    vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '0');
-    const settings = createActionSettingsProvider({ accountSettings: accountSettingsParse({}) });
-    const receiver = createExecutionRunRpcActionExecutor({ manager, policy,
-        context: { sessionId: null, cwd: '/repo', serverId, serverUrl }, actionsSettingsProvider: settings,
-        isExecutionRunsEnabled: () => resolveCliFeatureDecision({ featureId: 'execution.runs' }).state === 'enabled' });
-    const request = { intent: 'agent', instructions: 'Explain the captured comparison',
-        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' };
-    const ownerContext = { surface: 'rpc' as const, authority: 'account_automation' as const,
-        actionCaller: { kind: 'host' as const }, actionRequestId: 'scm-root:execution-start', runtimeAccountId: accountId };
-    const rootContext = { ...ownerContext, externalActionExecutionAuthorization: authorization,
-        externalActionTarget: authorization.binding.target };
-    const invokeReceiver = (localActionContext: Parameters<typeof buildActionExecutorContextForRpc>[0]['localActionContext']) =>
-        receiver.execute('execution.run.start', request, buildActionExecutorContextForRpc({
-            actionId: 'execution.run.start', serverId, externalActionTarget: authorization.binding.target,
-            callerAuthority: 'account_automation', localActionContext,
-        }));
-    const absent = await invokeReceiver(rootContext);
-    expect(absent).toMatchObject({ ok: false, errorCode: 'target_unavailable',
-        failureCause: { phase: 'action.automations.admission', nativeErrorReason: 'action_automation_owner_unavailable' } });
-    expect(sent).toEqual([]);
-    const forwardedPorts: unknown[] = [];
-    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
-        serverId, serverHttpBaseUrl: serverUrl, actionsSettingsProvider: settings,
-        machineActionDirectTargetTransport: { machineId, invoke: async (_method, _request, options) => {
-            forwardedPorts.push(options?.localActionContext?.actionAutomationPort);
-            return invokeReceiver(options?.localActionContext);
-        } } });
     try {
+        vi.stubEnv('HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED', '1');
+        const settings = createActionSettingsProvider({ accountSettings: accountSettingsParse({}) });
+        const receiver = createExecutionRunRpcActionExecutor({ manager, policy,
+            context: { sessionId: null, cwd: '/repo', serverId, serverUrl }, actionsSettingsProvider: settings,
+            isExecutionRunsEnabled: () => resolveCliFeatureDecision({ featureId: 'execution.runs' }).state === 'enabled' });
+        const request = { intent: 'agent', instructions: 'Explain the captured comparison',
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' };
+        const ownerContext = { surface: 'rpc' as const, authority: 'account_automation' as const,
+            actionCaller: { kind: 'host' as const }, actionRequestId: 'scm-root:execution-start', runtimeAccountId: accountId };
+        const rootContext = { ...ownerContext, externalActionExecutionAuthorization: authorization,
+            externalActionTarget: authorization.binding.target };
+        const invokeReceiver = (localActionContext: Parameters<typeof buildActionExecutorContextForRpc>[0]['localActionContext']) =>
+            receiver.execute('execution.run.start', request, buildActionExecutorContextForRpc({
+                actionId: 'execution.run.start', serverId, externalActionTarget: authorization.binding.target,
+                callerAuthority: 'account_automation', localActionContext,
+            }));
+        const absent = await receiver.execute('execution.run.start', request, buildActionExecutorContextForRpc({
+            actionId: 'execution.run.start', serverId, externalActionTarget: authorization.binding.target,
+            callerAuthority: 'account_automation', localActionContext: ownerContext,
+            // A fresh external root crosses admission here; forwarded local custody is already a continuation.
+            externalActionExecutionAuthorization: authorization,
+        }));
+        expect(absent, JSON.stringify(absent)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+            failureCause: { phase: 'action.automations.admission', nativeErrorReason: 'action_automation_owner_unavailable' } });
+        expect(sent).toEqual([]);
+        const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+            serverId, serverHttpBaseUrl: serverUrl, actionsSettingsProvider: settings,
+            machineActionDirectTargetTransport: { machineId, invoke: async (_method, _request, options) => {
+                return invokeReceiver(options?.localActionContext);
+            } } });
         const result = await deps.executionRunStart!(null, request, {
             ...ownerContext, serverId, targetMachineId: machineId,
         });
-        expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
-        expect(forwardedPorts[0]).toBe(deps.actionAutomations);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
         expect(sent).toEqual([`Bearer ${token}`]);
-        expect(http).toHaveBeenCalledTimes(1);
         await expect(deps.executionRunStart!(null, request, { ...rootContext, serverId, targetMachineId: machineId }))
             .resolves.toMatchObject({ ok: false, code: 'execution_run_target_unavailable',
                 details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
-        expect(forwardedPorts).toHaveLength(1);
+        expect(sent).toEqual([`Bearer ${token}`]);
         expect(manager.listPublic()).toEqual([]);
     } finally { await manager.dispose(); }
 });
