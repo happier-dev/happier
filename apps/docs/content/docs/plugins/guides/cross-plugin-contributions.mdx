@@ -141,6 +141,33 @@ an admitted contribution through the existing platform service and executes
 the original opaque operation handle; transports need no private registration
 or routing API. The first-party IMAP/SMTP transport uses this same contract.
 
+### Issue Watch options in 0.3 development source
+
+A PRs & Issues source can offer Issue Watch setup by declaring `issueWatch` in
+its `TriageSourcesContributionProtocolV1` descriptor. Use `publication: 'scan'`
+when the source scans a connected account for transitions or `publication:
+'commit'` when an Account-data source publishes transitions as it commits them.
+Omit `issueWatch` if your source offers neither.
+
+```ts
+import {
+  createTriageIssueEventSetupInputHintsV1,
+  createTriageIssueWatchOptionsV1,
+} from '@happier-dev/triage-sources/runtime';
+
+const source = { pluginId: 'example.tracker', localId: 'tracker' };
+const issueWatch = { publication: 'scan' } as const;
+const options = createTriageIssueWatchOptionsV1(source);
+const inputHints = createTriageIssueEventSetupInputHintsV1(source, issueWatch);
+```
+
+Use the same `issueWatch` value in the source descriptor and your setup Action.
+Register `options.inputTypes` and `options.resources` on your plugin, then set
+`inputHints` on the setup Action. The registered options use Triage's Account
+Actions to read active instances of the admitted source and configured
+investigations for that source. The setup Action resolves the selected instance
+before saving the Watch.
+
 ### Task kinds and creation places in 0.3 development source
 
 Declare the task kind and what people may set when creating or editing it in

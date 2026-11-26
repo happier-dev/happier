@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { BrandMark } from '@happier-dev/plugin-ui';
 import { REVIEW_TRIAGE_SOURCE_V1 } from '@happier-dev/triage-protocol/v1';
-import { TRIAGE_ISSUE_WATCH_SOURCES_V1 } from '@happier-dev/triage-sources/runtime';
 
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 
@@ -15,13 +14,10 @@ export function TriageSourceMark(props: Readonly<{
   pixelSize?: number;
 }>): React.ReactElement {
   const { source } = props;
-  // Happier holds tasks and Reviews itself (both under the Triage plugin's id), and its own exceptions (the telemetry
-  // plugin's Account-data source), so all three wear Happier's mark rather than a letter for a plugin with no brand.
-  const exceptions = TRIAGE_ISSUE_WATCH_SOURCES_V1.telemetry;
-  const happier = (source.pluginId === INTERNAL_TASK_SOURCE_V1.pluginId
+  // Tasks and Reviews live under Triage's identity. Other plugins own their own mark.
+  const happier = source.pluginId === INTERNAL_TASK_SOURCE_V1.pluginId
     && (source.localId === undefined || source.localId === INTERNAL_TASK_SOURCE_V1.localId
-      || (source.pluginId === REVIEW_TRIAGE_SOURCE_V1.pluginId && source.localId === REVIEW_TRIAGE_SOURCE_V1.localId)))
-    || (source.pluginId === exceptions.pluginId && (source.localId === undefined || source.localId === exceptions.localId));
+      || (source.pluginId === REVIEW_TRIAGE_SOURCE_V1.pluginId && source.localId === REVIEW_TRIAGE_SOURCE_V1.localId));
   return happier
     ? <BrandMark host size="small" externallyLabelled {...(props.pixelSize === undefined ? {} : { pixelSize: props.pixelSize })} />
     : <BrandMark pluginId={source.pluginId} size="small" externallyLabelled

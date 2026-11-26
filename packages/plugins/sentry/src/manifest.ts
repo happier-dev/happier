@@ -3,7 +3,7 @@ import { SENTRY_ACCOUNT_ACTIONS, READ_HOST_ACCESS } from './accountActions.js';
 import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
-import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, createTriageIssueEventSetupInputHintsV1, TRIAGE_ISSUE_WATCH_SOURCES_V1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
+import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, createTriageIssueEventSetupInputHintsV1, createTriageIssueWatchOptionsV1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
 import { runSentryIssueObserver, resetSentryIssueHistoryGap } from './source/issueObserver.js';
 
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
@@ -101,7 +101,11 @@ const TOKEN_FIELD = {
  * issue, and flattening it into either would make the aggregate lie about what
  * the row is.
  */
+const SENTRY_WATCH_SOURCE = { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_CONTRIBUTION_ID };
+const SENTRY_WATCH_OPTIONS = createTriageIssueWatchOptionsV1(SENTRY_WATCH_SOURCE);
+
 const SENTRY_SOURCE_DESCRIPTOR = {
+  issueWatch: { publication: 'scan' as const },
   v: 1 as const,
   purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE,
   // The page this source's own Settings contribution ships, so the PRs & Issues
@@ -155,7 +159,9 @@ export const SENTRY_PLUGIN = definePlugin({
   displayName: 'Sentry',
   description: 'Brings Sentry error issues into PRs & Issues with their own detail body.',
   brand: { iconResourceId: 'brand-icon', monochrome: true },
+  inputTypes: SENTRY_WATCH_OPTIONS.inputTypes,
   resources: {
+    ...SENTRY_WATCH_OPTIONS.resources,
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
@@ -336,11 +342,12 @@ export const SENTRY_PLUGIN = definePlugin({
       description: 'Prepares an existing configured source for issue alerts without changing it.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
       inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
-      inputHints: createTriageIssueEventSetupInputHintsV1(TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry, {
+      inputHints: createTriageIssueEventSetupInputHintsV1(SENTRY_WATCH_SOURCE, {
+          ...SENTRY_SOURCE_DESCRIPTOR.issueWatch,
           sourceDescription: { key: 'plugins.sentry.watch.sourceDescription', fallback: 'If no source is listed, connect one under PRs & Issues → Connect.' },
       }),
       resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, TriageIssueEventSourceConfigV1Schema.jsonSchema),
-      run: createTriageIssueEventSourceSetupV1({ pluginId: SENTRY_PLUGIN_ID, sourceLocalId: SENTRY_CONTRIBUTION_ID, displayName: 'Sentry' }),
+      run: createTriageIssueEventSourceSetupV1({ pluginId: SENTRY_PLUGIN_ID, sourceLocalId: SENTRY_CONTRIBUTION_ID, displayName: SENTRY_SOURCE_DESCRIPTOR.displayName, ...SENTRY_SOURCE_DESCRIPTOR.issueWatch }),
     },
   },
   connectedAccountDescriptors: {

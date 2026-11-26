@@ -8,13 +8,13 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { normalizePluginAccountCollectionContractV1, PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1 } from '@happier-dev/protocol';
-import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_WATCH_SOURCES_V1 } from '@happier-dev/triage-sources/runtime';
+import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import * as persistence from '@/persistence';
 import { createAuthoredAdmittedPluginRuntimeFixture, requireDaemonEntrypoint } from '@/plugins/testkit/admittedRuntime';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
-import { createCommittedContributedActionDefinitionLister, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionSchemaReader, createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -26,6 +26,7 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 import { PLUGIN_MANIFEST as triage, TRIAGE_PLUGIN } from '../../../../../packages/plugins/triage/src/manifest';
 import { PLUGIN_MANIFEST as sentry } from '../../../../../packages/plugins/sentry/src/manifest';
+import { SENTRY_CONTRIBUTION_ID, SENTRY_PLUGIN_ID } from '../../../../../packages/plugins/sentry/src/sentryContracts';
 import { activate as activateSentry } from '../../../../../packages/plugins/sentry/src/activate';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE, CORPUS_SOURCE_INSTANCES_COLLECTION_ID } from '../../../../../packages/plugins/triage/src/corpus/collections/ids';
 
@@ -33,7 +34,7 @@ it('settles cold Sentry Watch Source options with zero and one Account source', 
     const accountId = 'watch-options-owner';
     const origin = 'http://watch-options.test';
     const credentials = { token: 'e30.' + Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url') + '.signature', encryption: null };
-    const source = TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry;
+    const source = { pluginId: SENTRY_PLUGIN_ID, localId: SENTRY_CONTRIBUTION_ID };
     const sourceInstanceId = '00000001-1111-4111-8111-111111111111';
     const stored = {
         instanceTag: 't' + '0'.repeat(42),
@@ -102,14 +103,22 @@ it('settles cold Sentry Watch Source options with zero and one Account source', 
             });
             await ensureCliActionPolicySettings(credentials, origin);
             const { controller } = runtime;
+            const listDefinitions = createCommittedContributedActionDefinitionLister({
+                tryAcquireRuntimeRegistryLease: () => controller.tryAcquireRuntimeRegistry(),
+            });
             const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
-                listContributedActionDefinitions: createCommittedContributedActionDefinitionLister({
-                    tryAcquireRuntimeRegistryLease: () => controller.tryAcquireRuntimeRegistry(),
-                }),
+                listContributedActionDefinitions: listDefinitions,
+                readContributedActionSchemas: createCommittedContributedActionSchemaReader(listDefinitions),
                 ...createCommittedInputTypeDeps({ acquireRuntimeRegistryLease: () => controller.acquireRuntimeRegistry() }),
             });
+            const actionId = formatQualifiedPluginActionId({ pluginId: source.pluginId, localId: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 });
+            expect(await executor.execute('action.spec.get', { id: actionId }, { surface: 'agent' })).toMatchObject({
+                ok: true, result: { actionSpec: { id: actionId, inputSchema: {
+                    properties: { sourceInstanceId: expect.any(Object) },
+                } } },
+            });
             const resolveSource = () => executor.execute('action.options.resolve', {
-                actionId: formatQualifiedPluginActionId({ pluginId: source.pluginId, localId: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 }),
+                actionId,
                 fieldPath: 'sourceInstanceId', draftInput: {},
             }, { surface: 'ui' });
             const empty = await resolveSource();

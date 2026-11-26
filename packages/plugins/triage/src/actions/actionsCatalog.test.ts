@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
-import { createTriageIssueEventSourceSetupV1, TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
+import { createTriageIssueEventSourceSetupV1, createTriageIssueWatchOptionsV1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
 
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
-import { TRIAGE_ISSUE_INPUT_TYPES, TRIAGE_ISSUE_OPTIONS_RESOURCES } from './issueOptions.js';
 import {
     readTriageActionLaunchModeV1,
     TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
@@ -35,7 +34,7 @@ const NO_AGENT_ACTIONS = { observeForSelf: () => ({ readCurrent: async () => ({ 
 
 describe('the configured-action Actions', () => {
     it('offers an issue source only Actions startable for its declared subject', async () => {
-        const source = TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry;
+        const source = { pluginId: 'acme.errors', localId: 'incidents' };
         const sourceInstanceId = '00000001-1111-4111-8111-111111111111';
         const testkit = createTestkitAccountKv();
         const context = { surface: 'plugin', signal: new AbortController().signal,
@@ -50,8 +49,9 @@ describe('the configured-action Actions', () => {
             } } } as unknown as TriageDataActionContext;
         const handler = createTriageReadActionsActionHandler();
         const readCatalog = (input: unknown) => handler(TriageReadActionsActionInputV1Schema.parse(input), context);
-        const inputType = TRIAGE_ISSUE_INPUT_TYPES[triageIssueWatchOptionIdsV1(source).investigation]!;
-        const options = TRIAGE_ISSUE_OPTIONS_RESOURCES[inputType.options.resource]!;
+        const { inputTypes, resources } = createTriageIssueWatchOptionsV1(source);
+        const inputType = inputTypes[triageIssueWatchOptionIdsV1(source).investigation]!;
+        const options = resources[inputType.options.resource]!;
         const optionContext = (draftInput: Record<string, string>) => createTestResourceInvocationContext({
             query: { fieldPath: 'investigation.configuredActionId', draftInput },
             readAction: async (_ref, input) => ({ ok: true, result: await readCatalog(input) }),

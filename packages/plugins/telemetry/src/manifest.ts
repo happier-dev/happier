@@ -91,13 +91,16 @@ const EXCEPTION_DETAIL_FALLBACK_RENDERER_ID = 'exception-detail-fallback';
 export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  ...TELEMETRY_ACCOUNT_DEFINITION,
  description: 'Machine-local database observations and application telemetry.',
+ brand: { iconResourceId: 'brand-icon', monochrome: true },
  entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
  machineRoles: {
   local: { title: 'Local database capture', description: 'Record database observations and application telemetry for local Workspaces.', partOf: 'workspaces', backgroundServices: ['local-capture'] },
   telemetry: { title: 'Telemetry', description: 'Collect telemetry from deployed applications.', defaultActive: DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1[0].defaultActive, backgroundServices: ['telemetry-collector'] },
  },
  daemonDatabases: { capture: localCaptureBackground.databaseDefinition },
- resources: { ...TELEMETRY_ACCOUNT_DEFINITION.resources, [DATABASE_CAPTURE_RESOURCE_ID_V1]: {
+ inputTypes: telemetryExceptionManifestParts.inputTypes,
+ resources: { ...TELEMETRY_ACCOUNT_DEFINITION.resources, ...telemetryExceptionManifestParts.resources,
+  'brand-icon': { kind: 'asset', path: 'src/brand.png', contentType: 'image/png' }, [DATABASE_CAPTURE_RESOURCE_ID_V1]: {
   source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
   runtime: createCaptureResourceRuntime({
    subscribe: localCaptureBackground.subscribe,

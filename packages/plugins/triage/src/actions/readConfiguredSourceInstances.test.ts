@@ -1,6 +1,5 @@
 import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../telemetry/src/exceptions/source.js';
-import type { DefinePluginInput, PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -19,9 +18,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
-import { TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
-import { TRIAGE_ISSUE_OPTIONS_RESOURCES } from './issueOptions.js';
-import { PLUGIN_MANIFEST } from '../manifest.js';
+import { createTriageIssueWatchOptionsV1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
@@ -175,8 +172,8 @@ const INPUT = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1 });
 
 describe('the caller-scoped configured-instance read', () => {
     it.each([
-        [TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry, TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog],
-        [TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog, TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry],
+        [FORGE, TRACKER],
+        [TRACKER, FORGE],
     ])('offers only the selected source kind in the invoking Account (%j)', async (source, other) => {
         const current = createTestkitCorpusCollections();
         const foreign = createTestkitCorpusCollections();
@@ -184,13 +181,12 @@ describe('the caller-scoped configured-instance read', () => {
         current.control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: other, seed: 2 })));
         foreign.control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source, seed: 3 })));
         const handler = createTriageReadConfiguredSourceInstancesActionHandler();
-        expect(parsePluginManifest(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
-        const { source: inputTypeId } = triageIssueWatchOptionIdsV1(source);
-        const optionsId = PLUGIN_MANIFEST.contributes.inputTypes.find(type => type.id === inputTypeId)?.options?.resource;
-        if (typeof optionsId !== 'string') throw new Error('Expected a local options Resource reference');
-        const resources: NonNullable<DefinePluginInput['resources']> = TRIAGE_ISSUE_OPTIONS_RESOURCES;
-        const options = resources[optionsId];
-        if (options?.source !== 'dynamic') throw new Error('Expected the declared source options Resource');
+        const { inputTypes, resources } = createTriageIssueWatchOptionsV1(source);
+        const options = resources[inputTypes[triageIssueWatchOptionIdsV1(source).source]!.options.resource]!;
+        const watchSource = (settingsPageId?: string) => {
+            const contribution = admittedSource(source, settingsPageId);
+            return { ...contribution, descriptor: { ...contribution.descriptor, issueWatch: { publication: 'scan' } } } as const;
+        };
         const read = (collections: CorpusCollectionsV1, failed = false, settingsPageId?: string) =>
             options.runtime.read(createTestResourceInvocationContext({
                 readAction: async (_ref, input) => failed
@@ -198,7 +194,7 @@ describe('the caller-scoped configured-instance read', () => {
                     : { ok: true, result: await handler(TriageReadConfiguredSourceInstancesInputV1Schema.parse(input),
                         createContext({
                             collections,
-                            admitted: [admittedSource(source, settingsPageId), admittedSource(other, 'other/settings')],
+                            admitted: [watchSource(settingsPageId), admittedSource(other, 'other/settings')],
                         })) },
             }));
         expect(JSON.parse(String(await read(current.collections)))).toEqual({

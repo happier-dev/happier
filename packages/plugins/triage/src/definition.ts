@@ -1,6 +1,5 @@
 import { TRIAGE_ACCOUNT_ACTIONS, TRIAGE_ACCOUNT_RESOURCES, TRIAGE_ACCOUNT_DEFINITION, type TriageAccountActionSchemas } from './accountDefinition.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
-import { TRIAGE_ISSUE_INPUT_TYPES, TRIAGE_ISSUE_OPTIONS_RESOURCES } from './actions/issueOptions.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/plugin-sdk/reviews';
 
 import {
@@ -237,7 +236,6 @@ function createTriagePlugin(): TriagePlugin {
     description: 'Aggregates pull requests, issues and error groups from configured sources into one reviewable surface.',
     brand: { iconResourceId: 'brand-icon', monochrome: true },
     resources: {
-      ...TRIAGE_ISSUE_OPTIONS_RESOURCES,
       ...TRIAGE_ACCOUNT_RESOURCES,
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
 
@@ -255,7 +253,6 @@ function createTriagePlugin(): TriagePlugin {
       "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
     },
     inputTypes: {
-      ...TRIAGE_ISSUE_INPUT_TYPES,
       'pull-request-comparison': {
         title: { key: 'plugins.triage.comparison.title', fallback: 'Pull request' },
         semantic: 'scmPullRequestComparison',

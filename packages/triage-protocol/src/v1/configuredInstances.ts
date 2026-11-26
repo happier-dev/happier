@@ -51,6 +51,8 @@ export const TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 = Object.freeze({
 export const TriageReadConfiguredSourceInstancesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     source: PluginContributionIdentityV1Schema.optional(),
+    /** Restrict this read to sources declaring Issue Watch support. */
+    purpose: defineProtocolLiteral('issueWatch').optional(),
     /** Existing private tuple witness for currentness reads; never a new stored identity. */
     exact: TriageConfiguredSourceInstanceV1Schema.optional(),
 }, { policy: 'closed' });

@@ -130,25 +130,29 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
         const resolution = await resolveTriageCallerSources(context, cancellation, input.source);
         if (resolution.kind === 'invalidCaller') return INVALID_CALLER;
 
+        const callers = input.purpose === 'issueWatch'
+            ? resolution.callers.filter(caller => caller.contribution.descriptor.issueWatch !== undefined)
+            : resolution.callers;
+        if (input.purpose === 'issueWatch' && callers.length === 0) return fitTriageConfiguredSourceInstancesResult([]);
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
-        const admitted = indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution));
+        const admitted = indexTriageAdmittedSourcesV1(callers.map(caller => caller.contribution));
         const accountDataSources = readAccountDataSourceRecordsV1(admitted);
         if (input.exact !== undefined) {
             const exact = input.exact;
             // Resolve caller authority BEFORE deriving or reading another source's private row.
-            if (!resolution.callers.some(caller => sameTriageSourceIdentity(caller.source, exact.instance.source))) {
+            if (!callers.some(caller => sameTriageSourceIdentity(caller.source, exact.instance.source))) {
                 return fitTriageConfiguredSourceInstancesResult([]);
             }
             const stored = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, { ...cancellation,
                 accountDataSources });
             const row = stored?.value ?? null;
             return fitTriageConfiguredSourceInstancesResult(row !== null
-                && resolution.callers.some(caller => configuredSourceInstanceIsOwnedBy(row, caller.source))
+                && callers.some(caller => configuredSourceInstanceIsOwnedBy(row, caller.source))
                 ? [recordFrom(row)] : []);
         }
         const selected = input.source && admitted.get(renderSourceQualifiedId(input.source));
         const configureSource = selected && createTriageConfigureSourceOfferV1(selected.contributor.pluginId, selected.descriptor);
-        return await readTriageConfiguredSourceInstances(resolution.callers.map((caller) => caller.source), {
+        return await readTriageConfiguredSourceInstances(callers.map((caller) => caller.source), {
             sourceInstances,
             accountDataSources,
             ...(configureSource === undefined ? {} : { configureSource }),

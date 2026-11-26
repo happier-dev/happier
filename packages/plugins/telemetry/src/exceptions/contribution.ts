@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import {
   createTriageIssueEventSourceSetupV1,
+  createTriageIssueWatchOptionsV1,
   createTriageIssueEventSetupInputHintsV1,
   TRIAGE_ISSUE_EVENT_LOCAL_ID_V1,
   TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1,
@@ -21,6 +22,7 @@ import {
   getTelemetryException,
   scanTelemetryExceptions,
   TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1,
+  TELEMETRY_EXCEPTION_ISSUE_WATCH_V1,
   TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1,
   TELEMETRY_EXCEPTION_SOURCE_V1,
 } from './source.js';
@@ -43,6 +45,7 @@ const ids = {
 
 /** D30 native exceptions: one Account collection, one commit-published event, one public Triage source contribution. */
 export const telemetryExceptionManifestParts = {
+  ...createTriageIssueWatchOptionsV1(TELEMETRY_EXCEPTION_SOURCE_V1),
   actions: {
     ...exceptionActions,
     [ids.listInstances]: {
@@ -93,7 +96,7 @@ export const telemetryExceptionManifestParts = {
       description:
         'Prepares the configured Happier exceptions source for issue alerts without changing it.',
       inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
-      inputHints: createTriageIssueEventSetupInputHintsV1(TELEMETRY_EXCEPTION_SOURCE_V1, { publication: 'commit' }),
+      inputHints: createTriageIssueEventSetupInputHintsV1(TELEMETRY_EXCEPTION_SOURCE_V1, TELEMETRY_EXCEPTION_ISSUE_WATCH_V1),
       resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(
         1,
         TriageIssueCommitPublishedEventSourceConfigV1Schema.jsonSchema,
@@ -102,7 +105,7 @@ export const telemetryExceptionManifestParts = {
         pluginId: TELEMETRY_EXCEPTION_SOURCE_V1.pluginId,
         sourceLocalId: TELEMETRY_EXCEPTION_SOURCE_V1.localId,
         displayName: 'Happier exceptions',
-        publication: 'commit',
+        ...TELEMETRY_EXCEPTION_ISSUE_WATCH_V1,
       }),
     },
   },

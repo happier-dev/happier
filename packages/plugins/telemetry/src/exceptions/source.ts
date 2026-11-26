@@ -18,10 +18,10 @@ import {
   TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1,
   type ExceptionIssueRecord,
 } from './issueRecord.js';
-import { TRIAGE_ISSUE_WATCH_SOURCES_V1 } from '@happier-dev/triage-sources/runtime';
 import type { ExceptionDetailDataV1 } from './contracts.js';
 
-export const TELEMETRY_EXCEPTION_SOURCE_V1 = TRIAGE_ISSUE_WATCH_SOURCES_V1.telemetry;
+export const TELEMETRY_EXCEPTION_SOURCE_V1 = { pluginId: 'happier.telemetry', localId: 'exceptions' } as const;
+export const TELEMETRY_EXCEPTION_ISSUE_WATCH_V1 = { publication: 'commit' } as const;
 export const TELEMETRY_EXCEPTION_KIND_ID_V1 = 'exception';
 const LABEL = 'Happier exceptions';
 
@@ -40,6 +40,7 @@ export const TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1 =
     v: 1,
     purpose: 'exceptions',
     displayName: LABEL,
+    issueWatch: TELEMETRY_EXCEPTION_ISSUE_WATCH_V1,
     accountDataInstance: { sourceInstanceId: '6d04cf37-0f5b-4ccd-9a4b-370491c8c393', configurationRowId: 'happier-exceptions', draft: TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1 },
     // Resolve, Reopen and Ignore are the issue's own header actions, routed to the collector's single writer.
     kinds: [

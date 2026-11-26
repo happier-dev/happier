@@ -9,10 +9,19 @@
  * genuinely authorable and `qa/QA-PROTOCOL.md` QB-01 has failed.
  */
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import {
+    createTriageIssueEventSetupInputHintsV1,
+    createTriageIssueEventSourceSetupV1,
+    createTriageIssueWatchOptionsV1,
+    TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1,
+} from '@happier-dev/triage-sources/runtime';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageSourceConnectedAccountInputsV1,
+    TriageIssueEventSetupInputV1Schema,
+    TriageIssueEventSourceConfigV1Schema,
     TriageSourcesContributionProtocolV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -251,6 +260,9 @@ function actionContract(role) {
 }
 
 const sourceOperations = TriageSourcesContributionProtocolV1.operations;
+const source = { pluginId: LEDGER_PLUGIN_ID, localId: LEDGER_CONTRIBUTION_LOCAL_ID };
+const issueWatch = { publication: 'scan' };
+const watchOptions = createTriageIssueWatchOptionsV1(source);
 
 const plugin = definePlugin({
     id: LEDGER_PLUGIN_ID,
@@ -308,6 +320,19 @@ const plugin = definePlugin({
         },
     },
     actions: {
+        [TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1]: {
+            title: 'Watch ledger tickets',
+            execution: { target: 'daemon' },
+            scopes: ['global'],
+            surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
+            dangerLevel: 'safe',
+            inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
+            inputHints: createTriageIssueEventSetupInputHintsV1(source, issueWatch),
+            resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, TriageIssueEventSourceConfigV1Schema.jsonSchema),
+            run: createTriageIssueEventSourceSetupV1({
+                pluginId: source.pluginId, sourceLocalId: source.localId, displayName: LEDGER_DISPLAY_NAME, ...issueWatch,
+            }),
+        },
         [LEDGER_ACTION_IDS.listInstances]: {
             title: 'Discover Acme Ledger spaces',
             ...actionContract('listInstances'),
@@ -336,7 +361,9 @@ const plugin = definePlugin({
             run: runListCreationPlaces,
         },
     },
+    inputTypes: watchOptions.inputTypes,
     resources: {
+        ...watchOptions.resources,
         [LEDGER_DETAIL_DOCUMENT_RESOURCE_ID]: {
             source: 'dynamic',
             kind: 'config',
@@ -391,6 +418,7 @@ const plugin = definePlugin({
                         sortFields: Object.keys(LEDGER_SORT_COLUMNS),
                         displayName: LEDGER_DISPLAY_NAME,
                         settingsPageId: LEDGER_SETTINGS_PAGE_ID,
+                        issueWatch,
                         kinds: [
                             {
                                 id: 'change',

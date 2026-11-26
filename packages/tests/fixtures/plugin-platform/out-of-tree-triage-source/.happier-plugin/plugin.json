@@ -37,6 +37,433 @@
   "contributes": {
     "actions": [
       {
+        "title": "Watch ledger tickets",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "sourceInstanceId",
+              "title": "Source",
+              "description": "The configured PRs & Issues source to watch.",
+              "widget": "select",
+              "required": true,
+              "inputType": {
+                "pluginId": "acme.ledger",
+                "localId": "issue-source/acme-ledger"
+              }
+            },
+            {
+              "path": "checkPeriodSeconds",
+              "title": "Check every (seconds)",
+              "description": "Default: 300 seconds (5 minutes). Provider rate limits may delay a check.",
+              "widget": "number",
+              "defaultValue": 300
+            },
+            {
+              "path": "investigation.mode",
+              "title": "When an issue opens",
+              "widget": "select",
+              "defaultValue": "inbox",
+              "options": [
+                {
+                  "value": "inbox",
+                  "label": "Show in Inbox"
+                },
+                {
+                  "value": "auto_start",
+                  "label": "Start an investigation"
+                }
+              ]
+            },
+            {
+              "path": "investigation.configuredActionId",
+              "title": "Configured investigation",
+              "widget": "select",
+              "inputType": {
+                "pluginId": "acme.ledger",
+                "localId": "issue-investigation/acme-ledger"
+              },
+              "description": "Choose an existing investigate Action configured in PRs & Issues.",
+              "visibleWhen": {
+                "op": "eq",
+                "path": "investigation.mode",
+                "value": "auto_start"
+              },
+              "requiredWhen": {
+                "op": "eq",
+                "path": "investigation.mode",
+                "value": "auto_start"
+              }
+            }
+          ]
+        },
+        "execution": {
+          "target": "daemon"
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "sourceInstanceId": {
+              "type": "string",
+              "minLength": 36,
+              "maxLength": 36,
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "checkPeriodSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "investigation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "const": "inbox"
+                    }
+                  },
+                  "required": [
+                    "mode"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "const": "auto_start"
+                    },
+                    "configuredActionId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "configuredActionId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "sourceInstanceId"
+          ],
+          "additionalProperties": false
+        },
+        "resultSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "v": {
+              "type": "integer",
+              "const": 1
+            },
+            "sourceInstanceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "sourceContractVersion": {
+              "type": "integer",
+              "const": 1
+            },
+            "sourceConfig": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "v": {
+                  "const": 1
+                },
+                "instance": {
+                  "type": "object",
+                  "properties": {
+                    "v": {
+                      "const": 1
+                    },
+                    "instance": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "sourceInstanceId": {
+                          "type": "string",
+                          "minLength": 36,
+                          "maxLength": 36,
+                          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "sourceInstanceId"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "localInstanceKey": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "configuration": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "const": 1
+                        },
+                        "token": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 7336
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "token"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "locator": {
+                      "type": "object",
+                      "properties": {
+                        "v": {
+                          "const": 1
+                        },
+                        "displayLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 7336
+                        },
+                        "displayPath": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 7336
+                        },
+                        "webUrl": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 7336
+                        }
+                      },
+                      "required": [
+                        "v",
+                        "displayLabel"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "binding": {
+                      "type": "object",
+                      "properties": {
+                        "purpose": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        "account": {
+                          "type": "object",
+                          "properties": {
+                            "service": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "pluginId": {
+                                      "type": "string",
+                                      "minLength": 3,
+                                      "maxLength": 256,
+                                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                    },
+                                    "localId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 256,
+                                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "pluginId": {
+                                      "const": "happier"
+                                    },
+                                    "localId": {
+                                      "const": "mcp-sign-in"
+                                    }
+                                  },
+                                  "required": [
+                                    "pluginId",
+                                    "localId"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "service",
+                            "accountId"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "purpose",
+                        "account"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "instance",
+                    "localInstanceKey",
+                    "configuration",
+                    "binding"
+                  ],
+                  "additionalProperties": false
+                },
+                "checkPeriodMs": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "investigation": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "const": "inbox"
+                        }
+                      },
+                      "required": [
+                        "mode"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "const": "auto_start"
+                        },
+                        "configuredActionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                        }
+                      },
+                      "required": [
+                        "mode",
+                        "configuredActionId"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "v",
+                "instance",
+                "checkPeriodMs",
+                "investigation"
+              ],
+              "additionalProperties": false
+            },
+            "displayLabel": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "observationOnly": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "observationOnly"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "webhookDelivery": {
+              "type": "string",
+              "enum": [
+                "automatic",
+                "required"
+              ]
+            }
+          },
+          "required": [
+            "v",
+            "sourceInstanceId",
+            "sourceContractVersion",
+            "sourceConfig",
+            "displayLabel"
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin",
+          "ui",
+          "agent",
+          "mcp",
+          "cli"
+        ],
+        "placementBindings": [
+          "commandPalette"
+        ],
+        "dangerLevel": "safe",
+        "id": "automation/setup-issue-transition-v1"
+      },
+      {
         "title": "Discover Acme Ledger spaces",
         "hostAccess": [
           "acme-ledger-api"
@@ -8539,10 +8966,56 @@
       {
         "source": "dynamic",
         "kind": "config",
+        "scope": "global",
+        "contentType": "application/json",
+        "id": "options/issue-source/acme-ledger"
+      },
+      {
+        "source": "dynamic",
+        "kind": "config",
+        "scope": "global",
+        "contentType": "application/json",
+        "id": "options/issue-investigation/acme-ledger"
+      },
+      {
+        "source": "dynamic",
+        "kind": "config",
         "contentType": "application/vnd.happier.declarative-document+json;version=1",
         "scope": "surface",
         "maxBytes": 8192,
         "id": "ledger-detail-document"
+      }
+    ],
+    "inputTypes": [
+      {
+        "title": "Source",
+        "semantic": "triageConfiguredSource",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "string",
+          "minLength": 36,
+          "maxLength": 36,
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "options": {
+          "resource": "options/issue-source/acme-ledger"
+        },
+        "id": "issue-source/acme-ledger"
+      },
+      {
+        "title": "Configured investigation",
+        "semantic": "triageConfiguredInvestigation",
+        "valueSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "options": {
+          "resource": "options/issue-investigation/acme-ledger"
+        },
+        "id": "issue-investigation/acme-ledger"
       }
     ],
     "targetedPluginContributions": [
@@ -8574,7 +9047,10 @@
             "updated",
             "created"
           ],
-          "settingsPageId": "ledger-sources"
+          "settingsPageId": "ledger-sources",
+          "issueWatch": {
+            "publication": "scan"
+          }
         },
         "operations": {
           "listInstances": "ledger/discover-spaces",

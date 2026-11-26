@@ -147,6 +147,10 @@ export const TriageSourceDescriptorV1Schema = defineProtocolObject({
      * when it is present.
      */
     settingsPageId: TriageIdentifierV1ProtocolSchema.optional(),
+    /** The source publishes Issue Watch transitions by scanning or on commit. */
+    issueWatch: defineProtocolObject({
+        publication: defineProtocolUnion([defineProtocolLiteral('scan'), defineProtocolLiteral('commit')]),
+    }, { policy: 'closed' }).optional(),
     /** One immutable, setup-free instance in the invoking Account. Contributor
      * identity comes from admission, never from descriptor bytes. */
     accountDataInstance: defineProtocolObject({

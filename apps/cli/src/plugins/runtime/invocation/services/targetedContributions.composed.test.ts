@@ -20,6 +20,7 @@ import { PLUGIN_MANIFEST as TELEGRAM_PLUGIN_MANIFEST } from '@happier-dev/plugin
 import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '@happier-dev/plugins-scm-github';
 import { PLUGIN_MANIFEST as TRIAGE_PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import ledgerManifest from '../../../../../../../packages/tests/fixtures/plugin-platform/out-of-tree-triage-source/.happier-plugin/plugin.json';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createTriageListEntriesActionHandler } from '../../../../../../../packages/plugins/triage/src/actions/listEntries';
@@ -433,6 +434,38 @@ function emptyTriageDataContext(
 }
 
 describe('targeted contribution observation service', () => {
+    it('admits the declared Issue Watch options of an external Triage source', () => {
+        const target = readBundledChannelsProviderPlugin({
+            manifest: TRIAGE_PLUGIN_MANIFEST, packageName: '@happier-dev/plugins-triage', occurrenceId: 'triage-a',
+        });
+        const ledger = ingestCanonicalPluginManifest(ledgerManifest, {
+            sourceProvenance: 'localSource', manifestAuthority: 'external', enforceEngineCompatibility: false,
+        });
+        if (!ledger.ok) throw new Error(JSON.stringify(ledger.diagnostics));
+        const ledgerPath = '/plugins/acme-ledger';
+        const contributes = createResolvedContributionRegistry({
+            ...projectLoadedPluginContributes({
+                loadResult: { loadedPlugins: [target, {
+                    pluginId: ledger.manifest.id, manifest: ledger.manifest,
+                    pluginRootPath: ledgerPath, manifestPath: `${ledgerPath}/.happier-plugin/plugin.json`,
+                    daemonEntryPath: null, devDaemonEntryPath: null,
+                    sourceSpec: { kind: 'path', locator: ledgerPath, trustPolicy: 'local_trusted', installPolicy: 'link' },
+                }], diagnosticsByPluginId: {} },
+                provenance: plugin => plugin.sourceSpec.kind === 'bundled' ? 'first_party' : 'external',
+            }),
+            occurrenceIdsByPluginId: { [target.pluginId]: occurrenceId('triage-a'), [ledger.manifest.id]: occurrenceId('ledger-a') },
+        });
+        const point = TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1;
+        const snapshot = contributes.readAdmittedTargetedContributions?.({
+            targetPluginId: point.targetPluginId, pointId: point.id, protocol: point.protocol,
+        });
+        if (!snapshot) throw new Error('Expected the admitted Triage point');
+        const admitted = projectAdmittedTargetedContributionSnapshot(point, snapshot, sourceCustody);
+        const source = admitted.contributions.find(entry => entry.contributor.pluginId === ledger.manifest.id);
+        expect(source?.descriptor).toMatchObject({ issueWatch: { publication: 'scan' } });
+        expect(source?.operations.listCreationPlaces).toBeDefined();
+    });
+
     it('cancels the declared Triage list before an abort-ignoring HTTP read settles', async () => {
         const release = Promise.withResolvers<void>();
         let requestOpened = false;

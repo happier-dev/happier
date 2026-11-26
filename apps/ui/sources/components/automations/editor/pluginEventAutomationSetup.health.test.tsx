@@ -952,7 +952,7 @@ it.each([
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected the restored monitor Account');
-    const { TRIAGE_ISSUE_EVENT_LOCAL_ID_V1, TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_WATCH_SOURCES_V1 } =
+    const { TRIAGE_ISSUE_EVENT_LOCAL_ID_V1, TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } =
         await import('../../../../../../packages/triage-sources/src/observations/issueSource');
     const providerManifest = provider && (provider === 'sentry'
         ? (await import('../../../../../../packages/plugins/sentry/src/manifest')).PLUGIN_MANIFEST
@@ -972,11 +972,15 @@ it.each([
     const providerConfig = provider && await (async () => {
         const { createTriageSourceV1Fixture } = await import('@happier-dev/triage-protocol/testing/v1');
         const retained = createTriageSourceV1Fixture().configuredInstance;
-        const purpose = provider === 'sentry'
-            ? (await import('../../../../../../packages/plugins/sentry/src/sentryContracts')).SENTRY_CONNECTED_ACCOUNT_PURPOSE
-            : (await import('../../../../../../packages/plugins/posthog/src/posthogContracts')).POSTHOG_CONNECTED_ACCOUNT_PURPOSE;
+        const { purpose, localId } = await (provider === 'sentry'
+            ? import('../../../../../../packages/plugins/sentry/src/sentryContracts').then(contracts => ({
+                purpose: contracts.SENTRY_CONNECTED_ACCOUNT_PURPOSE, localId: contracts.SENTRY_CONTRIBUTION_ID,
+            }))
+            : import('../../../../../../packages/plugins/posthog/src/posthogContracts').then(contracts => ({
+                purpose: contracts.POSTHOG_CONNECTED_ACCOUNT_PURPOSE, localId: contracts.POSTHOG_SOURCE_CONTRIBUTION_ID,
+            })));
         return TriageIssueEventSourceConfigV1Schema.parse({ v: 1, instance: {
-            ...retained, instance: { sourceInstanceId, source: TRIAGE_ISSUE_WATCH_SOURCES_V1[provider] },
+            ...retained, instance: { sourceInstanceId, source: { pluginId, localId } },
             binding: { purpose, account: { service: { pluginId, localId: purpose }, accountId } },
         }, checkPeriodMs: 120_000, investigation: { mode: 'inbox' } });
     })();

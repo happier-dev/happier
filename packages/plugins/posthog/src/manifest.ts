@@ -19,7 +19,7 @@ import { POSTHOG_ACCOUNT_ACTIONS } from './accountActions.js';
 import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
-import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, createTriageIssueEventSetupInputHintsV1, TRIAGE_ISSUE_WATCH_SOURCES_V1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
+import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, createTriageIssueEventSetupInputHintsV1, createTriageIssueWatchOptionsV1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
 import { runPosthogIssueObserver, resetPosthogIssueHistoryGap } from './source/issueObserver.js';
 
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
@@ -89,7 +89,11 @@ const PERSONAL_API_KEY_FIELD = {
  * PostHog contributes one kind. An error issue is neither a pull request nor a code
  * issue, and flattening it into either would make the aggregate misdescribe the row.
  */
+const POSTHOG_WATCH_SOURCE = { pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_SOURCE_CONTRIBUTION_ID };
+const POSTHOG_WATCH_OPTIONS = createTriageIssueWatchOptionsV1(POSTHOG_WATCH_SOURCE);
+
 const POSTHOG_SOURCE_DESCRIPTOR = {
+    issueWatch: { publication: 'scan' as const },
     v: 1 as const,
     purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
     // The page this source's own Settings contribution ships, so the PRs & Issues
@@ -142,7 +146,9 @@ export const POSTHOG_PLUGIN = definePlugin({
     displayName: 'PostHog',
     description: 'Brings PostHog error issues into PRs & Issues with their own detail body.',
     brand: { iconResourceId: 'brand-icon', monochrome: true },
+    inputTypes: POSTHOG_WATCH_OPTIONS.inputTypes,
     resources: {
+      ...POSTHOG_WATCH_OPTIONS.resources,
       'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
       "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
       "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
@@ -300,11 +306,12 @@ export const POSTHOG_PLUGIN = definePlugin({
             description: 'Prepares an existing configured source for issue alerts without changing it.',
             surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
             inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
-            inputHints: createTriageIssueEventSetupInputHintsV1(TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog, {
+            inputHints: createTriageIssueEventSetupInputHintsV1(POSTHOG_WATCH_SOURCE, {
+                ...POSTHOG_SOURCE_DESCRIPTOR.issueWatch,
                 sourceDescription: { key: 'plugins.posthog.watch.sourceDescription', fallback: 'If no source is listed, connect one under PRs & Issues → Connect.' },
             }),
             resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, TriageIssueEventSourceConfigV1Schema.jsonSchema),
-            run: createTriageIssueEventSourceSetupV1({ pluginId: POSTHOG_PLUGIN_ID, sourceLocalId: POSTHOG_SOURCE_CONTRIBUTION_ID, displayName: 'PostHog' }),
+            run: createTriageIssueEventSourceSetupV1({ pluginId: POSTHOG_PLUGIN_ID, sourceLocalId: POSTHOG_SOURCE_CONTRIBUTION_ID, displayName: POSTHOG_SOURCE_DESCRIPTOR.displayName, ...POSTHOG_SOURCE_DESCRIPTOR.issueWatch }),
         }
     },
     connectedAccountDescriptors: {
