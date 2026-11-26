@@ -8970,7 +8970,7 @@ localTailscale: {
         source_owner_required: "この Team モデルをここで使えるのは、共有した本人だけです。別のモデルを選んでください。",
         source_replaced_or_missing: "この Team モデルの接続は置き換えられたか削除されました。共有した人にもう一度設定するよう依頼してください。",
         team_context_required: "この Team モデルは、その Team に属するセッションでのみ使えます。その Team でセッションを開始してください。",
-        team_visibility_required: "この Team モデルは、その Team が見られるセッションでのみ使えます。セッションを Team と共有してから、もう一度お試しください。",
+        team_visibility_required: "このモデルを使うには、そのチームをセッションの公開範囲に含める必要があります。公開範囲を選び直すか、別のモデルを選んでください。",
         authentication_required: "この Team のモデルを使うにはサインインが必要です。Team にサインインしてから、もう一度お試しください。",
         authentication_unavailable: "この Team のサインインポリシーを確認できませんでした。しばらくしてからもう一度お試しください。",
       },

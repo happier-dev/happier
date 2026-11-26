@@ -7174,7 +7174,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               source_owner_required: "只有共用此 Team 模型的人才能在這裡使用它。請選擇其他模型。",
               source_replaced_or_missing: "此 Team 模型的連線已被取代或移除。請共用它的人重新設定。",
               team_context_required: "此 Team 模型只能用於屬於其 Team 的工作階段。請在該 Team 中開始工作階段。",
-              team_visibility_required: "此 Team 模型只能用於其 Team 看得到的工作階段。請先與 Team 共用工作階段，然後重試。",
+              team_visibility_required: "此模型要求工作階段的存取範圍包含其所屬團隊。請選擇相應的存取範圍，或選擇其他模型。",
               authentication_required: "此 Team 要求先登入才能使用其模型。請登入 Team，然後重試。",
               authentication_unavailable: "無法檢查此 Team 的登入原則。請稍後重試。",
             },

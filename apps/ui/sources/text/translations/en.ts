@@ -10085,7 +10085,7 @@ const enSession = {
       source_owner_required: "Only the person who shared this Team model can use it here. Choose another model.",
       source_replaced_or_missing: "This Team model’s connection was replaced or removed. Ask the person who shared it to set it up again.",
       team_context_required: "This Team model works only in sessions that belong to its Team. Start the session in that Team.",
-      team_visibility_required: "This Team model works only in sessions its Team can see. Share the session with the Team, then try again.",
+      team_visibility_required: "This Team model needs an audience that includes its Team. Choose that audience or choose another model.",
       authentication_required: "This Team asks you to sign in before you use its models. Sign in to the Team, then try again.",
       authentication_unavailable: "This Team’s sign-in policy couldn’t be checked. Try again in a moment.",
     } satisfies Record<Exclude<SessionTeamCredentialBindingRejectionV1, 'connected_service_credential_reconnect_required' | 'broker_unavailable' | 'resource_corrupt' | 'update_required'>, string>,

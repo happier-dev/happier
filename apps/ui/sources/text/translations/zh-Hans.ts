@@ -8352,7 +8352,7 @@ export const zhHans: TranslationStructure = {
         source_owner_required: "只有共享此 Team 模型的人才能在这里使用它。请选择其他模型。",
         source_replaced_or_missing: "此 Team 模型的连接已被替换或移除。请让共享它的人重新设置。",
         team_context_required: "此 Team 模型只能用于属于其 Team 的会话。请在该 Team 中开始会话。",
-        team_visibility_required: "此 Team 模型只能用于其 Team 可以看到的会话。请先与 Team 共享会话，然后重试。",
+        team_visibility_required: "此模型要求会话的访问范围包含其所属团队。请选择相应的访问范围，或选择其他模型。",
         authentication_required: "此 Team 要求先登录才能使用其模型。请登录 Team，然后重试。",
         authentication_unavailable: "无法检查此 Team 的登录策略。请稍后重试。",
       },

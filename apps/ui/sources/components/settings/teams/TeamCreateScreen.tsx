@@ -730,8 +730,8 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                 />
             ) : null}
             {committedTeam ? (
-                // The Team exists; only its logo did not publish. Retry stays the primary action and
-                // the Team can be opened without it. A publication waiting on an approval is not a failure.
+                // The Team exists even when the logo request lacks a confirmed result. The person
+                // can open the Team and check the saved logo before deciding whether to upload again.
                 <AttentionBanner
                     testID="teams-create-logo-failed"
                     tone={approvalId ? 'neutral' : 'warning'}
