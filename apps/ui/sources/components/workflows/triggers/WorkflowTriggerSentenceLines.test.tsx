@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { t } from '@/text';
+import { buildTriggerDefinition, type TriggerWhenValue } from './sessionTriggerForm';
+import { formatSessionLifecycleScope } from './formatTriggerSummary';
 
 vi.mock('@/components/ui/popover', async (importOriginal) =>
   (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(
@@ -25,6 +27,56 @@ const { TriggerPluginEventRows } = await import('./TriggerPluginEventRows');
 const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
 
 afterEach(standardCleanup);
+
+describe('editing a sentence trigger filter', () => {
+  it.each([false, true])('keeps its open editor and unfinished clause through completion changes (rows: %s)', async (rows) => {
+    let current: TriggerWhenValue = {
+      kind: 'turnEnds', subject: { kind: 'project', serverId: 'portable-home', projectKey: 'project-one' },
+    };
+    function Habit() {
+      const [when, setWhen] = React.useState<TriggerWhenValue>(current);
+      current = when;
+      const incomplete = buildTriggerDefinition({ when, enabled: true, sessionId: null }) === null;
+      const scope = formatSessionLifecycleScope(when.kind === 'turnEnds' ? when.subject : undefined);
+      return (
+        <WorkflowSentenceRowsContext.Provider value={rows}>
+          <WorkflowTriggerSentenceLines testIDPrefix="p" startOptions={[]} onAdd={() => {}}
+            onStartsOpenChange={() => {}} editable={false}
+            lines={[{ key: 'habit', startId: null, startTitle: 'A session finishes a turn',
+              detail: scope.title, detailWord: scope.word, enabled: true, incomplete,
+              onSelectStart: () => {}, onRemove: () => {},
+              renderRows: () => <WorkflowTriggerBlock testID="habit" title="A session finishes a turn"
+                when={when} enabled incomplete={incomplete} startOptions={[]} onSelectStart={() => {}}
+                onChangeWhen={setWhen} onRemove={() => {}} machineId={null} serverId={null} />,
+            }]} />
+        </WorkflowSentenceRowsContext.Provider>
+      );
+    }
+    const screen = await renderScreen(<Habit />);
+    try {
+      expect(buildTriggerDefinition({ when: current, enabled: true, sessionId: null })).not.toBeNull();
+      await screen.pressByTestIdAsync('p-sentence-trigger:habit-detail');
+      await screen.pressByTestIdAsync('automation-event-filter-add-clause');
+      expect(current).toMatchObject({ filterInvalid: true });
+      expect(screen.findByTestId('habit')).not.toBeNull();
+      const valueID = 'automation-event-filter-clause-draft-0-value';
+      expect(screen.findByTestId(valueID)).not.toBeNull();
+      await screen.pressByTestIdAsync('automation-event-filter-clause-draft-0-field-picker');
+      await screen.pressByTestIdAsync('automation-event-filter-clause-draft-0-field-option-/changedFiles');
+      await act(async () => screen.findByTestId(valueID)!.props.onChangeText('true'));
+      expect(buildTriggerDefinition({ when: current, enabled: true, sessionId: null })).toMatchObject({
+        filter: { v: 1, all: [{ field: '/changedFiles', op: 'eq', value: true }] },
+      });
+      expect(screen.findByTestId('habit')).not.toBeNull();
+      expect(screen.findByTestId(valueID)?.props.value).toBe('true');
+      // Becoming incomplete again must keep the same editable operand, rather than recreating the editor.
+      await act(async () => screen.findByTestId(valueID)!.props.onChangeText(''));
+      expect(current).toMatchObject({ filterInvalid: true });
+      expect(screen.findByTestId('habit')).not.toBeNull();
+      expect(screen.findByTestId(valueID)?.props.value).toBe('');
+    } finally { await screen.unmount(); }
+  });
+});
 
 describe('the sentence When clause as labelled rows (phone builder sheet)', () => {
   it('puts a workflow with no trigger on the When row, with its add chip in that row', async () => {

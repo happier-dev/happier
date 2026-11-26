@@ -221,10 +221,9 @@ export function WorkflowSentenceUnit(
       </View>
     );
   }
-  if (props.word === undefined) return <>{props.children}</>;
   return (
     <View style={styles.unit}>
-      <WorkflowSentenceWord>{props.word}</WorkflowSentenceWord>
+      {props.word === undefined ? null : <WorkflowSentenceWord>{props.word}</WorkflowSentenceWord>}
       {props.children}
     </View>
   );
