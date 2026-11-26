@@ -362,7 +362,12 @@ export function createCliMachineActionTransport(
     // the installed receiver still owns target/currentness and execution identity.
     const admittedLocalCommand = input.method === RPC_METHODS.BASH && input.effectActionId === 'machines.command.run'
       && input.context?.machineAdmission?.machineId === input.machineId;
-    if (!requiresScmSessionIngress && direct?.machineId === input.machineId && (!externalRequest || retainedLocalRequester || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
+    // A Run's Machine assignment is independent of the target Session. Enter
+    // the ordinary Home Stop admission with the starter's credentials.
+    const requiresWorkflowStopIngress = input.method === RPC_METHODS.STOP_SESSION
+      && input.context?.actionCaller?.kind === 'workflowRun';
+    if (!requiresScmSessionIngress && !requiresWorkflowStopIngress
+      && direct?.machineId === input.machineId && (!externalRequest || retainedLocalRequester || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
       && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalCommand || admittedLocalAction)) {
       const localActionContext: RpcLocalActionContext = {
         ...(input.context?.presentUserApproval ? { presentUserApproval: input.context.presentUserApproval } : {}),

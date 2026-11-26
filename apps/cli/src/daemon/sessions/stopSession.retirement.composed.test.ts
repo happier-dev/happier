@@ -1,4 +1,24 @@
 import '../../../../ui/sources/dev/vitestSetup';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
+import { configuration } from '@/configuration';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import type { RpcRequest } from '@/api/rpc/types';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { MACHINE_SESSION_STOP_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
+import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
+import { createMachineSessionStopLifecycleActionExecutor } from '@/session/actions/lifecycle/createStopSessionLifecycleActionExecutor';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { buildWorkflowActionContext } from '../workflows/workflowActionContext';
+import { createWorkflowRunMachineTransport } from '../workflows/workflowMachineTransport';
+import { machinesRoutes } from '../../../../server/sources/app/api/routes/machines/machinesRoutes';
+import { getOrCreateServerIdentityId } from '../../../../server/sources/app/serverIdentity/serverIdentity';
+import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '../../../../server/sources/app/api/socket/machineSocketInstallationProof';
+import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '../../../../server/sources/app/clientCompatibility/accountStoredContentCompatibility';
+import { narrowCredentialAuthority } from '../../../../server/sources/app/auth/effectiveCredentialAuthority';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -6,6 +26,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Socket } from 'socket.io';
+import { io as createSocketClient } from 'socket.io-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
@@ -28,12 +49,13 @@ import { enableErrorHandlers } from '../../../../server/sources/app/api/utils/en
 import { sessionRoutes } from '../../../../server/sources/app/api/routes/session/sessionRoutes';
 import { accountRoutes } from '../../../../server/sources/app/api/routes/account/accountRoutes';
 import { createSessionPublisherPresence } from '../../../../server/sources/app/presence/sessionPublisherPresence';
+import { buildRpcMethodRoom } from '../../../../server/sources/app/api/socket/rpc/rpcMethodRoom';
 import { registerSocketRpcHandlers } from '../../../../server/sources/app/api/socket/rpc/registerSocketRpcHandlers';
 import { machineUpdateHandler } from '../../../../server/sources/app/api/socket/machineUpdateHandler';
 import { createFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '../../../../server/sources/app/api/testkit/socketHarness';
 import { createSessionActionTarget } from '../../../../ui/sources/components/sessions/actions/sessionActionContext';
 import { createSessionFixture } from '../../../../ui/sources/dev/testkit/fixtures/sessionFixtures';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -53,6 +75,167 @@ describe.skipIf(process.platform !== 'linux')('plain runner Stop retirement thro
             env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
     }, 0);
     afterAll(async () => { if (database) await database.close(); });
+
+    it('uses the starter’s Session authority for same-Machine Workflow Stop, send, and title changes', async () => {
+        const [owner, guest] = await Promise.all([
+            db.account.create({ data: { encryptionMode: 'plain' } }),
+            db.account.create({ data: { encryptionMode: 'plain' } }),
+        ]);
+        const machineId = randomUUID();
+        const installationId = randomUUID();
+        const homeId = await getOrCreateServerIdentityId();
+        const serverId = configuration.activeServerId;
+        const serverUrl = 'https://workflow-session-stop.example';
+        await db.machine.create({ data: {
+            id: machineId, accountId: owner.id, installationId, active: true,
+            metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 1,
+        } });
+        await db.machineGrant.create({ data: { machineId, principalKind: 'account', accountId: guest.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const createSession = async (accountId: string) => {
+            const metadata = { machineId, path: database.baseDir };
+            const ownerMetadata = createSessionOwnerMetadataV1({ metadata });
+            if (!ownerMetadata.ok) throw new Error('Invalid Session metadata fixture');
+            const session = await db.session.create({ data: {
+                accountId, tag: randomUUID(), active: false, encryptionMode: 'plain', metadataLayoutVersion: 1,
+                metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })),
+                ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata.ownerMetadata)),
+            } });
+            await db.accessKey.create({ data: { accountId, machineId, sessionId: session.id, data: 'fixture-access' } });
+            return session.id;
+        };
+        const ownerOrigin = await createSession(owner.id);
+        const targetSession = await createSession(owner.id);
+        const guestOrigin = await createSession(guest.id);
+        const app = Fastify().withTypeProvider<ZodTypeProvider>();
+        enableSchemaValidation(app); enableErrorHandlers(app); enableAuthentication(app);
+        sessionRoutes(app); accountRoutes(app); machinesRoutes(app);
+        const sockets = await createRequesterCurrentnessSocketHarness();
+        const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+        const stopEffects: string[] = [];
+        const rpc = new RpcHandlerManager({
+            scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId, encryptionMode: 'plain',
+            projectTransportAcknowledgement: projectMachineRpcTransportAcknowledgement,
+            authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                machineId, resolveInstallationId: () => installationId, resolveCustodianAccountId: async () => owner.id,
+                verifyMachineAdmission: async () => { throw new Error('Stop should use the authenticated Home admission'); },
+            }, source),
+            logger() {},
+        });
+        registerSessionLifecycleRpcHandlers({ rpcHandlerManager: rpc, scopes: MACHINE_SESSION_STOP_RPC_SCOPES,
+            actionExecutor: createMachineSessionStopLifecycleActionExecutor({ stopSession: async sessionId => {
+                stopEffects.push(sessionId);
+                return { status: 'stopped' };
+            } }) });
+        const ownerToken = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const machineSocket = createSocketClient(sockets.serverUrl, {
+            path: '/v1/updates', autoConnect: false, reconnection: false,
+            auth: { token: ownerToken, clientType: 'machine-scoped',
+                ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
+        });
+        machineSocket.on(SOCKET_RPC_EVENTS.REQUEST, (request: RpcRequest, acknowledge: (result: unknown) => void) => {
+            void rpc.handleRequest(request, undefined, 'authenticated_home_socket').then(acknowledge);
+        });
+        const presence = createSessionPublisherPresence();
+        sockets.server.use(async (socket, next) => {
+            const verified = await auth.verifyTokenForRoute(socket.handshake.auth.token);
+            if (!verified) return next(new Error('Unauthorized'));
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(socket.handshake.auth));
+            socket.data.userId = verified.userId;
+            socket.data.clientType = socket.handshake.auth.clientType;
+            socket.data.authTokenKind = verified.authTokenKind;
+            socket.data.authAuthority = narrowCredentialAuthority(verified.authority, socket.handshake.auth.authorityCeiling);
+            socket.data.authTokenAuthenticationEvidence = verified.authenticationEvidence;
+            if (socket.data.clientType === 'machine-scoped') {
+                if (verified.userId !== owner.id) return next(new Error('Unexpected Machine account'));
+                // Fixture for an already-verified installation at the network boundary.
+                socket.data.machineId = machineId;
+                socket.data[VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY] = installationId;
+            }
+            next();
+        });
+        sockets.server.on('connection', async socket => {
+            if (socket.data.clientType === 'machine-scoped') {
+                machineUpdateHandler(owner.id, socket, { sessionPublisherPresence: presence,
+                    operationSocketBatchLimits: { ok: false, errorCode: 'socket_capacity_insufficient' } });
+                await socket.join(buildRpcMethodRoom({ userId: owner.id, method: `${machineId}:${RPC_METHODS.STOP_SESSION}` }));
+                socket.emit('fixture:workflow-machine-ready');
+                return;
+            }
+            registerSocketRpcHandlers({ userId: socket.data.userId, socket, io: sockets.server, sessionPublisherPresence: presence });
+        });
+        const runs: ReturnType<typeof createWorkflowRunMachineTransport>[] = [];
+        const createRun = async (accountId: string, originSessionId: string) => {
+            const credentials = { token: await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' }), encryption: null };
+            const runId = randomUUID();
+            const attribution = { serverId, accountId, machineId, installationId };
+            const run = createWorkflowRunMachineTransport({
+                runId, credentials, requesterWorkAttributionV1: attribution,
+                machineAdmission: { actorAccountId: accountId, custodianAccountId: owner.id, encryptionMode: 'plain',
+                    machineId, installationId, role: accountId === owner.id ? 'manage' : 'use' },
+                boundary: { serverId, serverHttpBaseUrl: serverUrl, happyHomeDir: database.baseDir,
+                    getObservedServerIdentityId: () => homeId },
+                isCurrent: async () => true,
+                transport: { machineId, invoke: (method, request, options) => rpc.invokeLocal(method, request, options) },
+            });
+            runs.push(run);
+            const executor = createActionExecutor(createCliActionDeps({ credentials, token: credentials.token, sessionId: originSessionId,
+                mode: 'plain', ctx: null, serverId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
+                machineActionDirectTargetTransport: run.transport,
+                machineAdmissionTransport: async request => {
+                    const response = await machineSocket.emitWithAck(SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, request);
+                    return SessionPendingEnqueueByMachineResponseV1Schema.parse(response).result;
+                },
+            }));
+            const requester = await run.resolveActionRequesterContext();
+            expect(requester).not.toBeNull();
+            const context = { ...buildWorkflowActionContext({ runId, invocationRecordId: randomUUID(),
+                authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+                origin: { kind: 'direct', originSessionId }, workspace: { machineId } }, attribution), ...requester, defaultSessionId: originSessionId };
+            return { executor, context, credentials };
+        };
+        const send = { sessionId: targetSession, message: 'workflow input', requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none' } as const;
+        const title = { sessionId: targetSession, title: 'Workflow title' };
+        const stop = { sessionId: targetSession };
+        try {
+            await new Promise<void>((resolve, reject) => {
+                machineSocket.once('fixture:workflow-machine-ready', resolve);
+                machineSocket.once('connect_error', reject);
+                machineSocket.connect();
+            });
+            await runWithServerHttpBaseUrl(serverUrl, async () => {
+                const ownerRun = await createRun(owner.id, ownerOrigin);
+                const guestRun = await createRun(guest.id, guestOrigin);
+                expect(await guestRun.executor.execute('session.stop', stop, guestRun.context))
+                    .toMatchObject({ ok: true, result: { ok: false, code: 'session_not_found' } });
+                expect(await guestRun.executor.execute('session.title.set', title, guestRun.context)).toMatchObject({ ok: false });
+                const guestSend = await guestRun.executor.execute('session.message.send', send, guestRun.context);
+                expect(guestSend).not.toMatchObject({ ok: true, result: { status: 'accepted' } });
+                expect(stopEffects).toEqual([]);
+
+                const stopped = await ownerRun.executor.execute('session.stop', stop, ownerRun.context);
+                expect(stopped).toMatchObject({ ok: true, result: { sessionId: targetSession, stopped: true } });
+                expect(stopEffects).toEqual([targetSession]);
+
+                expect(await ownerRun.executor.execute('session.title.set', title, ownerRun.context)).toMatchObject({ ok: true });
+                const updated = await fetchSessionByIdCompat({ reason: 'session-query', token: ownerRun.credentials.token, sessionId: targetSession });
+                expect(updated && tryDecryptSessionOwnerMetadataView({ credentials: ownerRun.credentials,
+                    accountEncryptionMode: 'plain', rawSession: updated })).toMatchObject({ summary: { text: title.title } });
+
+                const sent = await ownerRun.executor.execute('session.message.send', send, ownerRun.context);
+                const pending = await db.sessionPendingMessage.findMany({ where: { sessionId: targetSession }, select: { localId: true } });
+                expect(pending).toHaveLength(1);
+                expect(sent).toMatchObject({ ok: true, result: { status: 'accepted', localId: pending[0]?.localId } });
+            });
+        } finally {
+            await Promise.all(runs.map(run => run.dispose()));
+            machineSocket.disconnect();
+            restoreHttp();
+            await sockets.close();
+            await app.close();
+        }
+    });
 
     it.each(['bound', 'bound-active-turn', 'bound-terminal-turn', 'missing-retirement-binding', 'replacement-runner'] as const)(
         'makes a stopped managed Session deletable only with %s', async wiring => {
