@@ -24,6 +24,59 @@ afterAll(async () => {
 });
 
 describe('installed web transcript retention', () => {
+    it('fits the Thinking and tool rows by the first frame after a wide-to-phone resize', async () => {
+        const browser = await chromium.launch({ executablePath: resolveChromiumExecutable() });
+        const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        const diagnostics = collectBrowserDiagnostics({ page });
+        try {
+            await page.goto(origin + '/?resize');
+            await page.addScriptTag({ url: origin + '/bundle.js' });
+            const list = page.getByTestId('transcript-chat-list');
+            await list.getByTestId('resize-thinking').waitFor();
+            await list.getByTestId('resize-tool').waitFor();
+            const observation = await list.evaluateHandle(el => {
+                const currentRows = () => [...el.querySelectorAll('[data-testid^="resize-"]')];
+                const originalRows = currentRows();
+                function measure() {
+                    const viewport = el.getBoundingClientRect();
+                    const rows = currentRows();
+                    return {
+                        width: viewport.width,
+                        edges: rows.map(row => {
+                            const box = row.getBoundingClientRect();
+                            return { left: box.left - viewport.left, right: viewport.right - box.right };
+                        }),
+                        sameRows: rows.every((row, index) => row === originalRows[index]),
+                    };
+                }
+                return {
+                    before: measure(),
+                    after: new Promise<ReturnType<typeof measure>>(resolve => {
+                        window.addEventListener('resize', () => {
+                            requestAnimationFrame(() => resolve(measure()));
+                        }, { once: true });
+                    }),
+                };
+            });
+            expect(await observation.evaluate(value => value.before.width)).toBe(1440);
+
+            await page.setViewportSize({ width: 390, height: 844 });
+
+            const after = await observation.evaluate(value => value.after);
+            expect(after.width).toBe(390);
+            expect(after.edges).toHaveLength(2);
+            for (const { left, right } of after.edges) {
+                expect(left).toBeGreaterThanOrEqual(0);
+                expect(right).toBeGreaterThanOrEqual(0);
+            }
+            expect(after.sameRows).toBe(true);
+        } catch (error) {
+            throw appendBrowserDiagnostics(error, diagnostics());
+        } finally {
+            await browser.close();
+        }
+    });
+
     it.each(['home', 'participants'] as const)('keeps the reading row through %s, notes and delayed image growth', async exit => {
         const browser = await chromium.launch({ executablePath: resolveChromiumExecutable() });
         const page = await browser.newPage({ viewport: { width: exit === 'home' ? 900 : 390, height: 844 } });

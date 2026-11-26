@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import { legendListRenderer } from '@/components/sessions/transcript/viewport/shell/renderer/legendListRenderer';
-import { resolveConversationTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
+import { resolveConversationTranscriptListShellFrame, resolveMainTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
 
 type Row = Readonly<{ id: string; image?: boolean }>;
 const lifetime = {};
@@ -47,7 +47,26 @@ function App() {
     </div>;
 }
 
+const resizeFrame = resolveMainTranscriptListShellFrame({ platformOS: 'web' });
+const resizeRows: readonly Row[] = [{ id: 'thinking' }, { id: 'tool' }];
+
+function renderResizeRow({ item }: Readonly<{ item: Row }>) {
+    return <div data-testid={`resize-${item.id}`} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {item.id === 'thinking'
+            ? 'Thinking — Mapping starter and target to scope the work and check which pieces belong in the first launch.'
+            : 'Read — /home/qa/resize/fixture.ts'}
+    </div>;
+}
+
+function ResizeTranscript() {
+    const observation = React.useMemo(createWebDomScrollObservation, []);
+    return <div data-testid="thread" style={{ height: 600, display: 'flex' }}>
+        <Renderer data={resizeRows} dataKey="session:resize" frame={resizeFrame}
+            keyExtractor={extractKey} renderItem={renderResizeRow} webDomObservation={observation} />
+    </div>;
+}
+
 const root = document.getElementById('root');
 if (!root) throw new Error('Transcript browser fixture root missing');
 document.body.style.margin = '0';
-createRoot(root).render(<App />);
+createRoot(root).render(location.search === '?resize' ? <ResizeTranscript /> : <App />);
