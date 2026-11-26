@@ -19,6 +19,29 @@ const invalidRequest = () => refusal('terminal_invalid_request', 'Invalid Agent 
 /** The Session's Agent is not on a live PTY terminal host in this process (another host, ended, or not started yet). */
 const unavailable = () => refusal('agent_terminal_unavailable', 'This Session has no live Agent terminal to attach to');
 
+/** The provider mode supplies on-demand presentation through the same viewer admission. */
+export function registerSessionAgentTerminalOpenHandler(rpc: RpcHandlerRegistrar, opts: Readonly<{
+  sessionId: string;
+  terminals?: () => TerminalPtySessionManager;
+  preparePresentation?: (signal?: AbortSignal) => Promise<Readonly<{ terminalId: string; fresh: boolean }> | null>;
+}>): void {
+  const terminals = opts.terminals ?? getAgentTerminalSessionManager;
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, async (raw: unknown, context) => {
+    if (!SessionAgentTerminalOpenRequestSchema.safeParse(raw).success) return invalidRequest();
+    const presentation = await opts.preparePresentation?.(context?.signal);
+    const terminal = opts.preparePresentation
+      ? presentation && terminals().get(presentation.terminalId)
+      : terminals().list().find(entry => entry.sessionId === opts.sessionId && !entry.ended);
+    if (!terminal || terminal.ended || terminal.sessionId !== opts.sessionId) return unavailable();
+    // Include the first screen of a just-started presenter. An existing terminal
+    // still opens at its live end.
+    if (presentation?.fresh) return { ok: true as const, terminalId: terminal.terminalId, byteOffset: 0 };
+    const end = terminals().readByteStream({ terminalId: terminal.terminalId, byteOffset: Number.MAX_SAFE_INTEGER, creditBytes: 0 });
+    if (!end.ok) return unavailable();
+    return { ok: true as const, terminalId: terminal.terminalId, byteOffset: end.nextByteOffset };
+  });
+}
+
 /**
  * `happier attach` viewers of this Session's Agent terminal, served from the process's one PTY
  * owner. Each call is bound to the Session the registrar serves: a terminal of another Session in
@@ -29,18 +52,9 @@ export function registerSessionAgentTerminalHandlers(rpc: RpcHandlerRegistrar, o
   terminals?: () => TerminalPtySessionManager;
 }>): void {
   const terminals = opts.terminals ?? getAgentTerminalSessionManager;
-  const live = () => terminals().list().find(entry => entry.sessionId === opts.sessionId && !entry.ended) ?? null;
-  const owned = (terminalId: string) => terminals().list().some(entry => entry.terminalId === terminalId && entry.sessionId === opts.sessionId);
+  const owned = (terminalId: string) => terminals().get(terminalId)?.sessionId === opts.sessionId;
 
-  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, async (raw: unknown) => {
-    if (!SessionAgentTerminalOpenRequestSchema.safeParse(raw).success) return invalidRequest();
-    const terminal = live();
-    if (!terminal) return unavailable();
-    // No credit: only the live end of the output, never retained history.
-    const end = terminals().readByteStream({ terminalId: terminal.terminalId, byteOffset: Number.MAX_SAFE_INTEGER, creditBytes: 0 });
-    if (!end.ok) return unavailable();
-    return { ok: true as const, terminalId: terminal.terminalId, byteOffset: end.nextByteOffset };
-  });
+  registerSessionAgentTerminalOpenHandler(rpc, opts);
 
   rpc.registerHandler(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_READ, async (raw: unknown, context) => {
     const parsed = TerminalStreamReadRequestSchema.safeParse(raw);

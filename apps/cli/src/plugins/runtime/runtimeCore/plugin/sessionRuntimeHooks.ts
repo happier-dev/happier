@@ -41,7 +41,7 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
     runtimeAuth?: AgentSessionRuntimeAuthControl;
     /** Exact current incarnation's original Exec custody, spent lazily by its presentation. */
-    readNativeLaunchAuthority?: (kind: 'attach' | 'terminal') => import('@/plugins/runtime/invocation/services/exec').HostAgentNativeLaunchAuthority | null;
+    readNativeLaunchAuthority?: (kind: 'attach' | 'terminal' | 'presenter') => import('@/plugins/runtime/invocation/services/exec').HostAgentNativeLaunchAuthority | null;
     /** Host-private repository execution through this Session's current Exec service. */
     runScmCommand?: ScmCommandRunner;
     /** One repository checkpoint phase through the same execution owner (one daemon operation for a runner-hosted Session). */

@@ -136,8 +136,16 @@ export type HeldAgentPtyRequest = Readonly<{
   rows: number;
 }>;
 
-export async function startHeldAgentPtyProcess(request: HeldAgentPtyRequest): Promise<HeldAgentPtyProcess> {
-  const launch = resolveAgentSessionHolderLaunch({ role: 'primary' });
+export function startHeldAgentPtyProcess(request: HeldAgentPtyRequest): Promise<HeldAgentPtyProcess> {
+  return startAgentPtyProcess(request, 'primary');
+}
+
+export function startAuxiliaryAgentPtyProcess(request: HeldAgentPtyRequest): Promise<HeldAgentPtyProcess> {
+  return startAgentPtyProcess(request, 'auxiliary');
+}
+
+async function startAgentPtyProcess(request: HeldAgentPtyRequest, role: 'primary' | 'auxiliary'): Promise<HeldAgentPtyProcess> {
+  const launch = resolveAgentSessionHolderLaunch({ role });
   const holder = launch.kind === 'adopt'
     ? adoptSessionHolderChild(launch)
     : spawnSessionHolderChild({
@@ -159,7 +167,7 @@ export async function startHeldAgentPtyProcess(request: HeldAgentPtyRequest): Pr
     holder.once('spawn', resolve);
     holder.once('error', reject);
   });
-  if (launch.kind === 'spawn') holder.publishAdoptState(HELD_TERMINAL_AGENT_META);
+  if (launch.kind === 'spawn' && role === 'primary') holder.publishAdoptState(HELD_TERMINAL_AGENT_META);
   const pty = holderTerminalProcess({
     // A target's pids are not this Machine's.
     pid: holder.target ? 0 : holder.pid ?? 0,

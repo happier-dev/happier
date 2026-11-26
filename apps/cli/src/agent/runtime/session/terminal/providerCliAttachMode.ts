@@ -22,6 +22,8 @@ import { buildTerminalHostHandleFromMetadata } from '@/terminal/runtime/terminal
 import { clearTerminalControlServiceabilityProjection } from '@/daemon/startup/terminalControlServiceabilityProjection';
 import { reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
 import { publishNativeAgentTerminalHostBinding } from './terminalHostBinding';
+import { closeAgentTerminalPresentation, findAgentTerminalPresentation } from '@/terminal/pty/agentTerminals';
+import { registerSessionAgentTerminalOpenHandler } from '@/rpc/handlers/sessionAgentTerminal';
 
 export function waitForNativeAgentTerminalRemoteDisposition(params: Readonly<{
     signal: AbortSignal;
@@ -74,6 +76,7 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
     runtime: TRuntime;
     attach: HostProviderCliAttachSurface;
     readNativeAttachLaunchAuthority?(): HostAgentNativeLaunchAuthority | null;
+    readNativePresenterLaunchAuthority?(): HostAgentNativeLaunchAuthority | null;
     workingDirectory?: string;
     session: ApiSessionClient;
     topology: 'exclusive' | 'shared';
@@ -322,6 +325,20 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             }
             return { ok: true, providerSessionId: request.providerSessionId };
         });
+    if (params.readNativePresenterLaunchAuthority) {
+        registerSessionAgentTerminalOpenHandler(params.session.rpcHandlerManager, {
+            sessionId: params.session.sessionId,
+            preparePresentation: async signal => {
+                if (lifecycleSignal.aborted || signal?.aborted) return null;
+                const previous = findAgentTerminalPresentation(params.session.sessionId);
+                if (await params.session.rpcHandlerManager.invokeLocal('switch', { to: 'local' }, { signal }) !== true) return null;
+                const current = findAgentTerminalPresentation(params.session.sessionId);
+                return current && !current.ended
+                    ? { terminalId: current.terminalId, fresh: current.terminalId !== previous?.terminalId }
+                    : null;
+            },
+        });
+    }
     const modeLoop: HostSessionTerminalRemoteModeLoop = Object.freeze({
         startingMode: params.startingMode,
         remoteExitCode: 0,
@@ -350,7 +367,10 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                 return true;
             });
             try {
-                const authority = requireAgentNativeLaunchAuthorityForHost(params.readNativeAttachLaunchAuthority?.());
+                const readPresenterAuthority = params.readNativePresenterLaunchAuthority;
+                const authority = readPresenterAuthority && !externalClient
+                    ? requireAgentNativeLaunchAuthorityForHost(readPresenterAuthority(), 'terminal')
+                    : requireAgentNativeLaunchAuthorityForHost(params.readNativeAttachLaunchAuthority?.());
                 signal = AbortSignal.any([signal, authority.signal]);
                 await authority.admit(signal);
                 if (clientAdmission && !(await clientAdmission).ok) {
@@ -395,6 +415,7 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                     sessionId: params.session.sessionId,
                     metadata: presentation.metadata,
                     signal,
+                    ...(readPresenterAuthority ? { streamPresentation: true } : {}),
                     ...(params.hostPresentation ? { hostPresentation: params.hostPresentation } : {}),
                     ...(params.resolveManagedServiceAccess
                         ? { resolveManagedServiceAccess: params.resolveManagedServiceAccess }
@@ -435,12 +456,13 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
             }
         },
         async runRemote() {
-            await publishAttached(false);
-            return await waitForNativeAgentTerminalRemoteDisposition({
+            const disposition = waitForNativeAgentTerminalRemoteDisposition({
                 signal: lifecycleSignal,
                 switching,
                 requestLocal: () => beginLocalRestore().promise,
             });
+            await publishAttached(false);
+            return await disposition;
         },
         onModeChange: () => undefined,
     });
@@ -456,7 +478,8 @@ export function createNativeAgentProviderAttachModeBinding<TRuntime extends Runt
                 lifecycleAbortController.abort();
                 await retireExternalClient();
                 await clientAdmission;
-                await activeAttach;
+                await activeAttach?.catch(() => undefined);
+                if (params.readNativePresenterLaunchAuthority) closeAgentTerminalPresentation(params.session.sessionId);
                 params.session.off('metadata-updated', onMetadataUpdated);
                 await params.disposePresentation?.();
             }

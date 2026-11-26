@@ -9432,6 +9432,13 @@ a terminal that actually exists.
 Herdr's exact socket is admitted before provider-specific authentication changes the
 child environment; an explicit socket never falls back to another ambient server.
 
+For a signed foreground start with plain terminal placement, the CLI opens the
+Session's existing Agent-terminal stream on the admitted Machine. When the runtime
+offers native provider presentation, the Session switches to local mode and starts
+the native client in an auxiliary held PTY through its admitted launch identity.
+The same Session retires the client on Switch to remote or Session shutdown.
+Viewer detach ends the stream without stopping the Session.
+
 Optional server-backed presenters use the adapter's single private launch handoff.
 Local attachment becomes available only after the native OS spawn receipt, within the
 existing Session startup deadline. Failed preparation leaves the admitted controller

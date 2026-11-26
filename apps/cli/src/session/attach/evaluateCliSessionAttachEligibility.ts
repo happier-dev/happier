@@ -68,6 +68,13 @@ export type CliSessionAttachEligibility =
       metadata: Record<string, unknown> | null;
     }>
   | Readonly<{
+      eligible: true;
+      agentId: CatalogAgentId | null;
+      attachStrategy: 'agent_terminal';
+      attachScope: 'local';
+      metadata: Record<string, unknown>;
+    }>
+  | Readonly<{
       eligible: false;
       agentId: CatalogAgentId | null;
       reasonCode: CliSessionAttachEligibilityReasonCode;
@@ -195,6 +202,8 @@ export type CliSessionAttachEligibilityParams = Readonly<{
   accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
   currentMachineId: string | null;
   currentMachineHost?: string | null;
+  /** Exact execution Machine from a successful signed foreground spawn. */
+  admittedForegroundMachineId?: string;
   localAttachmentInfo: TerminalAttachmentInfo | null;
   insideTmux: boolean;
   currentTmuxSocketPath?: string | null;
@@ -230,7 +239,7 @@ export async function evaluateCliSessionAttachEligibility(
     };
   }
 
-  const sessionMachineId = readMachineId(metadata);
+  const sessionMachineId = readMachineId(metadata) ?? params.admittedForegroundMachineId ?? null;
   const sessionHost = readHost(metadata);
   const hasLocalTerminalEvidence = params.localAttachmentInfo !== null;
   const hasSyncedTerminalMetadata = asRecord(metadata?.terminal) !== null;
@@ -292,6 +301,13 @@ export async function evaluateCliSessionAttachEligibility(
     })
     : null;
   if (terminalEligibility?.eligible) return terminalEligibility;
+
+  if (params.admittedForegroundMachineId && sameMachineIdentity && metadata.startedBy === 'daemon'
+    && (selectedHost === undefined || selectedHost === 'plain')) {
+    // The Session's Agent-terminal RPC supplies the live provider presentation
+    // decision for this signed handoff, including Sessions without a published Machine yet.
+    return { eligible: true, agentId, attachStrategy: 'agent_terminal', attachScope: 'local', metadata };
+  }
 
   const backendId = resolveCliSessionAttachBackendId(metadata);
   const backendExecutionSurfaces = backendId

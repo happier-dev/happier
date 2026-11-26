@@ -24,6 +24,7 @@ import type { HostAgentNativeLaunchAuthority } from '@/plugins/runtime/invocatio
 import { withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { launchBorrowedTerminalProcess, type TerminalSpawnProcess, type BorrowedTerminalProcessIdentity } from '@/terminal/host/borrowedTerminalProcess';
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
+import { runAgentTerminalPresentation } from '@/terminal/pty/agentTerminals';
 import type { TerminalHostHandle, TerminalHostPreference } from '@happier-dev/agents';
 import type { PreparedTerminalHostOwner } from '@/plugins/runtime/context/terminalHost';
 import { SessionProviderCliAttachPrepareResultV1Schema } from '@happier-dev/protocol/sessions/control/sessionProviderCliAttachPrepareV1';
@@ -55,6 +56,8 @@ export type HostProviderCliAttachRequest = Parameters<AttachSurface['attach']>[0
         onStarted(identity: BorrowedTerminalProcessIdentity): Promise<void>;
         onExited(identity: BorrowedTerminalProcessIdentity): Promise<void>;
     }>;
+    /** Stream the native client from this Session's auxiliary PTY. */
+    streamPresentation?: true;
     /** Captured host placement, supplied only by the admitted Session mode owner. */
     hostPresentation?: Readonly<{
         owner: PreparedTerminalHostOwner;
@@ -79,7 +82,7 @@ export type HostProviderCliAttachSurface = AttachSurface & Readonly<{
     prepareInvocation(request: HostProviderCliAttachPreparationRequest): Promise<HostProviderCliAttachPreparation>;
 }>;
 
-export type HostProviderCliAttachPreparationRequest = Omit<HostProviderCliAttachRequest, 'onAttached' | 'hostPresentation' | 'terminalClient'>;
+export type HostProviderCliAttachPreparationRequest = Omit<HostProviderCliAttachRequest, 'onAttached' | 'hostPresentation' | 'streamPresentation' | 'terminalClient'>;
 export type HostProviderCliAttachPreparation =
     | Extract<Awaited<ReturnType<AttachSurface['attach']>>, { ok: false }>
     | Readonly<{ ok: true; value: Readonly<{
@@ -137,7 +140,8 @@ async function readProviderCliVersion(params: Readonly<{
             authorized?.args ?? [...params.launch.args, ...params.args],
             {
                 env: authorized ? withHostProcessOwnerEnvironment(authorized.env, authorized.processOwnerTag) : params.env,
-                ...(authorized?.cwd ? { cwd: authorized.cwd } : {}),
+                cwd: authorized?.launcherCwd ?? authorized?.cwd,
+                ...(authorized?.stdinPreamble ? { inputBytes: authorized.stdinPreamble } : {}),
                 timeout: 5_000,
                 windowsHide: true,
                 ...(params.signal ? { signal: params.signal } : {}),
@@ -489,6 +493,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             const hostPresentation = 'onAttached' in request ? request.hostPresentation : undefined;
             const nativeLaunchAuthority = 'nativeLaunchAuthority' in request ? request.nativeLaunchAuthority : undefined;
             const workingDirectory = 'workingDirectory' in request ? request.workingDirectory : undefined;
+            const streamPresentation = 'onAttached' in request && request.streamPresentation;
             const startupDeadline = hostPresentation?.startupDeadline();
             if (signal?.aborted) return { ok: true, value: { exitCode: 0 } };
             let prepared: HostProviderCliAttachPreparation;
@@ -499,11 +504,31 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             }
             if (!prepared.ok) return prepared;
             const { invocation, childEnv, managedServiceAccess } = prepared.value;
+            const cwd = workingDirectory ?? hostPresentation?.workingDirectory ?? process.cwd();
+            if (streamPresentation) childEnv.TERM ??= 'xterm-256color';
             const nativeLaunch = nativeLaunchAuthority
                 ? await nativeLaunchAuthority.authorize({ command: invocation.command, args: [...invocation.args],
-                    cwd: workingDirectory ?? hostPresentation?.workingDirectory ?? process.cwd(),
-                    env: Object.fromEntries(Object.entries(childEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) }, signal)
+                    cwd, env: Object.fromEntries(Object.entries(childEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) }, signal)
                 : undefined;
+            if (streamPresentation) {
+                if (!nativeLaunch || !onAttached) throw new Error('Provider presentation requires the Session launch owner');
+                try {
+                    if (managedServiceAccess?.isCurrent?.() === false) {
+                        return { ok: false, code: 'attach_failed', message: 'Provider attach managed-service access is unavailable.' };
+                    }
+                    const exitCode = await runAgentTerminalPresentation({
+                        sessionId, workingDirectory: cwd, launch: nativeLaunch, signal, onAttached,
+                    });
+                    return { ok: true, value: { exitCode } };
+                } finally {
+                    try { await nativeLaunch.release(); }
+                    catch {
+                        try { logger.infoFile('[provider-attach] Native presentation launch cleanup failed', {
+                            error: 'provider_attach_cleanup_failed', sessionId,
+                        }); } catch { /* Preserve the presentation outcome. */ }
+                    }
+                }
+            }
             if (hostPresentation) {
                 const localAbort = new AbortController();
                 const retiredAbort = new AbortController();

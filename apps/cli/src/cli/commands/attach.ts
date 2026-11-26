@@ -79,6 +79,7 @@ type SpawnTmuxFn = typeof spawnTmux;
 
 type AttachCommandDeps = Readonly<{
   terminalRuntime?: CommandContext['terminalRuntime'];
+  admittedForegroundMachineId?: string;
   readCredentialsFn?: () => Promise<StoredCredentials | null>;
   readActiveMachineIdFn?: typeof readActiveMachineId;
   fetchSessionByIdFn?: typeof fetchSessionById;
@@ -483,12 +484,13 @@ export async function handleAttachCommand(
   });
 
   if (context) {
-    const effectiveMachineId = await readActiveMachineIdFn();
+    const effectiveMachineId = deps.admittedForegroundMachineId ?? await readActiveMachineIdFn();
     const eligibility = await getSessionHostBridge().evaluateAttachEligibility({
       credentials: context.credentials,
       rawSession: context.rawSession,
       accountEncryptionMode: context.accountEncryptionCurrentness.mode,
       currentMachineId: effectiveMachineId,
+      admittedForegroundMachineId: deps.admittedForegroundMachineId,
       currentMachineHost: hostname(),
       localAttachmentInfo: localInfo,
       insideTmux: Boolean(process.env.TMUX),
@@ -506,6 +508,12 @@ export async function handleAttachCommand(
       console.error(fail(explanation.fullReason));
       if (explanation.nextStepHint) console.error(chalk.gray(explanation.nextStepHint));
       process.exit(1);
+    }
+
+    if (eligibility.attachStrategy === 'agent_terminal') {
+      const exitCode = await runPtyAttachFn({ sessionId: resolvedSessionId });
+      if (exitCode !== 0) process.exit(exitCode);
+      return;
     }
 
     const currentOwnerMetadata = createSessionOwnerMetadataV1({ metadata: context.metadata }, 'stored');

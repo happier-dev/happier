@@ -7,6 +7,13 @@ import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { createConnection, type Socket } from 'node:net';
 import { describe, expect, it } from 'vitest';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionAgentTerminalOpenResponseSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createNativeAgentProviderAttachModeBinding } from '@/agent/runtime/session/terminal/providerCliAttachMode';
+import { runTerminalRemoteSessionModeLoop } from '@/agent/runtime/session/loop/runTerminalRemoteSessionModeLoop';
+import { registerSessionAgentTerminalHandlers } from '@/rpc/handlers/sessionAgentTerminal';
+import { createProviderCliAttachSurface } from '@/session/attach/providerCliAttach';
 import { probeProcessGroupLiveness } from '@happier-dev/cli-common/process';
 
 import { isPidAlive } from '@/testkit/process/spawn';
@@ -316,6 +323,92 @@ describe.skipIf(process.platform === 'win32')('native inherited PTY launch trans
       expect(output).toContain('echo:member-input');
       expect(output).not.toContain('happier-agent-launch-');
     } finally { manager.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+  it.skipIf(process.platform !== 'linux')('streams an isolated native presenter through its Session Agent-terminal RPC', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-presenter-'));
+    const session = createMutableApiSessionClientFixture({ sessionId: 'signed-foreground-member' });
+    const rpc = session.rpcHandlerManager;
+    registerSessionAgentTerminalHandlers(rpc, { sessionId: session.sessionId });
+    const require = createRequire(import.meta.url);
+    const shimUrl = new URL('../../daemon/agentIsolation/agentLaunchShim.ts', import.meta.url).href;
+    const frameUrl = new URL('../../daemon/agentIsolation/agentLaunchFrame.ts', import.meta.url).href;
+    // The private daemon/RunAs boundary supplies a finalized launch, with the
+    // same real framed shim in place of sudo on this non-provisioned worker.
+    const shim = `
+      const frame = await import(${JSON.stringify(frameUrl)});
+      const { executeAgentLaunchPayload } = await import(${JSON.stringify(shimUrl)});
+      if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Expected held PTY');
+      process.stdin.setRawMode(true);
+      process.stdout.write(frame.AGENT_LAUNCH_TERMINAL_READY);
+      const payload = await frame.readAgentLaunchFrame(process.stdin, 'terminal');
+      process.stdin.pause(); process.stdin.setRawMode(false);
+      const result = await executeAgentLaunchPayload(payload, { agentHome: ${JSON.stringify(root)},
+        input: process.stdin, stdout: process.stdout, stderr: process.stderr,
+        terminal: { accepted: () => process.stdout.write(frame.AGENT_LAUNCH_TERMINAL_ACCEPTED) } });
+      process.exitCode = result.code ?? 1;
+    `;
+    const lifecycle = new AbortController();
+    const nativeSource = 'console.log("presenter-ready");process.stdin.once("data", data=>{console.log("presenter-received:"+data);process.exit(0)})';
+    const attach = createProviderCliAttachSurface({
+      agentId: 'codex',
+      resolveTarget: () => ({ ok: true, value: { nativeId: 'native-thread' } }),
+      createArgs: () => [],
+      resolveLaunchSpec: () => ({ source: 'managed', resolvedPath: process.execPath, command: process.execPath, args: ['-e', nativeSource] }),
+    });
+    const noTurn = () => { throw new Error('Unexpected turn during presentation'); };
+    const binding = createNativeAgentProviderAttachModeBinding({
+      runtime: { beginTurnLifecycle: noTurn, sendTurnPrompt: async () => noTurn(), steerInFlightTurn: async () => noTurn(),
+        waitForTurnCompletion: async () => noTurn(), subscribeRuntimeEvents: () => () => {}, cancelTurn: async () => {},
+        readSessionIdentity: () => ({ sessionId: 'native-thread' }), updateSessionRuntimeConfig: async () => {},
+        resetOrDisposeRuntime: async () => {}, prepareTerminalPresentation: async () => ({ kind: 'provider_attach', metadata: {} }),
+      },
+      session, attach, workingDirectory: root, agentId: 'codex',
+      startingMode: 'remote', topology: 'shared', remoteWritable: true,
+      readNativePresenterLaunchAuthority: () => ({
+        signal: lifecycle.signal, admit: async () => {},
+        authorize: async launch => ({
+          command: process.execPath, args: ['--import', require.resolve('tsx/esm'), '--input-type=module', '-e', shim],
+          cwd: root, launcherCwd: process.cwd(), env: { TSX_TSCONFIG_PATH: resolve('tsconfig.json') },
+          stdinPreamble: encodeAgentLaunchFrame({ v: 1, executable: launch.command, args: launch.args, cwd: root,
+            runtimeHome: join(root, 'runtime/person'), environment: {}, selectedMaterials: [] }),
+          release() {},
+        }),
+      }),
+    });
+    const loop = runTerminalRemoteSessionModeLoop(binding.terminalRemoteModeLoop);
+    try {
+      await Promise.resolve();
+      const opened = SessionAgentTerminalOpenResponseSchema.parse(await rpc.invokeLocal(
+        SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_OPEN, { viewerId: 'foreground' }));
+      if (!opened.ok) throw new Error(opened.code);
+      const { terminalId, byteOffset } = opened;
+      await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_INPUT, {
+        terminalId, viewerId: 'foreground', event: { t: 'text', text: 'member-input\n' },
+      })).resolves.toEqual({ ok: true });
+      await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_DETACH, {
+        terminalId, viewerId: 'foreground',
+      })).resolves.toEqual({ ok: true });
+      const read = await (async () => {
+        let offset = byteOffset;
+        const chunks: Buffer[] = [];
+        for (;;) {
+          const result = TerminalStreamReadResponseSchema.parse(await rpc.invokeLocal(
+            SESSION_RPC_METHODS.SESSION_AGENT_TERMINAL_READ, { terminalId, byteOffset: offset, holdForOutput: true }));
+          if (!result.ok) throw new Error(result.code);
+          chunks.push(...result.frames.flatMap(frame => frame.t === 'bytes' ? [Buffer.from(frame.data, 'base64')] : []));
+          if (result.done) return Buffer.concat(chunks).toString();
+          offset = result.nextByteOffset;
+        }
+      })();
+      expect(read).toContain('presenter-ready');
+      expect(read).toContain('presenter-received:member-input');
+      expect(read).not.toContain('happier-agent-launch-');
+    } finally {
+      lifecycle.abort();
+      await binding.runtime.resetOrDisposeRuntime('session_closed');
+      await loop;
+      await rm(root, { recursive: true, force: true });
+    }
   });
   it.skipIf(process.platform !== 'linux')('closes the native shim after an interactive shell takes the foreground process group', async () => {
     const provider = createPythonPtyRelayProvider({ env: process.env, platform: process.platform });

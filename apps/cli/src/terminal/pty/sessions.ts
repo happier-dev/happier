@@ -48,7 +48,7 @@ import { resolveWorkspacePtyTarget } from '@/daemon/sessions/sessionTargetWorksp
 import type { WorkspaceSourcePlacement } from '@/workspaces/source/workspaceSource';
 import { resolveSessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
-import { spawnHolderPtyProcess, type HeldAgentPtyProcess, type HeldAgentPtyRequest } from './holderProcess';
+import { spawnHolderPtyProcess, startAuxiliaryAgentPtyProcess, type HeldAgentPtyProcess, type HeldAgentPtyRequest } from './holderProcess';
 import { createTerminalServiceProcess } from './serviceProcess';
 import type { PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -118,6 +118,8 @@ export type TerminalPtyEnsureInput = Readonly<{
   serviceProcess?: true;
   /** Canonical finalizer output for an admitted non-Project person shell. */
   authorizedNativeLaunch?: HostAuthorizedPluginExecLaunch;
+  /** The Session's existing launch owner supplies the native tuple for its auxiliary presenter. */
+  auxiliaryAgent?: true;
   /** Observed OS tuple from the same prepared native-operation owner. */
   nativeExecutionIdentity?: AgentIsolationMemberNativeIdentity;
   sessionId?: string;
@@ -656,6 +658,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     if (input.holdUntilExit && (!input.launchProcess || input.launchProcess.initialInput)) {
       return okDisabled('terminal_invalid_request');
     }
+    if (input.auxiliaryAgent && (!input.authorizedNativeLaunch || !input.sessionId)) return okDisabled('terminal_invalid_request');
     if (input.nativeExecutionIdentity && !(input.authorizedNativeLaunch ?? input.authorizedProjectLaunch)?.stdinPreamble) return okDisabled('terminal_forbidden');
     if (!input.nativeExecutionIdentity && input.custody?.kind === 'session' && !terminalIdByKey.has(storageKey)) {
       // Fresh exact Session authority can adopt its retained association.
@@ -688,7 +691,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       }
       if (existing && existing.serviceOwned !== (input.serviceProcess === true)) return okDisabled('terminal_busy');
       // A live Agent terminal has one host; a second start would leave its screen without output.
-      if (existing && !existing.ended && input.agent) return okDisabled('terminal_busy');
+      if (existing && !existing.ended && (input.agent || input.auxiliaryAgent)) return okDisabled('terminal_busy');
       if (existing?.ended && (existing.finiteHold || existing.stopPending || existing.stopUnconfirmed)) return okDisabled('terminal_busy');
       if (existing && !existing.ended) {
         const cols = typeof input.cols === 'number' && Number.isFinite(input.cols) ? Math.max(2, Math.trunc(input.cols)) : existing.cols;
@@ -729,15 +732,20 @@ export function createTerminalPtySessionManager(params: Readonly<{
       // Removing a prior terminal publishes an owner edge; recheck the same
       // admission decision at the actual native effect boundary.
       if (input.admissionDrain?.isQuiescing()) return okDisabled('terminal_busy');
-      const daemonTarget = !input.agent ? resolveWorkspacePtyTarget({
+      const agentTerminal = input.agent || input.auxiliaryAgent;
+      const daemonTarget = !agentTerminal ? resolveWorkspacePtyTarget({
         sessionId: input.sessionId, workspace, requesterAccountId: input.custody?.requesterAccountId,
       }) : null;
       if (workspace && !daemonTarget) return okDisabled('terminal_unavailable');
-      const scopedTarget = daemonTarget || input.agent ? null : resolveSessionProcessPtyTarget();
+      const scopedTarget = daemonTarget || agentTerminal ? null : resolveSessionProcessPtyTarget();
       const target = daemonTarget ?? scopedTarget;
-      if (input.agent?.startHeld) {
-        held = await input.agent.startHeld({ command: process.file, args: process.args, cwd, env: process.env ?? {}, cols, rows,
-          ...(input.agent.requiredFiles ? { requiredFiles: input.agent.requiredFiles } : {}),
+      const startAgent = input.auxiliaryAgent ? startAuxiliaryAgentPtyProcess : input.agent?.startHeld;
+      if (startAgent) {
+        input.signal?.throwIfAborted();
+        const requiredFiles = authorizedProjectLaunch?.requiredFiles ?? input.agent?.requiredFiles;
+        held = await startAgent({ command: process.file, args: process.args,
+          cwd: authorizedProjectLaunch?.launcherCwd ?? cwd, env: process.env ?? {}, cols, rows,
+          ...(requiredFiles ? { requiredFiles } : {}),
           ...(process.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
         pty = held.pty;
       } else if (target) {

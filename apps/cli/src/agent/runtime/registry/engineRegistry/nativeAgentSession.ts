@@ -6498,8 +6498,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ...(toolExecutionCapability === 'interceptable' ? {
                         setBeforeToolExecution: (handler: ((toolName: string) => Promise<void>) | null) => { beforeToolExecution = handler; },
                     } : {}),
-                    readNativeLaunchAuthority: (kind: 'attach' | 'terminal') => signal.aborted ? null
-                        : captureAgentNativeLaunchAuthorityForHost(services.exec, kind, signal, undefined, kind === 'terminal' ? nativeLaunch : undefined),
+                    readNativeLaunchAuthority: (kind: 'attach' | 'terminal' | 'presenter') => signal.aborted ? null
+                        : captureAgentNativeLaunchAuthorityForHost(services.exec, kind === 'presenter' ? 'terminal' : kind,
+                            signal, undefined, kind === 'terminal' ? nativeLaunch : undefined),
                     readActiveTurnAdmissionWitness: () => readActiveTurnAdmissionWitness(),
                     getRuntimeLifetimeSignal: () => signal,
                     readSessionStartupInstructions: () => startupInstructions,
@@ -6710,6 +6711,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             runtime,
                             attach,
                             readNativeAttachLaunchAuthority: () => runtime.readNativeLaunchAuthority?.('attach') ?? null,
+                            ...(!currentHandle && (preference === 'plain' || preference === undefined)
+                                && params.sessionInput.bootstrap.source === 'daemon'
+                                ? { readNativePresenterLaunchAuthority: () => runtime.readNativeLaunchAuthority?.('presenter') ?? null }
+                                : {}),
                             workingDirectory: runtimeParams.directory,
                             session: runtimeParams.session,
                             ...(hostPresentation ? {

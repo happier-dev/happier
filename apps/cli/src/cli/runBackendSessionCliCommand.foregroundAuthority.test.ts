@@ -20,7 +20,8 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -69,7 +70,7 @@ type ForegroundAuthorityCase = Readonly<{
   prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
-  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli' | 'fresh-directory' | 'member-terminal';
+  policyHandoff?: boolean | 'approval' | 'attach' | 'missing-cli' | 'fresh-directory' | 'member-terminal' | 'member-attach';
   nativeForkPolicy?: 'directly' | 'sandbox';
   modelSelection?: 'native' | 'provider';
   diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
@@ -81,6 +82,7 @@ describe('foreground CLI runner authority scope', () => {
     { prior: undefined, definitionId: undefined, missingCli: false, nativeForkPolicy: 'sandbox' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: true },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'attach' },
+    { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'member-attach' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'approval' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'missing-cli' },
     { prior: undefined, definitionId: undefined, missingCli: false, policyHandoff: 'fresh-directory' },
@@ -126,7 +128,8 @@ describe('foreground CLI runner authority scope', () => {
     const diagnosticLogger = diagnosticDebug ? new Logger({ logFilePath: diagnosticLogPath,
       pruneCurrentProcessLogs: false, allowDangerousRemoteLogging: false }) : null;
     const restoreLogger = diagnosticLogger ? bindProcessLogger(diagnosticLogger) : null;
-    let agentId = 'acme.foreground/fixture';
+    const attachHandoff = policyHandoff === 'attach' || policyHandoff === 'member-attach';
+    let agentId = attachHandoff ? 'codex' : 'acme.foreground/fixture';
     const agentTarget = definitionId === undefined ? undefined : {
       kind: 'agent' as const, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId,
     };
@@ -147,7 +150,7 @@ describe('foreground CLI runner authority scope', () => {
     let policySpawnInput: unknown;
     let policySpawnTarget: unknown;
     const freshDirectory = policyHandoff === 'fresh-directory';
-    const memberTerminal = policyHandoff === 'member-terminal';
+    const memberTerminal = policyHandoff === 'member-terminal' || policyHandoff === 'member-attach';
     const nativeHome = join(home, 'agent-home');
     const nativeRpc = new RpcHandlerManager({ scopePrefix: 'policy-machine', encryptionMode: 'plain', logger() {} });
     if (freshDirectory) registerSessionCreationDirectoryPreflightRpc({ rpcHandlerManager: nativeRpc });
@@ -210,9 +213,9 @@ describe('foreground CLI runner authority scope', () => {
             if (!prepared.ok) return respond(200, { ok: true, result: prepared.result });
             expect(prepared.preparedTarget.directory).toBe(nativeHome);
           }
-          if (policyHandoff === 'attach' || freshDirectory) return respond(200, { ok: true, result: {
+          if (attachHandoff || freshDirectory) return respond(200, { ok: true, result: {
             type: 'success', disposition: 'created', sessionId: 'cforegroundpolicysession01',
-            executionTarget: { serverId: 'foreground-fixture', machineId: 'policy-machine' },
+            executionTarget: { serverId: 'foreground-fixture', machineId: memberTerminal ? 'signed-pty-machine' : 'policy-machine' },
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
           } });
           if (policyHandoff === 'missing-cli') return respond(200, { ok: true, result: {
@@ -273,9 +276,25 @@ describe('foreground CLI runner authority scope', () => {
         if (path === '/v1/account/encryption/currentness') {
           return respond(200, createAccountEncryptionCurrentnessFixture());
         }
-        // Successful birth hands control to the real attach owner. Stop at its
-        // Home transport boundary, before opening an external terminal client.
-        if ((policyHandoff === 'attach' || freshDirectory) && path.startsWith('/v2/sessions/cforegroundpolicysession01')) {
+        if (attachHandoff && path === '/session-agent-terminal') {
+          const { sessionId, op, request } = JSON.parse(text);
+          expect(sessionId).toBe('cforegroundpolicysession01');
+          if (op === 'open') return respond(200, { ok: true, terminalId: 'agent-terminal', byteOffset: 0 });
+          expect(request.terminalId).toBe('agent-terminal');
+          if (op === 'read') return respond(200, { ok: true, terminalId: 'agent-terminal', frames: [],
+            nextByteOffset: 0, done: true });
+          expect(['input', 'detach']).toContain(op);
+          return respond(200, { ok: true });
+        }
+        if (attachHandoff && path.startsWith('/v2/sessions/cforegroundpolicysession01')) {
+          return respond(200, { session: createSessionRecordFixture({
+            id: 'cforegroundpolicysession01', active: true, encryptionMode: 'plain',
+            metadata: JSON.stringify({ flavor: 'codex', startedBy: 'daemon', path: nativeHome,
+              runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer',
+                providerSessionId: 'foreground-native-thread', appServerEndpoint: 'unix:///tmp/agent-private/app-server.sock' } } }),
+          }) });
+        }
+        if (freshDirectory && path.startsWith('/v2/sessions/cforegroundpolicysession01')) {
           return respond(503, { error: 'attach-fixture-unavailable' });
         }
         if (path === '/v1/sessions') {
@@ -305,7 +324,10 @@ describe('foreground CLI runner authority scope', () => {
     reloadConfiguration();
     try {
       await writeCredentialsTokenOnly({ token: 'foreground-fixture-token' });
-      fixture = agentTarget ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: home,
+      if (attachHandoff) await expect(acquireAuthoritativePluginRuntimeRegistryLease()).rejects.toMatchObject({
+        code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE',
+      });
+      else fixture = agentTarget ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: home,
         controller: pluginReloadController,
         runtimeOptions: { pluginIds: [agentTarget.identity.pluginId] } }) : await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: home,
  controller: pluginReloadController,
@@ -322,7 +344,7 @@ describe('foreground CLI runner authority scope', () => {
           'daemon.mjs': 'import { createRuntime } from "./runtime.mjs"; export function activate(api) { api.agents.register("fixture", createRuntime, { sessionRunnerFactory: { module: "./runtime.mjs", export: "createRuntime", runtimeApiVersion: 1 } }); }',
         },
       }] });
-      if (agentTarget) {
+      if (agentTarget && fixture) {
         const contribution = [...fixture.registry.contributes.agentDefinitionsById.values()]
           .find(value => value.identity?.pluginId === agentTarget.identity.pluginId
             && value.identity.localId === agentTarget.identity.localId);
@@ -437,9 +459,18 @@ describe('foreground CLI runner authority scope', () => {
         ...(memberTerminal ? { HAPPIER_TERMINAL_SESSION_MACHINE_ID: 'signed-pty-machine' } : {}),
         ...(diagnosticDebug ? { DEBUG: diagnosticDebug.session } : {}) },
         workingDirectory: directory, end: code => { endCodes.push(code); } }, invoke) : invoke();
-      if (hosted || policyHandoff === 'approval') await run;
+      if (attachHandoff || hosted || policyHandoff === 'approval') await run;
       else await expect(run).rejects.toThrow('foreground-command-exit');
       expect(boundaryErrors).toEqual([]);
+      if (attachHandoff) {
+        expect(processExit).not.toHaveBeenCalled();
+        expect(policySpawnInput).toMatchObject({ executionTarget: { machineId: memberTerminal ? 'signed-pty-machine' : 'policy-machine' },
+          directory: { kind: 'path' }, agentArgs: ['--native-flag', 'native value'] });
+        expect(requests.filter(path => path === '/actions/root/execute')).toHaveLength(1);
+        expect(requests).toContain('/session-agent-terminal');
+        expect(requests).not.toContain('/v1/sessions');
+        return;
+      }
       if (memberTerminal) {
         expect(policySpawnInput).toMatchObject({ executionTarget: { serverId: 'foreground-fixture', machineId: 'signed-pty-machine' },
           directory: { kind: 'path', path: directory }, agentArgs: ['--native-flag', 'native value'] });
@@ -461,9 +492,6 @@ describe('foreground CLI runner authority scope', () => {
           directory: { kind: 'path' }, agentArgs: ['--native-flag', 'native value'] });
         expect(requests).not.toContain('/v1/sessions');
         expect(authorizations).toHaveLength(0);
-        if (policyHandoff === 'attach') {
-          expect(requests.some(path => path.startsWith('/v2/sessions/cforegroundpolicysession01'))).toBe(true);
-        }
         if (policyHandoff === 'missing-cli') {
           expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain(AGENT_CLI_MISSING_PREVIEW);
         }

@@ -544,7 +544,10 @@ Provider CLI Options:
             throw Object.assign(new Error(message), { code: result.code });
           }
           if (result.type === 'pending') throw Object.assign(new Error('session_spawn_pending'), { code: 'outcome_unknown' });
-          await handleAttachCommand([result.sessionId], { terminalRuntime: params.context.terminalRuntime });
+          await handleAttachCommand([result.sessionId], {
+            terminalRuntime: params.context.terminalRuntime,
+            admittedForegroundMachineId: result.executionTarget.machineId,
+          });
           throw foregroundHandoffComplete;
         };
 
