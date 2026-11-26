@@ -11,7 +11,7 @@ import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 /** Only the exact guest's already opened publication can name a leftover node. */
 export function projectManagedDeleteTailnetWarning(daemonState: ReturnType<typeof StoredMachinePublishedDaemonStateV1Schema.parse> | null | undefined): ManagedDeleteTailnetWarningV1 | undefined {
     const network = daemonState?.reachability?.privateNetworks.find(candidate =>
-        candidate.provider.kind === 'builtin' && candidate.provider.id === 'tailscale');
+        'kind' in candidate.provider && candidate.provider.kind === 'builtin' && candidate.provider.id === 'tailscale');
     if (network?.dnsName && network.state !== 'needsAuth') {
         return { code: 'tailscale_logout_unconfirmed', node: network.dnsName };
     }
