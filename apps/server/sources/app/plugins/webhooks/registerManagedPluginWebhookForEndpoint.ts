@@ -27,7 +27,7 @@ type ManagedRegistration = Readonly<{
     triggerRevision: number;
     repositoryId: string;
     /** Supplied by the Home reachability owner. */
-    publicBaseUrl: string;
+    publicBaseUrl: string | null;
     forward: ForwardManagedPluginWebhookOperation;
 }>;
 
@@ -96,6 +96,9 @@ export async function registerManagedPluginWebhookForEndpoint(
             });
             if (!contribution || contribution.routingKind !== 'accountEndpoint' || contribution.verifierKind !== 'github_hmac_sha256_v1') {
                 return { kind: 'result', result: polling('endpoint_unavailable') } as const;
+            }
+            if (input.publicBaseUrl === null) {
+                return { kind: 'result', result: polling('github_webhook_home_unreachable') } as const;
             }
             const sourceInstanceId = `github:repository:${input.repositoryId}`;
             const endpointKey = managedGithubEndpointKey(input.repositoryId);

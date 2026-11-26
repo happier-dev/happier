@@ -1101,6 +1101,10 @@ durable Automation receiver. A Home GitHub cannot reach compares the heads of
 open PRs that have a serving Preview against their serving Receipts in the
 existing repository poll. A changed head deploys the exact new commit.
 
+In 0.3 development, Deploy on push keeps the selected GitHub Events watcher
+when GitHub cannot reach the Home. The save notice explains why direct delivery
+is unavailable and that Happier keeps checking the repository feed.
+
 Agents can read options using `deployments.environments.update` with
 `mode: "preview"`, `previewWatcher: "options"` and the proposed enabled
 `patch.previewTemplate`. Include the chosen `previewWatcher.options[].value`

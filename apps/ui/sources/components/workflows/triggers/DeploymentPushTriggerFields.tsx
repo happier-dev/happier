@@ -37,6 +37,13 @@ export function DeploymentPushTriggerFields(props: Readonly<{
 export function showDeploymentPushDeliveryResult(delivery: ManagedGithubRepositoryHookSaveResultV1 | undefined) {
   if (!delivery || delivery.kind === 'webhook') return;
   const code = delivery.kind === 'polling' ? delivery.code : undefined;
+  if (code === 'github_webhook_home_unreachable') {
+    void Modal.alert(t('projects.deployments.pushDelivery.saved'), [
+      t('workflows.problem.githubWebhookHomeUnreachable'),
+      t('projects.deployments.pushDelivery.polling'),
+    ].join(' '));
+    return;
+  }
   const needsReconnect = code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;
   const detail = delivery.kind === 'pendingVerification' ? 'pending'

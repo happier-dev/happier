@@ -1,6 +1,5 @@
-import { readManagedGithubRepositoryEventV1, readManagedGithubWebhookHomeUrlV1 } from '@happier-dev/protocol/automations/event-setup-result';
+import { readManagedGithubWebhookHomeUrlV1 } from '@happier-dev/protocol/automations/event-setup-result';
 
-import { AutomationValidationError } from '@/app/automations/automationValidation';
 import type { ForwardManagedPluginWebhookOperation } from '@/app/api/socket/managedPluginWebhookDispatcher';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
 import { projectHomeIngressReachability } from '@/app/home/reachability/homeReachability';
@@ -19,21 +18,13 @@ async function readWebhookAddress(request: object) {
 type ManagedRepositoryWebhookMutation = Readonly<{
     triggerId: string;
     managedGithubRepositoryId?: string;
-    trigger?: Readonly<{ kind: string; eventRef?: Readonly<{ pluginId: string; localId: string }> }>;
 }>;
 
 export async function admitManagedRepositoryWebhookSaves(
     request: object, mutations: readonly ManagedRepositoryWebhookMutation[],
 ): Promise<string | null> {
-    const requested = mutations.filter(item => item.managedGithubRepositoryId !== undefined);
-    if (!requested.length) return null;
-    const publicBaseUrl = await readWebhookAddress(request);
-    // Preview setup prefers a reachable hook. An unreachable Home keeps the saved observer.
-    if (!publicBaseUrl && requested.some(item => !item.trigger?.eventRef
-        || readManagedGithubRepositoryEventV1(item.trigger.eventRef) !== 'pull_request')) {
-        throw new AutomationValidationError('github_webhook_home_unreachable');
-    }
-    return publicBaseUrl;
+    return mutations.some(item => item.managedGithubRepositoryId !== undefined)
+        ? await readWebhookAddress(request) : null;
 }
 
 /** Runs after the Automation transaction has committed. Only the saved trigger can own the route. */
@@ -45,7 +36,6 @@ export async function settleManagedRepositoryWebhookSaves(params: Readonly<{
     forward: ForwardManagedPluginWebhookOperation;
 }>) {
     const { publicBaseUrl } = params;
-    if (publicBaseUrl === null) return undefined;
     const requested = params.mutations.flatMap(item => {
         if (item.managedGithubRepositoryId === undefined) return [];
         const trigger = params.automation.triggers.find(trigger => trigger.id === item.triggerId);

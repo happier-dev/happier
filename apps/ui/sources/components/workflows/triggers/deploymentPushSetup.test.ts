@@ -82,6 +82,17 @@ describe('Deploy on push consent', () => {
         expect(changeApproval).toHaveBeenCalledWith('ask');
     });
 
+    it('shows why a private Home keeps checking GitHub Events', () => {
+        showDeploymentPushDeliveryResult({ kind: 'polling', code: 'github_webhook_home_unreachable' });
+
+        expect(Modal.alert).toHaveBeenCalledWith(t('projects.deployments.pushDelivery.saved'), expect.stringContaining(
+            t('workflows.problem.githubWebhookHomeUnreachable'),
+        ));
+        expect(Modal.alert).toHaveBeenCalledWith(t('projects.deployments.pushDelivery.saved'), expect.stringContaining(
+            t('projects.deployments.pushDelivery.polling'),
+        ));
+    });
+
     it('shows the reconnect remedy while preserving polling after a GitHub scope refusal', () => {
         showDeploymentPushDeliveryResult({
             kind: 'polling',

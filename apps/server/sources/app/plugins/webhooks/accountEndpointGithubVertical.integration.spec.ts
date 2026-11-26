@@ -54,7 +54,7 @@ import { readPluginWebhookAccountStatusV1 } from "./statusStore";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../..");
 const GITHUB_PLUGIN_MANIFEST_PATH = resolve(
     REPO_ROOT,
-    "packages/plugins/scm-github/.happier-plugin/plugin.json",
+    "apps/cli/assets/bundled-plugin-manifests/scm-github.json",
 );
 
 const PREVIEW_LIFECYCLE_EVENT = "automation/pull-request-lifecycle-v1";
@@ -265,26 +265,7 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         ]);
     });
 
-    it('keeps the private Home exception confined to Preview saves', async () => {
-        harness.resetEnv({
-            HANDY_MASTER_SECRET: "github-account-endpoint-master-secret",
-            HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID,
-            HAPPIER_PUBLIC_SERVER_URL: "https://127.0.0.1:8443",
-        });
-        const { admitManagedRepositoryWebhookSaves } = await import('./settleManagedRepositoryWebhookSaves');
-        const managedGithubRepositoryId = ROUTING_SOURCE_INSTANCE_ID.split(':').at(-1)!;
-        const preview = { triggerId: randomUUID(), managedGithubRepositoryId, trigger: {
-            kind: 'pluginEvent', eventRef: { pluginId: MANIFEST.pluginId, localId: PREVIEW_LIFECYCLE_EVENT },
-        } };
-        const push = { triggerId: randomUUID(), managedGithubRepositoryId, trigger: {
-            kind: 'pluginEvent', eventRef: { pluginId: MANIFEST.pluginId, localId: GITHUB_MANAGED_PUSH_EVENT_LOCAL_ID_V1 },
-        } };
-        await expect(admitManagedRepositoryWebhookSaves({}, [preview])).resolves.toBeNull();
-        await expect(admitManagedRepositoryWebhookSaves({}, [preview, push]))
-            .rejects.toThrow('github_webhook_home_unreachable');
-    });
-
-    it("refuses managed GitHub push without saving a polling trigger on a private Home", async () => {
+    it("saves the GitHub Push observer when GitHub cannot reach the Home", async () => {
         harness.resetEnv({
             HANDY_MASTER_SECRET: "github-account-endpoint-master-secret",
             HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID,
@@ -294,6 +275,7 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         const repositoryId = ROUTING_SOURCE_INSTANCE_ID.split(":").at(-1)!;
         const repository = { id: Number(repositoryId), name: "example", full_name: "fixture/example", owner: { login: "fixture" } };
         const automationId = randomUUID();
+        const triggerId = randomUUID();
         const app = createAuthenticatedTestApp();
         registerAutomationV3Routes(app);
         try {
@@ -308,7 +290,7 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
                         templateVersion: 1, directory: "/workspace/app", prompt: "Deploy",
                     }),
                     triggers: [{
-                        triggerId: randomUUID(), managedGithubRepositoryId: repositoryId,
+                        triggerId, managedGithubRepositoryId: repositoryId,
                         trigger: {
                             kind: "pluginEvent", enabled: true, sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
                             sourceContractVersion: 1, displayLabel: repository.full_name, filter: null,
@@ -323,9 +305,15 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
                     }],
                 },
             });
-            expect(response.json()).toEqual({ error: "github_webhook_home_unreachable" });
-            expect(response.statusCode).toBe(400);
-            expect(await db.automation.findUnique({ where: { id: automationId } })).toBeNull();
+            expect(response.json()).toMatchObject({ managedGithubRepositoryHooks: [{
+                triggerId, result: { kind: "polling", code: "github_webhook_home_unreachable" },
+            }] });
+            expect(response.statusCode).toBe(200);
+            expect(await db.automationTrigger.findUnique({ where: { id: triggerId } })).toMatchObject({
+                automationId, observationTransport: "checkpointedPull", watcherMachineId: MACHINE_ID,
+                webhookEndpointId: null,
+            });
+            expect(await db.pluginWebhookEndpoint.count({ where: { accountId } })).toBe(0);
         } finally {
             await app.close();
         }
