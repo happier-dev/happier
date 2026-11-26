@@ -116,11 +116,13 @@ describe('install and Computer repair share configurable Action approval', () =>
     });
 
     it.each([
-        ['permission_denied', 'errors.permissionDenied'],
-        ['unsupported-method', 'deps.installFailed'],
-    ])('presents the native install refusal %s without exposing the daemon message', async (code, reason) => {
+        { code: 'permission_denied', headline: 'errors.permissionDenied', message: 'The daemon could not write to the install directory' },
+        { code: 'unsupported-method', headline: 'deps.installFailed', message: 'Upgrade is unavailable for this dependency' },
+        { code: 'permission_denied', headline: 'errors.permissionDenied', message: '' },
+    ])('presents the $code install refusal with native details only when available ($message)', async ({ code, headline, message }) => {
         const { serverId } = await addInstallerHome('Allowed');
-        boundary.rpc.mockResolvedValue({ ok: false, error: { code, message: 'Raw daemon diagnostic' } });
+        const secret = 'sk-abcdefghijklmnopqrstuvwxyz';
+        boundary.rpc.mockResolvedValue({ ok: false, error: { code, message: message ? `${message}\n${secret}` : '' } });
         const refresh = vi.fn();
         const hook = await renderHook(() => useInstallableDepInstall({
             serverId, machineId: 'machine', depId: COMPUTER_CUA_DRIVER_DEP_ID, depStatus: null, refreshStatus: refresh,
@@ -128,7 +130,17 @@ describe('install and Computer repair share configurable Action approval', () =>
         try {
             await act(async () => { await hook.getCurrent().run(); });
             expect(refresh).toHaveBeenCalled();
-            expect(boundary.alert).toHaveBeenCalledExactlyOnceWith('common.error', reason);
+            if (!message) {
+                expect(boundary.alert).toHaveBeenCalledExactlyOnceWith('common.error', headline);
+                return;
+            }
+            expect(boundary.alert).toHaveBeenCalledExactlyOnceWith('common.error', headline,
+                expect.arrayContaining([expect.objectContaining({ text: 'approvals.technicalDetails' })]));
+            const buttons = boundary.alert.mock.calls[0]?.[2] as import('@/modal').AlertButton[];
+            const details = buttons.find(button => button.text === 'approvals.technicalDetails');
+            await act(async () => { details?.onPress?.(); });
+            expect(boundary.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining(message));
+            expect(boundary.alert.mock.lastCall?.[1]).not.toContain(secret);
         } finally { await hook.unmount(); }
     });
 

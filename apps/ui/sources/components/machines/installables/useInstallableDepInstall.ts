@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { MachineCapabilityInstallOutputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpdateAvailable';
@@ -8,6 +9,7 @@ import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol'
 import { Modal } from '@/modal';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
 /**
  * The one install/update runner for a machine's installable (Tools page rows and the new-session installer): it
@@ -67,9 +69,14 @@ export function useInstallableDepInstall(
               : t('deps.installFailed'),
           );
         } else if (!invoke.response.ok) {
-          Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(
-            invoke.response.error, t('deps.installFailed'), { closedCodesOnly: true },
-          ));
+          const error = invoke.response.error;
+          const reason = resolveActionExecutionErrorMessage(error, t('deps.installFailed'), { closedCodesOnly: true });
+          const detail = redactBugReportSensitiveText(error.message).trim();
+          alertActionFailure({
+            reason,
+            code: detail ? redactBugReportSensitiveText(error.code || 'install-failed') : null,
+            context: { reason: detail },
+          });
         } else {
           const result = invoke.response.result;
           const logPath =
