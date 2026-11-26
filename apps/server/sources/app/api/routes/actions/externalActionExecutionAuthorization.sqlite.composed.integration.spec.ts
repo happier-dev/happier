@@ -257,6 +257,7 @@ import { readSessionSystemRecordV1 } from '@/app/session/systemRecords/sessionSy
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol';
 import { encodeAutomationSessionLifecycleConfiguration } from '@/app/automations/automationSessionLifecycleConfigurationCodec';
 import { deleteAutomationTrigger } from '@/app/automations/automationCrudService';
+import { registerAutomationActionIndexRoutes } from '@/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { registerWorkflowRunStorageRoutes } from '@/app/api/routes/automations/registerWorkflowRunStorageRoutes';
 import { startSocket } from '@/app/api/socket';
 import { createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginInstallationPublisherTestkit';
@@ -2674,7 +2675,7 @@ describe("external Action execution authorization", () => {
         const homeId = await getOrCreateServerIdentityId();
         const workspace = { serverId: homeId, refId: 'reviewed-source' };
         const request = ProjectServiceRelocateInputV1Schema.parse({ workspace, serviceName: 'api', requestId: 'reviewed-move',
-            currentTarget: { kind: 'managed_service', machineId: fixture.machine.id, managedServiceId: 'exact-native-instance',
+            sourceMachineId: fixture.machine.id, currentTarget: { kind: 'managed_service', machineId: fixture.machine.id, managedServiceId: 'exact-native-instance',
                 workspaceId: workspace.refId, cwd: '/source', declaration: { workspaceRefId: workspace.refId,
                     selection: { kind: 'manifest', name: 'api' } } },
             destination: { kind: 'workers', destination: { kind: 'machine', machineId: worker.id } }, selectedTarget: { machineId: worker.id },
@@ -5519,7 +5520,10 @@ describe("external Action execution authorization", () => {
         const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] },
             targets: { sessions: [session.id], machines: [] }, permissionModes: ['default' as const, 'read-only' as const] };
         await db.accountApiToken.update({ where: { id: fixture.pat.tokenId }, data: { accessGrant: grant } });
-        const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id, undefined, false, registerSessionPatchRoute);
+        const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id, undefined, false, routes => {
+            registerAutomationActionIndexRoutes(routes);
+            registerSessionPatchRoute(routes);
+        });
         try {
             const input = { sessionId: session.id, permissionMode: 'read-only' };
             const root = await mint(app, fixture, actionId, { ...fixture.envelope, target: { kind: 'session', sessionId: session.id }, input });
@@ -5562,7 +5566,10 @@ describe("external Action execution authorization", () => {
         await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
             sessionId: session.id, data: 'opaque-source-key' } });
         const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id, undefined, false,
-            routes => registerSessionPatchRoute(routes));
+            routes => {
+                registerAutomationActionIndexRoutes(routes);
+                registerSessionPatchRoute(routes);
+            });
         const actionId = 'session.title.set';
         const input = getActionSpec(actionId).inputSchema.parse({ sessionId: session.id, title: 'Signed metadata title' });
         const envelope: ExternalActionRequestEnvelopeV1 = { v: 1, requestId: crypto.randomUUID(),
@@ -6380,9 +6387,8 @@ describe("external Action execution authorization", () => {
                 pendingRequests: [{ requestId: 'pending-native-call', turnId: nativeRequest.turnId,
                     kind: nativeRequest.kind, tool: nativeRequest.tool, arguments: nativeRequest.arguments }],
                 acceptedWorkspace: { checkout: { serverId: homeId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath } } } });
-            expect(reads).toEqual([{ path: '/v1/account/project-rows/read', status: 200 }]);
-            // Older path-associated Sessions consume the same signed owner,
-            // with a Home/kind-filtered census rather than an accepted id.
+            expect(reads).toEqual([{ path: '/v1/account/project-rows/list', status: 200 }]);
+            // Older path-associated Sessions use the same signed Project context read.
             const pathFields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
                 storedContentMode: 'plain', metadata: createTestMetadata({ machineId: ref.machineId, path: ref.rootPath,
                     projectId: ref.projectKey }), agentState: null });
@@ -14186,6 +14192,7 @@ describe("external Action execution authorization", () => {
         const reads: Array<{ path: string; status: number; signed: boolean }> = [];
         const { sessionPendingRoutes } = await import('@/app/api/routes/session/pendingRoutes');
         const { app } = await createApp(fixture.team.id, false, async () => fixture.machine.id, undefined, false, routes => {
+            registerAutomationActionIndexRoutes(routes);
             sessionPendingRoutes(routes);
             routes.addHook('onResponse', async (request, reply) => {
                 if (request.url.startsWith(`/v2/sessions/${session.id}`)) {
@@ -16401,7 +16408,7 @@ describe("external Action execution authorization", () => {
                     target: { kind: 'session', sessionId } } });
             const refused = await relay('S2');
             expect(refused.statusCode, refused.body).toBe(403);
-            expect(refused.json()).toEqual({ error: 'credential_scope_denied' });
+            expect(refused.json()).toEqual({ error: 'credential_scope_denied', requestId: fixture.envelope.requestId });
             expect(sentSessions).toEqual([]);
             const admitted = await relay('S1');
             expect(admitted.statusCode, admitted.body).toBe(200);
