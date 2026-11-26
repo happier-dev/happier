@@ -238,7 +238,7 @@ describe('ProjectGroupHeader menu items', () => {
         expect(create.insets.right).toBe(0);
     });
 
-    it('sets and removes the project colour beside Rename and marks a coloured project with a dot', async () => {
+    it('sets and resets the project colour beside Rename and marks a coloured project with a dot', async () => {
         const { ProjectGroupHeader } = await import('./sessionListChrome');
         const onSetColor = vi.fn();
         const item = {
@@ -254,6 +254,8 @@ describe('ProjectGroupHeader menu items', () => {
 
         const plain = await render(null);
         expect(plain.findByTestId('session-workspace-color:project:repo')).toBeNull();
+        const plainColorMenu = dropdownMenuSpy.mock.calls.at(-1)?.[0].items.find((entry: { id: string }) => entry.id === 'workspace-color');
+        expect(plainColorMenu.submenu.items.some((entry: { id: string }) => entry.id === 'workspace-color:remove')).toBe(false);
         await plain.unmount();
 
         const screen = await render({ kind: 'accent', key: 'blue' });
@@ -263,12 +265,15 @@ describe('ProjectGroupHeader menu items', () => {
         const colorIndex = ids.indexOf('workspace-color');
         expect(colorIndex).toBe(ids.indexOf('rename') + 1);
         const submenu = menu.items[colorIndex].submenu.items as any[];
-        const swatches = submenu.filter((entry) => entry.swatch && !entry.swatch.empty);
+        const swatches = submenu.filter((entry) => entry.swatch);
         expect(swatches).toHaveLength(7);
         expect(swatches.filter((entry) => entry.checked)).toHaveLength(1);
+        const reset = submenu.find((entry) => entry.id === 'workspace-color:remove');
+        expect(reset.swatch).toBeUndefined();
+        expect(reset.title).toBe('sessionsList.appearance.resetColor');
         await act(async () => {
             menu.onSelect(swatches.at(-1).id);
-            menu.onSelect(submenu.find((entry) => entry.swatch?.empty).id);
+            menu.onSelect(reset.id);
             await Promise.resolve();
         });
         expect(onSetColor.mock.calls).toEqual([[{ kind: 'accent', key: 'purple' }], [null]]);

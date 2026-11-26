@@ -78,18 +78,17 @@ export function buildSessionAppearanceColorSubmenu(params: SessionAppearanceColo
             },
         };
     };
-    // One continuous wrapped grid: presets, colours in use, then Remove.
+    // Presets and colours in use share one wrapped grid.
     const presets = ACCENT_COLOR_KEYS.map((key) => swatchItem({ kind: 'accent', key }, t(ACCENT_TITLE_KEYS[key]), SWATCH_GRID_GROUP));
     const customHexes = [...params.customColors];
     for (const shown of [current, inherited]) {
         if (shown?.kind === 'custom' && !customHexes.includes(shown.hex)) customHexes.push(shown.hex);
     }
     const customs = customHexes.map((hex) => swatchItem({ kind: 'custom', hex }, t('sessionsList.appearance.customColorLabel', { hex }), SWATCH_GRID_GROUP));
-    const remove: DropdownMenuItem[] = current ? [{
+    const reset: DropdownMenuItem[] = current ? [{
         id: `${params.menuId}:${REMOVE_SUFFIX}`,
-        title: t('sessionsList.appearance.removeColor'),
-        checked: false,
-        swatch: { color: '', empty: true, group: SWATCH_GRID_GROUP },
+        title: t('sessionsList.appearance.resetColor'),
+        icon: <Icon name="arrow-clockwise" size={16} color={params.iconColor} />,
     }] : [];
     return {
         maxWidthCap: COLOR_SUBMENU_MAX_WIDTH,
@@ -98,7 +97,6 @@ export function buildSessionAppearanceColorSubmenu(params: SessionAppearanceColo
         items: [
             ...presets,
             ...customs,
-            ...remove,
             {
                 id: `${params.menuId}:${CUSTOM_PICKER_SUFFIX}`,
                 title: t('sessionsList.appearance.customColor'),
@@ -107,6 +105,7 @@ export function buildSessionAppearanceColorSubmenu(params: SessionAppearanceColo
                 keepMenuOpen: true,
                 ...(params.customPickerLoading ? { loading: true } : {}),
             },
+            ...reset,
         ],
     };
 }

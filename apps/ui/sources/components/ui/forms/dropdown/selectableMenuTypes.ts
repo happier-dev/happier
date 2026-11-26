@@ -64,8 +64,6 @@ export type SelectableMenuSwatch = Readonly<{
     color: string;
     /** Shown but not owned (a project colour a session inherits): a quieter ring; the item stays unchecked. */
     inherited?: boolean;
-    /** No colour: an empty ring struck through (the Remove choice), in the same row and radio semantics. */
-    empty?: boolean;
     /** Consecutive swatches with the same group render together and move sideways from the keyboard. */
     group?: string;
 }>;

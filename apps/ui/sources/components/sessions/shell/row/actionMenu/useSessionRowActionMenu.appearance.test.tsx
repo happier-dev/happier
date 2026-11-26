@@ -60,29 +60,30 @@ afterEach(async () => {
 });
 
 describe('useSessionRowActionMenu colour', () => {
-    it('offers presets, colours in use, custom and remove, and writes the chosen colour', async () => {
+    it('offers Reset color as a labelled row after the custom picker and clears the chosen colour', async () => {
         const onChange = vi.fn<(color: SessionAppearanceColor | null) => void>();
         const hook = await renderRowMenu({ current: { kind: 'accent', key: 'green' }, customColors: ['#123456'], theme: THEME, onChange });
 
         const submenu = colorSubmenu(hook)!;
-        const swatches = submenu.filter((item) => item.swatch && !item.swatch.empty);
+        const swatches = submenu.filter((item) => item.swatch);
         expect(swatches.map((item) => item.swatch!.color)).toEqual([...Object.values(ACCENT_COLORS), '#123456']);
         expect(swatches.filter((item) => item.checked).map((item) => item.swatch!.color)).toEqual(['#00FF00']);
         const custom = swatches.find((item) => item.swatch!.color === '#123456')!;
         expect(custom.title).toContain('#123456');
         expect(custom.title).not.toBe('#123456');
-        // Remove is a struck-through swatch in the custom row; Custom color… is the one text row.
-        expect(submenu.filter((item) => !item.swatch)).toHaveLength(1);
-        const remove = submenu.find((item) => item.swatch?.empty)!;
-        // One continuous grid: presets, then colours in use, then Remove last.
-        const grid = submenu.filter((item) => item.swatch);
-        expect(new Set(grid.map((item) => item.swatch!.group)).size).toBe(1);
-        expect(grid.at(-1)).toBe(remove);
+        const reset = submenu.find((item) => item.id === `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`)!;
+        expect(reset.swatch).toBeUndefined();
+        expect(reset.title).toBeTruthy();
+        expect(submenu.slice(-2).map((item) => item.id)).toEqual([
+            `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:custom-picker`,
+            reset.id,
+        ]);
+        expect(new Set(swatches.map((item) => item.swatch!.group)).size).toBe(1);
 
         await act(async () => {
             await hook.getCurrent().handleMoreMenuSelect(swatches.find((item) => item.swatch!.color === '#FF0000')!.id);
             await hook.getCurrent().handleMoreMenuSelect(custom.id);
-            await hook.getCurrent().handleMoreMenuSelect(remove.id);
+            await hook.getCurrent().handleMoreMenuSelect(reset.id);
         });
         expect(onChange.mock.calls).toEqual([[{ kind: 'accent', key: 'red' }], [{ kind: 'custom', hex: '#123456' }], [null]]);
         await hook.unmount();
@@ -98,7 +99,7 @@ describe('useSessionRowActionMenu colour', () => {
         expect(orange.checked).not.toBe(true);
         expect(orange.subtitle).toBeTruthy();
         expect(submenu.filter((item) => item.checked)).toHaveLength(0);
-        expect(submenu.filter((item) => item.swatch?.empty)).toHaveLength(0);
+        expect(submenu.some((item) => item.id === `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`)).toBe(false);
 
         await act(async () => {
             await hook.getCurrent().handleMoreMenuSelect(orange.id);
@@ -110,6 +111,12 @@ describe('useSessionRowActionMenu colour', () => {
     it('hides the session colour action when the server cannot store it', async () => {
         const hook = await renderRowMenu(null);
         expect(colorSubmenu(hook)).toBeNull();
+        await hook.unmount();
+    });
+
+    it('omits Reset color for an uncoloured session outside a coloured project', async () => {
+        const hook = await renderRowMenu({ current: null, customColors: [], theme: THEME, onChange: vi.fn() });
+        expect(colorSubmenu(hook)!.some((item) => item.id === `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`)).toBe(false);
         await hook.unmount();
     });
 });

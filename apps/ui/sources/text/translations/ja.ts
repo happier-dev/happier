@@ -10278,7 +10278,7 @@ localTailscale: {
             customColorTitle: 'カスタムカラー',
             customColorMessage: '色を選ぶか、16進数の値を入力してください。',
             invalidColor: '#3A7BD5 のような16進数の値を使ってください。',
-            removeColor: '色を削除',
+            resetColor: '色をリセット',
             inheritedFromProject: 'プロジェクトから',
             customColorLabel: ({ hex }: { hex: string }) => `カスタムカラー ${hex}`,
             colors: { blue: '青', green: '緑', orange: 'オレンジ', yellow: '黄', red: '赤', indigo: '藍', purple: '紫' },

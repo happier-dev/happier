@@ -21,7 +21,9 @@ import { resetScopedMachineTransportCacheForTests } from '@/sync/runtime/orchest
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
+import { buildSessionOrganizationLabelKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { selectEffectiveSessionAppearanceColor } from '@/sync/store/selectors/sessionAppearance';
+import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_SET_APPEARANCE_COLOR_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
 import { SessionHeaderActionMenu } from './SessionHeaderActionMenu';
 import { resolvePluginSessionHeaderActionPresentations } from './pluginHeaderActions';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -122,6 +124,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     let boundary: ReturnType<typeof createSocketIoBoundaryStub>;
     let previousState: ReturnType<typeof storage.getState>;
     let readStateReply: (() => Response) | null;
+    let setAppearanceReply: ((body: unknown) => Response) | null;
     let externalAction: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null;
 
     let restorePopoverGlobals: () => void = () => {};
@@ -138,6 +141,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         } });
         previousState = storage.getState();
         readStateReply = null;
+        setAppearanceReply = null;
         externalAction = null;
         voiceSessionBindingStore.setState({
             bindingsByConversationSessionId: {}, runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {},
@@ -160,6 +164,9 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
                     capabilities: { serverIdentity: { serverIdentityId: url.hostname === 'projection.home.test' ? SERVER_IDENTITY_ID : null } },
                 }));
                 if (path === '/v2/sessions/sess_1/read-state' && readStateReply) return readStateReply();
+                if (path === '/v2/session-organization/appearances/sess_1' && method === 'PUT' && setAppearanceReply) {
+                    return setAppearanceReply(body);
+                }
                 if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(body,
                     id => id === MACHINE_ID ? createPlainMachineRowFixture({ id, accountId: 'header-account' }) : null);
                 if (path === `/v1/machines/${MACHINE_ID}`) return Response.json({
@@ -201,6 +208,61 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         ioSpy.mockReset();
         modalShow.mockClear();
         modalAlert.mockClear();
+        modalPrompt.mockClear();
+    });
+
+    it('offers a labelled reset in the session header for an override and clears back to the project colour', async () => {
+        const serverId = homes.homes.projection!.id;
+        const session = storage.getState().sessions.sess_1!;
+        const sessionKey = buildSessionOrganizationSessionKey(serverId, session.id);
+        const workspaceKey = 'workspace';
+        const workspaceLabelKey = buildSessionOrganizationLabelKey({ serverId, labelKind: 'workspace', scopeKey: workspaceKey });
+        const projectColor = { kind: 'accent', key: 'blue' } as const;
+        const ownColor = { kind: 'accent', key: 'green' } as const;
+        const resetId = `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`;
+        const target = { sessionId: session.id, serverId, workspaceKey };
+        const handleWrite = vi.fn(() => Response.json({ appearance: null }));
+        setAppearanceReply = handleWrite;
+
+        storage.setState({
+            sessionOrganizationSessionAppearancesSupportedByServerId: { [serverId]: true },
+            sessionOrganizationAppearancesBySessionKey: {},
+            sessionOrganizationLabelsByLabelKey: {},
+        });
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const menu = () => screen.findByType(DropdownMenu).props;
+        const resetItem = () => menu().items.find(row => row.id === SESSION_ACTION_SET_APPEARANCE_COLOR_ID)
+            ?.submenu?.items.find(row => row.id === resetId);
+
+        expect(menu().items.some(row => row.id === SESSION_ACTION_SET_APPEARANCE_COLOR_ID)).toBe(true);
+        expect(resetItem()).toBeUndefined();
+        await act(async () => {
+            storage.setState({ sessionOrganizationLabelsByLabelKey: {
+                [workspaceLabelKey]: {
+                    labelKind: 'workspace', scopeKey: workspaceKey, createdAt: 1, updatedAt: 1, archivedAt: null,
+                    display: { t: 'plain', v: { color: projectColor } }, displayState: { status: 'available', value: null },
+                },
+            } });
+        });
+        expect(selectEffectiveSessionAppearanceColor(storage.getState(), target)).toEqual(projectColor);
+        expect(resetItem()).toBeUndefined();
+
+        await act(async () => {
+            storage.setState({ sessionOrganizationAppearancesBySessionKey: {
+                [sessionKey]: {
+                    sessionId: session.id, updatedAt: 1,
+                    display: { t: 'plain', v: { color: ownColor } }, displayState: { status: 'available', value: null },
+                },
+            } });
+        });
+        expect(selectEffectiveSessionAppearanceColor(storage.getState(), target)).toEqual(ownColor);
+        expect(resetItem()?.title).toBeTruthy();
+        expect(resetItem()?.swatch).toBeUndefined();
+        await act(async () => { menu().onSelect(resetId); });
+        await vi.waitFor(() => expect(handleWrite).toHaveBeenCalledWith({ display: null }));
+        expect(selectEffectiveSessionAppearanceColor(storage.getState(), target)).toEqual(projectColor);
+        await act(async () => { menu().onOpenChange(true); });
+        expect(resetItem()).toBeUndefined();
     });
 
     it.each([

@@ -381,25 +381,6 @@ describe('SelectableMenuResults', () => {
         expect(onPressItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'color:red' }));
     });
 
-    it('draws an empty swatch as the Remove choice in the same radio row', async () => {
-        const { SelectableMenuResults } = await import('./SelectableMenuResults');
-        const screen = await renderScreen(<SelectableMenuResults
-            categories={[{ id: 'c1', title: '', items: [
-                { id: 'color:remove', title: 'Remove color', checked: false, swatch: { color: '', empty: true, group: 'custom' } },
-                { id: 'color:#123456', title: 'Custom color #123456', checked: false, swatch: { color: '#123456', group: 'custom' } },
-            ] }]}
-            selectedIndex={-1}
-            onSelectionChange={() => {}}
-            onPressItem={() => {}}
-            rowVariant="slim"
-        />);
-        const remove = screen.findByTestId('dropdown-option-color_remove') as any;
-        expect(remove.props.accessibilityRole).toBe('radio');
-        expect(remove.props.accessibilityLabel).toBe('Remove color');
-        expect(remove.props.accessibilityState).toMatchObject({ checked: false });
-        expect(screen.findByTestId('dropdown-option-color_remove:strike')).not.toBeNull();
-    });
-
     it('draws the highlight of a swatch and of a row only when the menu says it is visible', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
         const render = (visible: boolean) => renderScreen(<SelectableMenuResults

@@ -382,20 +382,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     swatchRingChecked: {
         borderColor: theme.colors.text.primary,
     },
-    // "No colour": an unfilled ring, struck through on the diagonal.
-    swatchFillEmpty: {
-        borderWidth: 1.5,
-        borderColor: theme.colors.text.secondary,
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-    },
-    swatchStrike: {
-        width: SWATCH_FILL_SIZE * 1.2,
-        height: 1.5,
-        backgroundColor: theme.colors.text.secondary,
-        transform: [{ rotate: '-45deg' }],
-    },
     swatchRingInherited: {
         borderColor: theme.colors.text.secondary,
         borderStyle: 'dashed',
@@ -929,13 +915,7 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                                                             : swatch.inherited ? styles.swatchRingInherited : null,
                                                     ]}
                                                 >
-                                                    {swatch.empty ? (
-                                                        <View style={[styles.swatchFill, styles.swatchFillEmpty]}>
-                                                            <View testID={`${optionTestID}:strike`} style={styles.swatchStrike} />
-                                                        </View>
-                                                    ) : (
-                                                        <View style={[styles.swatchFill, { backgroundColor: swatch.color }]} />
-                                                    )}
+                                                    <View style={[styles.swatchFill, { backgroundColor: swatch.color }]} />
                                                 </View>
                                             </View>
                                     </Pressable>

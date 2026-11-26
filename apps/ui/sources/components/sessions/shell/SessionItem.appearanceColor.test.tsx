@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { SESSION_ACTION_SET_APPEARANCE_COLOR_ID } from '@/components/sessions/actions/sessionActionIds';
 import {
     createModelBackedSessionItemTestComponent,
@@ -65,26 +65,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: 'Swipeable',
 }));
-vi.mock('@/utils/sessions/sessionUtils', () => ({
-    getSessionName: () => 'Session',
-    resolveLockedSessionTitle: (title: string) => title,
-    getSessionSubtitle: () => 'Subtitle',
-    getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-    useSessionStatus: () => ({
-        isConnected: true,
-        statusText: 'Connected',
-        statusColor: '#000',
-        statusDotColor: '#0f0',
-        isPulsing: false,
-    }),
-}));
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
 }));
@@ -125,23 +105,15 @@ const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(Session
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 
 describe('SessionItem colour', () => {
-    function createSession(id: string) {
-        return {
-            id, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, metadata: null, metadataVersion: 1,
-            agentState: null, agentStateVersion: 1, thinking: false, thinkingAt: 0, presence: 'offline',
-        } as any;
-    }
     const baseProps = (overrides: Partial<SessionItemProps> = {}): SessionItemProps => ({
-        session: createSession('sess_1'), serverId: 'server_a', selected: false, variant: 'default', compact: false, ...overrides,
-    } as SessionItemProps);
+        session: createSessionFixture({ id: 'sess_1', presence: 'offline' }),
+        serverId: 'server_a', selected: false, variant: 'default', compact: false, ...overrides,
+    });
 
     function hoverRow(screen: Awaited<ReturnType<typeof renderScreen>>) {
-        // The row's hover owner: the nearest ancestor of the press target that tracks the pointer.
-        let node: any = (screen as any).findHostByTestId('session-list-item-sess_1')?.parent;
-        while (node && typeof node.props?.onPointerEnter !== 'function') node = node.parent;
-        node?.props.onMouseEnter?.();
-        node?.props.onHoverIn?.();
-        node?.props.onPointerEnter?.();
+        const hoverTarget = screen.root.findAll((node) => typeof node.props.onPointerEnter === 'function')[0];
+        expect(hoverTarget).toBeDefined();
+        hoverTarget.props.onPointerEnter();
     }
     function findMoreMenu(screen: Awaited<ReturnType<typeof renderScreen>>) {
         // The row's more menu: the one menu whose trigger is the row's ⋯ button.
