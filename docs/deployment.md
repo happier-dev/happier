@@ -5374,8 +5374,12 @@ the Domain controller preserves `admin_access_unavailable`. Both administrator
 refusals retain the serving Machine ID in the closed native Domain failure.
 The live result, retained operation, and approval read use that ID to show the
 Machine's name and open its Security tab for Administrator access. The
-operation address still names the controller that owns the operation. Older
-failures without a serving Machine ID keep their existing recovery.
+operation address still names the controller that owns the operation. The
+native `mode_none` and `not_preauthorized` causes distinguish an off policy
+from unavailable passwordless access. When the Machine reports a typed
+preauthorization issue, the failure retains the diagnosis and any console
+remedy it supplied. The Machine's Administrator access settings present the
+console guidance. Older failures can omit the Machine ID or the issue.
 An uncertain native effect remains `outcome_unknown`.
 Own-server preparation also preserves `plugin_exec_system_tool_unavailable`
 with the closed Docker details `kind: 'systemToolUnavailable'`, `toolId: 'docker'`

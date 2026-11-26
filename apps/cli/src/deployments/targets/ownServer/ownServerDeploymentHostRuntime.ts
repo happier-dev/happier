@@ -714,6 +714,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         }, { ...elevation, verifyCurrent: async () => !signal.aborted }));
                         if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome, {
                             ...('recovery' in elevated && elevated.recovery ? { recovery: elevated.recovery } : {}),
+                            ...('preauthorizationIssue' in elevated && elevated.preauthorizationIssue
+                                ? { preauthorizationIssue: elevated.preauthorizationIssue } : {}),
                             ...('failure' in elevated && elevated.failure ? { failure: elevated.failure,
                                 remedy: elevated.failure.remedy ?? (elevated.outcome === 'outcome_unknown'
                                     ? 'Inspect and reconcile Caddy setup on this Machine before retrying the Domain action.'

@@ -194,7 +194,7 @@ it('assembles the Machine Caddy origin independently of the unpublished workload
 
 });
 
-it('prepares Caddy without ingress and preserves the Admin Access None refusal before native effects', async () => {
+it.each(['none', 'preauthorized'] as const)('preserves the Caddy administrator refusal and Machine guidance for %s', async mode => {
     const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: 'fixture', encryption: null },
         serverId: 'home', serverHttpBaseUrl: 'https://home.test', machineId: 'machine',
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
@@ -214,15 +214,25 @@ it('prepares Caddy without ingress and preserves the Admin Access None refusal b
                 compareAndSwap: async () => { throw new Error('Setup discovery cannot change desired policy'); },
             }),
             elevation: {
-                readPolicy: async () => ({ version: 1, mode: 'none' }),
-                observe: async () => { throw new Error('None refuses before native privilege observation'); },
-                spawn: () => { nativeEffects++; throw new Error('None cannot elevate'); },
+                readPolicy: async () => ({ version: 1, mode }),
+                observe: async () => {
+                    if (mode === 'none') throw new Error('Off refuses before native privilege observation');
+                    return { version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'fixture',
+                        daemonIdentity: 'nonRoot', passwordlessSudoToRoot: 'denied', managedDropIn: 'absent',
+                        rootEquivalentGroups: [], tailscaledOperator: { authorization: 'unknown' } };
+                },
+                spawn: () => { nativeEffects++; throw new Error('The refused operation cannot elevate'); },
             },
         },
         context: { actionRequestId: 'no-ingress-admin-none' }, actionId: 'deployments.domains.add',
         installationId: 'installation', dockerEngineId: 'engine', signal: new AbortController().signal,
         async run() { nativeEffects++; throw new Error('None cannot mutate Docker'); },
-    })).rejects.toMatchObject({ code: 'mode_none' });
+    })).rejects.toMatchObject(mode === 'none' ? { code: 'mode_none', details: {} } : {
+        code: 'not_preauthorized',
+        details: { preauthorizationIssue: { cause: 'sudo_denied',
+            remedy: { kind: 'console', where: 'target_machine_console',
+                command: expect.any(String), sudoersRule: expect.any(String) } } },
+    });
     expect(nativeEffects).toBe(0);
 });
 

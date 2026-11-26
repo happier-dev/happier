@@ -253,7 +253,10 @@ it('keeps the Team creation policy explanation through deferred approval history
     .not.toHaveProperty('details');
 });
 
-it('retains the Domain setup refusal naming the origin on an approved controller Action', () => {
+it.each([undefined, {
+  cause: 'sudo_denied',
+  remedy: { kind: 'console', where: 'target_machine_console', command: 'fixture editor', sudoersRule: 'fixture rule' },
+}])('retains the Domain setup refusal and any Machine guidance on an approved controller Action (%j)', preauthorizationIssue => {
   const actionId = 'deployments.domains.add';
   const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'system' }, requestedSurface: 'ui', actionId, summary: 'Add address',
@@ -267,13 +270,14 @@ it('retains the Domain setup refusal naming the origin on an approved controller
   const operation = { serverId: 'home', machineId: 'controller', operationId: 'operation' };
   const failure = { ok: false as const, errorCode, error: errorCode, details: {
     environmentId: 'environment', domainId: 'domain', step: 'native_execution', machineId: 'origin-machine', operation,
+    ...(preauthorizationIssue ? { preauthorizationIssue } : {}),
   } };
   const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
   const stored = StoredApprovalRequestSchema.parse({ ...request, status: 'failed', updatedAtMs: 3,
     decision: { kind: 'approve', decidedAtMs: 2 }, execution });
   const publicRead = ApprovalRequestPublicReadSchema.parse(projectApprovalRequestForPublicRead(stored));
   expect(readApprovalExecutionFailure(publicRead)).toMatchObject({ errorCode, details: {
-    operation, machineId: 'origin-machine',
+    operation, machineId: 'origin-machine', ...(preauthorizationIssue ? { preauthorizationIssue } : {}),
   } });
   expect(projectApprovalExecutionFailureV2({ request, failure: { ...failure, details: {
     ...failure.details, environmentId: 'wrong-environment',

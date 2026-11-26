@@ -483,9 +483,12 @@ export function createOwnServerDomainNative(host: Readonly<{
                 }, { ...setup.elevation, installationId: identity.installationId,
                     ...resolveMachineEffectCli(), verifyCurrent: async () => !signal.aborted,
                     connectorSecretGrant: grant });
-                if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome,
-                    'failure' in elevated && elevated.failure ? { failure: elevated.failure,
-                        ...(elevated.failure.remedy ? { remedy: elevated.failure.remedy } : {}) } : undefined);
+                if (elevated.outcome !== 'applied') return refuse('reasonCode' in elevated ? elevated.reasonCode : elevated.outcome, {
+                    ...('preauthorizationIssue' in elevated && elevated.preauthorizationIssue
+                        ? { preauthorizationIssue: elevated.preauthorizationIssue } : {}),
+                    ...('failure' in elevated && elevated.failure ? { failure: elevated.failure,
+                        ...(elevated.failure.remedy ? { remedy: elevated.failure.remedy } : {}) } : {}),
+                });
                 if (!applied) return refuse('outcome_unknown');
                 if (!remove) {
                     const ready = await ensureNativeCloudflareConnector(connector, { run: acquired.run, signal, setupResult: applied });

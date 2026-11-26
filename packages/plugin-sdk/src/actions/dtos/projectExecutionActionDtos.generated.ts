@@ -433,6 +433,16 @@ export type ProjectExecutionActionResultById = {
                         kind: 'adopt';
                         tunnelId: string;
                     };
+                    machineId?: string | undefined;
+                    preauthorizationIssue?: undefined | {
+                        cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                        remedy?: undefined | {
+                            kind: 'console';
+                            where: 'target_machine_console';
+                            command: string;
+                            sudoersRule: string;
+                        };
+                    };
                 } | {
                     environmentId: string;
                     domainId: string;
@@ -1123,6 +1133,16 @@ export type ProjectExecutionActionResultById = {
                         recovery?: undefined | {
                             kind: 'adopt';
                             tunnelId: string;
+                        };
+                        machineId?: string | undefined;
+                        preauthorizationIssue?: undefined | {
+                            cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                            remedy?: undefined | {
+                                kind: 'console';
+                                where: 'target_machine_console';
+                                command: string;
+                                sudoersRule: string;
+                            };
                         };
                     } | {
                         environmentId: string;
@@ -3430,6 +3450,16 @@ export type ProjectExecutionActionResultById = {
                         kind: 'adopt';
                         tunnelId: string;
                     };
+                    machineId?: string | undefined;
+                    preauthorizationIssue?: undefined | {
+                        cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                        remedy?: undefined | {
+                            kind: 'console';
+                            where: 'target_machine_console';
+                            command: string;
+                            sudoersRule: string;
+                        };
+                    };
                 } | {
                     environmentId: string;
                     domainId: string;
@@ -4120,6 +4150,16 @@ export type ProjectExecutionActionResultById = {
                         recovery?: undefined | {
                             kind: 'adopt';
                             tunnelId: string;
+                        };
+                        machineId?: string | undefined;
+                        preauthorizationIssue?: undefined | {
+                            cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                            remedy?: undefined | {
+                                kind: 'console';
+                                where: 'target_machine_console';
+                                command: string;
+                                sudoersRule: string;
+                            };
                         };
                     } | {
                         environmentId: string;
@@ -6427,6 +6467,16 @@ export type ProjectExecutionActionResultById = {
                         kind: 'adopt';
                         tunnelId: string;
                     };
+                    machineId?: string | undefined;
+                    preauthorizationIssue?: undefined | {
+                        cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                        remedy?: undefined | {
+                            kind: 'console';
+                            where: 'target_machine_console';
+                            command: string;
+                            sudoersRule: string;
+                        };
+                    };
                 } | {
                     environmentId: string;
                     domainId: string;
@@ -7117,6 +7167,16 @@ export type ProjectExecutionActionResultById = {
                         recovery?: undefined | {
                             kind: 'adopt';
                             tunnelId: string;
+                        };
+                        machineId?: string | undefined;
+                        preauthorizationIssue?: undefined | {
+                            cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                            remedy?: undefined | {
+                                kind: 'console';
+                                where: 'target_machine_console';
+                                command: string;
+                                sudoersRule: string;
+                            };
                         };
                     } | {
                         environmentId: string;

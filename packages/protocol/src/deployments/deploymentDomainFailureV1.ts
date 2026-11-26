@@ -2,7 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js';
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
-import { MachineElevationFailureV1Schema } from '../machines/adminAccessV1.js';
+import { MachineElevatedNotAppliedResultV1Schema, MachineElevationFailureV1Schema } from '../machines/adminAccessV1.js';
 import { ExternalActionAuthorizationRefusalPhaseSchema } from '../actions/externalActionAuthorizationRefusalPhase.js';
 import { deploymentCollectorTailscaleSourceFailureV1, DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 
@@ -52,6 +52,7 @@ export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.unio
     z.strictObject({ environmentId: id, domainId: id, step: z.literal('native_execution'),
         /** Exact serving Machine for administrator recovery. The operation address still names its controller. */
         machineId: z.optional(id),
+        preauthorizationIssue: MachineElevatedNotAppliedResultV1Schema.shape.preauthorizationIssue,
         ...cloudflareRecoveryFields,
         /** Authored endpoint templates, issue paths and expected types; never response values. */
         providerOutput: z.optional(z.string().check(z.minLength(1))),
