@@ -1,5 +1,5 @@
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 
 import { importConnectedServiceSessionFiles } from '@/daemon/connectedServices/stateSharing/importConnectedServiceSessionFiles';
 import { AGY_APP_DATA_DIR } from './agyAcpLaunch';
@@ -25,17 +25,35 @@ function conversationDatabase(profileDir: string, appDataDir: string, id: string
   return join(profileDir, appDataDir, 'conversations', `${id}.db`);
 }
 
+/**
+ * Profiles whose retired-server store may hold the conversation: the profile itself and, when its CLI
+ * conversations are shared with another profile (a connected account linked to the machine login),
+ * that profile. Released connected homes linked the retired store too; materialization detaches those
+ * links, so the shared profile is found through the CLI store link instead.
+ */
+async function listLegacyProfiles(profileDir: string): Promise<string[]> {
+  try {
+    const shared = dirname(dirname(await realpath(join(profileDir, AGY_APP_DATA_DIR, 'conversations'))));
+    return resolve(shared) === resolve(await realpath(profileDir)) ? [profileDir] : [profileDir, shared];
+  } catch {
+    return [profileDir];
+  }
+}
+
 /** Where a conversation can be loaded from in a `--gemini-dir` profile; a legacy one must be imported first. */
 export async function locateAgyConversation(profileDir: string, conversationId: string): Promise<Readonly<{
   location: AgyConversationLocation;
   path: string | null;
+  legacyProfileDir?: string;
 }>> {
   const id = conversationId.trim();
   if (!isSafeConversationId(id)) return { location: 'missing', path: null };
   const native = conversationDatabase(profileDir, AGY_APP_DATA_DIR, id);
   if (await isFile(native)) return { location: 'native', path: native };
-  const legacy = conversationDatabase(profileDir, LEGACY_APP_DATA_DIR, id);
-  if (await isFile(legacy)) return { location: 'legacy', path: legacy };
+  for (const legacyProfileDir of await listLegacyProfiles(profileDir)) {
+    const legacy = conversationDatabase(legacyProfileDir, LEGACY_APP_DATA_DIR, id);
+    if (await isFile(legacy)) return { location: 'legacy', path: legacy, legacyProfileDir };
+  }
   return { location: 'missing', path: null };
 }
 
@@ -45,8 +63,9 @@ export async function locateAgyConversation(profileDir: string, conversationId: 
  */
 export async function importLegacyAgyConversation(profileDir: string, conversationId: string): Promise<boolean> {
   const id = conversationId.trim();
-  if ((await locateAgyConversation(profileDir, id)).location !== 'legacy') return false;
-  const legacy = join(profileDir, LEGACY_APP_DATA_DIR);
+  const conversation = await locateAgyConversation(profileDir, id);
+  if (conversation.location !== 'legacy' || !conversation.legacyProfileDir) return false;
+  const legacy = join(conversation.legacyProfileDir, LEGACY_APP_DATA_DIR);
   const native = join(profileDir, AGY_APP_DATA_DIR);
   // The database's SQLite sidecars and the `.meta` file travel with it.
   const conversationFiles = new Set([`${id}.db`, `${id}.db-wal`, `${id}.db-shm`, `${id}.meta`]);

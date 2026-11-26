@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -138,6 +138,32 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
           expect(await readFile(join(profile, 'antigravity-acp', path), 'utf8')).toBe(contents);
         }
         await expect(readFile(join(profile, 'antigravity-cli', 'conversations', 'other.db'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally { await backend.dispose(); }
+    });
+  });
+
+  it.each([
+    { state: 'shared', imported: true },
+    { state: 'isolated', imported: false },
+  ])('continues a machine-login conversation of the retired server in a connected account only with $state state', async ({ state, imported }) => {
+    await withTempDir('agy-launch-', async dir => {
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const machine = join(dir, 'machine');
+      const home = join(dir, 'connected-home');
+      await mkdir(join(machine, 'antigravity-acp', 'conversations'), { recursive: true });
+      await writeFile(join(machine, 'antigravity-acp', 'conversations', 'machine-legacy.db'), 'legacy database');
+      // Released connected homes linked the retired store; materialization detaches those links.
+      await mkdir(join(machine, 'antigravity-cli', 'conversations'), { recursive: true });
+      await mkdir(join(home, 'antigravity-cli'), { recursive: true });
+      if (state === 'shared') await symlink(join(machine, 'antigravity-cli', 'conversations'), join(home, 'antigravity-cli', 'conversations'), 'dir');
+      const backend = await createAgyAcpBackend({ cwd: dir, env: {
+        HAPPIER_AGY_PATH: agy, GEMINI_HOME: home, HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: CONNECTED_ACCOUNT_SELECTIONS,
+      } });
+      try {
+        const loaded = backend.loadSession!('machine-legacy');
+        await (imported ? expect(loaded).resolves.toMatchObject({ sessionId: 'machine-legacy' }) : expect(loaded).rejects.toThrow(/could not find/i));
+        const copy = readFile(join(machine, 'antigravity-cli', 'conversations', 'machine-legacy.db'), 'utf8');
+        await (imported ? expect(copy).resolves.toBe('legacy database') : expect(copy).rejects.toMatchObject({ code: 'ENOENT' }));
       } finally { await backend.dispose(); }
     });
   });
