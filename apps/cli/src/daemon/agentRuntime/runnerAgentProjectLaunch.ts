@@ -23,6 +23,9 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { mergeProjectLaunchLayers } from '@/workspaces/projectSetup/projectLaunchEnvironment';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import type { resolveGitIdentity } from '@/scm/gitIdentity';
 
 /** The retained producer owns review; its runner controller owns lifecycle and Stop. */
 function retainRunSetup(input: Readonly<{
@@ -97,6 +100,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     resolveInstalledAccountRuntime?: (signal: AbortSignal) => Promise<ProjectFiniteActionRuntime | null>;
 }>) {
     let owner: ReturnType<typeof createProjectAgentNativeLaunchOwner> | undefined;
+    let readGitIdentity: (() => Pick<Parameters<typeof resolveGitIdentity>[0], 'person' | 'isCustodian'>) | undefined;
     let runSetup: ReturnType<typeof retainRunSetup>;
     let disposed = false;
     // Attribute the private authorization wait without recording paths, launch
@@ -141,6 +145,25 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 ? unavailable('project_requester_credentials_unavailable', 'ingress_missing')
                 : unavailable((await import('@/workspaces/projectSetup/projectFiniteAction')).readProjectFiniteIngressRefusal(ingress)?.errorCode
                     ?? 'project_finite_execution_unavailable', 'finite_runtime_unavailable');
+            const session = ingress.requesterSessionBootstrap;
+            const requesterAccount = runtime.accountAuthorization
+                ? readRequesterAccountActionContext(runtime.accountAuthorization) : undefined;
+            const admission = ingress.machineAdmission;
+            const identity = runtime.requesterIdentity;
+            const isCustodian = session || installedAccount
+                ? identity?.kind === 'isolated' && !identity.separationRequired
+                : admission !== undefined && isCustodianMachineAdmission(admission);
+            const installedCredentials = installedAccount && isCustodian ? runtime.credentials : undefined;
+            const installedScope = installedCredentials
+                ? runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => resolveAccountSettingsScopeKey(installedCredentials))
+                : undefined;
+            readGitIdentity = () => {
+                const installed = installedScope ? getActiveAccountSettingsSnapshot() : undefined;
+                const snapshot = session?.savedSecretOperationContext.readSnapshot()
+                    ?? requesterAccount?.savedSecretOperationContext?.readSnapshot()
+                    ?? (installed?.scopeKey === installedScope ? installed : undefined);
+                return { person: snapshot?.settings.scmGitIdentity ?? null, isCustodian };
+            };
             let installedSecretOperation: Promise<SavedSecretOperationContextV1> | undefined;
             if (!input.operation && input.executionRun) runSetup = retainRunSetup({ runId: input.executionRun.runId,
                 control: input.executionRun, signal: input.signal, runtime, ...(input.sessionId ? { sessionId: input.sessionId } : {}) });
@@ -223,7 +246,8 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 },
             });
         }
-        return await observe('project_preparation', () => owner!.prepare(signal, cwd, environment));
+        const prepared = await observe('project_preparation', () => owner!.prepare(signal, cwd, environment));
+        return { ...prepared, gitIdentity: readGitIdentity?.() };
     };
     // One original occurrence owns one setup reservation and review producer.
     // Multiple qualified children keep their own tuples, but cannot overwrite

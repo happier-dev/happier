@@ -7,6 +7,7 @@ export type GitIdentityResolution = Readonly<{
   source: 'repository' | 'person' | 'native' | 'none';
   identity: ScmGitIdentity | null;
   environment: Readonly<Record<string, string>>;
+  processEnvironment: Readonly<Record<string, string>>;
 }>;
 
 /** The only precedence decision, shared by SCM and Agent launch composition. */
@@ -20,7 +21,7 @@ export async function resolveGitIdentity(input: Readonly<{
   if (input.isCustodian && !input.person) {
     const native = await input.run({ bin: 'git', cwd: input.cwd, args: ['var', 'GIT_COMMITTER_IDENT'] });
     const match = native.success ? /^(.*) <([^<>]*)> \d+ [+-]\d+$/.exec(native.stdout.trim()) : null;
-    return { source: 'native', identity: match ? { name: match[1]!, email: match[2]! } : null, environment: {} };
+    return { source: 'native', identity: match ? { name: match[1]!, email: match[2]! } : null, environment: {}, processEnvironment: {} };
   }
   const local = await input.run({ bin: 'git', cwd: input.cwd, args: ['config', '--includes', '--null', '--show-scope', '--get-regexp', '^user\\.(name|email)$'] });
   const records = local.stdout.split('\0');
@@ -36,14 +37,18 @@ export async function resolveGitIdentity(input: Readonly<{
   // Decision B: an explicit complete repository identity wins over the person.
   const repository = name && email ? { name, email } : null;
   const identity = repository ?? input.person;
-  if (identity) return { source: repository ? 'repository' : 'person', identity, environment: {
-    GIT_AUTHOR_NAME: identity.name, GIT_AUTHOR_EMAIL: identity.email,
-    GIT_COMMITTER_NAME: identity.name, GIT_COMMITTER_EMAIL: identity.email,
-  } };
-  // Decision A: no implicit host identity for another person; git var retains its typed refusal.
-  return { source: 'none', identity: null, environment: {
-    GIT_AUTHOR_NAME: '', GIT_AUTHOR_EMAIL: '', GIT_COMMITTER_NAME: '', GIT_COMMITTER_EMAIL: '',
-  } };
+  const environment = {
+    GIT_AUTHOR_NAME: identity?.name ?? '', GIT_AUTHOR_EMAIL: identity?.email ?? '',
+    GIT_COMMITTER_NAME: identity?.name ?? '', GIT_COMMITTER_EMAIL: identity?.email ?? '',
+  };
+  // An Agent can change repositories. Keep repository identity in Git config on that path.
+  // Empty names/emails for a guest without an identity preserve Git's refusal.
+  return {
+    source: repository ? 'repository' : input.person ? 'person' : 'none',
+    identity,
+    environment,
+    processEnvironment: repository ? {} : environment,
+  };
 }
 
 type IdentityScope = { person: ScmGitIdentity | null; isCustodian: boolean; resolutions: Map<string, Promise<GitIdentityResolution>> };

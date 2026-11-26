@@ -64,6 +64,9 @@ import { consumeDeploymentExecEnvForHost, type HostDeploymentRuntimeProjectionV1
 import { carryNativeDockerContextSelectionForHost } from '@/deployments/secrets/environmentRegistryConfig';
 import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
 import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { resolveGitIdentity } from '@/scm/gitIdentity';
+import { createHostScmCommandRunner } from '@/scm/runtime';
 import { awaitExecLaunchPreparation } from './execLaunchPreparation';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
@@ -146,8 +149,9 @@ export type HostAgentNativeLaunchPreparation = (
     cwd?: string,
     environment?: Readonly<Record<string, string>>,
 ) => Promise<Readonly<{
-    projectLaunch: HostProjectNativeLaunchAdmission;
+    projectLaunch?: HostProjectNativeLaunchAdmission;
     nativeExecutableOwner?: ExecService;
+    gitIdentity?: Pick<Parameters<typeof resolveGitIdentity>[0], 'person' | 'isCustodian'>;
 }> | undefined>;
 
 /** Placement selected by native admission; callers cannot manufacture an identity. */
@@ -1015,6 +1019,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
     launch: ResolvedHostExecLaunch;
     requestedCwd?: string;
     projectLaunch?: HostProjectNativeLaunchAdmission;
+    gitIdentity?: Pick<Parameters<typeof resolveGitIdentity>[0], 'person' | 'isCustodian'>;
     agentIsolation?: HostAgentIsolationLaunchContext;
     sessionMcpContext?: SessionMcpLocalContext;
     mcpLaunchMaterial?: McpLaunchMaterial;
@@ -1104,6 +1109,22 @@ async function finalizeHostExecLaunch(input: Readonly<{
             agentNativeLaunch: input.agentNativeLaunch,
             agentLaunchKind: input.agentLaunchKind ?? (input.projectLaunch?.status === 'ready' ? 'workspaceExec' : undefined) });
         assertCurrent();
+        const workspaceCwd = input.launch.cwd;
+        let gitEnvironment: Readonly<Record<string, string>> = {};
+        if (input.gitIdentity && workspaceCwd) {
+            const run = createHostScmCommandRunner({
+                // The probe uses the workspace placement already selected for this launch.
+                agentIsolation: isolated ? { requesterIdentity, read: () => isolated.snapshot } : undefined,
+                isCurrent: () => !input.signal.aborted,
+            });
+            const identity = await resolveGitIdentity({ ...input.gitIdentity, cwd: workspaceCwd,
+                run: command => run({ ...command, signal: input.signal }) });
+            gitEnvironment = identity.processEnvironment;
+            assertCurrent();
+        }
+        const gitEnvironmentKeys = Object.keys(gitEnvironment);
+        const withGitIdentity = (baseEnv: Readonly<Record<string, string>>) => gitEnvironmentKeys.length
+            ? buildScopedProcessEnv({ baseEnv, explicitEnv: gitEnvironment }) : baseEnv;
         if (isolated) {
             const material = isolated.snapshot.launch!;
             if (input.agentNativeLaunch && !material.sessionMcpContext) fail('agent_isolation_unavailable', 'Current Session MCP context is unavailable');
@@ -1113,12 +1134,13 @@ async function finalizeHostExecLaunch(input: Readonly<{
             }) : { args, environment: { ...environment, ...material.environment }, selectedMaterials: material.selectedMaterials };
             assertCurrent();
             const launch = createUnixAgentIdentityLaunch({ ...material, ...selectedFiles, executable: command, cwd: isolated.cwd,
-                environment: withHostProcessOwnerEnvironment(selectedFiles.environment,
+                environment: withHostProcessOwnerEnvironment(withGitIdentity(selectedFiles.environment),
                     input.launch.processOwnerTag ?? readHostProcessOwnerTag()),
                 // The admitted Project result is a complete environment. The
                 // identity adapter still excludes source/control credentials.
                 selectedEnvironmentKeys: [...material.selectedEnvironmentKeys, ...(launchEnvironmentKeys ?? []),
-                    ...(input.projectLaunch?.status === 'ready' ? Object.keys(environment) : []), PROCESS_OWNER_ENV_KEY],
+                    ...(input.projectLaunch?.status === 'ready' ? Object.keys(environment) : []),
+                    ...gitEnvironmentKeys, PROCESS_OWNER_ENV_KEY],
                 nativeSocketDirectory: input.mcpLaunchMaterial?.nativeSocketDirectory,
                 ...(isolated.snapshot.memberIdentity ? { memberIdentity: isolated.snapshot.memberIdentity } : {}),
                 sessionMcpContext: material.sessionMcpContext });
@@ -1131,6 +1153,7 @@ async function finalizeHostExecLaunch(input: Readonly<{
             launcherCwd = process.cwd();
             stdinPreamble = launch.stdinPreamble;
         }
+        if (!isolated) environment = withGitIdentity(environment);
         const invocation = resolveStablePluginExecInvocation({
             command, args, env: environment,
         });
@@ -1181,6 +1204,7 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
     let projectLaunch = input.projectLaunch;
     let nativeExecutableOwner = input.nativeExecutableOwner;
     let requesterIdentity = input.requesterIdentity;
+    let gitIdentity: NonNullable<Awaited<ReturnType<HostAgentNativeLaunchPreparation>>>['gitIdentity'];
     try {
         assertCurrent();
         validateExecLaunchInput(input.launch);
@@ -1191,6 +1215,7 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
             assertCurrent();
             projectLaunch = prepared?.projectLaunch;
             nativeExecutableOwner = prepared?.nativeExecutableOwner;
+            gitIdentity = prepared?.gitIdentity;
         }
     } catch (error) {
         input.launch.release?.();
@@ -1201,6 +1226,7 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
         ...input,
         requesterIdentity,
         projectLaunch,
+        gitIdentity,
         ...(executableOwner ? {
             resolveNativeExecutable: (executable: ManagedExecutableRef, signal: AbortSignal) =>
                 resolveNativeExecutableForHost(executableOwner, executable, signal),
@@ -1916,6 +1942,7 @@ export function createStablePluginExecService(params: Readonly<{
             ...(request.env ?? {}),
         };
         const signal = options?.signal ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal]) : lifetime?.signal ?? params.signal;
+        let gitIdentity: NonNullable<Awaited<ReturnType<HostAgentNativeLaunchPreparation>>>['gitIdentity'];
         try {
             const prepare = prepareAgentNativeLaunch ?? (agentNativeLaunch ? params.prepareAgentNativeLaunch : undefined);
             if (prepare && !projectLaunch) {
@@ -1923,6 +1950,7 @@ export function createStablePluginExecService(params: Readonly<{
                 assertCurrent();
                 projectLaunch = prepared?.projectLaunch;
                 nativeExecutableOwner = prepared?.nativeExecutableOwner;
+                gitIdentity = prepared?.gitIdentity;
             }
         } catch (error) {
             releaseExecutable();
@@ -1938,6 +1966,7 @@ export function createStablePluginExecService(params: Readonly<{
             signal,
             assertCurrent,
             projectLaunch,
+            gitIdentity,
             ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
             agentIsolation: hostAgentIsolation ?? params.agentIsolation,
             agentNativeLaunch,

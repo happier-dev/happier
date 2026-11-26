@@ -1,5 +1,20 @@
 # CLI Architecture
 
+## Agent Git identity at native launch (0.3 development)
+
+Retained Agent Sessions and Execution Runs use the requesting Account's
+`scmGitIdentity` and the verified Machine custodian decision. At native launch,
+the host uses the admitted workspace runner to resolve Git identity once and
+applies the result to the final process environment. The same resolver owns the
+precedence for SCM commands.
+
+A repository-local or worktree-local identity at the launch directory leaves
+the Agent's Git environment alone, as does native fallback for the custodian.
+A personal identity sets the Git author and committer variables. A guest with
+no identity gets empty author and committer variables so Git refuses to use the
+Machine's default identity. These variables apply to the life of the Agent
+process, including commands it runs in a second repository.
+
 ## Project launch environment composition (0.3 development)
 
 `workspaces/projectSetup/projectLaunchEnvironment.ts` owns Project launch inputs.

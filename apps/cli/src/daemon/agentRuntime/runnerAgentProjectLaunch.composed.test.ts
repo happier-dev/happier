@@ -2,6 +2,7 @@ import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import axios from 'axios';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import type { ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
@@ -51,9 +52,15 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean; trusted?: boolean; boundRequester?: boolean;
-  projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile'; publishUnrelatedPreference?: boolean }> = {}) {
+  projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile'; publishUnrelatedPreference?: boolean;
+  machineAccess?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['machineAccess'];
+  accountSettings?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['accountSettings'] }> = {}) {
   const refs = { project: formatSharedSavedSecretRefV1('native-project-secret'), invocation: formatSharedSavedSecretRefV1('native-invocation-secret') };
-  const f = await createProjectSessionRuntimeFixture({ ...(options.boundRequester ? { boundSessionId: 'session' } : {}) });
+  const custodianAccountId = options.machineAccess?.custodianAccountId ?? 'custodian';
+  const homeServerIdentityId = options.machineAccess ? 'srv_fixture_git_home' : undefined;
+  const f = await createProjectSessionRuntimeFixture({ ...(options.boundRequester ? { boundSessionId: 'session' } : {}),
+    ...(options.machineAccess ? { homeServerIdentityId, machineAccess: options.machineAccess } : {}),
+    accountSettings: options.accountSettings });
   const profile = ProfileRecordV1Schema.parse({ v: 1, id: 'native-profile', enabled: true, promptStack: [],
     secretBindings: { TOKEN: refs.invocation }, definition: { kind: 'legacy', profile: AIBackendProfileSchema.parse({
       id: 'native-profile', name: 'Native Profile', envVarRequirements: [{ name: 'TOKEN', kind: 'secret', required: true }],
@@ -120,6 +127,9 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
       return { status: 200, data: { status: 'updated', revision: 1, cursor: 1 } };
     }
     if (String(url).endsWith('/project-rows/list')) {
+      if (homeServerIdentityId && body.serverId === homeServerIdentityId) {
+        return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [] } };
+      }
       const key = { kind: 'workspace-ref', serverId: 'session-home', id: 'workspace' };
       return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [{ key, revision: rowRevision,
         content: { t: 'plain', v: { key, value: { id: 'workspace', serverId: 'session-home', machineId: 'machine',
@@ -186,7 +196,7 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
   const autostartContext: ActionExecutorContext = { surface: 'ui', authority: 'present_user', serverId: 'session-home',
     runtimeAccountId: 'requester', executeHostReviewedChildAction: (actionId, input, context) => childExecutor.execute(actionId, input, context) };
   const factory = createInstalledProjectFiniteRuntime({ api, credentials: custodianCredentials,
-    externalActionAccountId: 'custodian', finiteServerId: 'session-home', finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
+    externalActionAccountId: custodianAccountId, finiteServerId: 'session-home', finiteServerHttpBaseUrl: 'https://session-home.test', registeredMachineId: 'machine',
     admission, nativeIo, successHomeDir: join(f.directory, 'success'), isCurrent: async () => true,
     prepareBetween: async () => { throw new Error('No worker preparation expected'); }, resolveCurrentMachineExecutionOriginContext: async () => null });
   const resolveRuntime = (context: typeof ingress) => factory({ operationRuntime, terminalSessions }, context);
@@ -471,6 +481,49 @@ it('prepares a fresh zero-step native Project through installed Session custody 
       env: { PATH: '/native/bin', NATIVE: 'active' } });
     expect(launch.env).not.toHaveProperty('ORIGINAL');
     expect(h.nativeEffects()).toBe(1);
+  } finally { await launch.release(); }
+});
+
+const guestGitIdentity = { name: 'Guest Person', email: 'guest@example.test' };
+
+it.each([
+  { label: 'guest on a shared Machine', custodian: false, repository: false, person: guestGitIdentity,
+    expected: 'Guest Person <guest@example.test>' },
+  { label: 'Machine custodian', custodian: true, repository: false, person: null,
+    expected: 'Machine Person <machine@example.test>' },
+  { label: 'guest in a repository with its own identity', custodian: false, repository: true, person: guestGitIdentity,
+    expected: 'Repository Person <repo@example.test>' },
+  { label: 'guest without an identity', custodian: false, repository: false, person: null, expected: null },
+])('prepares the Git environment for $label', async ({ custodian, repository, person, expected }) => {
+  const h = await harness({
+    boundRequester: true,
+    machineAccess: { custodianAccountId: custodian ? 'requester' : 'custodian', role: 'manage' },
+    accountSettings: { scmGitIdentity: person },
+  });
+  const global = join(h.cwd, 'machine.gitconfig');
+  await writeFile(global, '[user]\nname = Machine Person\nemail = machine@example.test\n');
+  const git = (args: string[], environment: Readonly<Record<string, string>> = {}) => execFileSync('git', args, {
+    cwd: h.cwd, stdio: 'pipe', encoding: 'utf8',
+    env: { ...environment, PATH: process.env.PATH, GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: '1' },
+  });
+  git(['init']);
+  if (repository) {
+    git(['config', '--local', 'user.name', 'Repository Person']);
+    git(['config', '--local', 'user.email', 'repo@example.test']);
+  }
+  const launch = await h.launch();
+  try {
+    const identityEnvironment = Object.fromEntries(Object.entries(launch.env).filter(
+      ([key]) => /^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/.test(key),
+    ));
+    expect(identityEnvironment).toEqual(custodian || repository ? {} : {
+      GIT_AUTHOR_NAME: person?.name ?? '', GIT_AUTHOR_EMAIL: person?.email ?? '',
+      GIT_COMMITTER_NAME: person?.name ?? '', GIT_COMMITTER_EMAIL: person?.email ?? '',
+    });
+    for (const variable of ['GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT']) {
+      if (expected) expect(git(['var', variable], launch.env)).toContain(expected);
+      else expect(() => git(['var', variable], launch.env)).toThrow(/empty ident/i);
+    }
   } finally { await launch.release(); }
 });
 
