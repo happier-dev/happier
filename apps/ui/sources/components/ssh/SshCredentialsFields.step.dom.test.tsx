@@ -121,6 +121,14 @@ it("picks the way to sign in from one field select whose menu explains each way,
       expect(byTestId('ssh-sshIdentityFile')).not.toBeNull(),
     );
     expect(byTestId('ssh-sshPasswordInput')).toBeNull();
+    // The key's path leads; pasting a key is a quiet way that opens its field.
+    expect(byTestId('ssh-sshPrivateKeyMaterialInput')).toBeNull();
+    await act(async () => {
+      byTestId('ssh-sshPrivateKeyMaterialOpen')!.click();
+    });
+    await vi.waitFor(() =>
+      expect(byTestId('ssh-sshPrivateKeyMaterialInput')).not.toBeNull(),
+    );
 
     await choose('agent');
     await vi.waitFor(() => expect(byTestId('ssh-sshIdentityFile')).toBeNull());
