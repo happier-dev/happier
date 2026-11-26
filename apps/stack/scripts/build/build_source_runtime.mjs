@@ -31,7 +31,7 @@ import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../p
 import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
 import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
 import { readPublishedSourceRuntimeRecord, readSelectedSourceRuntimeRecord, readSourceRuntimeBundleRecord, sourceBundleCandidatePath, sourceRuntimeCandidateKey } from '../runtime/shared/source_bundle_record.mjs';
-import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resolveDependencyRefreshLockPath } from '../utils/proc/dependency_refresh.mjs';
+import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resolveDependencyRefreshLockPath, withDependencyConsumption } from '../utils/proc/dependency_refresh.mjs';
 import { diagnoseSourceReloadFailure, emitSourceReloadRefusal, parseSourceReloadRefusalLine, recordSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_author_packages.mjs';
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
@@ -881,7 +881,7 @@ export function sourceRuntimeProducerUnavailable(cause, context) {
 
 async function readCompletedProducerComponents({ repoDir, stackBaseDir, components, env, signal,
   sourceCapturedAfter, pending, reuseSelected, requireCurrentSource = false, captureFingerprints,
-  requireLastGreen = false, revision, sharedSourceInputs, select = true }) {
+  requireLastGreen = false, revision, sharedSourceInputs, pinCheckout = false, select = true }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   // A revision selects the exact revision build, or (by default) the latest
   // built revision; content-equal captures go through captureFingerprints.
@@ -910,7 +910,7 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
       const outputDir = join(bundleRoot, candidate.outputName);
       // A legacy linked product cannot satisfy a pinned capture, even when
       // its authored revision is equal. The producer must materialize it once.
-      if (descriptor.component === 'daemon' && (revision || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot')
+      if (descriptor.component === 'daemon' && (revision || pinCheckout || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot')
         && record.runtimeDependencyClosure?.captured !== true) break;
       // Revision builds never adopt a dirty-checkout capture; the latest built
       // revision is never an overlay build.
@@ -974,13 +974,17 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     ...(component.component === 'daemon' ? { serverComponent: 'happier-server-light', dbProvider: undefined } : {}) }));
   const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
   const requireCurrentSource = context.consumerStackName === context.producerStackName;
+  const pinCheckout = !sourceRevision && devStartup && requireCurrentSource
+    && isRepoStackIdentityName(context.producerStackName)
+    && context.env.HAPPIER_STACK_RUNTIME_MODE !== 'source-snapshot'
+    && components.length === 1 && components[0].component === 'daemon';
   let revision;
   let revisionArchivePath = null;
   // The producer's own source-dev Stack keeps its live-checkout runtime; a revision it
   // builds for QA consumers is published to the store, never selected into that Stack.
   const select = () => !(requireCurrentSource && revision);
   const adopt = () => readCompletedProducerComponents({ repoDir, stackBaseDir, components, env: context.env,
-    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, revision, select: select() });
+    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, revision, pinCheckout, select: select() });
   const report = prepared => {
     for (const [component, built] of Object.entries(prepared)) logger.error(`[source-bundle] adopted component=${component} producer=${context.producerStackName} rev=${built.sourceCapture?.revision ?? 'checkout'}${built.sourceCapture?.overlayDigest ? `+overlay:${built.sourceCapture.overlayDigest}` : ''} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
     return prepared;
@@ -1018,7 +1022,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
           args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
             stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
             producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource,
-            revision: revision && { ...revision, latest: false }, select: select(), revisionArchivePath, resultPath })] }),
+            revision: revision && { ...revision, latest: false }, pinCheckout, select: select(), revisionArchivePath, resultPath })] }),
           locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
             errorLabel: 'source runtime producer lock' }],
           cwd: repoDir, env: admissionEnv, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
@@ -1047,12 +1051,12 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
 }
 
 async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, consumerStackBaseDir, pendingRequestId,
-  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, select = true, revisionArchivePath, env = process.env, signal }) {
+  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, pinCheckout = false, select = true, revisionArchivePath, env = process.env, signal }) {
   if (pendingRequestId) await updatePendingSourcePreparationPhase({ stackBaseDir: consumerStackBaseDir,
     requestId: pendingRequestId, phase: 'building',
     ...(components.length === 1 ? { component: components[0].component } : {}), signal });
   const lookup = { repoDir, stackBaseDir: consumerStackBaseDir, components, env, signal, sourceCapturedAfter, reuseSelected,
-    revision, select, pending: { requestId: pendingRequestId } };
+    revision, pinCheckout, select, pending: { requestId: pendingRequestId } };
   const completed = await readCompletedProducerComponents({ ...lookup, requireCurrentSource });
   if (completed) return completed;
   // A checkout capture keys its locks before capture. A revision capture is
@@ -1073,7 +1077,7 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
   const buildComponents = async (fingerprints, sharedSourceInputs) => {
     const prepared = {};
     for (const [index, descriptor] of components.entries()) prepared[descriptor.component] = await prepareSharedSourceRuntimeBundle({
-      repoDir, stackBaseDir, ...descriptor, fingerprint: fingerprints[index], sharedSourceInputs, env, signal,
+      repoDir, stackBaseDir, ...descriptor, fingerprint: fingerprints[index], sharedSourceInputs, pinCheckout, env, signal,
     });
     if (sourceCapturedAfter != null && Object.values(prepared).some(built => !(Date.parse(built.sourceCapture?.capturedAt) >= sourceCapturedAfter))) {
       throw sourceRuntimeCaptureUnavailable({
@@ -1126,7 +1130,7 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
       if (descriptorDir) removeOwnedDirectorySync(descriptorDir);
     }
   };
-  return await withSourceCaptureRetry({ repoDir, env, signal }, prepare);
+  return pinCheckout ? await prepare() : await withSourceCaptureRetry({ repoDir, env, signal }, prepare);
 }
 
 /** Build from the execution host's installed source. Stack consumers adopt the
@@ -1257,9 +1261,9 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, component, ser
 }
 
 async function prepareSharedSourceRuntimeBundle({ repoDir, stackBaseDir, component, serverComponent, dbProvider,
-  fingerprint, sharedSourceInputs, env = process.env, signal }) {
+  fingerprint, sharedSourceInputs, pinCheckout, env = process.env, signal }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
-  const inputs = { repoDir, component, serverComponent, dbProvider, sharedSourceInputs };
+  const inputs = { repoDir, component, serverComponent, dbProvider, sharedSourceInputs, pinCheckout };
   // The selected graph already has Stack retention. Borrow its inventory only
   // as a candidate; the canonical UI owner revalidates and materializes bytes
   // into this replacement, never leaving a link to the incumbent's output.
@@ -1372,7 +1376,7 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui, p
   })) };
 }
 
-async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, env = process.env, signal }) {
+async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, pinCheckout, env = process.env, signal }) {
   if (component === 'server' && !sharedSourceInputs) {
     const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
     // A queued standalone build checks readiness at its actual capture point.
@@ -1383,7 +1387,7 @@ async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component
   try {
     return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (env, publication) => ({
       ...await consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider,
-        retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, env, signal, onOutputReady: () => { ownsOutput = true; } }),
+        retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, pinCheckout, env, signal, onOutputReady: () => { ownsOutput = true; } }),
       dependencyPublication: { ...publication.state,
         markerPath: resolveDependencyRefreshMarkerPath(resolveDependencyInstallRoot(repoDir)),
         generationPath: `${resolveDependencyRefreshLockPath(resolveDependencyInstallRoot(repoDir), env)}.generation`,
@@ -1395,7 +1399,7 @@ async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component
   }
 }
 
-async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, env, signal, onOutputReady }) {
+async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, pinCheckout, env, signal, onOutputReady }) {
   if (component !== 'daemon' && component !== 'server') throw new Error(`Unsupported source runtime component: ${component}`);
   repoDir = resolve(repoDir);
   outputDir = resolve(outputDir);
@@ -1425,7 +1429,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   process.once('SIGTERM', interrupt);
   try {
     const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootDir, capturedFiles: captured.files, guestPayloadTargets,
-      captureDependencies: Boolean(captured.revision) || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot',
+      captureDependencies: pinCheckout || Boolean(captured.revision) || env.HAPPIER_STACK_RUNTIME_MODE === 'source-snapshot',
       outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
     if (guestPayloadTargets) {
       built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir,
@@ -1471,7 +1475,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       process.once('SIGTERM', interrupt);
       try {
         if (options.producerComponents) {
-          result = await prepareSourceRuntimeProducerInProcess({ ...options, signal: cancellation.signal });
+          const signal = cancellation.signal;
+          const prepare = env => prepareSourceRuntimeProducerInProcess({ ...options, env, signal });
+          // The source capture owns authored bytes. Keep its installed workspace
+          // links stable through compilation and publication, then release them.
+          result = options.pinCheckout ? await withDependencyConsumption({ installDir: resolveDependencyInstallRoot(options.repoDir),
+            env: process.env, signal, stableCheckout: true }, prepare) : await prepare(process.env);
         } else {
           // A queued pre-cutover launcher retains the former component request
           // and fingerprint lease. Translate at this boundary; the admission

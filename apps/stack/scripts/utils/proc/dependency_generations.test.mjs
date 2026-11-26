@@ -262,6 +262,46 @@ test('a lock-only writer on a generation-managed tree runs beside a long-lived r
   await server;
 });
 
+test('ordinary readers enter the installed generation while publication waits for a checkout build', { timeout: 15_000 }, async t => {
+  const { env, installDir } = await setup(t);
+  await moveInPlaceInstallationIntoGeneration(installDir);
+  await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
+  let release, entered, waiting;
+  const held = new Promise(resolve => { release = resolve; });
+  const inside = new Promise(resolve => { entered = resolve; });
+  const waitingAtPublication = new Promise(resolve => { waiting = resolve; });
+  const options = { installDir, env, signal: t.signal };
+  const build = dependencies.withDependencyConsumption({ ...options, stableCheckout: true }, async () => {
+    entered();
+    await held;
+    assert.ok(readInstalled(installDir).every(content => content.includes('v1')));
+  });
+  await inside;
+
+  const writeStderr = process.stderr.write;
+  const notice = t.mock.method(process.stderr, 'write', function (chunk, ...args) {
+    if (String(chunk).includes('waiting for dependency consumers lock')) waiting();
+    return writeStderr.call(this, chunk, ...args);
+  });
+  const refresh = dependencies.withDependencyRefresh({ ...options, generationInstall: true,
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0' } }, async ({ installCwd, publishInstallation }) => {
+    await fakeInstall(installCwd, 'v2');
+    await publishInstallation();
+  });
+  try {
+    await Promise.race([waitingAtPublication, refresh.then(() => assert.fail('published before the checkout build finished'))]);
+    const published = await dependencies.withDependencyConsumption({ ...options, wait: false }, () => readInstalled(installDir));
+    assert.ok(published.every(content => content.includes('v1')), 'ordinary readers use the complete old generation');
+    await assert.rejects(dependencies.withDependencyConsumption({ ...options, stableCheckout: true, wait: false },
+      () => assert.fail('a second checkout build extended the writer wait')), { code: 'EJSONOWNERFILELOCKBUSY' });
+  } finally {
+    notice.mock.restore();
+    release();
+    await Promise.all([build, refresh]);
+  }
+  assert.ok(readInstalled(installDir).every(content => content.includes('v2')));
+});
+
 test('a routed payload keeps the generation it started on through a switch, and it goes once the payload exits', async t => {
   const { env, installDir } = await setup(t);
   const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;

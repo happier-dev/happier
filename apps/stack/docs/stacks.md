@@ -167,6 +167,13 @@ authority refuses with a busy publication lease while a source-bundle build
 holds that lease. Retry after the build completes. Ordinary startup and
 recovery continue to use the retained source generation.
 
+In 0.3 development, the repository development daemon captures the checkout
+once per source build. Its build holds the installed checkout inputs through
+publication and bundles its runtime dependencies. Dependency installation can
+stage a new generation alongside the build. Other readers can use the installed
+generation until publication begins after the build releases the checkout. The
+next normal daemon reload captures the newer inputs.
+
 In 0.3 development, full reloads, retained source-capture adoption and dev
 source-generation swaps refresh running named identity daemons after the default
 daemon. Discovery uses the daemon host's identity homes as well as recorded

@@ -483,6 +483,65 @@ test('recovering dependency drift does not publish a refusal before the producer
 });
 
 
+test('repo-dev daemon finishes one captured build while source edits and dependency refresh arrive', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+  const { fixture, native, repoDir, cliDir, entry, env } = await createProducerFixture(t);
+  const stackName = 'repo-dev-a1cc5e0671';
+  const stackBaseDir = fixture.path(`stacks/${stackName}`);
+  const stackEnv = { ...env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: stackName };
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  const { createDependencyGeneration, flipDependencyGeneration } = await import('../utils/proc/dependency_generations.mjs');
+  const install = async () => {
+    const generation = await createDependencyGeneration(repoDir);
+    for (const dir of ['', 'apps/cli']) await mkdir(join(generation.genRoot, dir, 'node_modules'), { recursive: true });
+    await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')),
+      join(generation.genRoot, 'apps/cli/node_modules/esbuild'), 'dir');
+    return generation;
+  };
+  await flipDependencyGeneration(repoDir, await install());
+  const { resolveDependencyRefreshLockPath } = await import('../utils/proc/dependency_refresh.mjs');
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, stackEnv)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'initial', completedGeneration: 'initial' }));
+
+  const started = fixture.path('started');
+  const release = fixture.path('release');
+  const watcher = watch(fixture.root);
+  t.after(() => watcher.close());
+  const captured = new Promise((resolve, reject) => {
+    watcher.on('error', reject);
+    watcher.on('change', (_event, name) => { if (name === 'started') resolve(); });
+  });
+  await writeFile(join(cliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
+    `import {writeFileSync,existsSync} from 'node:fs'; writeFileSync(${JSON.stringify(started)},'captured'); while(!existsSync(${JSON.stringify(release)})) await new Promise(resolve=>setTimeout(resolve,10)); export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=[];`);
+
+  const refresh = wait => withDependencyRefreshLock({ installDir: repoDir, env: stackEnv, wait }, async () => {
+    await markDependencyMutation({ installDir: repoDir, env: stackEnv });
+    await flipDependencyGeneration(repoDir, await install());
+  });
+  const options = { repoDir, component: 'daemon', env: stackEnv, stackBaseDir, devStartup: true, signal: t.signal };
+  const build = native.build(options);
+  const firstCapture = await Promise.race([captured.then(() => true), build.then(() => false)]);
+  assert.equal(firstCapture, true);
+  let refreshRefusal;
+  try {
+    await writeFile(entry, 'export const value = 2;');
+    await refresh(false).catch(error => { refreshRefusal = error; });
+  } finally {
+    await writeFile(release, 'release');
+  }
+  const first = await build;
+  assert.equal((await import(pathToFileURL(first.entrypoint))).value, 1, 'the admitted build publishes its captured source');
+  assert.match(refreshRefusal?.message ?? '', /busy with consumer/, 'the dependency owner protects the captured inputs until publication');
+  assert.equal(first.runtimeDependencyClosure?.captured, true, 'the resulting daemon can start after the writer is admitted');
+
+  await refresh(true);
+  assert.equal((await import(`${pathToFileURL(first.entrypoint).href}?after-refresh`)).value, 1);
+  const second = await native.build(options);
+  assert.equal((await import(pathToFileURL(second.entrypoint))).value, 2, 'the next reload consumes the newer inputs');
+  assert.notEqual(second.entrypoint, first.entrypoint);
+  assert.equal(JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, second.entrypoint);
+});
+
 test('repo-dev default daemon startup enters the existing reload preparation tier', { skip: process.platform !== 'linux' }, async t => {
   const childProcess = (await import('node:child_process')).default;
   const { syncBuiltinESMExports } = await import('node:module');

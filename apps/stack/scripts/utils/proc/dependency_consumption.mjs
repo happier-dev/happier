@@ -10,6 +10,7 @@ import { pruneDependencyGenerations, readCurrentDependencyGeneration } from './d
 
 const readers = new AsyncLocalStorage();
 const custodyVariable = 'HAPPIER_BUILD_DEPENDENCY_CUSTODY';
+const dependencyReaderName = /^reader-(\d+)-(checkout-)?[a-f0-9-]+\.json$/;
 export const DEPENDENCY_LOCK_STALE_AFTER_MS = 240_000;
 
 export function inheritedDependencyWriter(lockPath, env) {
@@ -31,12 +32,13 @@ function inheritedReader(lockPath, env) {
   if (local?.active) return local;
   let inherited;
   try { inherited = JSON.parse(env[custodyVariable] ?? 'null'); } catch { return null; }
-  if (inherited?.lockPath !== lockPath || !/^reader-\d+-[a-f0-9-]+\.json$/.test(inherited.name ?? '')) return null;
+  const name = dependencyReaderName.exec(inherited?.name ?? '');
+  if (inherited?.lockPath !== lockPath || !name) return null;
   let record;
   try { record = JSON.parse(readFileSync(join(`${lockPath}.readers`, inherited.name), 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   return record.pid === inherited.pid && observePidLiveness(record.pid).status !== 'dead'
-    ? { active: true, env } : null;
+    ? { active: true, stableCheckout: Boolean(name[2]), env } : null;
 }
 
 // A writer installing into a new dependency generation mutates no installed
@@ -68,13 +70,13 @@ export function hasDependencyReadLock(lockPath, env) {
 // and drains it, or the reader sees the writer and withdraws before importing.
 // Readers never take an exclusive FIFO turn merely to register consumption.
 // Publication admission runs once here; inherited readers/writers retain it.
-export async function withDependencyReadLock({ lockPath, installDir, env, signal, wait = true, onAdmit }, consume) {
+export async function withDependencyReadLock({ lockPath, installDir, env, signal, wait = true, stableCheckout = false, onAdmit }, consume) {
   if (inheritedDependencyWriter(lockPath, env)) return await consume(env);
   const inherited = inheritedReader(lockPath, env);
-  if (inherited) return await consume({ ...env, [custodyVariable]: inherited.env[custodyVariable] });
+  if (inherited && (!stableCheckout || inherited.stableCheckout)) return await consume({ ...env, [custodyVariable]: inherited.env[custodyVariable] });
   const directory = `${lockPath}.readers`;
   mkdirSync(directory, { recursive: true });
-  const name = `reader-${process.pid}-${randomUUID()}.json`;
+  const name = `reader-${process.pid}-${stableCheckout ? 'checkout-' : ''}${randomUUID()}.json`;
   const recordPath = join(directory, name);
   const observer = createFileChangeObserver([dirname(lockPath)]);
   const readGate = () => readJsonOwnerLockSnapshot(lockPath).raw;
@@ -89,8 +91,10 @@ export async function withDependencyReadLock({ lockPath, installDir, env, signal
       signal?.throwIfAborted();
       const snapshot = observer.capture(readGate);
       writeFileSync(recordPath, JSON.stringify({ pid: process.pid, ...(generation ? { generation } : {}) }), { flag: 'wx' });
+      // A finite checkout build must enter before the writer's turn. The
+      // writer can then drain those builds while ordinary readers still enter.
       if (!isJsonOwnerFileLockActive(lockPath, { staleAfterMs: DEPENDENCY_LOCK_STALE_AFTER_MS })
-        || writerAdmitsReaders(lockPath)) break;
+        || (!stableCheckout && writerAdmitsReaders(lockPath))) break;
       unlinkSync(recordPath);
       const owner = readJsonOwnerLockSnapshot(lockPath).owner;
       if (!wait) throw Object.assign(new Error(`Dependency refresh is busy with writer pid=${owner?.pid ?? 'unknown'}`),
@@ -99,7 +103,7 @@ export async function withDependencyReadLock({ lockPath, installDir, env, signal
       await observer.wait({ snapshot, readSnapshot: readGate, maxWaitMs: DEFAULT_FILE_CHANGE_CATCH_UP_MS, signal });
     }
     observer.close();
-    reader = { active: true, env: { ...env,
+    reader = { active: true, stableCheckout, env: { ...env,
       [custodyVariable]: JSON.stringify({ lockPath, name, pid: process.pid }) } };
     signal?.throwIfAborted();
     return await readers.run(new Map([...(readers.getStore() ?? []), [lockPath, reader]]), async () => {
@@ -119,10 +123,10 @@ export async function withDependencyReadLock({ lockPath, installDir, env, signal
   }
 }
 
-// The writer already owns the gate: no new independent reader can enter.
+// The writer already excludes new readers of the kind it is draining.
 // Filesystem departures wake this wait; the existing catch-up policy handles
 // a process that died without unlinking its immutable record.
-export async function waitForDependencyReaders({ lockPath, env, signal, wait = true }) {
+export async function waitForDependencyReaders({ lockPath, env, signal, wait = true, stableCheckoutOnly = false }) {
   const directory = `${lockPath}.readers`;
   mkdirSync(directory, { recursive: true });
   const observer = createFileChangeObserver([directory]);
@@ -131,8 +135,8 @@ export async function waitForDependencyReaders({ lockPath, env, signal, wait = t
   const inspect = () => {
     const active = [];
     for (const name of readdirSync(directory)) {
-      const match = /^reader-(\d+)-[a-f0-9-]+\.json$/.exec(name);
-      if (!match) continue;
+      const match = dependencyReaderName.exec(name);
+      if (!match || (stableCheckoutOnly && !match[2])) continue;
       const pid = Number(match[1]);
       if (observePidLiveness(pid).status === 'dead') {
         try { unlinkSync(join(directory, name)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
