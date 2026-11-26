@@ -50,7 +50,6 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     providerAccountUsageHistory: {
         id: 'providerAccountUsageHistory',
         policyConfig: ageConfig('PROVIDER_ACCOUNT_USAGE_HISTORY', { mode: 'delete_older_than', days: 90 }),
-        runsWhenGlobalPolicyIsDisabled: true,
     },
     voiceSessionLeases: { id: 'voiceSessionLeases', policyConfig: ageConfig('VOICE_SESSION_LEASES') },
     userFeedItems: { id: 'userFeedItems', policyConfig: ageConfig('USER_FEED_ITEMS') },

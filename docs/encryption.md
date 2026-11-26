@@ -1610,9 +1610,9 @@ the recent exact-history NDJSON wire and pace semantics are unchanged.
 
 The existing server retention registry owns `providerAccountUsageHistory` and
 the `HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE` / `__DAYS`
-keys. Their default policy is `delete_older_than` with a 90-day window. This domain
-applies its own policy even when `HAPPIER_SERVER_RETENTION__ENABLED` is off.
-The sweeper deletes expired detail only for days whose summaries match accepted
+keys. Their configured defaults are `delete_older_than` and 90 days; the global
+`HAPPIER_SERVER_RETENTION__ENABLED` switch remains off by default. The existing
+sweeper deletes expired detail only for days whose summaries match accepted
 coverage. Unsummarized detail stays available, and the next ordinary key-holding
 usage write backfills
 every missing day it can open, opening and summarizing only those missing days.
