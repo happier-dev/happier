@@ -19,6 +19,7 @@ import { resolveWorkspaceTypeScriptCompilerArgs } from '../../../../../packages/
 import { resolveCliPublicationBuildSteps } from '../../../../cli/scripts/buildPublication.mjs';
 import { isCliTestBuildSkipped } from '../../../../cli/scripts/vitestPreparation.mjs';
 import { readVitestSourcePreparation } from './vitest_config_preparation.mjs';
+import { shouldUseCliSourceEntrypoint } from '../../../../../packages/tests/src/testkit/process/providerSourcePreparation.mjs';
 import { sourceWebExportDiagnosticEnv } from '../../build/sourceWebExportArgs.mjs';
 import { parseEnvToObject } from '../env/dotenv.mjs';
 import { buildRuntimeSnapshotObservationExpression } from './runtime_snapshot_observation.mjs';
@@ -811,6 +812,12 @@ function resolveCommandPolicyContext(commandArgs, { cwd = '.', repoRoot = COMMAN
     ...(facts.declaredRequiredTools ?? [])])].join(' ');
   if ((policy.kind === 'source-test' || facts.component === 'apps/cli') && policy.workerTool === 'vitest' && policy.generatorCheck === '0') {
     policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, facts.component, policy.requiredTools);
+    // Composed tests can launch apps/cli/src directly from the same checkout.
+    if (facts.component === 'packages/tests'
+      && shouldUseCliSourceEntrypoint({ ...env, ...facts.commandEnvironment })) {
+      policy.requiredTools = resolveSourceTestRequiredTools(repoRoot, 'apps/cli', policy.requiredTools);
+      policy.preparationScope = 'host-native';
+    }
   }
   if (['node', 'nodejs'].includes(facts.command) && facts.nativeTest === '1' && facts.nativeTestPaths.length) {
     const demand = readNativeTestPreparationDemand(repoRoot, facts.nativeTestPaths, { sourceCondition: facts.sourceCondition === '1',

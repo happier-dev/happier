@@ -67,6 +67,9 @@ Source-test tool requirements come from the selected package's optional
 `package.json#happierSourceTestTools` array of executable names, for both direct
 Vitest and package-manager requests. An absent declaration adds no prerequisite;
 a malformed present declaration fails visibly. Current CLI source declares Go.
+Routed `packages/tests` Vitest source tests that opt into the CLI source
+entrypoint also consume the CLI's tool declaration and prepare its host custody
+executables before the test runner starts.
 On POSIX, public source-test preparation (`prepareNativeCustody` in
 `apps/cli/src/test-setup.ts`) makes this Machine's Go process-custody helper and
 Rust Session holder current, each keyed on its recorded input identity and output

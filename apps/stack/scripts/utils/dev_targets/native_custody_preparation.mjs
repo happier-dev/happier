@@ -11,9 +11,12 @@ const stalePreparationExitCode = 3;
 export function resolveCliNativeCustodyOptions({
   componentRelativeDir, validationKind, requiredTools = '', preparationScope,
 }) {
-  if (validationKind !== 'source-test' || componentRelativeDir?.replaceAll('\\', '/') !== 'apps/cli'
-    || !requiredTools.split(/[\s,]+/u).includes('go')) return null;
-  return { sessionTargets: preparationScope !== 'host-native' };
+  if (validationKind !== 'source-test' || !requiredTools.split(/[\s,]+/u).includes('go')) return null;
+  const component = componentRelativeDir?.replaceAll('\\', '/');
+  if (component === 'apps/cli' || (component === 'packages/tests' && preparationScope === 'host-native')) {
+    return { sessionTargets: preparationScope !== 'host-native' };
+  }
+  return null;
 }
 
 /** @typedef {'dependency-refresh' | 'source-load' | 'native-staging' | 'native-readiness' | 'go-build' | 'post-build' | 'source-runtime'} PreparationStep */

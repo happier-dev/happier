@@ -5489,6 +5489,25 @@ test('a direct node run of the e2e Vitest heartbeat wrapper is admitted like its
   }
 });
 
+test('source CLI composed replay admits host native preparation before the daemon starts', async () => {
+  const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+  const file = 'suites/core-layer/databaseWorkbench.capture.F7.composed.test.ts';
+  const cwd = join(repoRoot, 'packages/tests');
+  const { resolveCliNativeCustodyOptions } = await import('./native_custody_preparation.mjs');
+  for (const [args, env] of [
+    [['pnpm', 'run', 'test:core', file], { HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1' }],
+    [['env', 'HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1', 'node', 'scripts/run-vitest-with-heartbeat.mjs',
+      '--config', 'vitest.core.config.ts', file], {}],
+    [['pnpm', 'run', 'test:core', file], {}],
+  ]) {
+    const policy = await commandPolicy.resolvePackageCommandPolicy(args, { repoRoot, cwd, env });
+    const source = env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT === '1' || args[0] === 'env';
+    const native = resolveCliNativeCustodyOptions({ validationKind: policy.kind, componentRelativeDir: policy.component,
+      requiredTools: policy.requiredTools, preparationScope: policy.preparationScope });
+    assert.deepEqual(native, source ? { sessionTargets: false } : null, args.join(' '));
+  }
+});
+
 test('the UI e2e Playwright wrapper leaves artifact preparation to its runtime owners', async () => {
   // MUTAGEN-STAGE / TRIAGE-W1-WRITES (2026-11-18): `hstack-exec -- node scripts/run-playwright-with-heartbeat.mjs`
   // was unclassified, so the routed run on windows2-linux held no admission and the UI web
