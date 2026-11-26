@@ -1,4 +1,4 @@
-import { Fragment, createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Animated, Easing, Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 import { Circle, ClipPath, Defs, Path, Pattern, Rect } from 'react-native-svg';
 
@@ -264,11 +264,7 @@ const AXIS_TICK_REACH_PX = 40;
 /** A fragment of fewer consecutive samples than this (cut off by gaps) is drawn as a line only: an area under 2 or 3 points is a hard-edged sliver. A chart that is itself that short keeps its area. */
 const MIN_AREA_RUN_SAMPLES = 4;
 
-/** A host can retain one final reading in Values after its drawn series ends. */
-export const HappierSeriesTrailingReadingContext = createContext<readonly HappierSeries[] | null>(null);
-
 export function StackedSeriesChart(props: StackedSeriesChartProps) {
-  const trailingSeries = useContext(HappierSeriesTrailingReadingContext);
   const interactive = useChartInteractionAvailable();
   const defaultDatum = interactive && !props.renderBucket && !props.renderPlotOverlay;
   const patternId = `chart-hatch-${useId().replace(/:/gu, '')}`;
@@ -348,11 +344,6 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     width: plotWidth, height: Math.max(1, height - inset * 2), variant: props.variant,
     normalized: props.normalized, fitLine: props.fitLine, minimumMaximum: props.minimumMaximum, domain: props.domain,
   }), [props.series, plotWidth, height, inset, props.variant, props.normalized, props.fitLine, props.minimumMaximum, props.domain]);
-  const trailingReading = useMemo(() => trailingSeries
-    ? resolveHappierSeriesGeometry(trailingSeries, { width: 0, height: 0, variant: props.variant }).buckets[0]
-    : undefined, [trailingSeries, props.variant]);
-  const readingBuckets = useMemo(() => trailingReading ? [...geometry.buckets, trailingReading] : geometry.buckets,
-    [geometry.buckets, trailingReading]);
   // A subpixel hit target cannot identify an exact sample by pointer. Keep the complete path and
   // geometry, but use one physical plot control with exact traversal. Native inline charts retain
   // their complete accessible image instead. This also avoids mounting all targets before layout.
@@ -408,7 +399,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     const values = bucket.values.map(entry => `${entry.label} ${entry.value === null ? unknown : format(entry.value)}`).join(', ');
     return `${range}; ${asOf(describeHappierSeriesCoordinate(bucket, reading))}${bucket.annotation ? ` · ${bucket.annotation}` : ''}: ${values}`;
   };
-  const exact = props.decorative ? '' : latest ? (trailingReading ? describe(trailingReading) : '') : readingBuckets.map(describe).join('; ');
+  const exact = latest || props.decorative ? '' : geometry.buckets.map(describe).join('; ');
   const reference = props.reference && Number.isFinite(props.reference.value) ? props.reference : null;
   const shading = new Map((props.bucketShading ?? []).map(entry => [entry.bucketId, entry]));
   const barRanges = props.variant === 'bar' ? (props.barRanges ?? []).filter(range => Number.isFinite(range.lower)
@@ -448,19 +439,15 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   };
   // A bucket's hit area never reaches a neighbouring bucket: bar columns split their gap, stacked
   // exact-value rows stay on their own row.
-  const exactCoordinate = (bucket: HappierSeriesBucket) => {
-    const coordinate = describeHappierSeriesCoordinate(bucket, reading);
-    return bucket.id === trailingReading?.id && bucket.annotation ? `${coordinate} · ${bucket.annotation}` : coordinate;
-  };
   const datumOf = (bucket: HappierSeriesBucket) => ({
-    label: exactCoordinate(bucket),
+    label: describeHappierSeriesCoordinate(bucket, reading),
     value: bucket.values.map(entry => {
       if (entry.value === null) return `${entry.label}: ${unknown}`;
       const exact = formatHappierDataValue(magnitude(entry.value), text.locale);
       const visible = format(entry.value);
       return `${entry.label}: ${visible.includes(exact) ? visible : `${visible} (${exact})`}`;
     }).join(' · '),
-    subtitle: [bucket.id === trailingReading?.id ? undefined : bucket.annotation, props.summary].filter(Boolean).join(' · ') || undefined,
+    subtitle: [bucket.annotation, props.summary].filter(Boolean).join(' · ') || undefined,
     color: bucket.values[0]?.color ?? color(0),
   });
   const bucketControl = (bucket: HappierSeriesBucket, index: number, visual: ReactNode, style: HappierPortableStyle | undefined,
@@ -760,7 +747,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       (entry.foldedMembers?.length ? entry.foldedMembers : [null]).map(member => ({
         index, label: member?.label ?? entry.label, member,
       })));
-    const buckets = readingBuckets.map(bucket => ({ ...bucket, values: exactMembers.map(({ index, member }) => {
+    const buckets = geometry.buckets.map(bucket => ({ ...bucket, values: exactMembers.map(({ index, member }) => {
       const drawn = bucket.values[index]!;
       if (!member) return drawn;
       const value = member.valueByBucket.get(bucket.id);
@@ -768,15 +755,15 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         value: typeof value === 'number' && Number.isFinite(value) ? value : null };
     }) }));
     return { columns: exactMembers, buckets };
-  }, [showExactValues, props.series, readingBuckets]);
+  }, [showExactValues, props.series, geometry.buckets]);
   const exactColumns = expandedValues?.columns ?? props.series;
-  const exactBuckets = expandedValues?.buckets ?? readingBuckets;
+  const exactBuckets = expandedValues?.buckets ?? geometry.buckets;
   return <View testID={props.testID} accessible={nativeInline && !props.decorative ? true : undefined}
     aria-hidden={props.decorative} importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
     role={!props.decorative && !nativeInline ? 'group' : undefined}
     accessibilityRole={!props.decorative && nativeInline ? 'image' : undefined}
     {...(props.pending ? { 'aria-busy': true } : {})}
-    accessibilityLabel={props.decorative ? undefined : props.pending ? props.label : `${props.label}${latest ? imageName(latest) : ''}${exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
+    accessibilityLabel={props.decorative ? undefined : props.pending ? props.label : `${props.label}${latest ? imageName(latest) : exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
     onLayout={(event: HappierLayoutChangeEvent) => {
       const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
       if (visibleWidth !== null) setWidth(visibleWidth);
@@ -851,8 +838,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     </View> : valuesExpanded ? <View style={{ marginTop: HAPPIER_DATA_METRICS.blockGapPx }}><HappierDataTable theme={props.theme} label={props.label}
       columns={[{ label: props.label }, ...exactColumns.map((entry) => ({ label: entry.label }))]}
       // Details keeps every meaningful digit (a display formatter may abbreviate); coordinates read in the caller's words.
-      rows={exactBuckets.map((bucket) => [exactCoordinate(bucket),
-        ...bucket.values.map((entry) => entry.value === null ? unknown : magnitude(entry.value))])}
+      rows={exactBuckets.map((bucket) => [describeHappierSeriesCoordinate(bucket, reading), ...bucket.values.map((entry) => entry.value === null ? unknown : magnitude(entry.value))])}
       rowDatums={exactBuckets.map(datumOf)}
       testID={props.testID ? `${props.testID}-values` : undefined} /></View> : null}
   </View>;

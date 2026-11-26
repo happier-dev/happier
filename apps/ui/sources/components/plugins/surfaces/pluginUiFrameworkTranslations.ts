@@ -42,7 +42,6 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         'happier.plugin-ui.state.empty': t('ui.pluginUi.empty'),
         'happier.plugin-ui.state.error': t('ui.pluginUi.error'),
         'happier.plugin-ui.state.details': t('common.details'),
-        'happier.plugin-ui.usage.soFar': t('transcriptNavigation.soFar'),
         'happier.plugin-ui.state.collapseDetails': t('common.collapse'),
         'happier.plugin-ui.state.retry': t('common.retry'),
         // A template: the public `FreshnessLine` puts its time into `{time}`, keeping each locale's order.

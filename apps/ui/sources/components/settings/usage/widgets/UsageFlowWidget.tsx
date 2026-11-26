@@ -3,7 +3,6 @@ import { UsageAccountingMetricSchema } from '@happier-dev/protocol/inputs/usageQ
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
-  HappierSeriesTrailingReadingContext,
   StackedSeriesChart,
   type HappierSeries,
 } from '@happier-dev/plugin-ui/presentation';
@@ -44,7 +43,6 @@ import {
   useUsageChartPlotPx,
 } from './usageBodyKit';
 import { UsageRiverStyleBody } from './UsageChartStyleBodies';
-import { projectUsageFlowModel } from './usageChartModels';
 
 /** One body per widget: its Style own-input picks the encoding of the same question. */
 export function UsageFlowWidget(props: UsageBodyProps) {
@@ -108,15 +106,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     },
     [mix, sourceSeries, cost, view, range, theme, agentColor, byModel, props.query, props.slice.accounting?.coverage],
   );
-  // Volume buckets use seconds; the Agent/model sources and mix use milliseconds.
-  const timeUnitMs = sourceSeries.length === 0 && cost ? 1_000 : 1;
-  const flow = React.useMemo(() => projectUsageFlowModel(periodSeries, range, Date.now(), timeUnitMs),
-    [periodSeries, range, timeUnitMs]);
-  const series = flow.drawn;
-  const trailingReading = React.useMemo(() => flow.trailingReading?.map(entry => ({
-    ...entry,
-    points: entry.points.map(point => ({ ...point, annotation: t('transcriptNavigation.soFar') })),
-  })) ?? null, [flow.trailingReading]);
+  const series = React.useMemo(() => trimUsageFlowUnreadTail(periodSeries), [periodSeries]);
   // Choosing an Agent in the lens or the legend narrows the page's one filter row to it.
   const drill = useUsageDrill(props.query);
   const byAgent = !byModel && (!cost || sourceSeries.length > 0);
@@ -167,59 +157,57 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
         reason={t('usage.board.page.flowEmptyReason')}
       />
     );
-  const chart = (
-    <StackedSeriesChart
-      {...details}
-      testID={`${props.testID}.chart`}
-      theme={chartTheme}
-      label={cost ? t('usage.cost') : t('usage.tokens')}
-      series={series}
-      coordinateFormatter={(x) => formatUsageCalendarDate(x * timeUnitMs, props.query.timeZoneOffsetMinutes,
-        range?.granularity === 'hour' ? { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' } : undefined)}
-      variant="area"
-      size="full"
-      viewportHeight={height}
-      {...areaInk}
-      plotInset={2}
-      scaleGutter={44}
-      showGrid
-      showScaleValues
-      showLegend
-      {...(!byAgent
-        ? {}
-        : {
-            leads: Object.fromEntries(
-              series
-                .filter((entry) => entry.id !== USAGE_MODEL_MIX_OTHER_KEY)
-                .map((entry): [string, React.ReactNode] => [
-                  entry.id,
-                  <UsageAgentMark key={entry.id} agentId={agentForSeries(entry.id)} serverId={props.serverId} size={12} />,
-                ]),
-            ),
-          })}
-      valueFormatter={format}
-      unknownLabel={'—'}
-      showReadout={false}
-      valuesLabel={t('usage.showAll')}
-      valuesCollapseLabel={t('usage.showLess')}
-      {...lens}
-      {...(drillable
-        ? {
-            onSeriesPress: (seriesId: string) => {
-              choice(seriesId)?.onPress();
-            },
-            seriesPressLabel: (entry: HappierSeries) =>
-              choice(entry.id)?.pressLabel ?? null,
-            selectedSeriesIds: series
-              .filter((entry) => drill.selected('agents', agentForSeries(entry.id)))
-              .map((entry) => entry.id),
-          }
-        : {})}
-    />
-  );
   return (
     <View style={{ gap: theme.space.s10 }} testID={`${props.testID}.flow`}>
-      <HappierSeriesTrailingReadingContext.Provider value={trailingReading}>{chart}</HappierSeriesTrailingReadingContext.Provider>
+      <StackedSeriesChart
+        {...details}
+        testID={`${props.testID}.chart`}
+        theme={chartTheme}
+        label={cost ? t('usage.cost') : t('usage.tokens')}
+        series={series}
+        // Volume buckets count seconds, mix and source buckets milliseconds; exact values read each as its date.
+        coordinateFormatter={(x) => formatUsageCalendarDate(sourceSeries.length === 0 && cost ? x * 1000 : x, props.query.timeZoneOffsetMinutes,
+          range?.granularity === 'hour' ? { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' } : undefined)}
+        variant="area"
+        size="full"
+        viewportHeight={height}
+        {...areaInk}
+        plotInset={2}
+        scaleGutter={44}
+        showGrid
+        showScaleValues
+        showLegend
+        {...(!byAgent
+          ? {}
+          : {
+              leads: Object.fromEntries(
+                series
+                  .filter((entry) => entry.id !== USAGE_MODEL_MIX_OTHER_KEY)
+                  .map((entry): [string, React.ReactNode] => [
+                    entry.id,
+                    <UsageAgentMark key={entry.id} agentId={agentForSeries(entry.id)} serverId={props.serverId} size={12} />,
+                  ]),
+              ),
+            })}
+        valueFormatter={format}
+        unknownLabel={'—'}
+        showReadout={false}
+        valuesLabel={t('usage.showAll')}
+        valuesCollapseLabel={t('usage.showLess')}
+        {...lens}
+        {...(drillable
+          ? {
+              onSeriesPress: (seriesId: string) => {
+                choice(seriesId)?.onPress();
+              },
+              seriesPressLabel: (entry: HappierSeries) =>
+                choice(entry.id)?.pressLabel ?? null,
+              selectedSeriesIds: series
+                .filter((entry) => drill.selected('agents', agentForSeries(entry.id)))
+                .map((entry) => entry.id),
+            }
+          : {})}
+      />
       <UsageCoverageLine
         slice={props.slice}
         sources={['accounting']}
@@ -243,4 +231,24 @@ function usageFlowHasShape(series: readonly Readonly<{ points: readonly Readonly
     longest = Math.max(longest, run);
   }
   return longest > 0 && longest >= Math.min(USAGE_FLOW_MIN_RUN, length);
+}
+
+/**
+ * The period's unread end (today before its first reading lands: some series unknown, none above zero) is left off the
+ * flow. Drawn, a stacked area ends in a vertical cut where one series is unknown while its neighbours fall to zero
+ * (USAGE-ACCEPT #18). A measured zero day with every series read stays. The buckets before anything was recorded (a
+ * Year whose history starts in October) are left off the front, so the flow spans the stretch it can draw; the daily
+ * bars keep the whole period with its unrecorded weeks marked.
+ */
+export function trimUsageFlowUnreadTail<Series extends Readonly<{ points: readonly Readonly<{ y: number | null }>[] }>>(series: readonly Series[]): Series[] {
+  const length = Math.max(0, ...series.map(entry => entry.points.length));
+  let end = length;
+  while (end > 2) {
+    const at = series.map(entry => entry.points[end - 1]?.y ?? null);
+    if (!at.some(value => value === null) || at.some(value => value !== null && value > 0)) break;
+    end -= 1;
+  }
+  let start = 0;
+  while (end - start > 2 && series.every(entry => (entry.points[start]?.y ?? null) === null)) start += 1;
+  return start === 0 && end === length ? [...series] : series.map(entry => ({ ...entry, points: entry.points.slice(start, end) }) as Series);
 }

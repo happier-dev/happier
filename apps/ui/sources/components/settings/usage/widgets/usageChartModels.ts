@@ -1,5 +1,5 @@
 import type {
-  HappierSeries, HappierSeriesPoint, UsageAgentShare, UsageDayModel, UsageRunLengthModel, UsageScoreModel, UsageShippedModel, UsageSkyDay, UsageSkyModel,
+  UsageAgentShare, UsageDayModel, UsageRunLengthModel, UsageScoreModel, UsageShippedModel, UsageSkyDay, UsageSkyModel,
   UsageSteeringTideModel, UsageConstellationModel, UsageRiverModel, UsageWeekHourModel, UsageDaylightModel, UsagePortraitModel,
 } from '@happier-dev/plugin-ui/presentation';
 import type { UsageHowYouWork } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
@@ -10,7 +10,6 @@ import { resolveUsageCalendarInstant, resolveUsageBucketBounds } from '@happier-
 import { isUsageNightHour, summarizeUsageConcurrency } from '@happier-dev/protocol/usage/usageWorkIntervals';
 import { UsagePresentationMetricSchema } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageChartMetric } from './usageChartHost';
-import type { UsageCalendarRange } from '@/sync/domains/usage/usageCalendarPresentation';
 import { countUsageChartCalendarDates, projectUsageRiverWeekRange } from '@happier-dev/plugin-ui/components';
 import { projectUsageCalendarArtModel } from '@happier-dev/plugin-ui/components';
 import { type UsageCalendarArtModel, type UsageMoonsModel, type UsageMachinesModel, type UsageProjectsModel, type UsageAtmosphereModel, type UsageGalaxyModel } from '@happier-dev/plugin-ui/presentation';
@@ -86,22 +85,15 @@ function periodDates(calendar: UsageAgentCalendar): string[] {
   return dates;
 }
 
-/** An admitted period ends exclusively; its last included instant names the bucket even if rendering happens later. */
-function runningUsageBucketStart(range: UsageCalendarRange, referenceMs: number): number | null {
-  const { granularity, timeZoneOffsetMinutes, endMs } = range;
-  const last = resolveUsageBucketBounds(granularity, endMs - 1, timeZoneOffsetMinutes);
-  const current = resolveUsageBucketBounds(granularity, referenceMs, timeZoneOffsetMinutes);
-  return last.bucketStartMs === current.bucketStartMs ? current.bucketStartMs : null;
-}
-
 export function projectUsageSkyModel(calendar: UsageAgentCalendar, metric: UsageChartMetric, colourBy: 'intensity' | 'leadingAgent', referenceMs: number): UsageSkyModel {
   const byDate = new Map(calendar.days.map((bucket) => [bucket.date, bucket]));
   const dates = periodDates(calendar);
   const field = METRIC_FIELDS[metric];
-  const runningStart = runningUsageBucketStart({
-    ...calendar.period, granularity: 'day', timeZoneOffsetMinutes: calendar.timeZoneOffsetMinutes,
-  }, referenceMs);
-  const running = runningStart === null ? null : resolveUsageCalendarInstant(runningStart, calendar.timeZoneOffsetMinutes).date;
+  // The calendar's last day is partial while it is still today on that calendar: a relative read ends at its read
+  // clock and is drawn later, so the last included instant (not the render clock) names the day (r227 #76, J-B55).
+  // A last day before today is closed.
+  const lastDay = resolveUsageCalendarInstant(calendar.period.endMs - 1, calendar.timeZoneOffsetMinutes).date;
+  const running = lastDay === resolveUsageCalendarInstant(referenceMs, calendar.timeZoneOffsetMinutes).date ? lastDay : null;
   const days: UsageSkyDay[] = dates.map((date) => {
     const bucket = byDate.get(date);
     if (!bucket) return { date, state: emptyCalendarMetric(calendar, metric) === 0 ? 'inactive' : 'unknown' };
@@ -134,50 +126,6 @@ export function projectUsageSkyModel(calendar: UsageAgentCalendar, metric: Usage
   // Asked for leaders but none is known: the sky draws intensity, so the model says so for its caption (USAGE-ACCEPT 1118 #19).
   const drawnColourBy = colourBy === 'leadingAgent' && days.some((day) => day.leader != null) ? 'leadingAgent' : 'intensity';
   return { encoding: 'amount', days, colourBy: drawnColourBy, best, current };
-}
-
-/**
- * The period's unread end (today before its first reading lands: some series unknown, none above zero) is left off the
- * flow. Drawn, a stacked area ends in a vertical cut where one series is unknown while its neighbours fall to zero
- * (USAGE-ACCEPT #18). A measured zero day with every series read stays. The buckets before anything was recorded (a
- * Year whose history starts in October) are left off the front, so the flow spans the stretch it can draw; the daily
- * bars keep the whole period with its unrecorded weeks marked.
- */
-export function trimUsageFlowUnreadTail<Series extends Readonly<{ points: readonly Readonly<{ y: number | null }>[] }>>(series: readonly Series[]): Series[] {
-  const length = Math.max(0, ...series.map(entry => entry.points.length));
-  let end = length;
-  while (end > 2) {
-    const at = series.map(entry => entry.points[end - 1]?.y ?? null);
-    if (!at.some(value => value === null) || at.some(value => value !== null && value > 0)) break;
-    end -= 1;
-  }
-  let start = 0;
-  while (end - start > 2 && series.every(entry => (entry.points[start]?.y ?? null) === null)) start += 1;
-  return start === 0 && end === length ? [...series] : series.map(entry => ({ ...entry, points: entry.points.slice(start, end) }) as Series);
-}
-
-type UsageFlowReadingPoint = HappierSeriesPoint & Required<Pick<UsageSkyDay, 'partial'>>;
-type UsageFlowReadingSeries = Omit<HappierSeries, 'points'> & Readonly<{ points: readonly UsageFlowReadingPoint[] }>;
-
-export function projectUsageFlowModel(
-  series: readonly HappierSeries[],
-  range: UsageCalendarRange | null,
-  referenceMs: number,
-  timeUnitMs: number,
-): Readonly<{ drawn: readonly HappierSeries[]; trailingReading: readonly UsageFlowReadingSeries[] | null }> {
-  const trimmed = trimUsageFlowUnreadTail(series);
-  const running = range ? runningUsageBucketStart(range, referenceMs) : null;
-  if (running === null) return { drawn: trimmed, trailingReading: null };
-
-  const isRunning = (point: HappierSeriesPoint | undefined) =>
-    typeof point?.x === 'number' && point.x * timeUnitMs === running;
-  // Remove the last bucket from the area. It keeps its admitted values, including a zero beside an unknown series.
-  const drawn = trimmed.map(entry => isRunning(entry.points.at(-1)) ? { ...entry, points: entry.points.slice(0, -1) } : entry);
-  const trailingReading = series.map(entry => {
-    const point = entry.points.at(-1);
-    return { ...entry, points: point && isRunning(point) ? [{ ...point, partial: true }] : [] } satisfies UsageFlowReadingSeries;
-  });
-  return { drawn, trailingReading: trailingReading.some(entry => entry.points[0]?.y != null) ? trailingReading : null };
 }
 
 function emptyCalendarMetric(calendar: UsageAgentCalendar, metric: UsageChartMetric): number | null {

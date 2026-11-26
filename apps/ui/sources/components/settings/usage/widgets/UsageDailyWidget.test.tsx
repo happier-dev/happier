@@ -81,23 +81,6 @@ describe('Daily period chart', () => {
     const amounts = [...row.props.accessibilityLabel.matchAll(/: (\d+)(?= · |, |$)/g)].map(match => Number(match[1]));
     expect(amounts.reduce((sum, value) => sum + value, 0)).toBe(75);
   });
-  it('keeps the running bucket in the spoken chart and Exact values after the area ends', async () => {
-    const end = start + 6 * day + 3_600_000;
-    const props = fixture([10, 10, 10, 10, 10, 10, 17], end);
-    vi.spyOn(Date, 'now').mockReturnValue(end + 1);
-    const screen = await renderControls(<UsageFlowWidget {...props} id="usage_flow" testID="flow" />);
-    expect(screen.findByType(StackedSeriesChart).props.series[0].points.map((point: { y: number }) => point.y))
-      .toEqual([10, 10, 10, 10, 10, 10]);
-    const qualifier = t('transcriptNavigation.soFar');
-    expect(screen.findHostByTestId('flow.chart')?.props.accessibilityLabel).toContain(`${qualifier}: Codex 17`);
-    await screen.pressByTestIdAsync('flow.chart-values-toggle');
-    const finalRow = screen.findHostByTestId('flow.chart-values-row-6');
-    expect(finalRow?.props.accessibilityLabel).toContain(`${qualifier}: Codex: 17`);
-    const displayedAmounts = Array.from({ length: 7 }, (_, index) => (
-      Number(screen.findHostByTestId(`flow.chart-values-row-${index}`)?.props.accessibilityLabel.match(/Codex: (\d+)/u)?.[1])
-    ));
-    expect(displayedAmounts.reduce((sum, amount) => sum + amount, 0)).toBe(props.slice.accounting?.totals.tokens.total);
-  });
   it('conserves admitted weekly amounts and calls out both clipped weeks', async () => {
     const props = fixture([10, 30, 20], start + 14 * day, true, 'week');
     const screen = await renderScreen(<UsageDailyWidget {...props} />);
