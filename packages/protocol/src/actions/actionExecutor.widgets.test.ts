@@ -125,6 +125,53 @@ describe('configured widget Actions', () => {
       { surface: 'ui', bypassApprovals: true })).toMatchObject({ ok: false, errorCode: 'widget_edit_denied' });
   });
 
+  it('denies group placement review and execution on a view-only Project even with destination inputs', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const ownerSurface = { ...surface, accountId: 'project-owner', owner: { kind: 'project', projectId: 'shared-project' } } as const;
+    const artifactId = buildWidgetSurfaceArtifactIdV1(ownerSurface);
+    const target = { ...ownerSurface, artifactId };
+    const layout = { v: 1 as const, surface: ownerSurface, items: [] };
+    const created = await boundary.forAccount(ownerSurface.accountId).create({
+      artifactId, header: buildWidgetSurfaceArtifactHeaderV1(layout), body: JSON.stringify(layout),
+    });
+    boundary.rows.set(artifactId, { ...created, access: 'view', shared: true });
+    const viewer = boundary.forAccount(surface.accountId);
+    const artifact = createWidgetSurfaceArtifactPortV1(viewer, { surface: target, isCurrent: () => true });
+    const executor = createActionExecutor({
+      widgetAccountScope: () => surface,
+      widgetSurfaceActions: { project: createWidgetAreaActionPortV1(() => artifact) },
+      widgetInputs: createWidgetActionInputResolverV1({
+        readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
+        readContext: async ({ context }) => context.widgetAreaContext?.values ?? {},
+        readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => ({ status: 'valid' }),
+        resolveOptions: async (field, input) => field.path === 'period' ? readUsagePeriodOptions(input.period) : [],
+      }),
+    });
+    const definition = { kind: 'builtin', id: 'usage_daily' } as const;
+    const child: WidgetInstanceV1 = {
+      v: 1, id: 'daily', definition,
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+    };
+    const input = { surface: target, group: {
+      kind: 'group', id: 'daily-group', width: 'full', frameStyle: 'card', dividers: 'hairline',
+      children: [{ kind: 'widget', instance: child }],
+    } };
+    const context = {
+      surface: 'ui', authority: 'present_user', bypassApprovals: true,
+      widgetAreaContext: { surface: target, values: {
+        period: [{ relative: '7days' }], agents: [[]], machines: [[]], projects: [[]],
+        sources: [[]], session: [null], costBasis: ['auto'],
+      } },
+    } satisfies ActionExecutorContext;
+    const refused = { ok: false, errorCode: 'widget_edit_denied' };
+    expect(await executor.execute('widgets.group.add', input, context)).toMatchObject(refused);
+    expect((await viewer.read(artifactId))?.revision).toEqual(created.revision);
+    expect(await executor.prepare('widgets.group.add', input, context, { reviewOnly: true }))
+      .toMatchObject({ kind: 'settled', result: refused });
+    expect((await viewer.read(artifactId))?.revision).toEqual(created.revision);
+  });
+
   it.each(['project', 'pluginArea', 'corePage'] as const)('removes a personal referenced widget directly on %s while confirming sole content, groups and explicit Ask', async kind => {
     const boundary = createWorkBoardArtifactBoundary();
     const target = { ...surface, owner: kind === 'project' ? { kind, projectId: 'project' }

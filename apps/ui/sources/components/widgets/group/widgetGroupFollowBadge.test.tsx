@@ -242,11 +242,13 @@ it('prints only label-owner answers across the five mounted group input surfaces
         const setup = form.props.setup();
         const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} testID="count" onDone={() => {}} />);
         expect.soft(screen.getTextContent()).toContain(`widgetFrame.groupFollowCount(following=${following},count=7)`);
-        const reading = screen.findByTestId('count.field.period.input')?.props.placeholder;
-        if (following === 0) expect.soft(reading).toBeUndefined();
+        const periodEditor = screen.findByTestId('count.field.period.input');
+        if (following === 0) expect.soft(periodEditor?.props.placeholder).toBeUndefined();
         else {
-            expect.soft(screen.findByTestId('count.field.period.trigger')?.props.accessibilityLabel).toBe('Period, widgetFrame.followingGroup');
-            expect.soft(reading).toBe('Today');
+            // The children follow the group, while the group's own Period follows the page.
+            expect.soft(screen.findByTestId('count.field.period.trigger')?.props.accessibilityLabel)
+                .toBe('Period, widgetAdd.inheritedValue(value=Today,source=This page)');
+            expect.soft(periodEditor).toBeNull();
         }
         await screen.unmount();
         await editor.unmount();
