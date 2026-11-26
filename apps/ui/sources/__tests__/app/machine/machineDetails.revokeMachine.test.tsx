@@ -1,5 +1,4 @@
 import React from 'react';
-import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 // Keep browser persistence owners real above IndexedDB's environment boundary.
 import 'fake-indexeddb/auto';
@@ -10,8 +9,9 @@ import { installMachineDetailsCommonModuleMocks } from './machineDetailsTestHelp
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { decodePlainMachineStoredContent, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
 import {
@@ -28,9 +28,8 @@ import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { MachineUpdateMetadataRequest, MachineUpdateMetadataResponse } from '@happier-dev/protocol/machines/metadataUpdate';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import type { MachineReplacementPickerModalProps } from '@/components/machines/MachineReplacementPickerModal';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox, replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
+import { replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
 
 const testGlobal = globalThis as typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -135,6 +134,7 @@ installDisconnectedServerSocketBoundary((socket) => {
 // Load after the SDK/framework boundaries are installed, as the managed-Machine
 // harness does; per-test cache resets must not own the cold runtime import.
 await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { Item } = await import('@/components/ui/lists/Item');
 
 type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
@@ -235,23 +235,18 @@ async function serveMachineHome(input: string | URL | Request, init?: RequestIni
         const machine = publishedMachines.find(machine => machine.id === decodeURIComponent(path.slice('/v1/machines/'.length)));
         if (machine) return Response.json({ machine });
     }
-    // Unused Home APIs are unsupported in this bounded machine fixture.
-    return Response.json({ error: 'not_found' }, { status: 404 });
+    return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({ error: 'not_found' }, { status: 404 });
 }
 
 async function publishMachineFixture() {
     await act(async () => {
         const { storage } = await import('@/sync/domains/state/storage');
-        const { fetchAndApplyProfile } = await import('@/sync/engine/account/syncAccount');
-        await fetchAndApplyProfile({ credentials: accountConnection!.credentials, applyProfile: storage.getState().applyProfile });
+        const { sync } = await import('@/sync/sync');
+        expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
         const { settingsParse } = await import('@/sync/domains/settings/settings');
         storage.getState().applySettingsForScope({ serverId: machineState.serverId, accountId: 'account-a' },
             settingsParse(machineState.settings), machineState.settingsVersion);
-        const { fetchAndApplyMachines } = await import('@/sync/engine/machines/syncMachines');
-        await fetchAndApplyMachines({ credentials: accountConnection!.credentials, expectedAccountMode: 'plain', encryption: null,
-            machineDataKeys: new Map(), sourceServerId: machineState.serverId, throwOnError: true,
-            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace,
-                { sourceServerId: machineState.serverId, sourceAccountId: 'account-a' }), replace: true });
+        await sync.refreshMachines({ serverId: machineState.serverId });
     });
 }
 
@@ -275,9 +270,9 @@ function publishProviderCatalogFixture() {
 async function renderScreen(element: React.ReactElement) {
     await publishMachineFixture();
     const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
-    const { AuthProvider } = await import('@/auth/context/AuthContext');
-    return renderScreenWithProviders(React.createElement(AuthProvider, {
-        initialCredentials: accountConnection!.credentials,
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    return renderScreenWithProviders(React.createElement(InjectedAuthProvider, {
+        credentials: accountConnection!.credentials,
         children: React.createElement(AppPaneProvider, null, element),
     }));
 }
@@ -307,9 +302,34 @@ function findHeaderMenuAction(screen: RenderedScreen, testID: string) {
     return menus.flatMap((menu) => menu.props.actions as Array<{ testID?: string; loading?: boolean; onSelect: () => void }>).find((action) => action.testID === testID);
 }
 
+function readReplacementPicker() {
+    return showSpy.mock.calls.map(([options]) => options)
+        .find(options => options.chrome?.testID === 'machine-replacement-picker-modal');
+}
+
 function readReplacementPickerProps() {
-    // Modal.show is a generic system boundary; this screen opens only the machine picker.
-    return showSpy.mock.calls[0]?.[0]?.props as Omit<MachineReplacementPickerModalProps, 'onClose'> | undefined;
+    return readReplacementPicker()?.props as { onSelectCandidate: (machineId: string) => void } | undefined;
+}
+
+async function renderReplacementPicker() {
+    const picker = readReplacementPicker();
+    if (!picker) throw new Error('Expected the Machine replacement picker');
+    return renderScreen(React.createElement(picker.component, { ...picker.props, onClose: () => {} }));
+}
+
+function nativeReviews() {
+    return showSpy.mock.calls.map(([options]) => options)
+        .filter(options => options.chrome?.testID === 'actions.confirmation-review.modal');
+}
+
+async function answerNativeReview(actionId: string, confirmationIndex: number, confirm: boolean) {
+    await act(async () => {
+        await vi.waitFor(() => expect(nativeReviews()).toHaveLength(confirmationIndex));
+        const props = nativeReviews()[confirmationIndex - 1]?.props;
+        expect(props).toMatchObject({ actionId, actionArgs: { machineId: 'machine-1' }, onAnswer: expect.any(Function) });
+        if (typeof props?.onAnswer !== 'function') throw new Error('Expected a native review answer');
+        props.onAnswer(confirm);
+    });
 }
 
 describe('MachineDetailScreen (revoke/forget machine)', () => {
@@ -476,7 +496,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         expect(screen.findByTestId('machine-detail-name-input')).toBeTruthy();
         await act(async () => screen.changeTextByTestId('machine-detail-name-input', 'Retry name'));
         await pressNameSave(screen);
-        expect(alertSpy).toHaveBeenCalledWith('common.error', 'rename transport failed');
+        expect(alertSpy).toHaveBeenCalledWith('common.error', 'errors.scmOutcomeUnknown');
         expect(machineState.requests.filter(request => request.path === '/v1/machines').length).toBeGreaterThan(1);
         expect(screen.findByTestId('machine-detail-name-input')?.props.value).toBe('Retry name');
         expect(screen.findByTestId('machine-detail-name-input')?.props.editable).toBe(true);
@@ -766,10 +786,12 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
             }),
         });
         expect(showOptions?.chrome).not.toHaveProperty('layout');
-        expect(readReplacementPickerProps()?.candidates).toHaveLength(5);
+        const picker = await renderReplacementPicker();
+        const candidates = picker.findAllByType(Item).filter(item => String(item.props.testID).startsWith('machine-replacement-picker-candidate:'));
+        expect(candidates).toHaveLength(5);
         // Same-named candidates are told apart by the machine naming owner.
-        const labels = readReplacementPickerProps()!.candidates.map((candidate) => candidate.label);
-        expect(new Set(labels).size).toBe(5);
+        expect(new Set(candidates.map(candidate => candidate.props.title)).size).toBe(5);
+        await picker.unmount();
         expect(machineState.requests.filter(request => request.path.endsWith('/replacement'))).toEqual([]);
     });
 
@@ -792,9 +814,10 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
             replacementItem!.onSelect();
         });
 
-        expect(readReplacementPickerProps()?.candidates).toEqual([
-            expect.objectContaining({ id: 'machine-2' }),
-        ]);
+        const picker = await renderReplacementPicker();
+        const candidates = picker.findAllByType(Item).filter(item => String(item.props.testID).startsWith('machine-replacement-picker-candidate:'));
+        expect(candidates.map(item => item.props.testID)).toEqual(['machine-replacement-picker-candidate:machine-2']);
+        await picker.unmount();
     });
 
     it.each(['machines.replacement.set', 'machines.replacement.clear'] as const)('honors disabled %s policy at the mounted header instead of submitting a parallel HTTP mutation', async actionId => {
@@ -807,7 +830,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         const screen = await renderScreen(React.createElement(MachinePageScreen));
         await act(async () => {
             findHeaderMenuAction(screen, actionId.endsWith('set') ? 'machine-replacement-repair-open' : 'machine-replacement-repair-undo')!.onSelect();
-            if (actionId.endsWith('set')) readReplacementPickerProps()?.onSelectCandidate('machine-2', 'Replacement Machine');
+            if (actionId.endsWith('set')) readReplacementPickerProps()?.onSelectCandidate('machine-2');
             await vi.waitFor(() => expect(alertSpy).toHaveBeenCalled());
         });
         expect(machineState.requests.filter(request => request.path.endsWith('/replacement'))).toEqual([]);
@@ -815,7 +838,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
     });
 
     it.each(['machines.replacement.set', 'machines.replacement.clear', 'machines.remove', 'machines.daemon.stop'] as const)(
-        'routes explicit Require Ask, rejection and approval for %s through the mounted continuation', async actionId => {
+        'routes explicit Require Ask, rejection and approval for %s through the mounted native review', async actionId => {
         machineState.settings.actionsSettingsV1 = { v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] },
             actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } };
         if (actionId === 'machines.replacement.clear') machineState.currentMachine = { ...machineState.currentMachine, replacedByMachineId: 'machine-2' };
@@ -829,21 +852,17 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
                 && typeof node.props?.onPress === 'function')[0]!.props.onPress();
             else {
                 findHeaderMenuAction(screen, actionId.endsWith('set') ? 'machine-replacement-repair-open' : 'machine-replacement-repair-undo')!.onSelect();
-                if (actionId.endsWith('set')) readReplacementPickerProps()?.onSelectCandidate('machine-2', 'Replacement Machine');
+                if (actionId.endsWith('set')) readReplacementPickerProps()?.onSelectCandidate('machine-2');
             }
         };
         const effects = () => [...machineState.daemonStops, ...machineState.requests.filter(request => request.method !== 'GET'
             && (request.path.endsWith('/replacement') || request.path.endsWith('/revoke')))];
         await act(async () => invoke());
-        await vi.waitFor(async () => {
-            await act(async () => {});
-            expect({ artifacts: artifactStore.list().length, effects: effects(), alerts: alertSpy.mock.calls,
-                paths: machineState.requests.map(request => `${request.method} ${request.path}`) }).toMatchObject({ artifacts: 1 });
-        });
+        await vi.waitFor(() => expect(nativeReviews()).toHaveLength(1));
         expect(effects()).toEqual([]);
         expect(confirmSpy).not.toHaveBeenCalled();
-        const rejectedId = artifactStore.list()[0]!.id;
-        await expect(decideApprovalAsInbox(machineState.serverId, rejectedId, 'reject')).resolves.toMatchObject({ ok: true });
+        expect(artifactStore.list()).toEqual([]);
+        await answerNativeReview(actionId, 1, false);
         await vi.waitFor(() => {
             if (actionId === 'machines.remove') expect(findRemoveMachineButton(screen).disabled).toBe(false);
             else if (actionId === 'machines.daemon.stop') expect(screen.findAll(node => node.props?.testID === 'machine-detail-stop-daemon-button'
@@ -853,12 +872,11 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         expect(alertSpy).not.toHaveBeenCalled();
         expect(effects()).toEqual([]);
         await act(async () => invoke());
-        await vi.waitFor(() => expect(artifactStore.list()).toHaveLength(2));
+        await vi.waitFor(() => expect(nativeReviews()).toHaveLength(2));
         expect(effects()).toEqual([]);
-        const approvedId = artifactStore.list()[1]!.id;
-        const approved = await decideApprovalAsInbox(machineState.serverId, approvedId, 'approve');
-        expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true });
+        await answerNativeReview(actionId, 2, true);
         await vi.waitFor(() => expect(effects()).toHaveLength(1));
+        expect(artifactStore.list()).toEqual([]);
         if (actionId === 'machines.remove') expect(effects()).toEqual([expect.objectContaining({ method: 'POST', path: '/v1/machines/machine-1/revoke' })]);
         else if (actionId === 'machines.daemon.stop') expect(machineState.daemonStops).toEqual([expect.objectContaining({ method: `machine-1:${RPC_METHODS.STOP_DAEMON}` })]);
         else expect(effects()).toEqual([expect.objectContaining({ method: actionId.endsWith('set') ? 'POST' : 'DELETE', path: '/v1/machines/machine-1/replacement' })]);
@@ -873,7 +891,7 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         const screen = await renderMachineSection(React.createElement(MachinePageScreen));
         const invoke = () => {
             findHeaderMenuAction(screen, actionId.endsWith('set') ? 'machine-replacement-repair-open' : 'machine-replacement-repair-undo')!.onSelect();
-            if (actionId.endsWith('set')) readReplacementPickerProps()?.onSelectCandidate('machine-2', 'Replacement Machine');
+            if (actionId.endsWith('set')) readReplacementPickerProps()?.onSelectCandidate('machine-2');
         };
         const effects = () => machineState.requests.filter(request => request.method !== 'GET' && request.path.endsWith('/replacement'));
         confirmSpy.mockResolvedValue(false);
@@ -902,32 +920,36 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         const screen = await renderMachineSection(React.createElement(MachineSubPageScreen));
         const invoke = () => findRemoveMachineButton(screen).onPress();
         const effects = () => machineState.requests.filter(request => request.method === 'POST' && request.path.endsWith('/revoke'));
-        confirmSpy.mockResolvedValueOnce(false);
         await act(async () => invoke());
-        await vi.waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1));
+        await answerNativeReview(actionId, 1, false);
         await vi.waitFor(() => expect(findRemoveMachineButton(screen).disabled).toBe(false));
-        expect(confirmSpy).toHaveBeenCalledTimes(1);
+        expect(nativeReviews()).toHaveLength(1);
         expect(effects()).toEqual([]);
         expect(alertSpy).not.toHaveBeenCalled();
         machineState.settings.actionsSettingsV1 = { v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } };
         await publishMachineFixture();
         machineState.settings.actionsSettingsV1 = { v: 1 };
         await publishMachineFixture();
-        confirmSpy.mockResolvedValueOnce(true);
         await act(async () => invoke());
+        await answerNativeReview(actionId, 2, true);
         await vi.waitFor(() => expect(effects()).toHaveLength(1));
-        expect(confirmSpy).toHaveBeenCalledTimes(2);
+        expect(nativeReviews()).toHaveLength(2);
+        expect(confirmSpy).not.toHaveBeenCalled();
         expect(artifactStore.list()).toEqual([]);
     });
 
     it('shows a typed Remove refusal through the existing Action outcome presenter', async () => {
         routeParams.page = 'details';
-        confirmSpy.mockResolvedValueOnce(true);
-        machineState.revokeFailure = { status: 403, error: 'permission_denied' };
+        machineState.revokeFailure = { status: 404, error: 'machine_not_found' };
         const { MachineSubPageScreen } = await import('@/components/machines/page/MachineSubPageScreen');
         const screen = await renderMachineSection(React.createElement(MachineSubPageScreen));
         await act(async () => findRemoveMachineButton(screen).onPress());
-        await vi.waitFor(() => expect(alertSpy.mock.calls.some(call => call[1] === 'permission_denied')).toBe(true));
+        await answerNativeReview('machines.remove', 1, true);
+        await vi.waitFor(() => expect(alertSpy).toHaveBeenCalledWith('common.error', 'machine_not_found'));
+        expect(machineState.requests.filter(request => request.path.endsWith('/revoke'))).toEqual([
+            expect.objectContaining({ method: 'POST', path: '/v1/machines/machine-1/revoke' }),
+        ]);
+        expect(routerMock.replace).not.toHaveBeenCalled();
         expect((await readVisibleMachine())?.revokedAt).toBeNull();
         expect(machineState.providerCatalogWrites).toEqual([]);
     });
