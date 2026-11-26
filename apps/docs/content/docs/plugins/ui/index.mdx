@@ -328,7 +328,9 @@ the Session ID, it fills the input path and makes one attempt through normal
 Action admission with the seeding plugin's authority. Existing confirmation
 rules apply. If the Session is created in a different Account, the host drops
 the intent and shows a post-create notice. Clearing the draft also clears
-the intent. An Action refusal appears in the same notice. If the host
+the intent. For ordinary Machine creation, the host attempts the Action before
+automatically opening the Session or starting another draft. The notice includes
+the typed cause and request ID if the Action is refused. If the host
 loses the create acknowledgement, it skips the Action. Use matching 0.3
 development versions of the SDK and host for this field.
 

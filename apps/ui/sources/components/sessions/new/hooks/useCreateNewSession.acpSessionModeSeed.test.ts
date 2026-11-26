@@ -230,6 +230,9 @@ async function createHarness() {
       for (const write of temporaryDestinationCredentials.splice(0).reverse()) await write.rollback();
       await account.dispose();
     },
+    seedOwnedSession(sessionId: string) {
+      createdSessions.set(sessionId, createPlainSessionCurrentProjectionRecordFixture({ id: sessionId }));
+    },
     async seedTemporaryDestination(sessionId: string) {
       const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
       const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -605,8 +608,17 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     expect(sendMessageSpy).not.toHaveBeenCalled();
   });
 
-  it.each(['agent', 'linked', 'refused', 'plain', 'confirmation', 'account-mismatch'] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
-    const { useCreateNewSession, sessionSpawnNewRpcSpy, seedTemporaryDestination } = await setupHarness();
+  it.each([
+    'agent', 'linked', 'refused', 'confirmation', 'account-mismatch',
+    'docked-fix-start', 'docked-add-instructions', 'docked-investigate', 'docked-refused', 'docked-plain',
+  ] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
+    const { useCreateNewSession, sessionSpawnNewRpcSpy, actionOperationGetRpcSpy, seedOwnedSession, seedTemporaryDestination } = await setupHarness();
+    const docked = scenario.startsWith('docked-');
+    const refused = scenario === 'refused' || scenario === 'docked-refused';
+    const plain = scenario === 'docked-plain';
+    const startsAnother = scenario === 'docked-add-instructions';
+    const linksEntry = scenario === 'agent' || scenario === 'linked'
+      || scenario === 'docked-fix-start' || scenario === 'docked-add-instructions' || scenario === 'docked-investigate';
     const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
     const { readNewSessionDraftFromRepository } = await import('../../composer/newSessionDraftRepositoryAdapter');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -642,13 +654,14 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
     const { collections, control } = createTestkitCorpusCollections();
     const entryRef = scenario === 'agent' ? testkitEntryRef({ kindId: 'issue' }) : testkitEntryRef();
     const configured = testkitConfiguredInstance();
-    if (scenario !== 'refused') {
+    if (!refused) {
       control.sourceInstances.seed(toCorpusStoredValue({ instanceTag: 'a'.repeat(43),
         lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active, configuredAtMs: 1,
         sourceQualifiedId: entryRef.source.pluginId + '/' + entryRef.source.localId, configured }));
     }
 
     const invocations: unknown[] = [];
+    let linkRequestId: string | undefined;
     const actionId = TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1;
     const manifest = TRIAGE_PLUGIN.manifest;
     const installed = await installPortableAccountPluginReleaseForTest({
@@ -715,6 +728,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
             api.actions.register(id, (value, context) => {
               const input = TriageLinkEntryToSessionInputV1Schema.parse(value);
               invocations.push({ sessionId: input.sessionId, accountScope: context.accountScope });
+              linkRequestId = context.requestId;
               // Supply the source census and Account Collections at their service boundaries.
               const collection = ((definition: { id: string }) => {
                 if (definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID) return collections.sourceInstances;
@@ -741,6 +755,8 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
           createDraftId: () => draftId, navigateToNewSession: () => {} }).kind).toBe('opened');
       };
       if (scenario === 'agent') {
+        const callerSessionId = 'agent-session';
+        seedOwnedSession(callerSessionId);
         const { createCurrentUiContributedActionRpcHandler } =
           await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -759,7 +775,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
             sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'compose' } },
           actionRequestId: 'agent-configured-triage', expectedContributorOccurrenceId: declaration.occurrenceId,
           invokingAccountAction: { accountId: scope.accountId,
-            caller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'default' },
+            caller: { kind: 'session', sessionId: callerSessionId, starterDepth: 0, turnDepth: 0 }, callerPermissionMode: 'default' },
         });
         expect(opened, JSON.stringify(opened)).toMatchObject({
           ok: true, result: { handoff: { kind: 'composed', destination: { kind: 'newSessionDraft' } } },
@@ -770,45 +786,81 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
             || !('draftId' in route.params) || typeof route.params.draftId !== 'string') throw new Error('Expected the authored draft route');
         draftId = route.params.draftId;
         expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();
-      } else if (scenario === 'plain') open({ prompt: 'Address this entry' });
+      } else if (plain) open({ prompt: 'Address this entry' });
       else {
         expect(await requestTriageNewSessionAuthoringV1({
           version: () => ({ methods: ['openNewSession'] }),
           openNewSession: async seed => open(seed),
           selectActionInput: async () => { throw new Error('No preparation is requested'); },
         }, { entries: [], linkEntry: { entryRef, display: TESTKIT_LINK_DISPLAY, sourceInstance: configured.instance },
-          promptText: 'Address this entry', profileId: null, checkoutIntent: 'none', placement: null, candidates: [] }))
+          promptText: scenario === 'docked-investigate' ? 'Investigate this entry'
+            : scenario === 'docked-add-instructions' ? 'Add instructions for this entry' : 'Fix this entry', profileId: null, checkoutIntent: 'none', placement: null, candidates: [] }))
           .toEqual({ status: 'seeded' });
       }
       expect(invocations).toEqual([]);
-      expect(Boolean(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction)).toBe(scenario !== 'plain');
-      const params = buildCreateSessionHookParams({ draftId, draftScope, targetServerId: scope.serverId });
-      const hook = await renderHook(() => useCreateNewSession(params as never));
+      expect(Boolean(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction)).toBe(!plain);
+      const createRequestId = 'triage-docked-create';
+      const operationId = 'triage-docked-spawn';
+      const presentedWithInvocationCounts: number[] = [];
+      const router = { push: vi.fn(), replace: vi.fn(() => presentedWithInvocationCounts.push(invocations.length)) };
+      const { NewSessionEmbeddedHostProvider } = await import('../navigation/newSessionHost');
+      const host = { kind: 'docked' as const, params: {}, demanded: true, createdSessionPresentation: 'inPlace' as const,
+        setParams: vi.fn(), openDraft: vi.fn(), onHandedOff: vi.fn() };
+      if (docked) {
+        const terminal = sessionSpawnNewRpcSpy.getMockImplementation()!;
+        sessionSpawnNewRpcSpy.mockImplementationOnce(async input => {
+          const result = await terminal(input);
+          if (result.type !== 'success' || !input.observeSessionCommit) return result;
+          seedOwnedSession(result.sessionId);
+          const operation = { ...input.executionTarget, operationId };
+          actionOperationGetRpcSpy.mockResolvedValueOnce(ActionOperationGetV1ResponseSchema.parse({
+            kind: 'found', operation: {
+              version: 1, operationId, revision: 2, actionId: 'session.spawn_new', state: 'succeeded',
+              scope: { accountId: scope.accountId, machineId: input.executionTarget.machineId }, title: 'Create session',
+              requestId: createRequestId, createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported', result,
+            },
+          }));
+          return { type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true, operation, sessionId: result.sessionId };
+        });
+      }
+      const params = buildCreateSessionHookParams({ draftId, draftScope, targetServerId: scope.serverId, router,
+        onStartAnother: () => presentedWithInvocationCounts.push(invocations.length),
+        ...(docked ? { launchUserAttemptId: createRequestId, selectedMachine: createMachineFixture({ id: 'm1',
+          operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3] } },
+        }) } : {}),
+      });
+      const hook = await renderHook(() => useCreateNewSession(params as never), docked ? {
+        wrapper: ({ children }: React.PropsWithChildren) => React.createElement(NewSessionEmbeddedHostProvider, { host, children }),
+      } : undefined);
       try {
-        await act(async () => { await hook.getCurrent().handleCreateSession(); });
+        await act(async () => { await hook.getCurrent().handleCreateSession(docked && !startsAnother ? { afterSend: 'open' } : undefined); });
         expect(sessionSpawnNewRpcSpy).toHaveBeenCalledTimes(1);
+        if (docked) expect(presentedWithInvocationCounts).toEqual([plain ? 0 : 1]);
+        if (plain) expect(actionOperationGetRpcSpy).toHaveBeenCalledWith({ operationId, waitForTerminal: true });
         expect(invocations, JSON.stringify({ alerts: modalAlertSpy.mock.calls, confirms: modalConfirmSpy.mock.calls,
           retainedIntent: Boolean(readNewSessionDraftFromRepository({ scope, draftId })?.postCreateAction) }))
-          .toEqual(scenario === 'linked' || scenario === 'refused' || scenario === 'agent' ? [{ sessionId: 'sess_new', accountScope: scope }] : []);
+          .toEqual(linksEntry || refused ? [{ sessionId: 'sess_new', accountScope: scope }] : []);
         const rows = await collections.sessionLinks.query({
           index: CORPUS_SESSION_LINKS_INDEX_ID.bySession, prefix: ['sess_new'], order: 'asc',
         });
-        expect(rows.rows).toHaveLength(scenario === 'linked' || scenario === 'agent' ? 1 : 0);
+        expect(rows.rows).toHaveLength(linksEntry ? 1 : 0);
         expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction).toBeUndefined();
         if (scenario === 'confirmation') expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
           chrome: expect.objectContaining({ testID: 'app-shell-transient-interaction-dialog' }),
         }));
-        if (scenario === 'linked' || scenario === 'account-mismatch') {
+        if (linksEntry || scenario === 'account-mismatch') {
           expect(modalConfirmSpy).not.toHaveBeenCalled();
           expect(modalShowSpy).not.toHaveBeenCalled();
         }
         if (scenario === 'account-mismatch') {
           expect(modalAlertSpy).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('action_account_scope_changed'), undefined);
         }
-        if (scenario === 'refused') {
-          expect(modalAlertSpy).toHaveBeenCalledWith(
-            expect.any(String), expect.stringContaining('sessionLinksSourceInstanceUnavailable'), undefined,
-          );
+        if (refused) {
+          expect(linkRequestId).toBeTruthy();
+          expect(linkRequestId).not.toBe(createRequestId);
+          const notice = modalAlertSpy.mock.calls.find(([, message]) =>
+            typeof message === 'string' && message.includes('sessionLinksSourceInstanceUnavailable'));
+          expect(notice?.[1]).toContain(linkRequestId);
         }
       } finally {
         await hook.unmount();

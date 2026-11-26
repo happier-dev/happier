@@ -83,6 +83,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { bindPluginUiNewSessionPostCreateActionV1 } from '@happier-dev/protocol/plugins/ui';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { randomUUID } from '@/platform/randomUUID';
 import {
     classifyLaunchRetryFailure,
     promptDaemonUnavailableRetry,
@@ -777,23 +778,26 @@ export function useCreateNewSession(params: Readonly<{
             const seededAction = takeNewSessionDraftPostCreateAction({ scope: draftScope, draftId: submittedDraftId });
             if (!seededAction) return;
             let failureCode: string | null;
+            let actionRequestId: string | undefined;
             if (seededAction.authoringScope.accountId !== input.scope.accountId
                 || !areServerProfileIdentifiersEquivalent(seededAction.authoringScope.serverId, input.scope.serverId)) {
                 failureCode = 'action_account_scope_changed';
             } else {
+                actionRequestId = randomUUID();
                 const failure = await createDefaultActionExecutor().execute(
                     'action.invoke',
                     bindPluginUiNewSessionPostCreateActionV1(seededAction.intent, input.sessionId),
                     { ...createPluginActionCallerContext({ pluginId: seededAction.pluginId }),
                         surface: 'ui', serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
-                        defaultSessionId: input.sessionId, signal: input.signal },
+                        defaultSessionId: input.sessionId, actionRequestId, signal: input.signal },
                 ).then(result => result.ok ? null : result, normalizeActionExecutorThrownError);
                 failureCode = failure ? failure.failureCause?.errorCode ?? failure.errorCode : null;
+                actionRequestId = failure?.requestId ?? actionRequestId;
             }
             if (!failureCode || input.signal.aborted) return;
             const message = [
                 t('inbox.actionOperations.followUpNeedsAttention'),
-                formatActionFailureDetails({ code: failureCode }),
+                formatActionFailureDetails({ code: failureCode, context: { requestId: actionRequestId ?? null } }),
             ].join('\n');
             actionOperationStore.markFollowUpNeedsAttention({ ...input.scope, requestId: input.requestId, message });
             input.alert(t('common.error'), message);
@@ -1348,6 +1352,8 @@ export function useCreateNewSession(params: Readonly<{
                 : null;
             const sourceDraftExisted = sourceDraft !== null;
             const hasSeededPostCreateAction = sourceDraft?.localSupplement.newSessionLocalState?.postCreateAction !== undefined;
+            // Keep the submitted draft available for its one-shot Action and notice before handing it off.
+            const handOffBeforeFollowUp = hasSeededPostCreateAction ? undefined : handOffAdmittedLaunch;
             submittedDraftCurrentness = current.draftScope && current.draftId
                 ? captureNewSessionDraftWorkflowCurrentness({
                     scope: current.draftScope,
@@ -1917,7 +1923,7 @@ export function useCreateNewSession(params: Readonly<{
                 // is needed. A docked or background "Session started" receipt waits for terminal success.
                 const presentsAtCommit = !hostSpawnExecutorRef.current
                     && !opts?.afterCreated && !current.authoringOrigin && !managedCreation
-                    && resolvedInitialMessage?.kind !== 'action';
+                    && !hasSeededPostCreateAction && resolvedInitialMessage?.kind !== 'action';
                 const canOpenCommittedSession = () => isLaunchScopeStillActive()
                     && !sourceDraftCancellation.signal.aborted
                     && !launchOutlivesSurfaceRef.current
@@ -1995,7 +2001,7 @@ export function useCreateNewSession(params: Readonly<{
                                     if (!isLaunchScopeStillActive() || sourceDraftCancellation.signal.aborted) return;
                                     if (receipt.operation) setManagedProgress({ signature: submittedIntent.signature,
                                         value: { kind: 'session_starting', operationAddress: receipt.operation } });
-                                    if (afterSend === 'startAnother') handOffAdmittedLaunch();
+                                    handOffBeforeFollowUp?.();
                                 },
                                 ...(presentsAtCommit ? {
                                     operationProtocolCapabilities: current.selectedMachine?.operationProtocolCapabilities,
@@ -2388,7 +2394,7 @@ export function useCreateNewSession(params: Readonly<{
                     return;
                 }
                 // Hosts and recovered custody may return success without a live acceptance observer.
-                handOffAdmittedLaunch();
+                handOffBeforeFollowUp?.();
                 if (initialInputWasNotAccepted) {
                     // Preserve the draft and distinguish a proven rejection from
                     // uncertain admission before navigation unmounts the launcher.
@@ -2729,6 +2735,7 @@ export function useCreateNewSession(params: Readonly<{
                         current.disableDraftPersistence?.();
                     }
                     await clearCompletedDraft(launchAttempt.attemptId);
+                    if (hasSeededPostCreateAction) handOffAdmittedLaunch();
                     if (opts?.onAfterCreatedSettled && isLaunchScopeStillActive()) {
                         reportAfterCreatedSettlement(initialInputWasNotAccepted
                             ? { status: 'rejected' }
