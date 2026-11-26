@@ -728,7 +728,17 @@ describe('callMachineRpc', () => {
         expect(socket.emit).not.toHaveBeenCalled();
         return;
       }
-      if (mode === 'replaced' || mode === 'tampered') {
+      if (mode === 'tampered') {
+        // The person can record consent, but the deciding host authenticates
+        // the proposal before asking the daemon to execute it.
+        expect(decision).toMatchObject({ ok: false, errorCode: 'approval_stale',
+          details: { reason: 'credential_changed' }, effectAttempted: false });
+        expect(storedRequest()).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+        expect(storedRequest().execution).toBeUndefined();
+        expect(socket.emit).not.toHaveBeenCalled();
+        return;
+      }
+      if (mode === 'replaced') {
         expect(decision).toMatchObject({ ok: true, result: { status: 'failed', execution: {
           ok: false, errorCode: 'approval_stale' } } });
         expect(socket.emit).toHaveBeenCalledTimes(1);
@@ -1835,7 +1845,9 @@ describe('callMachineRpc', () => {
     await expect(executor.execute('workspace.files.replace', { machineId: 'replace-machine', rootPath: '/workspace',
       operation: { kind: 'replace', matcher: { query: 'old', replacement: 'new', matchCase: true, regex: false },
         files: ['a.txt', 'b.txt'].map(path => ({ path, expectedHash: 'a'.repeat(64) })) },
-    }, { surface: 'ui', authority: 'present_user', serverId: 'home', signal: controller.signal })).resolves.toEqual({ ok: true, result });
+    }, { surface: 'ui', authority: 'present_user', serverId: 'home', signal: controller.signal })).resolves.toEqual({
+      ok: true, result, automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
+    });
     expect(socket.close).toHaveBeenCalled();
   });
 
