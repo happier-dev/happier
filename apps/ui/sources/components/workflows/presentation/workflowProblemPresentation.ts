@@ -18,6 +18,7 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 import { formatExactTurnAutomationError } from '@/components/automations/automationErrorFormatting';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /**
  * The one place a Workflow failure becomes something a person can read.
@@ -389,8 +390,8 @@ export function describeKnownWorkflowRunFailure(code: string): WorkflowProblemPr
     if (code === 'connected_service_run_materialization_blocked') return present(null, {
         ...GENERIC_RUN_FAILURE, messageKey: 'workflows.problem.preExecution.connectedAccountPreparationBlocked',
     });
-    const startupCause = presentSessionStartupFailureCause(code);
-    return startupCause ? { ...present(null, GENERIC_RUN_FAILURE), message: startupCause } : null;
+    const cause = presentSessionStartupFailureCause(code) ?? describeActionExecutionPrerequisite(code)?.message;
+    return cause ? { ...present(null, GENERIC_RUN_FAILURE), message: cause } : null;
 }
 
 /**

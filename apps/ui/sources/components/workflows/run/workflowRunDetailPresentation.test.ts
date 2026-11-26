@@ -94,6 +94,24 @@ describe('managed workflow Run presentation', () => {
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, headline: runProblem?.message });
     });
 
+    it('explains a database Action permission refusal before and after its failed step loads', () => {
+        const code = 'deployment_access_denied';
+        const run = createWorkflowRunSummaryFixture({ state: 'interrupted', errorCode: code });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', runId: run.id });
+        const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+            blockKind: 'action', attempt: '0', logicalInvocationRecordId: invocation.id,
+            invocationPath: { blockId: 'read-selected-database', scope: [] }, reason: {
+                code, failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: code, httpStatus: 403 },
+            } });
+        const failure = projectWorkflowRunFailure({ run, invocation, progress, machineHomeDirectory: null,
+            structure: new Map(), projection: null });
+        expect({
+            runReason: resolveWorkflowRunProblemPresentation(run)?.message,
+            stepReason: failure && formatWorkflowRunFailureCauseLine(failure),
+        }).toEqual({ runReason: t('errors.permissionDenied'), stepReason: t('errors.permissionDenied') });
+        expect(failure?.recovery.failureCause).toMatchObject({ code, diagnostics: { errorCode: code } });
+    });
+
     it.each(['agent_signed_out', 'agent_cli_missing'])('shows the typed %s start refusal and offers another agent', code => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
@@ -609,8 +627,8 @@ describe('managed workflow Run presentation', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'interrupted' });
         const coverage = summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false });
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, failure: { step: 'For each issue' } }))
-            .toBe('For each issue was interrupted. Completed work is retained.');
-        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe('Completed work is retained.');
+            .toBe(t('workflows.run.interruptedStepSentence', { step: 'For each issue' }));
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage })).toBe(t('workflows.run.interruptedSentence'));
     });
     it('retains an interrupted aggregate while naming the known failed child as failed', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'interrupted', workflowCustodyState: 'pending' });
@@ -622,7 +640,7 @@ describe('managed workflow Run presentation', () => {
         })).toBe('Check the release summary didn’t finish. Completed work is kept.');
         expect(formatWorkflowRunOutcomeSentence({ run, coverage,
             failure: { step: 'Check the release summary', lifecycle: 'outcome_uncertain' },
-        })).toBe('Check the release summary was interrupted. Completed work is retained.');
+        })).toBe(t('workflows.run.interruptedStepSentence', { step: 'Check the release summary' }));
     });
     it('offers an explicit engine replacement only for a stopped unavailable step with settled custody', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
