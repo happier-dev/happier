@@ -10,6 +10,9 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-de
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { dispatchLocalManagedMachineAgentIsolation } from './externalActionExecutionAuthorization';
 import { readStoredCredentialsForServerId, removeStoredCredentialsForServerId, writeStoredCredentialsForServerId, updateSettings } from '@/persistence';
@@ -29,6 +32,8 @@ it.each([
 ] as const)('carries the reviewed Create isolation child through original Account admission ($mode $scenario)', async ({ scenario, mode }) => {
     const currentness = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => currentness.close());
+    const lifetime = new AbortController();
+    onTestFinished(() => lifetime.abort());
     const profile = `managed-child-review-${randomUUID()}`;
     onTestFinished(() => removeStoredCredentialsForServerId(profile));
     await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [profile]: {
@@ -62,13 +67,14 @@ it.each([
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
     });
     const settings = ActionsSettingsV1Schema.parse({ v: 1, ...(scenario === 'undeclared' ? { actions: {
-        [childAction]: { approvalRequiredSurfaces: ['ui'] },
+        [childAction]: { approvalRequiredSurfaces: ['cli'] },
     } } : {}) });
     const asks: string[] = [];
     const askSurfaces: unknown[] = [];
     let effects = 0;
     let childResult: ActionExecuteResult | undefined;
-    const guest = createCliActionExecutorHarness({ token, credentials,
+    let storedApproval: ReturnType<typeof StoredApprovalRequestSchema.parse> | null = null;
+    const guestHarness = createCliActionExecutorHarness({ token, credentials,
         ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null }
             : { mode: 'e2ee' as const, ctx: { encryptionVariant: 'legacy' as const, encryptionKey: secret } }),
         sessionId: '', serverId: profile, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
@@ -76,10 +82,27 @@ it.each([
     }, {
         // Artifact storage and native effects are boundaries; policy and the
         // private requester/child admission run through their real owners.
-        approvalsCreate: async ({ request }) => { asks.push(request.actionId); askSurfaces.push(request.requestedSurface); return { artifactId: 'isolation-ask' }; },
+        approvalsCreate: async ({ request }) => {
+            asks.push(request.actionId); askSurfaces.push(request.requestedSurface);
+            // The remote person declines at the Artifact boundary; observation and
+            // propagation use the real host owner rather than a synthetic observer.
+            storedApproval = StoredApprovalRequestSchema.parse({ ...request, status: 'rejected',
+                updatedAtMs: request.updatedAtMs + 1, decision: { kind: 'reject', decidedAtMs: request.updatedAtMs + 1 } });
+            expect(decideApprovalRequestTransition(request, storedApproval)).toMatchObject({ ok: true });
+            return { artifactId: 'isolation-ask' };
+        },
+        approvalsGet: async () => storedApproval,
         machineAgentIsolationAction: async () => { effects++; return { kind: 'accepted', operationId: 'isolation', metadataVersion: 1,
             status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } }; },
-    }).executor;
+    });
+    const guest = guestHarness.executor;
+    // The real Account Automation selector reads its index through this HTTP boundary.
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
+        expect(config.url).toBe(`https://home.example${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`);
+        expect(config.method).toBe('GET');
+        expect(config.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+    });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
         if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account' } };
         if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 0 } };
@@ -129,11 +152,12 @@ it.each([
         const result = await dispatchLocalManagedMachineAgentIsolation({ actionId: childAction, input: childInput,
             homeId: 'srv_home', managedContinuation: { managedId: 'managed', creationRequestId: 'creation', expectedIntentRevision: 0 },
             context, credentials, custodianAccountId: scenario === 'other requester' ? 'other-account' : 'account',
-            serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
+            serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true,
+            observeRecordedApprovalExecution: guestHarness.observeRecordedApprovalExecution });
         childResult = result;
         return result.ok ? { managedId: 'managed' } : result;
     } });
-    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, signal: lifetime.signal,
         runtimeAccountId: 'account', serverId: 'srv_home', serverIdentityId: 'srv_home', actionRequestId: 'creation', actionsSettings: settings,
         externalActionTarget: { kind: 'machine', machineId: 'controller' },
         presentUserConfirmation: { actionId: 'machines.managed.acquire',
@@ -146,15 +170,16 @@ it.each([
         expect(result).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
         expect(childResult).toBeUndefined(); expect(asks).toEqual([]); expect(effects).toBe(0);
     } else if (scenario === 'declared') {
-        expect(result, result.ok ? undefined : JSON.stringify(result)).toMatchObject({ ok: true });
+        expect(result, result.ok ? undefined : JSON.stringify({ result, childResult, asks, effects })).toMatchObject({ ok: true });
         expect(childResult).toMatchObject({ ok: true, result: { kind: 'accepted', operationId: 'isolation' } });
         expect(asks).toEqual([]); expect(effects).toBe(1);
     } else if (scenario === 'undeclared') {
-        expect(result, result.ok ? undefined : JSON.stringify(result)).toMatchObject({ ok: true });
-        expect(childResult).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: childAction } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+        expect(childResult).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
         expect(asks).toEqual([childAction]); expect(effects).toBe(0);
-        // This Account's own box decides the policy surface, never a SOURCE stamp.
-        expect(askSurfaces).toEqual(['ui']);
+        // An undeclared child has no reviewed invocation box, so its authenticated
+        // terminal chooses the policy surface rather than the parent's UI stamp.
+        expect(askSurfaces).toEqual(['cli']);
     } else {
         expect(result).toMatchObject({ ok: false }); expect(asks).toEqual([]); expect(effects).toBe(0);
     }
