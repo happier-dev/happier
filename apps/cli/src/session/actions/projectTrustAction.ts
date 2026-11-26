@@ -29,7 +29,11 @@ export function createCliProjectTrustAction(params: Readonly<{
       || (parsed.data.project && !await isServerProfileHomeIdentity(params.serverId, parsed.data.project.serverId))) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
-    const client = createProjectSetupTrustClient({ credentials, serverHttpBaseUrl: params.serverHttpBaseUrl });
+    // An admitted external requester keeps its own signed Home transport; cancellation aborts the HTTP request.
+    const authorization = context.externalActionExecutionAuthorization;
+    const client = createProjectSetupTrustClient({ credentials, serverHttpBaseUrl: params.serverHttpBaseUrl,
+      ...(authorization?.requesterAccountProjection ? { authorization, effectActionId: actionId } : {}),
+      ...(context.signal ? { signal: context.signal } : {}) });
     try {
       context.signal?.throwIfAborted();
       if (actionId === 'projects.trust.list') {

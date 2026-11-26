@@ -95,6 +95,20 @@ describe('Project Trust Actions through requester CLI composition', () => {
     expect(await executor().execute('projects.trust.list', {}, { ...context, signal: controller.signal }))
       .toMatchObject({ ok: false, errorCode: 'cancelled' });
   });
+  it('aborts the in-flight Trust HTTP request when the invocation is cancelled', async () => {
+    const controller = new AbortController();
+    const post = networkBoundary();
+    let requestSignal: AbortSignal | undefined;
+    post.mockImplementationOnce(async (_url, _body, options) => {
+      requestSignal = options?.signal as AbortSignal | undefined;
+      controller.abort();
+      if (requestSignal?.aborted) throw Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' });
+      return { status: 200, data: { rows: [] } };
+    });
+    expect(await executor().execute('projects.trust.list', {}, { ...context, signal: controller.signal }))
+      .toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect(requestSignal?.aborted).toBe(true);
+  });
   it('preserves a confirmed Forget CAS receipt when cancellation arrives after the Account mutation', async () => {
     const controller = new AbortController();
     const post = networkBoundary();
