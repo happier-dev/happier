@@ -8,6 +8,7 @@ import { readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOper
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -55,7 +56,7 @@ export function observeInboxMachineSignInItems(params: Readonly<{
         current = false;
         if (reading || controller.signal.aborted) return;
         reading = true;
-        void (async () => {
+        fireAndForget((async () => {
             try {
                 while (invalidated && !controller.signal.aborted) {
                     invalidated = false;
@@ -69,7 +70,7 @@ export function observeInboxMachineSignInItems(params: Readonly<{
             } finally {
                 reading = false;
             }
-        })();
+        })(), { tag: 'Inbox.machineSignIn.refresh' });
     };
     const unsubscribe = subscribeHomeAccountChange(event => {
         if (event.source === 'snapshot' || event.source === 'connected'

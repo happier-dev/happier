@@ -56,6 +56,36 @@ describe('Inbox managed sign-in data', () => {
         } finally { dispose(); }
     });
 
+    it.each(['retirement', 'unmount'] as const)('quietly cancels an in-flight sign-in read on %s', async reason => {
+        const { binding, retire } = lifetime();
+        let signal: AbortSignal | undefined;
+        // The Home HTTP read rejects with its AbortSignal's reason when cancelled.
+        const read = vi.fn((_scope: ServerAccountScopeLifetime['scope'], input: AbortSignal) => new Promise<never>((_resolve, reject) => {
+            signal = input;
+            input.addEventListener('abort', () => reject(input.reason), { once: true });
+        }));
+        const publish = vi.fn();
+        const unhandled: unknown[] = [];
+        const recordUnhandled = (error: unknown) => { unhandled.push(error); };
+        process.on('unhandledRejection', recordUnhandled);
+        const dispose = observeInboxMachineSignInItems({ binding, publish, read });
+        try {
+            expect(signal).toBeDefined();
+            if (reason === 'retirement') retire();
+            else dispose();
+            expect(signal?.aborted).toBe(true);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(unhandled).toEqual([]);
+            expect(publish).not.toHaveBeenCalled();
+            publishHomeAccountChangeWake(scope.serverId, { t: 'account-change', changeKinds: ['account'],
+                entityIds: [MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1 + 'id'] }, 'socket');
+            expect(read).toHaveBeenCalledTimes(1);
+        } finally {
+            dispose();
+            process.removeListener('unhandledRejection', recordUnhandled);
+        }
+    });
+
     it.each([
         { replaced: false, opaque: false }, { replaced: true, opaque: false }, { replaced: false, opaque: true },
     ])('passes only the addressed current task to the member-client approve flow ($replaced, $opaque)', async ({ replaced, opaque }) => {
