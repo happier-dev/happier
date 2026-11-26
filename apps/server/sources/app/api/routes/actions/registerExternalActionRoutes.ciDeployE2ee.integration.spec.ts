@@ -30,8 +30,14 @@ import {
 } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { openExternalActionRequestV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
+import { featuresRoutes } from '../features/featuresRoutes';
+import { admitDeploymentStoredContentInTx } from '@/app/deployments/deploymentStoredContent';
+import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/serverHttpBaseUrl';
+import { artifactsRoutes } from '../artifacts/artifactsRoutes';
+import { registerAccountApiTokenManagementRoutes } from '../auth/registerAccountApiTokenManagementRoutes';
 import { auth } from '@/app/auth/auth';
 import type { Fastify as AppFastify } from '@/app/api/types';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
@@ -55,8 +61,13 @@ import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceSer
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { createDeploymentEnvironmentV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
+
+function importCli(specifier: string): Promise<unknown> {
+  return import(specifier);
+}
 
 // Composed hop: the real bearer verifier, persisted API token, grant evaluator,
 // Environment read route, external Action ingress and dispatcher decide what a
@@ -158,7 +169,7 @@ describe('Deploy from CI with an Environment-scoped API token (integration)', ()
     // Home validates plain Environment content; E2EE content stays opaque to it.
     const plainContent = createDeploymentEnvironmentV1().content;
     if (plainContent.t !== 'plain') throw new Error('Expected plain Environment fixture');
-    const value = { body: JSON.stringify(mode === 'plain' ? plainContent.v : { name: 'CI app' }) };
+    const value = { body: JSON.stringify(plainContent.v) };
     const artifact = await createArtifact({
       actorUserId: account.id,
       artifactId: crypto.randomUUID(),
@@ -223,11 +234,18 @@ describe('Deploy from CI with an Environment-scoped API token (integration)', ()
             tokenId,
             'Staging CI',
           );
+    const wrappingSecret = nacl.randomBytes(32);
+    const contentPublicKey = privacyKit.encodeBase64(contentKeys.publicKey);
+    const encryption = mode === 'e2ee' ? { access: wrapApiTokenEncryptionAccessV1({
+      context: { serverIdentityId: serverId, accountId: account.id, tokenId, contentPublicKey },
+      contentPrivateKey: contentKeys.secretKey, wrappingSecret, randomBytes: nacl.randomBytes,
+    }) } : undefined;
     const pat = await auth.createApiToken({
       accountId: account.id,
       tokenId,
       label,
       grant,
+      ...(encryption ? { encryption } : {}),
       deployment: {
         serverId,
         environmentId: environment.environmentId,
@@ -242,19 +260,103 @@ describe('Deploy from CI with an Environment-scoped API token (integration)', ()
       pat,
       tokenId,
       accountKey: machineKey,
+      installationPrivateKey: installationKeys.secretKey,
+      artifactId: artifact.artifact.id,
+      apiTokenContentAccess: { contentPublicKey, wrappingSecret: Buffer.from(wrappingSecret).toString('base64url') },
     };
   }
 
-  it.each(['plain', 'e2ee'] as const)('places a %s CI deploy through the scoped controller read without a wider read', async (mode) => {
+  it.each(['plain', 'e2ee'] as const)('places a %s CI deploy and admits its exact candidate without granting a wider read', async (mode) => {
     const f = await fixture(mode);
     const forwarded: unknown[] = [];
+    const statuses: Array<{ path: string; status: number }> = [];
+    let origin: string;
+    let custodyStep = 'daemon not reached';
     const forwardRpc: ExternalActionForwardRpcCall = async ({ callParams }) => {
       const request = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
       const binding = request.executionAuthorization?.binding;
       forwarded.push({ v: request.envelope.v, machineId: binding?.machineId,
         environmentId: binding?.environmentId, accountEncryptionMode: binding?.accountEncryptionMode });
-      // The controller daemon is the boundary; its execution is not under test here.
-      throw new Error('controller boundary');
+      // Replace Socket.IO only for this diagnostic. The scoped token, envelope,
+      // installed proof, signed Home read and Account Artifact opener stay real.
+      if (!request.executionAuthorization || !f.controller.installationId) {
+        custodyStep = 'controller admission absent';
+        throw new Error(custodyStep);
+      }
+      const root = request.executionAuthorization;
+      const envelope = request.envelope;
+      const opened = envelope.v === 2 ? openExternalActionRequestV2({ envelope,
+        binding: { serverIdentityId: f.serverId, accountId: f.account.id, credentialId: f.tokenId,
+          actionId: 'deployments.deploy', requestId: 'ci-run-1', target: root.binding.target },
+        material: { type: 'dataKey', machineKey: f.accountKey }, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 }) : null;
+      custodyStep = 'exact controller envelope';
+      if (envelope.v === 2 && !opened?.apiTokenContentAccess) throw new Error(custodyStep);
+      expect(envelope.v === 1 ? envelope.input : opened?.input)
+        .toMatchObject({ environmentId: f.environmentId, sha: 'a'.repeat(40) });
+
+      const { projectExternalActionRequesterHttpAuthorization } = await importCli('../../../../../../cli/src/api/externalActionExecutionAuthorization') as
+        typeof import('../../../../../../cli/src/api/externalActionExecutionAuthorization');
+      const { prepareApiTokenDeploymentAccountProjection, readRequesterDeploymentArtifactStore } = await importCli('../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection') as
+        typeof import('../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection');
+      const { retainApiTokenDeploymentContentAccess } = await importCli('../../../../../../cli/src/auth/apiTokenDeploymentCustody') as
+        typeof import('../../../../../../cli/src/auth/apiTokenDeploymentCustody');
+      const projected = await projectExternalActionRequesterHttpAuthorization({
+        authorization: root, serverId: f.serverId, serverIdentityId: f.serverId, serverHttpBaseUrl: origin,
+        installationId: f.controller.installationId, privateKey: f.installationPrivateKey, rootAdmitted: true,
+        target: root.binding.target,
+      });
+      custodyStep = 'installed HTTP proof';
+      if (!projected) throw new Error(custodyStep);
+      // The daemon preserves the signed HTTP projector's immutable descriptors
+      // on an extensible invocation before attaching optional token custody.
+      const invocation = Object.defineProperties({ ...projected }, Object.getOwnPropertyDescriptors(projected));
+      const disposeKey = opened?.apiTokenContentAccess
+        ? retainApiTokenDeploymentContentAccess(invocation, opened.apiTokenContentAccess) : undefined;
+      custodyStep = 'envelope access retained';
+      try {
+        const scope = await prepareApiTokenDeploymentAccountProjection(invocation);
+        custodyStep = 'same-token custody projection';
+        if (!scope) throw new Error(custodyStep);
+        try {
+          const read = await invocation.requesterAccountProjection?.readArtifact({ serverId: f.serverId, artifactId: f.artifactId },
+            { authorization: invocation });
+          custodyStep = 'exact Environment Artifact read';
+          expect(read).toMatchObject({ artifactId: f.artifactId,
+            document: { header: { kind: 'deployment-environment.v1' }, body: expect.any(String) } });
+          custodyStep = 'Environment Artifact opened';
+          const candidateId = root.binding.deploymentCandidatePublication?.contentArtifactId;
+          const store = readRequesterDeploymentArtifactStore(invocation);
+          const http = invocation.requesterHttpProjection;
+          custodyStep = 'exact candidate publication authorized';
+          if (!candidateId || !store || !http) throw new Error(custodyStep);
+          const artifact = await runWithServerHttpBaseUrl(origin, () => store.create({
+            artifactId: candidateId, header: { kind: 'deployment-receipt.v1', title: 'CI exact-SHA Deploy' },
+            body: JSON.stringify(createDeploymentReceiptDetailV1().content),
+            authorizationHeaders: async proof => {
+              const headers = await http.createRequestHeaders({ ...proof, effectActionId: root.binding.actionId });
+              if (!headers) throw new Error('candidate HTTP proof absent');
+              return headers;
+            },
+          }));
+          custodyStep = 'candidate Artifact published';
+          const refusal = await inTx(tx => admitDeploymentStoredContentInTx(tx, f.account.id,
+            { kind: 'account', accountId: f.account.id }, { contentArtifactId: artifact.artifactId,
+              contentHeaderVersion: artifact.revision.headerVersion, contentBodyVersion: artifact.revision.bodyVersion },
+            DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1));
+          if (refusal) {
+            const stored = await db.artifact.findUnique({ where: { id: candidateId }, select: { accountId: true, kind: true } });
+            const path = '/v1/features/authenticated';
+            const headers = await http.createRequestHeaders({ method: 'GET', path, effectActionId: root.binding.actionId });
+            const response = headers ? await typed.inject({ method: 'GET', url: path, headers }) : null;
+            custodyStep = 'candidate Artifact refused: ' + JSON.stringify({ code: refusal.error, kind: stored?.kind,
+              owned: stored?.accountId === f.account.id, featuresStatus: response?.statusCode,
+              featuresError: response?.statusCode === 200 ? undefined : response?.json().error });
+            throw new Error(custodyStep);
+          }
+          custodyStep = 'candidate Artifact admitted';
+        } finally { scope.dispose(); }
+      } finally { disposeKey?.(); }
+      throw new Error('deployment effect boundary');
     };
     const io = new Server();
     const app = Fastify({ logger: false });
@@ -262,10 +364,20 @@ describe('Deploy from CI with an Environment-scoped API token (integration)', ()
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as unknown as AppFastify;
     enableAuthentication(typed);
+    typed.addHook('onSend', async (req, reply, payload) => {
+      const path = req.url.split('?')[0]!;
+      if (path.startsWith('/v1/artifacts') || path.endsWith('/encryption-access') || path === '/v1/features/authenticated') {
+        statuses.push({ path, status: reply.statusCode });
+      }
+      return payload;
+    });
     registerDeploymentRoutes(typed);
+    artifactsRoutes(typed);
+    featuresRoutes(typed);
+    registerAccountApiTokenManagementRoutes(typed);
     registerExternalActionRoutes(typed, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc }) });
     io.attach(typed.server);
-    await typed.listen({ host: '127.0.0.1', port: 0 });
+    origin = await typed.listen({ host: '127.0.0.1', port: 0 });
     try {
       const headers = { authorization: `Bearer ${f.pat.token}` };
       const controllerRead = (environmentId: string, serverId = f.serverId) => typed.inject({ method: 'GET',
@@ -294,11 +406,19 @@ describe('Deploy from CI with an Environment-scoped API token (integration)', ()
           binding: { serverIdentityId: f.serverId, accountId: f.account.id, credentialId: f.tokenId,
             actionId: 'deployments.deploy', requestId: 'ci-run-1', target },
           input, material: { type: 'dataKey', machineKey: f.accountKey },
+          apiTokenContentAccess: f.apiTokenContentAccess,
           randomBytes: (length) => nacl.randomBytes(length) });
       await typed.inject({ method: 'POST', url: '/v1/actions/deployments.deploy', headers, payload });
       expect(forwarded).toEqual([{ v: mode === 'plain' ? 1 : 2, machineId: f.controller.id,
         environmentId: f.environmentId, accountEncryptionMode: mode }]);
 
+      expect(custodyStep, JSON.stringify(statuses)).toBe('candidate Artifact admitted');
+      expect(statuses).toEqual(expect.arrayContaining([
+        { path: `/v1/artifacts/${f.artifactId}`, status: 200 },
+        { path: '/v1/artifacts', status: 200 },
+      ]));
+      const keyAccess = statuses.filter(({ path }) => path === '/v1/auth/api-tokens/encryption-access');
+      expect(keyAccess).toEqual(mode === 'e2ee' ? [{ path: '/v1/auth/api-tokens/encryption-access', status: 200 }] : []);
       await auth.revokeApiToken({ accountId: f.account.id, tokenId: f.tokenId });
       expect((await controllerRead(f.environmentId)).statusCode).toBe(401);
     } finally {

@@ -754,8 +754,7 @@ async function readDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
             || selectedSource !== undefined && row.projectSourceId !== selectedSource.id)) return null;
     const scope = minted ?? createDeploymentCandidatePublicationV1({ ...binding, environmentId,
         source: { id: custody.source.id, revision: custody.source.revision } });
-    const admit = async (allowed: boolean, artifactId: string) => {
-        if (!allowed) return null;
+    const admit = async (artifactId: string, requiredStoredKind: string) => {
         const publicationGrants: Pick<ArtifactAccessGrantSetInputV1, 'principal' | 'accessLevel'>[] = [];
         publicationGrants.push({ principal: custody.owner, accessLevel: 'admin' });
         if (artifactId === scope.contentArtifactId) {
@@ -766,7 +765,7 @@ async function readDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
                 }
             }
         }
-        return { ...custody, publicationGrants };
+        return { ...custody, publicationGrants, requiredStoredKind };
     };
     // Receipt admission consumes preparation authority. Native transitions keep
     // their existing, separate accepted-execution writer after this point.
@@ -779,8 +778,9 @@ async function readDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
         const parsed = ArtifactJsonCreateHttpInputV1Schema.safeParse(proof.body);
         if (!parsed.success) return null;
         const kind = kindFor(parsed.data.id);
-        return admit(kind !== undefined && (parsed.data.kind === undefined || parsed.data.kind === kind)
-            && parsed.data.approvalState === undefined && parsed.data.approvalSessionId === undefined && matches(parsed.data), parsed.data.id);
+        if (kind === undefined || parsed.data.kind !== undefined && parsed.data.kind !== kind
+            || parsed.data.approvalState !== undefined || parsed.data.approvalSessionId !== undefined || !matches(parsed.data)) return null;
+        return admit(parsed.data.id, kind);
     }
     const path = /^\/v1\/artifacts\/([^/?#]+)(?:\/access\/(grants|recipients|key-envelopes))?$/u.exec(proof.path);
     if (!path) return null;
@@ -793,12 +793,11 @@ async function readDeploymentCandidatePublicationHttpPurposeInTx(tx: Tx,
     })) return null;
     if (method === 'POST' && path[2] === undefined) {
         const parsed = ArtifactJsonUpdateHttpInputV1Schema.safeParse(proof.body);
-        return admit(parsed.success && (parsed.data.kind === undefined || parsed.data.kind === kind)
+        return parsed.success && (parsed.data.kind === undefined || parsed.data.kind === kind)
             && parsed.data.approvalState === undefined && parsed.data.approvalSessionId === undefined
-            && matches({ id, ...parsed.data }), id);
+            && matches({ id, ...parsed.data }) ? admit(id, kind) : null;
     }
-    const admitted = await admit(true, id);
-    if (!admitted) return null;
+    const admitted = await admit(id, kind);
     if (method === 'GET' && proof.body === undefined
         && (path[2] === 'recipients' || path[2] === 'grants' || path[2] === undefined)) return matches({ id }) ? admitted : null;
     if (method === 'PUT' && path[2] === 'grants') {
@@ -827,7 +826,10 @@ export function createDeploymentCandidateArtifactMutationGuard(input: Readonly<{
             if (environmentId) await lockDeploymentEnvironmentInTx(tx, environmentId);
             const admission = await readDeploymentCandidatePublicationHttpPurposeInTx(tx, input.binding,
                 input.effectActionId, input.proof);
-            return admission ? { publicationGrants: admission.publicationGrants } : null;
+            if (!admission || !('requiredStoredKind' in admission)) return null;
+            // The signed root already fixes this exact candidate's kind. It is
+            // required for admission even when the writer has no query hints.
+            return { publicationGrants: admission.publicationGrants, requiredStoredKind: admission.requiredStoredKind };
         },
     };
 }

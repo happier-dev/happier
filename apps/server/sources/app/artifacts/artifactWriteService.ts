@@ -1008,7 +1008,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
             if (!inherited) return null;
             const policy = await resolveReviewCreationPolicyInTx(tx, { actorAccountId: input.actorAccountId,
                 projectSourceId: reviewMetadata.projectSourceId, authentication: params.authentication });
-            return policy ? { publicationGrants: [...inherited.publicationGrants, ...policy.publicationGrants] } : null;
+            return policy ? { ...inherited, publicationGrants: [...inherited.publicationGrants, ...policy.publicationGrants] } : null;
         } };
     }
     const publication = mutationGuard ? await admitArtifactMutationInTx(tx, {
@@ -1044,8 +1044,10 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     }
 
     const plain = isPlainArtifactDataKeyBytes(params.dataEncryptionKey);
-    const kind = artifactWriteKind(params.header, plain, params.kind, params);
-    if (!kind) return { ok: false, error: 'invalid-params' };
+    const kind = artifactWriteKind(params.header, plain, publication?.requiredStoredKind ?? params.kind, params);
+    if (!kind || publication?.requiredStoredKind !== undefined && kind.kind !== publication.requiredStoredKind) {
+        return { ok: false, error: 'invalid-params' };
+    }
     if (!await admitSessionApprovalConsentWriteInTx(tx, { actorAccountId: params.actorUserId, ownerAccountId: params.actorUserId,
         writerAuthTokenKind: params.writerAuthTokenKind, current: null, next: kind })) return { ok: false, error: 'artifact_access_forbidden' };
     const isReview = decodeArtifactKindV1(kind.kind).kindHint === REVIEW_ARTIFACT_KIND_V1;
@@ -1435,12 +1437,14 @@ export async function updateArtifactTx(
     }
 
     const nextKind = params.header
-        ? artifactWriteKind(params.header.bytes, isPlainArtifactDataKeyBytes(current.dataEncryptionKey), params.kind, params)
+        ? artifactWriteKind(params.header.bytes, isPlainArtifactDataKeyBytes(current.dataEncryptionKey), publication.requiredStoredKind ?? params.kind, params)
         : hasQueryHints ? artifactWriteKind(openedCurrent.header, isPlainArtifactDataKeyBytes(current.dataEncryptionKey), params.kind ?? current.kind ?? undefined, {
             approvalState: params.approvalState === undefined ? current.approvalState : params.approvalState,
             approvalSessionId: params.approvalSessionId === undefined ? current.approvalSessionId : params.approvalSessionId,
         }) : undefined;
-    if (nextKind === null) return { ok: false, error: 'invalid-params' };
+    if (nextKind === null || nextKind && publication.requiredStoredKind !== undefined && nextKind.kind !== publication.requiredStoredKind) {
+        return { ok: false, error: 'invalid-params' };
+    }
     if (!await admitSessionApprovalConsentWriteInTx(tx, { actorAccountId: params.actorUserId, ownerAccountId,
         writerAuthTokenKind: params.writerAuthTokenKind, current, next: nextKind ?? current })) {
         return { ok: false, error: 'artifact_access_forbidden' };

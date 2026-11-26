@@ -66,6 +66,7 @@ export function projectArtifactPublicAudience(publication: Parameters<typeof isP
 /** Request-private admission carried into the transaction that changes the Artifact. */
 export type ArtifactMutationAdmission = Readonly<{
     publicationGrants: readonly (Pick<ArtifactAccessGrantSetStorageInputV1, 'principal' | 'accessLevel'> & { requiredByTeamPolicy?: boolean })[];
+    requiredStoredKind?: string;
 }>;
 export interface ArtifactMutationTransactionGuard {
     admitInTx(tx: Tx, input: Readonly<{ actorAccountId: string; artifactId: string }>): Promise<ArtifactMutationAdmission | null>;
