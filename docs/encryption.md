@@ -2220,17 +2220,27 @@ and retain the native host-key trust flow.
 
 An attached SSH workspace retains the saved `remoteHostId` in the managed
 resource. The Project Account row stores the managed V2 workspace reference
-and guest root, using the Project row's existing plaintext or E2EE envelope.
+(`ManagedWorkspaceRefV2WriteSchema`: explicit `v: 2`, `kind: 'managed'`,
+`managedId`, and `controller: { machineId, installationId }`, forbidding
+`machineId` while the Machine arm forbids `kind`) and guest root, using the
+Project row's existing plaintext or E2EE envelope, so V1 stored readers cannot
+misinterpret a managed guest root as a path on the controller Machine's disk.
 The controller's managed invocation binds the resource to its custodian
 Account. `remoteHostStore.readWorkspaceSshBinding` opens the selected host
 record, establishes SSH host-key trust on the controller, then resolves that
 record's password or private-key SavedSecret. Device-local identity paths and
 SSH agent authentication are outside this attachment path.
 
-`MachineProvisionersService.materializeBootstrapCredential` lends the resolved
-SSH binding to the native exec, file-transfer or stream invocation. It includes
-the controller's known-hosts path so the transport can enforce strict host-key
-checking. The SSH transport disposes of the material after use. The attach
+`MachineProvisionersService.materializeBootstrapCredential({ kind: 'bytes' })`
+lends an invocation-scoped `RemoteHostWorkspaceBindingV1` byte lease to the
+native `ssh`/`scp` exec, file-transfer or stream invocation. The transport
+enforces `StrictHostKeyChecking=yes` with `knownHostsMode: 'app'` (using the
+controller's known-hosts path) and `sshConfigFile: 'none'`, and keeps passwords
+and private-key material out of child `argv`: passwords travel through
+`SSH_PASSWORD_ENV` with `SSH_ASKPASS`/`SSH_ASKPASS_REQUIRE`, and private keys
+are materialized into a `0600` temporary file with `IdentitiesOnly=yes`. In
+`finally`, the transport zeroes the lease bytes on `dispose()` and removes the
+temporary identity file. The attach
 Action carries the host ID. On first use, a pending acquire can publish the
 host-key question through its existing Action operation before a managed row
 exists. Declining settles the operation before attachment. Later workspace

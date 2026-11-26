@@ -1868,7 +1868,9 @@ Coder lists workspaces for the selected Connected Account and binds the selected
 `prepareManagedWorkspaceAttachment` establishes the native transport and probes
 the guest for holder support before Home admits the prepared attachment.
 Home records an existing resource with manual lifecycle responsibility and
-`until-delete` retention. The bootstrap path uses the guest's existing user.
+`until-delete` retention; policy admission (`admitManagedPolicy` and
+`prepareManagedPolicy`) refuses retention sweeps on `until-delete` rows with
+`permission_denied`. The bootstrap path uses the guest's existing user.
 See [SSH credential custody](encryption.md#private-remote-host-catalog-03-development).
 
 After the folder picker returns a path, `projects.open` uses
@@ -1879,14 +1881,21 @@ Clients route the effect to the controller. `readWorkspaceSourcePlacement` and
 `selectWorkspaceSource` use the exact managed address at admission.
 An unavailable attachment settles as `workspace_target_unavailable` when there
 is no target to bind. A matching directory on the controller cannot satisfy
-that address.
+that address. A warm target is bound to that exact managed address (including
+the controller `installationId`) and requester Account; a different requester
+Account or a replaced controller installation settles as
+`workspace_target_unavailable` rather than reusing the channel or falling back
+to local disk.
 
 `sessionTargetWorkspaces.ts` owns the attached workspace source by exact
 address and requester Account. Its Agent-less holder runs in `workspace` stdio
 mode over the provisioner's stream. In-flight work, watches and Project PTYs
 hold the channel while they use it. The last release closes the channel and
 the holder exits. A later demand opens a fresh channel, including after a drop.
-The retained attachment by itself opens no channel. An in-place Session
+The retained attachment by itself opens no channel, and stopped or idle
+managed Projects perform zero background provider polls or retry timers; a
+stopped provider refusal (`managed_power_required`) settles after that single
+demand attempt until an explicit user action or active-surface reconnect. An in-place Session
 uses its own Agent holder in the guest, independently of the Project's
 panel channel.
 

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
@@ -252,5 +252,80 @@ describe('remote workspace shape contracts', () => {
         .then(source => ({ kind: source.kind }), (error: unknown) => error);
       expect(denied).toMatchObject({ code: 'workspace_target_unavailable' });
     } finally { lifetime.abort(); }
+  });
+
+  it('D-g: a stopped managed remote workspace performs 0 background polls while idle and after a single demand refusal', async () => {
+    vi.useFakeTimers();
+    const workspace = { ...managedWorkspace, workspaceId: 'stopped-zero-poll-project' };
+    const lifetime = new AbortController();
+    let channelOpens = 0;
+    const providerRoles: string[] = [];
+    try {
+      registerManagedWorkspaceTarget({
+        workspace,
+        requesterAccountId: 'owner',
+        target: {
+          lifetime: lifetime.signal,
+          holderPath: '/fixture/holder',
+          helperPath: '/fixture/helper',
+          openChannel: (argv, signal) => {
+            channelOpens += 1;
+            return openManagedNativeChannel(
+              { resource: { contributionRef: { pluginId: 'fixture.coder', localId: 'coder' }, schemaVersion: 1, value: { id: 'stopped-guest' } } },
+              async role => {
+                providerRoles.push(role);
+                throw new PluginError({ code: 'managed_power_required' });
+              },
+              { argv, signal },
+            );
+          },
+        },
+      });
+
+      // Idle stopped managed workspace: advancing timers must not trigger background polls or channel opens.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(channelOpens).toBe(0);
+      expect(providerRoles).toEqual([]);
+
+      // Explicit user demand performs one attempt and surfaces managed_power_required.
+      const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+      const source = await admission.selectWorkspaceSource({
+        machineAdmission: {
+          ...workspace.controller,
+          actorAccountId: 'owner',
+          custodianAccountId: 'owner',
+          role: 'manage',
+          encryptionMode: 'plain',
+        },
+      }, { workspace, rootPath: workspace.rootPath });
+      const executor = createDirectoryRpcActionExecutor({
+        workingDirectory: '/controller',
+        accessPolicy: { kind: 'osUser' as const },
+        getAdditionalAllowedReadDirs: () => [],
+        getAdditionalAllowedWriteDirs: () => [],
+        limits: { listMaxEntries: 100, treeMaxDepth: 3, treeMaxNodes: 100 },
+      });
+      const execution = await runWithWorkspaceSourceDemand(source, async () =>
+        await executor.execute(
+          'daemon.filesystem.listDirectory',
+          { workspace, rootPath: workspace.rootPath, path: workspace.rootPath },
+          { surface: 'rpc', authority: 'present_user' },
+        ),
+      );
+      expect(execution.ok ? execution.result : execution).toMatchObject({
+        success: false,
+        errorCode: 'managed_power_required',
+      });
+      expect(channelOpens).toBe(1);
+      expect(providerRoles).toEqual(['stream']);
+
+      // After refusal, advancing timers again must not schedule background retries or polls.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(channelOpens).toBe(1);
+      expect(providerRoles).toEqual(['stream']);
+    } finally {
+      lifetime.abort();
+      vi.useRealTimers();
+    }
   });
 });

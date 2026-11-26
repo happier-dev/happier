@@ -8,7 +8,23 @@ import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transit
 import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from './managedCreationBirth';
 import { cancelWorkflowRun } from '@/app/workflows/workflowRunService';
-import { reportManagedIntent } from './managedMutations';
+import tweetnacl from 'tweetnacl';
+import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { defineProtocolObject } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import {
+    MachineProvisionerBootstrapCarrierV1Schema,
+    MachineProvisionerCheckResultProtocolV1Schema,
+    MachineProvisionerObservationV1Schema,
+    MachineProvisionerPowerResultV1Schema,
+    defineMachineProvisionerSchemas,
+} from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import {
+    MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
+    type ManagedCommittedIdleEvidenceV1,
+} from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { admitManagedPolicy, prepareManagedPolicy, reportManagedIntent } from './managedMutations';
 import { classifyLayout1SessionCreateThrow } from '@/app/session/create/createFreshBoundLayout1Session';
 
 describe('creation scope retention at the real archive owner', () => {
@@ -225,5 +241,314 @@ describe('creation scope retention at the real archive owner', () => {
         expect(settled.machine.submittedNativeEffect).toBeUndefined();
         expect(settled.machine.retention).toEqual({ kind: 'until-delete' });
         expect(settled.machine.allocation).toBe(effect === 'delete' ? 'confirmed-absent' : 'bound');
+    });
+
+    it('D-h: server admits unused retention sweep (signed idle drain & ended bound session) while rejecting until-delete with permission_denied', async () => {
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controllerKeys = tweetnacl.sign.keyPair();
+        const controller = await db.machine.create({
+            data: {
+                id: randomUUID(),
+                accountId: custodian.id,
+                active: true,
+                installationId: randomUUID(),
+                installationPublicKey: new Uint8Array(controllerKeys.publicKey),
+                metadata: '{}',
+                pluginMaterializationRevision: BigInt(1),
+            },
+        });
+        const controllerRef = { machineId: controller.id, installationId: controller.installationId! };
+        const provider = { pluginId: 'acme.retention-dh', localId: 'vm' };
+        const nativeSchema = defineProtocolObject({}, { policy: 'closed' });
+        const roles = defineMachineProvisionerSchemas({ launch: nativeSchema, resource: nativeSchema });
+        const roleActions = [
+            { id: 'check', inputSchema: roles.checkInput.jsonSchema, resultSchema: MachineProvisionerCheckResultProtocolV1Schema.jsonSchema },
+            { id: 'acquire', inputSchema: roles.acquireInput.jsonSchema, resultSchema: roles.acquireResult.jsonSchema },
+            { id: 'bootstrap', inputSchema: roles.bootstrapInput.jsonSchema, resultSchema: MachineProvisionerBootstrapCarrierV1Schema.jsonSchema },
+            { id: 'inspect', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerObservationV1Schema.jsonSchema },
+            { id: 'destroy', inputSchema: roles.resourceInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
+            { id: 'power', inputSchema: roles.powerInput.jsonSchema, resultSchema: MachineProvisionerPowerResultV1Schema.jsonSchema },
+        ];
+        const manifest = PluginManifestV2Schema.parse({
+            schemaVersion: 2,
+            id: provider.pluginId,
+            version: '1.0.0',
+            displayName: 'Retention D-h Fixture',
+            engines: { happier: '^1.0.0' },
+            runtime: { apiVersion: 1 },
+            entrypoints: { daemon: './daemon.js' },
+            hostAccess: { required: [], optional: [] },
+            contributes: {
+                machineProvisioners: [{
+                    id: provider.localId,
+                    title: 'Fixture VM',
+                    icon: 'machine',
+                    resourceKind: 'vm',
+                    schemaVersion: 1,
+                    launchSchema: nativeSchema.jsonSchema,
+                    resourceSchema: nativeSchema.jsonSchema,
+                    platforms: ['linux'],
+                    prerequisites: [],
+                    browserReachable: false,
+                    billing: { location: 'local', stoppedBilling: 'not-billed' },
+                    retention: { supportedIntents: ['start', 'stop', 'delete'] },
+                    actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+                }],
+                actions: roleActions.map(action => ({
+                    ...action,
+                    title: action.id,
+                    execution: { target: 'daemon' as const },
+                    surfaces: ['plugin' as const],
+                    scopes: ['machine' as const],
+                    dangerLevel: 'safe' as const,
+                })),
+            },
+        });
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.create({
+            data: {
+                accountId: custodian.id,
+                pluginId: provider.pluginId,
+                enabled: true,
+                writableCollections: [],
+                releaseLessDeclaration: declaration,
+            },
+        });
+        await db.pluginMachineMaterialization.create({
+            data: {
+                accountId: custodian.id,
+                serverIdentityId: homeId,
+                machineId: controller.id,
+                materializationId: controller.installationId!,
+                pluginId: provider.pluginId,
+                version: manifest.version,
+                sourceClass: 'bundledFirstParty',
+                portableRelease: false,
+                archiveDigestSha256: declaration.manifestDigestSha256,
+                uiArtifacts: [],
+                enabled: true,
+                trustState: 'trusted',
+                observedAt: new Date(),
+            },
+        });
+
+        const launch = { provider, schemaVersion: 1, name: 'D-h guest', choices: {} };
+        const resource = { contributionRef: provider, schemaVersion: 1, value: {} };
+
+        const makeGuest = async () => {
+            const keys = tweetnacl.sign.keyPair();
+            const machineId = randomUUID();
+            const installationId = randomUUID();
+            await db.machine.create({
+                data: {
+                    id: machineId,
+                    accountId: custodian.id,
+                    metadata: '{}',
+                    installationId,
+                    installationPublicKey: new Uint8Array(keys.publicKey),
+                },
+            });
+            return { keys, machineId, installationId };
+        };
+
+        const signIdleEvidence = (
+            guest: { keys: tweetnacl.SignKeyPair; machineId: string; installationId: string },
+            managedId: string,
+            decision: { kind: 'idle'; since: number; confirmedAt: number },
+        ): ManagedCommittedIdleEvidenceV1 => {
+            const context = {
+                actorAccountId: custodian.id,
+                custodianAccountId: custodian.id,
+                machineId: guest.machineId,
+                installationId: guest.installationId,
+                role: 'manage' as const,
+                encryptionMode: 'plain' as const,
+            };
+            const managedTarget = { homeId, managedId, expectedRevision: 0, controller: controllerRef };
+            const method = `${guest.machineId}:${MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD}`;
+            return {
+                context,
+                method,
+                managedTarget,
+                decision,
+                proof: signMachineInstallationProof({
+                    payload: {
+                        version: 1,
+                        machineId: guest.machineId,
+                        installationId: guest.installationId,
+                        accountId: custodian.id,
+                        rpcAdmission: { context, method, managedTarget, managedIdleDecision: decision },
+                    },
+                    privateKey: guest.keys.secretKey,
+                }),
+            };
+        };
+
+        // 1) Enrolled guests: unused (afterMs: 60_000, effect: 'stop') vs until-delete on the same controller.
+        const unusedGuest = await makeGuest();
+        const untilDeleteGuest = await makeGuest();
+        const unusedRow = await db.managedMachine.create({
+            data: {
+                homeId,
+                custodianAccountId: custodian.id,
+                controllerMachineId: controller.id,
+                controllerInstallationId: controller.installationId!,
+                enrolledMachineId: unusedGuest.machineId,
+                admittedActionRequestId: randomUUID(),
+                admittedInput: {},
+                launch,
+                resource,
+                allocation: 'bound',
+                creationState: 'active',
+                desired: 'start',
+                retention: { kind: 'unused', afterMs: 60_000, effect: 'stop' },
+                wakeOnAcceptedMessage: false,
+            },
+        });
+        const untilDeleteRow = await db.managedMachine.create({
+            data: {
+                homeId,
+                custodianAccountId: custodian.id,
+                controllerMachineId: controller.id,
+                controllerInstallationId: controller.installationId!,
+                enrolledMachineId: untilDeleteGuest.machineId,
+                admittedActionRequestId: randomUUID(),
+                admittedInput: {},
+                launch,
+                resource,
+                allocation: 'bound',
+                creationState: 'active',
+                desired: 'start',
+                retention: { kind: 'until-delete' },
+                wakeOnAcceptedMessage: false,
+            },
+        });
+
+        // Under threshold (confirmedAt - since < afterMs): unused rejects with intent_changed.
+        const tooSoonEvidence = signIdleEvidence(unusedGuest, unusedRow.id, { kind: 'idle', since: 1_000, confirmedAt: 30_000 });
+        await expect(admitManagedPolicy({
+            custodianAccountId: custodian.id,
+            input: {
+                homeId,
+                managedId: unusedRow.id,
+                expectedIntentRevision: 0,
+                requestId: randomUUID(),
+                controller: controllerRef,
+                purpose: { kind: 'retention', evidence: tooSoonEvidence },
+            },
+        })).rejects.toMatchObject({ code: 'intent_changed' });
+
+        // At/past threshold: unused previews stop via prepareManagedPolicy and commits via admitManagedPolicy.
+        const dueEvidence = signIdleEvidence(unusedGuest, unusedRow.id, { kind: 'idle', since: 1_000, confirmedAt: 61_000 });
+        const unusedInput = {
+            homeId,
+            managedId: unusedRow.id,
+            expectedIntentRevision: 0,
+            requestId: randomUUID(),
+            controller: controllerRef,
+            purpose: { kind: 'retention' as const, evidence: dueEvidence },
+        };
+        await expect(prepareManagedPolicy({ custodianAccountId: custodian.id, input: unusedInput }))
+            .resolves.toMatchObject({ machine: { id: unusedRow.id, desired: 'stop', desiredWhen: 'now', intentRevision: 0 }, replayed: false });
+        await expect(admitManagedPolicy({ custodianAccountId: custodian.id, input: unusedInput }))
+            .resolves.toMatchObject({ machine: { id: unusedRow.id, desired: 'stop', desiredWhen: 'now', intentRevision: 1 }, replayed: false });
+
+        // Identical valid signed idle evidence against until-delete is strictly refused (both prepare and admit) and mutates nothing.
+        const untilDeleteEvidence = signIdleEvidence(untilDeleteGuest, untilDeleteRow.id, { kind: 'idle', since: 1_000, confirmedAt: 999_000 });
+        const untilDeleteInput = {
+            homeId,
+            managedId: untilDeleteRow.id,
+            expectedIntentRevision: 0,
+            requestId: randomUUID(),
+            controller: controllerRef,
+            purpose: { kind: 'retention' as const, evidence: untilDeleteEvidence },
+        };
+        await expect(prepareManagedPolicy({ custodianAccountId: custodian.id, input: untilDeleteInput }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        await expect(admitManagedPolicy({ custodianAccountId: custodian.id, input: untilDeleteInput }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: untilDeleteRow.id } })).toMatchObject({
+            desired: 'start',
+            intentRevision: 0,
+            retention: { kind: 'until-delete' },
+            cleanup: null,
+            archivedAt: null,
+        });
+
+        // 2) Unenrolled resource-bound rows: ended session with unused(afterMs: 0, delete) admits delete; until-delete refuses permission_denied.
+        const endedScope = { effect: 'delete' as const, source: { kind: 'session' as const, sessionId: randomUUID() }, endedAt: Date.now() };
+        const unusedBoundRow = await db.managedMachine.create({
+            data: {
+                homeId,
+                custodianAccountId: custodian.id,
+                controllerMachineId: controller.id,
+                controllerInstallationId: controller.installationId!,
+                admittedActionRequestId: randomUUID(),
+                admittedInput: { enrollmentAccountId: custodian.id, acquisitionMode: 'resource-bound', creationScopeRetention: endedScope },
+                launch,
+                resource,
+                allocation: 'bound',
+                creationState: 'active',
+                desired: 'stop',
+                retention: { kind: 'unused', afterMs: 0, effect: 'delete' },
+                wakeOnAcceptedMessage: false,
+            },
+        });
+        const untilDeleteBoundRow = await db.managedMachine.create({
+            data: {
+                homeId,
+                custodianAccountId: custodian.id,
+                controllerMachineId: controller.id,
+                controllerInstallationId: controller.installationId!,
+                admittedActionRequestId: randomUUID(),
+                admittedInput: { enrollmentAccountId: custodian.id, acquisitionMode: 'resource-bound' },
+                launch,
+                resource,
+                allocation: 'bound',
+                creationState: 'active',
+                desired: 'start',
+                retention: { kind: 'until-delete' },
+                wakeOnAcceptedMessage: false,
+            },
+        });
+
+        await expect(admitManagedPolicy({
+            custodianAccountId: custodian.id,
+            input: {
+                homeId,
+                managedId: unusedBoundRow.id,
+                expectedIntentRevision: 0,
+                requestId: randomUUID(),
+                controller: controllerRef,
+                purpose: { kind: 'retention' },
+            },
+        })).resolves.toMatchObject({
+            machine: { id: unusedBoundRow.id, desired: 'delete', desiredWhen: 'now', intentRevision: 1 },
+            replayed: false,
+        });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: unusedBoundRow.id } })).toMatchObject({
+            desired: 'delete',
+            cleanup: { disposition: 'pending', reason: 'delete_requested' },
+        });
+
+        const untilDeleteBoundInput = {
+            homeId,
+            managedId: untilDeleteBoundRow.id,
+            expectedIntentRevision: 0,
+            requestId: randomUUID(),
+            controller: controllerRef,
+            purpose: { kind: 'retention' as const },
+        };
+        await expect(prepareManagedPolicy({ custodianAccountId: custodian.id, input: untilDeleteBoundInput }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        await expect(admitManagedPolicy({ custodianAccountId: custodian.id, input: untilDeleteBoundInput }))
+            .rejects.toMatchObject({ code: 'permission_denied' });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: untilDeleteBoundRow.id } })).toMatchObject({
+            desired: 'start',
+            intentRevision: 0,
+            retention: { kind: 'until-delete' },
+            cleanup: null,
+            archivedAt: null,
+        });
     });
 });
