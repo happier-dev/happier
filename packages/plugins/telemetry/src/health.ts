@@ -3,7 +3,7 @@ import { HealthCheckResultV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSc
 import { projectNativeJsonValueForTransport, type ProtocolSchemaInput } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
-import { DatabaseCaptureCostsReadResultV1Schema, TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import { DatabaseCaptureCostsReadResultV1Schema, TelemetryMetricsReadResultV1Schema, TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import {
     projectTelemetryMetricsActionReadResultV1,
@@ -255,7 +255,7 @@ async function readRemoteKeyFlow(input: Omit<KeyFlowReadInput, 'serverId'>, cont
         const pricing = await loadCaptureCostPricingContext(context, appCallsPricingModelIds([operands]));
         return projectKeyFlowSpend(input, measure.costMode, operands, pricing);
     }
-    const metrics = keyFlowReadResultSchema.parse(result);
+    const metrics = TelemetryMetricsReadResultV1Schema.parse(result);
     return { measurements: metrics.result.measurements ?? unknown(input, metrics.result.cause?.reason ?? 'measurement_unavailable') };
 }
 
