@@ -46,6 +46,7 @@ import { createAccountEncryptionCurrentnessFixture, createSessionNotificationCon
 import { createExternalActionAuthorizedRequestHeaders, prepareExternalActionRequesterAccountAuthorizationResult, resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectSessionActionIssuerRefusal } from '@/api/externalActionIssuerRefusal';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createSessionListActionDeps } from '@/session/actions/sessionListActionDependency';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
@@ -349,6 +350,11 @@ function installClientMachineControlHttp(clientAction: Pick<Awaited<ReturnType<t
       ...('defaultSessionId' in body && typeof body.defaultSessionId === 'string' ? { defaultSessionId: body.defaultSessionId } : {}),
     }, clientAction.runtime.controller);
   });
+}
+
+function installEmptyActionAutomationIndex(app: Fastify) {
+  app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { preHandler: app.authenticate },
+    async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
 }
 
 async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Promise<void>, bypassActionInterception = false,
@@ -719,6 +725,7 @@ it('lists internal Tasks through the Session agent Account provider', async () =
 
 it('stores a privately approved agent secret through the original Home authority without disclosing its value', async () => {
   const f = await fixture();
+  installEmptyActionAutomationIndex(f.app);
   const input = { name: 'Replay3 disposable secret' };
   const material = 'SECRET-AUTH-synthetic-private-value';
   const history: unknown[] = [];
@@ -759,6 +766,12 @@ it('stores a privately approved agent secret through the original Home authority
       serverHttpBaseUrl, installationId: storage.state.installationId, privateKey: installation.secretKey }),
   });
   const executor = createActionExecutor({
+    actionAutomations: createActionAutomationHttpPortV1({ accountId: storage.account.id, async request(path, init) {
+      const response = await f.app.inject({ method: init.method, url: path,
+        headers: { authorization: `Bearer ${f.credentials.token}` } });
+      expect(response.statusCode).toBe(200);
+      return response.json();
+    } }),
     // The originating Session's message delivery is the transport boundary.
     sessionSendMessage: async ({ sessionId: targetSessionId, message, localId }) => {
       expect(targetSessionId).toBe(sessionId); deliveredMessages.push(message);
@@ -855,6 +868,7 @@ it('preserves the incumbent refusal of an unsupported asynchronous Session brows
     },
   }));
   const f = await fixture(1, undefined, false, false, true, undefined, undefined, dispatch);
+  installEmptyActionAutomationIndex(f.app);
   try {
     const parentActionId = 'ui.current_context.command.invoke';
     const readActionId = FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory;
@@ -936,6 +950,7 @@ it('prepares a public-profile preview through the signed Session Account binding
 
 it.each([false, true])('retains signed Account authority for atomic public-profile widening without borrowing refresh consent (refreshApproved=%s)', async refreshApproved => {
   const f = await fixture();
+  installEmptyActionAutomationIndex(f.app);
   const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, population: 'public_eligible_personal' });
   const policy = { indexable: false, fields: Object.fromEntries(Object.keys(DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields)
     .map(field => [field, field === 'tokens'])) };
@@ -984,6 +999,7 @@ it.each([false, true])('retains signed Account authority for atomic public-profi
 
 it.each(['present', 'absent'] as const)('writes an allowed subscription price through authenticated native Agent Account custody (%s)', async initial => {
   const f = await fixture();
+  installEmptyActionAutomationIndex(f.app);
   const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'personal' };
   const sibling = { ...account, accountId: 'work' };
   f.setRawSettings({ actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
