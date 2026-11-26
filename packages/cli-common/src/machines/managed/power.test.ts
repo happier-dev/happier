@@ -218,7 +218,7 @@ describe('shared admitted native power', () => {
         let observed = false;
         const value = await executeManagedMachinePowerIntent({ machine: { ...machine, desired },
             waitForObservation: async () => { observed = true; },
-            invoke: async role => {
+            invoke: async (role): Promise<JsonValue> => {
                 roles.push(role);
                 return role === 'power' ? { kind: 'confirmed' } : {
                     observedAt: observed ? 2 : 1, availability: 'present', power: observed ? settledPower : 'running',
