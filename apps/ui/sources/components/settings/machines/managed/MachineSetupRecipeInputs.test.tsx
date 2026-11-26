@@ -50,9 +50,11 @@ it('collects required selected recipe inputs before the first effects Plan and c
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
         requests.push(input);
         const single = 'targets' in input ? null : input;
+        // An effects Plan addresses the scripts its Apply runs; this preset runs none.
         return MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0,
             sources: single?.sources ?? [{ kind: 'direct', setup: {} }], support: [], exclusions: [],
-            ...(single?.mode === 'effects' ? { recipePlans: [] } : {}),
+            ...(single?.mode === 'effects' ? { recipePlans: [], review: { target: { homeId: 'home', machineId: 'machine' },
+                administratorRequired: false, downtime: 'none', presetUpdateEffects: { toolchain: false, scripts: [] } } } : {}),
         });
     } }));
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
