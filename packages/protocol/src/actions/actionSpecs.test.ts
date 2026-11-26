@@ -16,7 +16,8 @@ import {
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
 } from '../execution/runs/index.js';
-import { actionSpecToActionDefinitionV1, listActionSpecsForCatalogSurface, resolveActionCatalogSurfaceProjection, serializeActionSpec } from './actionCatalog.js';
+import { actionSpecToActionDefinitionV1, getActionDefinitionForCatalogSurface, listActionSpecsForCatalogSurface, resolveActionCatalogSurfaceProjection, searchSerializedActionSpecsForSurface, serializeActionSpec } from './actionCatalog.js';
+import { decodeVoiceAssistantActions } from '../voice/actions.js';
 import { listVoiceToolActionSpecs } from './actionSpecs.js';
 import { resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SIGNED_ROOT_ACTION_IDS, SignedRootActionIdSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, getActionContextualDefaults, getActionSpec, isActionSpecSurfacedOn, isHumanSecretApiExcludedActionId, isInternalActionId, isPluginProvenanceOnlyActionId, isPluginSurfaceExcludedActionId, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, projectSessionSpawnNewApiRequest, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
@@ -5261,8 +5262,7 @@ describe('Action Spec Registry', () => {
 
     expect(hotPathIds).toContain('action.spec.search');
     expect(hotPathIds).toContain('session.mode.set');
-    expect(hotPathIds).toContain('subagents.plan.start');
-    expect(hotPathIds).toContain('subagents.delegate.start');
+    expect(hotPathIds).toContain('session.status.get');
     expect(hotPathIds).not.toContain('memory.get_window');
   });
 
@@ -5327,9 +5327,12 @@ describe('Action Spec Registry', () => {
     expect(isVoicePromptHotPathSpec({ prompting: { voiceHotPath: false } })).toBe(false);
   });
 
-  it('keeps option schemas discoverable without publishing them on the Voice hot path', () => {
+  it('keeps specialist launches and option schemas discoverable outside the Voice hot path', () => {
     const discoverableIds = new Set(listVoiceToolActionSpecs().map((spec) => spec.id));
     for (const id of [
+      'subagents.plan.start',
+      'subagents.delegate.start',
+      'review.start',
       'action.options.resolve',
       'agents.models.list',
       'agents.config_options.list',
@@ -5339,6 +5342,24 @@ describe('Action Spec Registry', () => {
       expect(isVoicePromptHotPathSpec(spec)).toBe(false);
       expect(discoverableIds.has(id)).toBe(true);
     }
+  });
+
+  it.each([
+    'subagents.plan.start', 'subagents.delegate.start', 'review.start',
+  ] as const)('discovers the full Voice launch contract and decodes its executable binding for %s', (id) => {
+    const found = searchSerializedActionSpecsForSurface({ surface: 'voice', query: id });
+    expect(found.some(spec => spec.id === id)).toBe(true);
+    const definition = getActionDefinitionForCatalogSurface({ surface: 'voice', id });
+    expect(definition).not.toBeNull();
+    const toolName = definition?.bindings?.voiceClientToolName;
+    const example = definition?.examples?.voice?.argsExample;
+    if (!toolName || !example) throw new Error(`Missing discoverable Voice launch contract: ${id}`);
+    expect(definition?.inputSchema).toHaveProperty('properties');
+    const action = { t: toolName, args: JSON.parse(example) };
+    const inputSchema = resolveActionCatalogSurfaceProjection(getActionSpec(id), 'voice').inputSchema;
+    expect(decodeVoiceAssistantActions([action]).actions).toEqual([{ t: toolName, args: inputSchema.parse(action.args) }]);
+    expect(resolveActionCatalogSurfaceProjection(getActionSpec(id), 'voice').inputSchema.safeParse(action.args).success)
+      .toBe(true);
   });
 
   // Public discovery permits absent examples; validate authored examples without inventing invocation facts.

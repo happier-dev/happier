@@ -168,7 +168,6 @@ function createReviewActionSpecs(): readonly [
     sideEffectClass: 'external',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
-    prompting: { voiceHotPath: true },
     slash: { tokens: ['/review', '/h.review'] },
     bindings: { voiceClientToolName: 'startReview', mcpToolName: 'review_start' },
     inputHints: {

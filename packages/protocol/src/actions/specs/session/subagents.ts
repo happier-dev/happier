@@ -95,7 +95,6 @@ function createSubagentActionSpecs() {
     sideEffectClass: 'external',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
-    prompting: { voiceHotPath: true },
     slash: { tokens: ['/h.plan'] },
     bindings: { voiceClientToolName: 'startPlan', mcpToolName: 'subagents_plan_start' },
     inputHints: {
@@ -184,7 +183,6 @@ function createSubagentActionSpecs() {
     sideEffectClass: 'external',
     safety: 'safe',
     placements: ['agent_input_chips', 'session_action_menu', 'command_palette', 'slash_command', 'voice_panel'],
-    prompting: { voiceHotPath: true },
     slash: { tokens: ['/h.delegate'] },
     bindings: { voiceClientToolName: 'startDelegate', mcpToolName: 'subagents_delegate_start' },
     inputHints: {

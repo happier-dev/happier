@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as React from 'react';
 import { buildLocalVoiceAgentSystemPrompt, buildVoiceRealtimeAttemptPolicy } from '@happier-dev/agents/voice';
+import { getActionVoiceWorkflowNotes } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 
 import {
   getActionSpec,
@@ -243,7 +244,11 @@ describe('bundled Conversation runtime host tool projection', () => {
       });
       expect(policy.instructions).toMatch(/^- inbox_get: /m);
       expect(tools.some(tool => tool.name === 'requestVoiceBrief')).toBe(true);
-      expect(policy.instructions).toContain('For a briefing about what needs attention, use requestVoiceBrief');
+      const brief = listVoiceToolActionSpecs().find(spec => spec.bindings?.voiceClientToolName === 'requestVoiceBrief');
+      if (!brief) throw new Error('Expected canonical Brief Action');
+      const briefGuidance = getActionVoiceWorkflowNotes(brief.id);
+      expect(briefGuidance.length).toBeGreaterThan(0);
+      for (const note of briefGuidance) expect(policy.instructions).toContain(note);
       expect(policy.instructions).not.toContain('For a briefing or a broad question about what needs attention, use inbox_get');
       expect(policy.instructions).toContain('approval_request_list covers Account approval requests only');
     } finally {

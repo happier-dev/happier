@@ -332,7 +332,8 @@ describe('voiceAgentPrompt', () => {
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
     expect(prompt).toContain('setSessionMode');
-    expect(prompt).toContain('startPlan');
+    expect(prompt).toContain('For planning, delegation, code reviews, and other Actions, use searchActionSpecs');
+    expect(prompt).not.toContain('- startPlan:');
     expect(prompt).not.toContain('- memoryGetWindow:');
   });
 
@@ -357,7 +358,8 @@ describe('voiceAgentPrompt', () => {
       sessionId: 's1',
     });
 
-    expect(prompt).toContain('startReview');
+    expect(prompt).toContain('For planning, delegation, code reviews, and other Actions, use searchActionSpecs');
+    expect(prompt).not.toContain('- startReview:');
     expect(prompt).toContain('searchActionSpecs');
     expect(prompt).toContain('getActionSpec');
     expect(prompt).toContain('resolveActionOptions');
