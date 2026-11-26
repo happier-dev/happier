@@ -24,7 +24,8 @@ export type FrontDoorRuntimeActionExecutor = FrontDoorRuntimeActionExecute & Rea
 }>;
 export type UiActionOperation = Pick<UiActionExecutorContext,
   'signal' | 'presentUserConfirmation' | 'defaultSessionId' | 'actionRequestId' | 'onTransportIssued' | 'isPluginSettingsIntentCurrent' | 'sessionMessageDisplayText'
-  | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'voiceSpeechSource' | 'reviewPublicProfilePreparedAction' | 'capturePublicProfilePreview' | 'publicProfilePreviewAdmission'> & Readonly<{
+  | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'voiceSpeechSource' | 'reviewPublicProfilePreparedAction' | 'capturePublicProfilePreview' | 'publicProfilePreviewAdmission'
+  | 'reviewNativeSignInLaunch'> & Readonly<{
     confirmed?: true;
   }>;
 
@@ -123,6 +124,7 @@ export function createFrontDoorUiActionExecutor(
       ...(options?.reviewPublicProfilePreparedAction ? { reviewPublicProfilePreparedAction: options.reviewPublicProfilePreparedAction } : {}),
       ...(options?.capturePublicProfilePreview ? { capturePublicProfilePreview: options.capturePublicProfilePreview } : {}),
       ...(options?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: options.publicProfilePreviewAdmission } : {}),
+      ...(options?.reviewNativeSignInLaunch ? { reviewNativeSignInLaunch: options.reviewNativeSignInLaunch } : {}),
     });
     requireActionSuccess(result, actionId);
     return result.result;

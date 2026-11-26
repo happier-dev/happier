@@ -12,7 +12,7 @@ import { useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { describeMachineSignInScope } from '@/components/machines/setup/machineSignInScope';
+import { describeMachineSignInScope, reviewMachineSignInLaunch } from '@/components/machines/setup/machineSignInScope';
 
 import { AgentSignInTerminalView } from './AgentSignInTerminalView';
 import { MachineAgentMark } from './MachineAgentMark';
@@ -33,9 +33,12 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
     onTerminalExit?: () => void;
 }>) {
     const target = { serverId: props.serverId, machineId: props.machineId, agentId: props.agentId };
-    const signIn = useAgentSignIn(target);
-    const machine = useMachine(props.machineId);
     const hostUser = useMachineField(props.machineId, 'metadata', 'username', { serverId: props.serverId });
+    // Restarting here prepares a new launch: a shared OS user is confirmed again before it starts.
+    const reviewNativeSignInLaunch = React.useMemo(() => reviewMachineSignInLaunch({ tool: props.agentTitle,
+        account: props.agentTitle, machine: props.machineName, hostUser }), [hostUser, props.agentTitle, props.machineName]);
+    const signIn = useAgentSignIn(target, { reviewNativeSignInLaunch });
+    const machine = useMachine(props.machineId);
     const presence = useMachinePresenceSummary(props.serverId, props.machineId);
     const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const notifiedExitTerminalRef = React.useRef<string | null>(null);

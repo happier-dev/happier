@@ -4245,11 +4245,15 @@ type VoiceActionExecutorBinding = Readonly<{
         throw error;
       }
     },
-    machineAgentSignInStart: async ({ machineId, serverId, signal, ...request }) => {
-      if (request.method !== 'native' || !accountContext) return await startAgentSignInRpc({ machineId, serverId, signal }, request);
+    machineAgentSignInStart: async ({ machineId, serverId, signal, ...request }, context) => {
+      // The present person's review of the prepared launch, when this invocation carries one.
+      const { reviewNativeSignInLaunch } = context;
+      if (request.method !== 'native' || !accountContext) {
+        return await startAgentSignInRpc({ machineId, serverId, signal }, request, undefined, reviewNativeSignInLaunch);
+      }
       const { executeAgentSignInLifecycle } = await import('@/agents/machineAgents/signIn/useAgentSignIn');
       return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId: request.agentId,
-        lifetime: accountContext.accountLifetime, signal }, 'start');
+        lifetime: accountContext.accountLifetime, signal, ...(reviewNativeSignInLaunch ? { reviewNativeSignInLaunch } : {}) }, 'start');
     },
     machineAgentSignInStatus: async ({ machineId, serverId, signal, agentId }) => {
       if (!accountContext) return await checkAgentSignInRpc({ machineId, serverId, signal }, agentId);
@@ -4263,11 +4267,12 @@ type VoiceActionExecutorBinding = Readonly<{
       return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId,
         lifetime: accountContext.accountLifetime, signal }, 'cancel', terminalId);
     },
-    machineAgentSignInRestart: async ({ machineId, signal, agentId, terminalId }) => {
+    machineAgentSignInRestart: async ({ machineId, signal, agentId, terminalId }, context) => {
       if (!accountContext) return { ok: false, errorCode: 'sign_in_unavailable', error: 'An exact Home Account is required.' };
+      const { reviewNativeSignInLaunch } = context;
       const { executeAgentSignInLifecycle } = await import('@/agents/machineAgents/signIn/useAgentSignIn');
       return await executeAgentSignInLifecycle({ machineId, serverId: accountContext.serverId, agentId,
-        lifetime: accountContext.accountLifetime, signal }, 'restart', terminalId);
+        lifetime: accountContext.accountLifetime, signal, ...(reviewNativeSignInLaunch ? { reviewNativeSignInLaunch } : {}) }, 'restart', terminalId);
     },
     machineAgentInstallStart: async ({ machineId, signal, context, ...request }) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };

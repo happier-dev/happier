@@ -19,7 +19,8 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
-import { useServerScopedMachine } from '@/sync/store/hooks';
+import { useMachineField, useServerScopedMachine } from '@/sync/store/hooks';
+import { reviewMachineSignInLaunch } from '@/components/machines/setup/machineSignInScope';
 
 import { AgentSetupFormView, type AgentSetupFormHandlers } from './AgentSetupFormView';
 import { useAgentSignInTerminalHost } from './signInTerminalHost';
@@ -55,12 +56,31 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
     const agent = useMachineAgent(target);
     const canManage = useServerScopedMachine(props.serverId, props.machineId, canManageMachine);
     const installJob = useAgentInstallJob(target);
-    const signIn = useAgentSignIn(target);
     const terminalHost = useAgentSignInTerminalHost();
+    const hostUser = useMachineField(props.machineId, 'metadata', 'username', { serverId: props.serverId }) ?? null;
     const router = useRouter();
     const { mutateDefaults, execution } = useConnectedAccountPurposeDefaults(props.serverId);
     const agentRef = React.useRef(agent);
     agentRef.current = agent;
+
+    const openTerminal = React.useCallback(() => {
+        const current = agentRef.current;
+        if (!current) return;
+        const terminalTarget = {
+            serverId: props.serverId,
+            machineId: props.machineId,
+            machineName: props.machineName,
+            agentId: props.agentId,
+            agentTitle: current.title,
+        };
+        if (terminalHost) terminalHost.open(terminalTarget);
+        else showAgentSignInTerminalSheet(terminalTarget);
+    }, [props.agentId, props.machineId, props.machineName, props.serverId, terminalHost]);
+    // A login into an OS user other people use is confirmed before it launches; the terminal opens once it may.
+    const agentTitle = agent?.title ?? props.agentId;
+    const reviewNativeSignInLaunch = React.useMemo(() => reviewMachineSignInLaunch({ tool: agentTitle, account: agentTitle,
+        machine: props.machineName, hostUser, onLaunch: openTerminal }), [agentTitle, hostUser, openTerminal, props.machineName]);
+    const signIn = useAgentSignIn(target, { reviewNativeSignInLaunch });
 
     const selectCredential = React.useCallback(async (serviceId: string | null, selection?: ConnectedServiceSessionSelection) => {
         const current = agentRef.current;
@@ -81,20 +101,6 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
         // The form itself reviews the install and any vendor-recipe consent; its press confirms.
         fireAndForget(installJob.start(intent), { tag: 'AgentSetupForm.install' });
     }, [canManage, installJob]);
-
-    const openTerminal = React.useCallback(() => {
-        const current = agentRef.current;
-        if (!current) return;
-        const terminalTarget = {
-            serverId: props.serverId,
-            machineId: props.machineId,
-            machineName: props.machineName,
-            agentId: props.agentId,
-            agentTitle: current.title,
-        };
-        if (terminalHost) terminalHost.open(terminalTarget);
-        else showAgentSignInTerminalSheet(terminalTarget);
-    }, [props.agentId, props.machineId, props.machineName, props.serverId, terminalHost]);
 
     const handlers = React.useMemo((): AgentSetupFormHandlers => ({
         onInstall: () => install('install'),
@@ -134,7 +140,6 @@ export const AgentSetupForm = React.memo(function AgentSetupForm(props: AgentSet
             fireAndForget((async () => {
                 if (!await selectCredential(null)) return;
                 fireAndForget(signIn.start(), { tag: 'AgentSetupForm.signIn' });
-                openTerminal();
             })(), { tag: 'AgentSetupForm.selectNativeCredential', onError: credentialFailure });
         },
         onShowTerminal: openTerminal,

@@ -12,6 +12,16 @@ export const AgentSignInPrepareRequestSchema = lazyZodSchema(() => (<T extends z
   serviceId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   launchId: z.optional(z.enum(['primary', 'device_code'])),
 })));
+/**
+ * The OS user a native sign-in on this Machine signs in, as the caller's admission places it. `member` is the
+ * requester's own user; `machineOwner` and `sharedAgent` are users other people's Sessions run as.
+ */
+export const AgentSignInScopeSchema = lazyZodSchema(() => z.enum(['machineOwner', 'member', 'sharedAgent']));
+export type AgentSignInScope = z.output<typeof AgentSignInScopeSchema>;
+/** A login made in a shared OS user is theirs to use too, so a person confirms it before it starts. */
+export function isSharedAgentSignInScope(scope: AgentSignInScope | null | undefined): scope is 'machineOwner' | 'sharedAgent' {
+  return scope === 'machineOwner' || scope === 'sharedAgent';
+}
 export const AgentSignInStatusResponseSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum(['signedIn', 'signedOut', 'unknown']),
   /** Canonical executable presence; null or omission means it could not be established. */
@@ -19,13 +29,15 @@ export const AgentSignInStatusResponseSchema = lazyZodSchema(() => z.strictObjec
   accountLabel: z.optional(z.nullable(z.string())),
   /** Selected credential route, not an assertion that bound material is available. */
   credentialSource: z.optional(z.nullable(z.enum(['connectedAccount', 'machineLogin', 'none']))),
-  signInScope: z.optional(z.enum(['machineOwner', 'member', 'sharedAgent'])),
+  signInScope: z.optional(AgentSignInScopeSchema),
   checkedAt: z.number(),
   nativeLogin: z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']),
   connectedServices: z.array(z.strictObject({ serviceId: z.string(), title: z.string() })),
 }));
 export const AgentSignInPrepareResponseSchema = lazyZodSchema(() => z.union([
-  z.strictObject({ method: z.literal('native'), launch: DaemonTerminalLaunchIntentSchema }),
+  z.strictObject({ method: z.literal('native'), launch: DaemonTerminalLaunchIntentSchema,
+    /** The same scope the daemon's Status reports, from the same producer; absent when it reports none. */
+    signInScope: z.optional(AgentSignInScopeSchema) }),
   z.strictObject({ method: z.literal('connected'), command: ConnectedAccountDaemonCommandSchema }),
   z.strictObject({ ok: z.literal(false), errorCode: z.enum(['agent_login_unsupported', 'connected_service_unsupported']), error: z.string() }),
 ]));

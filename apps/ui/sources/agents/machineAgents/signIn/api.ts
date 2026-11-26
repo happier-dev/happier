@@ -1,5 +1,5 @@
 import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD, AgentSignInPrepareRequestSchema, AgentSignInPrepareResponseSchema, AgentSignInStatusRequestSchema, AgentSignInStatusResponseSchema, type AgentSignInPrepareRequest } from '@happier-dev/protocol/daemon/agentSignIn';
-import { startMachineAgentSignIn, cancelMachineAgentSignIn } from '@happier-dev/protocol/daemon/startAgentSignIn';
+import { startMachineAgentSignIn, cancelMachineAgentSignIn, type AgentSignInNativeLaunchReview } from '@happier-dev/protocol/daemon/startAgentSignIn';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { runConnectedAccountAuthenticationCommand } from '@/sync/ops/connectedAccounts/connectedAccountDaemon';
 import { machineTerminalEnsure, machineTerminalClose, machineTerminalList } from '@/sync/ops/machineTerminal';
@@ -26,9 +26,11 @@ export async function startAgentSignInRpc(
   target: AgentSignInTarget,
   input: AgentSignInPrepareRequest,
   onNativeTerminalChanged?: (terminalId: string | null) => void,
+  reviewNativeSignInLaunch?: (review: AgentSignInNativeLaunchReview) => Promise<boolean>,
 ) {
   const result = await startMachineAgentSignIn({ ...input, machineId: target.machineId }, {
     signal: target.signal,
+    ...(reviewNativeSignInLaunch ? { reviewNativeSignInLaunch } : {}),
     prepare: (request) => prepareAgentSignInRpc(target, request),
     beginConnect: (command) => runConnectedAccountAuthenticationCommand({
       serverId: target.serverId ?? null, machineId: target.machineId, command, signal: target.signal,

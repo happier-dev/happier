@@ -25,6 +25,30 @@ describe('native machine Agent sign-in execution', () => {
     expect(operations.closeTerminal).not.toHaveBeenCalled();
   });
 
+  it('has the person confirm a shared native sign-in before any launch, and launches a personal one at once', async () => {
+    for (const [signInScope, confirmationRequired] of [['sharedAgent', true], ['machineOwner', true], ['member', false], [undefined, false]] as const) {
+      for (const answer of [false, true]) {
+        const operations = boundary();
+        operations.prepare.mockResolvedValueOnce({ method: 'native', launch: { kind: 'agent_login', agentId: 'fixture/agent' },
+          ...(signInScope ? { signInScope } : {}) } as never);
+        const reviewNativeSignInLaunch = vi.fn(async () => {
+          expect(operations.ensureTerminal).not.toHaveBeenCalled();
+          return answer;
+        });
+        const result = await startMachineAgentSignIn({ machineId: 'machine', agentId: 'fixture/agent' },
+          { ...operations, reviewNativeSignInLaunch });
+        expect(reviewNativeSignInLaunch).toHaveBeenCalledWith({ ...(signInScope ? { signInScope } : {}), confirmationRequired });
+        if (answer) {
+          expect(result).toEqual({ terminalKey: 'provider-login:machine:fixture/agent', terminalId: 'terminal' });
+          expect(operations.ensureTerminal).toHaveBeenCalledTimes(1);
+        } else {
+          expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+          expect(operations.ensureTerminal).not.toHaveBeenCalled();
+        }
+      }
+    }
+  });
+
   it('returns terminal launch failure instead of a prepared key', async () => {
     const operations = boundary();
     const failure = { ok: false as const, errorCode: 'terminal_spawn_failed' as const, error: 'Fixture spawn failed' };

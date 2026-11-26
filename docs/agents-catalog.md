@@ -2623,6 +2623,13 @@ the full existing response. Native member/shared-user probes use the existing
 requester native-operation launcher with empty selected material and no borrowed
 owner environment. A missing member binding or unavailable native probe reports
 unknown without falling back to the owner or provisioning from a status read.
+The native `daemon.agents.signIn.prepare` reply carries the same optional
+`signInScope`, from the same daemon producer as status. The one start sequence
+(`startMachineAgentSignIn`) hands that prepared scope to the app's present person
+before any terminal launches: a `machineOwner` or `sharedAgent` login is confirmed
+first, and a decline stops with `approval_canceled`. Every other surface reaches
+that sequence only through the Action's existing approval policy, which asks by
+default for this `danger` Action unless the person waived it.
 The same identity-free projection applies to `cli.*` capability detection
 (including `machines.agents.list`), both its `signIn` and `authStatus` facts,
 Azure CLI dependency detection, daemon-service task results, and the auth facts

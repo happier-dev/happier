@@ -1,8 +1,7 @@
-import type { MachineCliSignInAuthentication, MachineCliSignInRow } from '@/agents/machineAgents/signIn/useAgentSignIn';
+import { isSharedAgentSignInScope } from '@happier-dev/protocol/daemon/agentSignIn';
+import type { MachineCliSignInAuthentication, ReviewNativeSignInLaunch } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-
-type SignInTarget = Pick<MachineCliSignInRow, 'title' | 'authentication'>;
 
 /**
  * What signing in on a shared OS user means, in words (owner ruling Q5, SECURITY-REVIEW S4): a login made where
@@ -19,30 +18,38 @@ export function describeMachineSignInScope(
   }>,
 ): string | null {
   const { scope, account } = input;
+  if (!isSharedAgentSignInScope(scope)) return null;
   if (scope === 'machineOwner' && input.hostUser)
     return t('machinePresets.setup.tab.signInSharedUser', { user: input.hostUser, account });
-  if (scope === 'machineOwner' || scope === 'sharedAgent')
-    return t('machinePresets.setup.tab.signInSharedUserUnnamed', { account });
-  return null;
+  return t('machinePresets.setup.tab.signInSharedUserUnnamed', { account });
 }
 
-/** The confirm step before a shared-user sign-in starts; a sign-in into the requester's own user starts at once. */
-export async function confirmMachineSignInScope(
+/**
+ * The app's review of a prepared native sign-in, run by the one start sequence before anything launches. The daemon's
+ * Prepare reports where the login lands; a shared OS user is confirmed first, the requester's own user starts at once.
+ * `onLaunch` runs once the sign-in may start (the entry opens its terminal there, never before the confirm).
+ */
+export function reviewMachineSignInLaunch(
   input: Readonly<{
-    row: SignInTarget;
+    tool: string;
+    account: string;
     machine: string;
-    hostUser: string | null;
+    hostUser: string | null | undefined;
+    onLaunch?: () => void;
   }>,
-): Promise<boolean> {
-  const warning = describeMachineSignInScope({ scope: input.row.authentication?.signInScope,
-    account: input.row.authentication?.connectedServices[0]?.title ?? input.row.title, hostUser: input.hostUser });
-  if (!warning) return true;
-  return Modal.confirm(
-    t('machinePresets.setup.tab.signInConfirmTitle', {
-      machine: input.machine,
-      tool: input.row.title,
-    }),
-    warning,
-    { confirmText: t('machinePresets.setup.tab.signInConfirmCta') },
-  );
+): ReviewNativeSignInLaunch {
+  return async ({ signInScope, confirmationRequired }) => {
+    const warning = confirmationRequired
+      ? describeMachineSignInScope({ scope: signInScope ?? null, account: input.account, hostUser: input.hostUser }) : null;
+    if (warning) {
+      const confirmed = await Modal.confirm(
+        t('machinePresets.setup.tab.signInConfirmTitle', { machine: input.machine, tool: input.tool }),
+        warning,
+        { confirmText: t('machinePresets.setup.tab.signInConfirmCta') },
+      );
+      if (!confirmed) return false;
+    }
+    input.onLaunch?.();
+    return true;
+  };
 }

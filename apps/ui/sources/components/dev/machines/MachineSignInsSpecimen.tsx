@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { MachineCliSignInRow } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import { MachineSignInsList } from '@/components/machines/setup/MachineSignInsSection';
-import { confirmMachineSignInScope } from '@/components/machines/setup/machineSignInScope';
+import { reviewMachineSignInLaunch } from '@/components/machines/setup/machineSignInScope';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import {
@@ -63,7 +63,7 @@ const ROWS: readonly MachineCliSignInRow[] = [
 
 /**
  * Dev-only: the Setup tab's "Sign-ins on {machine}" (lab L10 row) through the real `MachineSignInsList`, and the
- * LOW-1 shared-OS-user warning through the real `confirmMachineSignInScope`. `?state=list|warning`. Signing in here
+ * LOW-1 shared-OS-user warning through the real `reviewMachineSignInLaunch`. `?state=list|warning`. Signing in here
  * only opens the warning; nothing starts a CLI.
  */
 export function MachineSignInsSpecimen(
@@ -73,11 +73,13 @@ export function MachineSignInsSpecimen(
   const machineId =
     useAllMachines((machines) => machines[0]?.id ?? null) ?? 'devbox';
   const warn = React.useCallback((target: MachineCliSignInRow) => {
-    void confirmMachineSignInScope({
-      row: target,
+    void reviewMachineSignInLaunch({
+      tool: target.title,
+      account: target.authentication?.connectedServices[0]?.title ?? target.title,
       machine: 'devbox',
       hostUser: 'leeroy',
-    });
+    })({ ...(target.authentication?.signInScope ? { signInScope: target.authentication.signInScope } : {}),
+      confirmationRequired: true });
   }, []);
   React.useEffect(() => {
     if (props.state === 'warning') warn(ROWS[3]!);

@@ -30,7 +30,7 @@ import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverP
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
-import { confirmMachineSignInScope } from './machineSignInScope';
+import { reviewMachineSignInLaunch } from './machineSignInScope';
 
 /** One row's state in words: the native sign-in owner's reported status, never a local guess. */
 function describeSignIn(row: MachineCliSignInRow): string {
@@ -147,10 +147,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
   const router = useRouter();
   const hostUser = useMachineField(props.machineId, 'metadata', 'username', { serverId: props.serverId }) ?? null;
   const open = React.useCallback(
-    async (row: MachineCliSignInRow) => {
-      // A sign-in into an OS user other people's Sessions run as is theirs to use too: say so before it starts.
-      const confirmed = await confirmMachineSignInScope({ row, machine: props.machineName, hostUser });
-      if (!confirmed || !isCurrent()) return;
+    (row: MachineCliSignInRow) => {
       const target = {
         serverId: props.serverId,
         machineId: props.machineId,
@@ -158,9 +155,16 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
         agentId: row.id,
         agentTitle: row.title,
       };
-      fireAndForget(start(row.id, { method: 'native' }), { tag: 'MachineSignIns.startNative' });
-      if (terminalHost) terminalHost.open(target);
-      else showAgentSignInTerminalSheet(target);
+      // A sign-in into an OS user other people's Sessions run as is theirs to use too: the start sequence has the
+      // person confirm it from the daemon's prepared scope before anything launches, and the terminal opens then.
+      const review = reviewMachineSignInLaunch({ tool: row.title, machine: props.machineName, hostUser,
+        account: row.authentication?.connectedServices[0]?.title ?? row.title,
+        onLaunch: () => {
+          if (!isCurrent()) return;
+          if (terminalHost) terminalHost.open(target);
+          else showAgentSignInTerminalSheet(target);
+        } });
+      fireAndForget(start(row.id, { method: 'native' }, review), { tag: 'MachineSignIns.startNative' });
     },
     [hostUser, isCurrent, props.machineId, props.machineName, props.serverId, start, terminalHost],
   );
@@ -200,7 +204,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
   }, [machineId, onReportSettled, reportSettled]);
   if (rows.length === 0 && phase !== 'loading' && !offline) return null;
   return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
-    rows={rows} offline={offline} editable={props.editable && !offline} onSignIn={(row) => { void open(row); }}
+    rows={rows} offline={offline} editable={props.editable && !offline} onSignIn={open}
     onUseConnected={useConnected} />;
 });
 

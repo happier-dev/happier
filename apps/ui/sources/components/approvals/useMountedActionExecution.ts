@@ -136,6 +136,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
             ...(operation?.reviewPublicProfilePreparedAction ? { reviewPublicProfilePreparedAction: operation.reviewPublicProfilePreparedAction } : {}),
             ...(operation?.capturePublicProfilePreview ? { capturePublicProfilePreview: operation.capturePublicProfilePreview } : {}),
             ...(operation?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: operation.publicProfilePreviewAdmission } : {}),
+            ...(operation?.reviewNativeSignInLaunch ? { reviewNativeSignInLaunch: operation.reviewNativeSignInLaunch } : {}),
         });
         if (!result.ok) return result;
         const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);

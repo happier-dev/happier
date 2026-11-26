@@ -8,6 +8,8 @@ import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type Mac
 import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol/daemon/terminal';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import type { AgentSignInNativeLaunchReview } from '@happier-dev/protocol/daemon/startAgentSignIn';
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { replaceTerminalSurfaceState, createEmptyTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -18,6 +20,9 @@ import { startAgentSignInRpc, checkAgentSignInRpc, cancelAgentSignInRpc } from '
 
 const IDLE: MachineAgentSignInSession = Object.freeze({ phase: 'idle', terminalKey: null, authUrl: null, startedAtMs: null, failure: null });
 type BoundTarget = Readonly<{ serverId: string; machineId: string; agentId: string; lifetime: ServerAccountScopeLifetime }>;
+/** The present person's review of a prepared native launch (`startMachineAgentSignIn` decides when it must confirm). */
+export type ReviewNativeSignInLaunch = (review: AgentSignInNativeLaunchReview) => Promise<boolean>;
+type StartTarget = BoundTarget & Readonly<{ reviewNativeSignInLaunch?: ReviewNativeSignInLaunch }>;
 type Entry = {
   state: MachineAgentSignInSession; accountLabel: string | null;
   authentication: Omit<AgentSignInStatusResponse, 'checkedAt'> | null;
@@ -96,7 +101,7 @@ async function checkAgain(entry: Entry, target: BoundTarget, signal?: AbortSigna
     return null;
   }
 }
-async function start(entry: Entry, target: BoundTarget, signal?: AbortSignal) {
+async function start(entry: Entry, target: StartTarget, signal?: AbortSignal) {
   if (entry.opening) return await entry.opening;
   if (entry.state.phase === 'waiting' && entry.terminalId && entry.state.terminalKey) return { terminalKey: entry.state.terminalKey, terminalId: entry.terminalId };
   if (!target.lifetime.isCurrent()) return;
@@ -113,7 +118,7 @@ async function start(entry: Entry, target: BoundTarget, signal?: AbortSignal) {
     try {
       const result = await startAgentSignInRpc({ ...target, signal: abort.signal }, { agentId: target.agentId, method: 'native' }, (terminalId) => {
         entry.terminalId = terminalId;
-      });
+      }, target.reviewNativeSignInLaunch);
       if (abort.signal.aborted) {
         if (entry.terminalId && 'errorCode' in result) throw new Error(result.errorCode);
         if (target.lifetime.isCurrent()) publish(entry, IDLE);
@@ -124,6 +129,9 @@ async function start(entry: Entry, target: BoundTarget, signal?: AbortSignal) {
         publish(entry, { phase: 'waiting', terminalKey: result.terminalKey });
         // The daemon reports the OS-user scope. Existing credentials do not settle this new login.
         void readAuthentication(entry, target, abort.signal).catch(() => undefined);
+      } else if ('errorCode' in result && isActionApprovalDeclinedErrorCode(result.errorCode)) {
+        // The person said no before anything launched: nothing failed.
+        publish(entry, IDLE);
       } else publish(entry, { phase: 'failed', failure: 'errorCode' in result ? result.errorCode : 'agent_login_unsupported' });
       return result;
     } catch (error) {
@@ -172,7 +180,7 @@ async function cancel(entry: Entry, target: BoundTarget, acquiredTerminalId?: st
 }
 
 /** Admitted Actions and passive presenters consume the same Account-scoped process custody and state. */
-type LifecycleTarget = Readonly<{ serverId: string; machineId: string; agentId: string; lifetime: ServerAccountScopeLifetime; signal?: AbortSignal }>;
+type LifecycleTarget = StartTarget & Readonly<{ signal?: AbortSignal }>;
 export function executeAgentSignInLifecycle(target: LifecycleTarget, operation: 'cancel', terminalId: string): Promise<MachinesAgentsSignInCancelOutput>;
 export function executeAgentSignInLifecycle(target: LifecycleTarget, operation: 'start' | 'restart', terminalId?: string): Promise<MachinesAgentsSignInStartOutput>;
 export function executeAgentSignInLifecycle(target: LifecycleTarget, operation: 'status'): Promise<AgentSignInStatusResponse>;
@@ -198,10 +206,13 @@ export async function executeAgentSignInLifecycle(
   return await start(entry, target, target.signal) ?? { ok: false, errorCode: 'sign_in_unavailable', error: 'Sign-in did not start.' };
 }
 
-export function useAgentSignIn(target: Readonly<{ serverId?: string | null; machineId: string | null; agentId: string }>) {
+export function useAgentSignIn(target: Readonly<{ serverId?: string | null; machineId: string | null; agentId: string }>,
+  options?: Readonly<{ reviewNativeSignInLaunch?: ReviewNativeSignInLaunch }>) {
   const activeServer = useActiveServerSnapshot(!target.serverId);
   const serverId = target.serverId?.trim() || activeServer.serverId;
   const { binding, execute, getSignal } = useMountedActionExecution(serverId);
+  const review = React.useRef(options?.reviewNativeSignInLaunch);
+  review.current = options?.reviewNativeSignInLaunch;
   const boundTarget = React.useMemo<BoundTarget | null>(() => binding?.isCurrent() && target.machineId
     ? { serverId: binding.scope.serverId, machineId: target.machineId, agentId: target.agentId, lifetime: binding } : null,
   [binding, serverId, target.machineId, target.agentId]);
@@ -234,12 +245,14 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     if (operation === 'cancel' && !terminalId) return;
     const actionOperation = !terminalId && (operation === 'restart' || operation === 'status' && entry.state.phase === 'failed') ? 'start' : operation;
     if (!boundTarget.lifetime.isCurrent()) return;
+    const reviewLaunch = actionOperation === 'start' || actionOperation === 'restart' ? review.current : undefined;
     const result = await execute(`machines.agents.signIn.${actionOperation}`, {
       machineId: boundTarget.machineId, agentId: boundTarget.agentId,
       ...(actionOperation === 'start' ? { method: 'native' } : {}),
       ...((actionOperation === 'cancel' || actionOperation === 'restart') ? { terminalId } : {}),
-    });
-    if (!result.ok && actionOperation === 'start' && boundTarget.lifetime.isCurrent() && !entry.terminalId) {
+    }, reviewLaunch ? { reviewNativeSignInLaunch: reviewLaunch } : undefined);
+    if (!result.ok && actionOperation === 'start' && boundTarget.lifetime.isCurrent() && !entry.terminalId
+      && !isActionApprovalDeclinedErrorCode(result.errorCode)) {
       publish(entry, { phase: 'failed', failure: result.errorCode });
     }
     return result;
@@ -372,8 +385,10 @@ export function useMachineCliSignIns(target: Readonly<{
     await Promise.all(rows.map(row => execute('machines.agents.signIn.status', { machineId: target.machineId, agentId: row.id })));
   }, [execute, projection.phase, rows, target.machineId, target.presented]);
   React.useEffect(() => { fireAndForget(refresh(), { tag: 'MachineCliSignIns.refresh' }); }, [refresh]);
-  const startSignIn = React.useCallback((id: string, choice: Readonly<{ method: 'native' | 'connected'; serviceId?: string }>) =>
-    execute('machines.agents.signIn.start', { machineId: target.machineId, agentId: id, ...choice }), [execute, target.machineId]);
+  const startSignIn = React.useCallback((id: string, choice: Readonly<{ method: 'native' | 'connected'; serviceId?: string }>,
+    reviewNativeSignInLaunch?: ReviewNativeSignInLaunch) =>
+    execute('machines.agents.signIn.start', { machineId: target.machineId, agentId: id, ...choice },
+      reviewNativeSignInLaunch ? { reviewNativeSignInLaunch } : undefined), [execute, target.machineId]);
   const phase = projection.phase === 'ready' && snapshot.pending ? 'loading' : projection.phase;
   return { phase, items: snapshot.items, refresh, start: startSignIn };
 }

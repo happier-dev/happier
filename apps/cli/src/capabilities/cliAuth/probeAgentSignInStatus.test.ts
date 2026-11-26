@@ -4,7 +4,7 @@ import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { registerMachineAgentSignInRpcHandlers } from '@/api/machine/rpcHandlers.agentSignIn';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
-import { AgentSignInStatusResponseSchema } from '@happier-dev/protocol/daemon/agentSignIn';
+import { AgentSignInPrepareResponseSchema, AgentSignInStatusResponseSchema } from '@happier-dev/protocol/daemon/agentSignIn';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveCliConnectedDefaultSelection } from '@/session/services/agentConnectedDefaultRoutes';
@@ -129,6 +129,38 @@ describe('on-demand native sign-in status', () => {
     expect(result).toMatchObject({ status: 'unknown', credentialSource: 'connectedAccount', signInScope: 'machineOwner' });
     expect(result).not.toHaveProperty('accountLabel');
     expect(JSON.stringify(result)).not.toContain('unavailable-private-account');
+  });
+  it('prepares a native sign-in carrying exactly the scope its Status reports for the same admitted caller', async () => {
+    const runtime = await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.codex'] },
+    });
+    try {
+      const admission = (role: 'use' | 'manage') => ({ signal: new AbortController().signal, machineAdmission: {
+        actorAccountId: 'guest', custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation',
+        role, encryptionMode: 'plain' as const } });
+      const isolationPolicies = [undefined, { enabled: false }, { enabled: true },
+        { enabled: true, memberProvisioning: 'linuxUsersV1' }] as const;
+      const observed: unknown[] = [];
+      for (const policy of isolationPolicies) {
+        const handlers = new Map<string, RpcHandler>();
+        registerMachineAgentSignInRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
+          ...(policy ? { deps: { agentIsolation: { read: () => policy } as never } } : {}) });
+        for (const context of [undefined, admission('use'), admission('manage')]) {
+          const status = AgentSignInStatusResponseSchema.parse(await handlers.get('daemon.agents.signIn.status')!({ agentId: 'codex' }, context));
+          const prepared = AgentSignInPrepareResponseSchema.parse(await handlers.get('daemon.agents.signIn.prepare')!(
+            { agentId: 'codex', method: 'native' }, context));
+          expect(prepared).toMatchObject({ method: 'native', launch: { kind: 'agent_login', agentId: 'codex' } });
+          expect('method' in prepared && prepared.method === 'native' ? prepared.signInScope : 'not native').toBe(status.signInScope);
+          observed.push(status.signInScope ?? null);
+        }
+      }
+      // The guest's shared placements are reported (Machine owner's user, the shared Agent user); the owner's own call none.
+      expect(observed).toEqual(expect.arrayContaining(['machineOwner', 'sharedAgent']));
+      expect(observed[0]).toBeNull();
+    } finally {
+      await runtime.dispose();
+    }
   });
   it('does not infer signed-in or signed-out when no native probe can answer', async () => {
     expect(await probeAgentSignInStatus('missing-fixture-agent')).toMatchObject({ status: 'unknown' });

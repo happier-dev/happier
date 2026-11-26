@@ -7,17 +7,44 @@ import {
   AgentSignInStatusRequestSchema,
 } from '@happier-dev/protocol/daemon/agentSignIn';
 
-import type { RpcHandlerRegistrar } from '../rpc/types';
+import type { AgentSignInScope } from '@happier-dev/protocol/daemon/agentSignIn';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { projectIdentityFreeSignIn } from '@/capabilities/cliAuth/identityFreeSignIn';
 import { resolveHostRequesterTerminalPlacementForHost, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 
+type AgentSignInRpcDeps = Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'> & Readonly<{
+  readSignInConnectedDefaultSelection?: (agentId: string, context: RpcHandlerContext) => Promise<import('@/session/services/agentConnectedDefaultRoutes').CliConnectedDefaultSelection>;
+}>;
+
+/**
+ * Which OS user this caller's native sign-in lands in, as its admission places it: the one producer for both
+ * Status and Prepare. Manage reports only the Machine owner's own user; Use reports its isolation placement; an
+ * unadmitted (local owner) call, or an unread isolation policy, reports none.
+ */
+async function resolveNativeSignInScope(
+  context: RpcHandlerContext | undefined,
+  deps: AgentSignInRpcDeps | undefined,
+  snapshot = deps?.agentIsolation?.read(),
+): Promise<AgentSignInScope | undefined> {
+  const role = context?.machineAdmission?.role;
+  if (context && role === 'manage') {
+    const home = deps?.resolveHostHomeServerIdentityId
+      ? await deps.resolveHostHomeServerIdentityId(context.signal).catch(() => null)
+      : context.callerInputAuthorization?.binding.serverIdentityId ?? null;
+    const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
+    return resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() }) === 'person'
+      ? 'machineOwner' : undefined;
+  }
+  if (role !== 'use' || deps?.agentIsolation && !snapshot) return undefined;
+  const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
+  return placement === 'daemon' ? 'machineOwner' : placement;
+}
+
 export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
-  deps?: Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'> & Readonly<{
-    readSignInConnectedDefaultSelection?: (agentId: string, context: import('../rpc/types').RpcHandlerContext) => Promise<import('@/session/services/agentConnectedDefaultRoutes').CliConnectedDefaultSelection>;
-  }>;
+  deps?: AgentSignInRpcDeps;
 }>): void {
   params.rpcHandlerManager.registerHandler(AGENT_SIGN_IN_STATUS_RPC_METHOD, async (raw, context) => {
     const request = AgentSignInStatusRequestSchema.parse(raw);
@@ -28,13 +55,8 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
     };
     if (context?.machineAdmission?.role !== 'use') {
       const status = await readCredentialSource(await probeAgentSignInStatus(request.agentId));
-      if (context?.machineAdmission?.role !== 'manage') return status;
-      const home = params.deps?.resolveHostHomeServerIdentityId
-        ? await params.deps.resolveHostHomeServerIdentityId(context.signal).catch(() => null)
-        : context.callerInputAuthorization?.binding.serverIdentityId ?? null;
-      const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
-      const placement = resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => params.deps?.agentIsolation?.read() });
-      return placement === 'person' ? { ...status, signInScope: 'machineOwner' as const } : status;
+      const signInScope = await resolveNativeSignInScope(context, params.deps);
+      return signInScope ? { ...status, signInScope } : status;
     }
     const snapshot = params.deps?.agentIsolation?.read();
     const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
@@ -69,14 +91,16 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
       }
     };
     const status = await readCredentialSource(await readNativeStatus().catch(() => probeAgentSignInStatus(request.agentId, null)));
+    const signInScope = await resolveNativeSignInScope(context, params.deps, snapshot);
     // The verified ingress owns access. Project before transport encryption;
     // the Home cannot inspect an E2EE reply to remove Account identity.
-    return {
-      ...projectIdentityFreeSignIn(status),
-      ...(params.deps?.agentIsolation && !snapshot
-        ? {} : { signInScope: placement === 'daemon' ? 'machineOwner' as const : placement }),
-    };
+    return { ...projectIdentityFreeSignIn(status), ...(signInScope ? { signInScope } : {}) };
   });
-  params.rpcHandlerManager.registerHandler(AGENT_SIGN_IN_PREPARE_RPC_METHOD, (raw) =>
-    prepareAgentSignIn(AgentSignInPrepareRequestSchema.parse(raw)));
+  params.rpcHandlerManager.registerHandler(AGENT_SIGN_IN_PREPARE_RPC_METHOD, async (raw, context) => {
+    const prepared = prepareAgentSignIn(AgentSignInPrepareRequestSchema.parse(raw));
+    if (!('method' in prepared) || prepared.method !== 'native') return prepared;
+    // The start sequence decides from this whether its person confirms before the launch.
+    const signInScope = await resolveNativeSignInScope(context, params.deps);
+    return signInScope ? { ...prepared, signInScope } : prepared;
+  });
 }

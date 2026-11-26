@@ -725,6 +725,8 @@ export type ActionExecutorContext = Readonly<{
   publicProfilePreviewAdmission?: Promise<import('./publicProfileActions.js').PublicProfilePreviewAdmission | null>;
   /** Host-local disclosure review of this exact effect before approval; never Action input or execution authority. */
   reviewPublicProfilePreparedAction?: (effect: import('./publicProfileActions.js').PreparedPublicProfileAction) => Promise<boolean>;
+  /** The present person's review of a prepared native Agent sign-in before it launches; never Action input. */
+  reviewNativeSignInLaunch?: (review: import('../../daemon/startAgentSignIn.js').AgentSignInNativeLaunchReview) => Promise<boolean>;
   /** Prepared local public preview, under the same exact live invocation custody. */
   publicProfilePreviewResult?: ActionExecuteResult;
   /** Content-free observer installed by the host; never parsed from Action/RPC input. */

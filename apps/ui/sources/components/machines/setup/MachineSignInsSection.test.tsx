@@ -63,14 +63,15 @@ function row(
 type StatusAnswer = (agentId: string) => Promise<Record<string, unknown>>;
 
 /** One Home, one online Machine and its daemon: GitHub CLI plus the given Agents, statuses answered by `status`. */
-async function installSignInsMachine(status: StatusAnswer, agentsById: Record<string, { id: string; title: string }>) {
+async function installSignInsMachine(status: StatusAnswer, agentsById: Record<string, { id: string; title: string }>,
+  /** Where the daemon's Prepare says the native login lands. */
+  prepareScope?: 'machineOwner' | 'member' | 'sharedAgent', machineId = 'github-sign-in') {
   await home.reset();
   boundary.rpc.mockReset();
   const serverId = await home.addHome({ name: 'Sign-in', serverUrl: 'https://fixture.invalid', accountId: 'fixture-account' });
   const { PLUGIN_MANIFEST: github } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
   const definition = github.contributes!.systemTools!.find(tool => tool.id === 'gh')!;
   const toolId = `${github.id}/${definition.id}`;
-  const machineId = 'github-sign-in';
   const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
   const fixture = createPlainMachineRowFixture({ id: machineId, accountId: 'fixture-account', machine });
   home.answer(serverId, '/v1/machines', { body: [fixture] });
@@ -92,7 +93,7 @@ async function installSignInsMachine(status: StatusAnswer, agentsById: Record<st
     };
     if (method === 'daemon.agents.signIn.status') return await status(payload.agentId);
     if (method === 'daemon.agents.signIn.prepare') return {
-      method: 'native', launch: { kind: 'agent_login', agentId: toolId },
+      method: 'native', launch: { kind: 'agent_login', agentId: toolId }, ...(prepareScope ? { signInScope: prepareScope } : {}),
     };
     if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'github-login', reused: false };
     throw new Error(`Unexpected fixture RPC ${method}`);
@@ -101,15 +102,17 @@ async function installSignInsMachine(status: StatusAnswer, agentsById: Record<st
 }
 
 describe('Machine sign-ins (E U4)', () => {
-  it('starts one native GitHub terminal only after the shared-user warning is accepted', async () => {
+  it('launches one native GitHub terminal only after the shared-user warning from Prepare is accepted', async () => {
     boundary.confirm.mockReset();
     boundary.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    // Status's earlier scope no longer decides: the daemon's Prepare reports the shared Machine owner user.
     const { serverId, machineId, toolId } = await installSignInsMachine(async () => ({
       installed: true, status: 'signedOut', checkedAt: Date.now(), nativeLogin: 'login_terminal',
-      signInScope: 'machineOwner', connectedServices: [],
-    }), {});
+      connectedServices: [],
+    }), {}, 'machineOwner');
     const starts = () => boundary.rpc.mock.calls.map(([request]) => request)
       .filter(request => request.method === 'daemon.agents.signIn.prepare');
+    const launches = () => boundary.rpc.mock.calls.filter(([request]) => request.method === 'daemon.terminal.ensure');
     const terminalHost = { open: vi.fn() };
     const screen = await renderScreen(
       <AgentSignInTerminalHostProvider host={terminalHost}>
@@ -121,17 +124,44 @@ describe('Machine sign-ins (E U4)', () => {
       await waitForHomeGovernance(() => expect(screen.findByTestId(startButton)).not.toBeNull());
       expect(starts()).toHaveLength(0);
       await screen.pressByTestIdAsync(startButton);
-      expect(boundary.confirm).toHaveBeenCalledOnce();
-      expect(starts()).toHaveLength(0);
+      await waitForHomeGovernance(() => expect(boundary.confirm).toHaveBeenCalledOnce());
+      // Declined: Prepare ran, nothing launched and no terminal opened.
+      await waitForHomeGovernance(() => expect(screen.findByTestId(startButton)).not.toBeNull());
+      expect(starts()).toHaveLength(1);
+      expect(launches()).toHaveLength(0);
       expect(terminalHost.open).not.toHaveBeenCalled();
       await screen.pressByTestIdAsync(startButton);
-      expect(terminalHost.open).toHaveBeenCalledOnce();
+      await waitForHomeGovernance(() => expect(terminalHost.open).toHaveBeenCalledOnce());
       expect(terminalHost.open).toHaveBeenCalledWith(expect.objectContaining({ serverId, machineId, agentId: toolId }));
-      await waitForHomeGovernance(() => expect(starts()).toEqual([
-        expect.objectContaining({ payload: { agentId: toolId, method: 'native' } }),
-      ]));
+      expect(starts()).toEqual([0, 1].map(() => expect.objectContaining({ payload: { agentId: toolId, method: 'native' } })));
+      await waitForHomeGovernance(() => expect(launches()).toHaveLength(1));
+      expect(boundary.confirm).toHaveBeenCalledTimes(2);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("launches at once, with no warning, when Prepare places the login in the requester's own user", async () => {
+    boundary.confirm.mockReset();
+    // An earlier Status scope saying shared cannot ask a second, different question.
+    const { serverId, machineId, toolId } = await installSignInsMachine(async () => ({
+      installed: true, status: 'signedOut', checkedAt: Date.now(), nativeLogin: 'login_terminal',
+      signInScope: 'machineOwner', connectedServices: [],
+    }), {}, 'member', 'own-user-sign-in');
+    const terminalHost = { open: vi.fn() };
+    const screen = await renderScreen(
+      <AgentSignInTerminalHostProvider host={terminalHost}>
+        <MachineSignInsSection serverId={serverId} machineId={machineId} machineName="Devbox" presented editable />
+      </AgentSignInTerminalHostProvider>,
+    );
+    try {
+      const startButton = `machine-setup-sign-in-start:${toolId}`;
+      await waitForHomeGovernance(() => expect(screen.findByTestId(startButton)).not.toBeNull());
+      await screen.pressByTestIdAsync(startButton);
       await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.map(([request]) => request.method))
         .toContain('daemon.terminal.ensure'));
+      expect(terminalHost.open).toHaveBeenCalledOnce();
+      expect(boundary.confirm).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
     }

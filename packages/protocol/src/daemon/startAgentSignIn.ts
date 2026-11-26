@@ -1,8 +1,19 @@
-import { AgentSignInPrepareResponseSchema, machineAgentSignInTerminalKey, type AgentSignInPrepareRequest, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelInput, type MachinesAgentsSignInCancelOutput } from './agentSignIn.js';
+import { AgentSignInPrepareResponseSchema, isSharedAgentSignInScope, machineAgentSignInTerminalKey, type AgentSignInPrepareRequest, type AgentSignInScope, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelInput, type MachinesAgentsSignInCancelOutput } from './agentSignIn.js';
 import type { ConnectedAccountAttemptResponse, ConnectedAccountDaemonCommand } from '../connect/connectedAccountDaemonRpcV1.js';
 import type { DaemonTerminalEnsureRequest, DaemonTerminalEnsureResponse, DaemonTerminalCloseResponse, DaemonTerminalListResponseV1 } from './terminal.js';
 
-/** One sequence; the existing terminal and Connected Account owners retain execution. */
+/** What the daemon prepared for a native sign-in, handed to the host's person before anything launches. */
+export type AgentSignInNativeLaunchReview = Readonly<{
+  signInScope?: AgentSignInScope;
+  /** Decided here once: a login in a shared OS user starts only after its person confirms it. */
+  confirmationRequired: boolean;
+}>;
+
+/**
+ * One sequence; the existing terminal and Connected Account owners retain execution. A host with its person
+ * present (the app's own press) supplies `reviewNativeSignInLaunch`; every other surface reaches this only after
+ * the Action's own approval policy (Ask by default for this `danger` Action, or the person's saved setting).
+ */
 export async function startMachineAgentSignIn(
   input: AgentSignInPrepareRequest & { machineId: string },
   operations: Readonly<{
@@ -10,6 +21,8 @@ export async function startMachineAgentSignIn(
     beginConnect(command: ConnectedAccountDaemonCommand): Promise<ConnectedAccountAttemptResponse>;
     ensureTerminal(request: DaemonTerminalEnsureRequest): Promise<DaemonTerminalEnsureResponse>;
     closeTerminal(terminalId: string): Promise<DaemonTerminalCloseResponse>;
+    /** Host-local review of this exact prepared launch; false stops before any native launch. */
+    reviewNativeSignInLaunch?(review: AgentSignInNativeLaunchReview): Promise<boolean>;
     signal?: AbortSignal;
   }>,
 ): Promise<MachinesAgentsSignInStartOutput> {
@@ -20,6 +33,14 @@ export async function startMachineAgentSignIn(
   if ('ok' in prepared) return prepared;
   if (operations.signal?.aborted) return cancelled;
   if (prepared.method === 'connected') return await operations.beginConnect(prepared.command);
+  if (operations.reviewNativeSignInLaunch) {
+    const confirmed = await operations.reviewNativeSignInLaunch({
+      ...(prepared.signInScope ? { signInScope: prepared.signInScope } : {}),
+      confirmationRequired: isSharedAgentSignInScope(prepared.signInScope),
+    });
+    if (operations.signal?.aborted) return cancelled;
+    if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
+  }
   const terminalKey = machineAgentSignInTerminalKey(machineId, request.agentId);
   // Acquisition must retain its response even after cancellation: only that
   // response identifies the process that needs closing. The daemon owns reuse

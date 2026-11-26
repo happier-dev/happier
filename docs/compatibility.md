@@ -2959,7 +2959,9 @@ rollback adapter is introduced.
 
 Machine Use can read the existing sign-in status RPC. The daemon omits identity
 fields for Use and adds optional `signInScope`; owner/Manage responses retain
-their prior shape. Load matching Home, Protocol, daemon and app together: an old
+their prior shape. The native Prepare reply carries the same optional
+`signInScope`, which an older strict 0.3 app reader also rejects.
+Load matching Home, Protocol, daemon and app together: an old
 development daemon does not perform this privacy projection, and an old strict
 app reader rejects the projected response. Do not enable the wider Home policy
 against an old development daemon. No persistence, migration or protocol epoch
