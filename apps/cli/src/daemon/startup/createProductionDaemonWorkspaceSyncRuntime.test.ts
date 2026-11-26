@@ -1209,7 +1209,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     } else await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it.each(['idle', 'unavailable', 'unavailable-no-socket', 'running', 'another-persons-copy', 'target-refuses'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
+  it.each(['idle', 'unavailable', 'unavailable-no-socket', 'unavailable-with-sibling', 'running', 'another-persons-copy', 'target-refuses'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
     const rows: ProjectAccountRowV1[] = [];
     const http = createProjectAccountRowsHttpBoundary(rows);
     let offline: false | 'stopped' | 'no-socket' = false;
@@ -1223,6 +1223,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       resolveMachineRpcRoutePolicy(method.slice(method.indexOf(':') + 1)).sharedMachineAccess === 'custodian_only';
     const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, withScmRuntime: true,
       projectRowsFromHttp: true, separateTargetParent: true, remoteSeed: true, workerRunAtMost: 1,
+      loopbackWorkspaceSync: scenario === 'unavailable-with-sibling',
       handleAdditionalSocketAck: async raw => {
         if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string') return undefined;
         if (raw.method.startsWith('another-person-machine:')) {
@@ -1262,6 +1263,13 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       mode: 'keep_synced', contentPolicy, destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
     } }));
     expect(created.status.state).toBe('watching');
+    if (scenario === 'unavailable-with-sibling') {
+      await create({ v: 1, operationId: 'fresh-remove-sibling', actionInput: {
+        v: 1, sourceWorkspaceRefId: fixture.sourceRef.id, targetMachineId: fixture.targetRef.machineId,
+        targetPath: `${fixture.targetPath}-sibling`, mode: 'keep_synced', contentPolicy,
+        destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
+      } });
+    }
     const expectedRelationship = getActiveProjectAccountRowsSnapshot()!.relationships
       .find(relationship => relationship.relationshipId === created.relationshipId)!;
     const others = getActiveProjectAccountRowsSnapshot()!.relationships.filter(relationship => relationship !== expectedRelationship);
@@ -1276,7 +1284,8 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
       onTestFinished(async () => { finish(); await pending; });
       await expect.poll(() => worker.dependencies().some(item => item.state === 'running')).toBe(true);
     }
-    offline = scenario === 'unavailable' ? 'stopped' : scenario === 'unavailable-no-socket' ? 'no-socket' : false;
+    if (scenario === 'unavailable-with-sibling') await fixture.targetParent!.stop();
+    offline = scenario === 'unavailable' || scenario === 'unavailable-with-sibling' ? 'stopped' : scenario === 'unavailable-no-socket' ? 'no-socket' : false;
     refuseTarget = scenario === 'target-refuses';
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), projectWorkerAction: createProjectWorkerAction({
       machineId: fixture.sourceRef.machineId, serverId: fixture.serverId, serverHttpBaseUrl: 'https://bind-child-home.invalid',
@@ -1306,7 +1315,17 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         status: 'retired', ...(offline ? { uncheckedMachineIds: [fixture.targetRef.machineId] } : {}),
       });
       expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual(others);
-      expect((await fixture.parentManagedWorkspaceSync.list()).map(value => value.relationshipId)).not.toContain(created.relationshipId);
+      // A surviving link's unavailable recovery may defer native reconciliation after graph commitment.
+      if (scenario === 'unavailable-with-sibling') {
+        offline = false;
+        await fixture.restartTargetParent();
+        await fixture.restartSourceParent();
+        await fixture.settleProjects();
+        expect((await fixture.parentManagedWorkspaceSync.list()).map(value => value.relationshipId)).toEqual(
+          others.map(value => value.relationshipId));
+      } else {
+        expect((await fixture.parentManagedWorkspaceSync.list()).map(value => value.relationshipId)).not.toContain(created.relationshipId);
+      }
     }
     // Keeping files asks this copy's own two Machines; another person's Machine is never read.
     expect(otherPersonCalls).toEqual([]);

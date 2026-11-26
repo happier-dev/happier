@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpc/errors';
+import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 
 import { parseProjectAccountSnapshotV1, assertProjectAccountSnapshotTransition, resolveProjectAccountWorkspaceRefRemovalV1, type ProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCopyProvenancesEqual, getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -243,7 +244,7 @@ const RECONCILING_REFUSAL_CODES: ReadonlySet<string> = new Set(['peer_unavailabl
 function isReconcilingRefusal(error: unknown): boolean {
   const code = readRpcErrorCode(error) ?? (typeof error === 'object' && error !== null && 'code' in error
     && typeof error.code === 'string' ? error.code : undefined);
-  return code !== undefined && RECONCILING_REFUSAL_CODES.has(code);
+  return isMachineRequestReachabilityFailureV1(error) || (code !== undefined && RECONCILING_REFUSAL_CODES.has(code));
 }
 
 function isIndeterminate(error: unknown): boolean {

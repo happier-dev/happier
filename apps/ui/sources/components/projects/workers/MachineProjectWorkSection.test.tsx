@@ -1,4 +1,7 @@
 import * as React from 'react';
+// Real Action receipt captured from createProductionDaemonWorkspaceSyncRuntime.test.ts's
+// stopped-Machine + surviving sibling topology; the dependency reader and owner are unmocked.
+import offlineRetireReceipt from './MachineProjectWorkSection.offlineRetire.fixture.json';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -20,7 +23,7 @@ import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProf
 
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createHydratedPlainMachineFixture, createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineMetadataFixture, createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
@@ -46,7 +49,7 @@ vi.mock(
 );
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key) => key,
+    translate: (key, params) => key === 'projectWorkers.removeUnchecked' ? `${key}(${params?.machines})` : key,
   }),
 );
 vi.mock(
@@ -101,6 +104,8 @@ afterEach(async () => {
  */
 async function setup(
   options: Readonly<{
+    machineId?: string;
+    machineName?: string;
     holdPolicyRead?: boolean;
     /** The Machine page above already says the Machine is offline. */
     announced?: boolean;
@@ -119,6 +124,7 @@ async function setup(
       releasePolicyRead = resolve;
     });
   const accountId = 'artifact-account';
+  const machineId = options.machineId ?? 'm1';
   const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
   // This fixture is already bootstrapped: its local Home id and portable identity agree.
   await upsertServerProfileOnly({ serverUrl: 'https://srv_machine_work' });
@@ -146,10 +152,11 @@ async function setup(
     })));
 
   const ownerMachine = createHydratedPlainMachineFixture({
-    id: 'm1',
+    id: machineId,
     accountId,
     // A Machine that is answering; an offline one is covered by its own case.
-    machine: { active: true, activeAt: Date.now(), metadataVersion: 4 },
+    machine: { active: true, activeAt: Date.now(), metadataVersion: 4,
+      ...(options.machineName ? { metadata: createMachineMetadataFixture({ displayName: options.machineName }) } : {}) },
   });
   const sharedRow = options.role ? createPlainSharedMachineRowFixture({
     id: ownerMachine.id, custodianAccountId: 'owner', role: options.role, machine: ownerMachine,
@@ -179,21 +186,21 @@ async function setup(
         }
       }
       const batch = path === '/v1/machines/read-batch' && init?.method === 'POST';
-      if (!machineHttp.read || (path !== '/v1/machines/m1' && !batch)) return null;
+      if (!machineHttp.read || (path !== `/v1/machines/${machineId}` && !batch)) return null;
       policyReads += 1;
       await machineHttp.gate;
       const response = machineHttp.read();
       if (!batch || !response.ok) return response;
       const body: unknown = await response.json();
       const row = body && typeof body === 'object' && 'machine' in body ? body.machine : null;
-      return createMachineReadBatchResponseFixture(init?.body, id => id === 'm1' ? row : id === 'source-machine' ? copyActions[0]!.machine : null);
+      return createMachineReadBatchResponseFixture(init?.body, id => id === machineId ? row : id === 'source-machine' ? copyActions[0]!.machine : null);
     },
   });
   machineHttp.read = () =>
     new Response(
       JSON.stringify({
         machine: {
-          ...(sharedRow ?? createPlainMachineRowFixture({ id: 'm1', accountId, machine })),
+          ...(sharedRow ?? createPlainMachineRowFixture({ id: machineId, accountId, machine })),
           metadata: encodePlainMachineStoredContent(metadata),
           metadataVersion: version,
         },
@@ -247,13 +254,13 @@ async function setup(
     <MachineProjectWorkSection
       testID="work"
       serverId={fixture.home.id}
-      machineId="m1"
+      machineId={machineId}
       machineName="hz-build-1"
     />
   );
   const screen = await renderScreen(
     options.announced
-      ? <CheckoutReachabilityScope scope={{ serverId: fixture.home.id, machineId: 'm1' }}>{section}</CheckoutReachabilityScope>
+      ? <CheckoutReachabilityScope scope={{ serverId: fixture.home.id, machineId }}>{section}</CheckoutReachabilityScope>
       : section,
   );
   if (!options.role && !options.holdPolicyRead && !options.deferMachineDiscovery && !options.presenceBeforeDiscovery)
@@ -266,7 +273,7 @@ async function setup(
     discoverMachine: () => storage.getState().applyMachines([machine]) };
 }
 
-async function seedWorkerCopy() {
+async function seedWorkerCopy(targetMachineId = 'm1') {
   const scope = storage.getState().profileScope;
   if (!scope || scope.serverId !== fixture?.home.id)
     throw new Error('expected_current_project_account_scope');
@@ -282,7 +289,7 @@ async function seedWorkerCopy() {
   const target = {
     id: 'fresh-target',
     serverId: scope.serverId,
-    machineId: 'm1',
+    machineId: targetMachineId,
     rootPath: '/worker/project',
     label: 'Worker target checkout',
     createdAtMs: 1,
@@ -789,37 +796,39 @@ describe('Machine › Work from your projects through the Machine policy Actions
     );
   });
 
-  it('after a removal says which Machine could not be asked, and says nothing extra when all were asked', async () => {
-    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
-    await seedWorkerCopy();
-    const retire = vi.fn(async () => ({ status: 'retired', uncheckedMachineIds: ['source-machine'] }));
+  it('retains the real daemon stopped-Machine receipt after native confirmation and the pushed row removal', async () => {
+    const { screen } = await setup({ machineId: 'target-parent', machineName: 'Stopped copy Machine' });
+    const { scope, source, target } = await seedWorkerCopy('target-parent');
+    await act(async () => {
+      const machine = createHydratedPlainMachineFixture({ id: 'target-parent', accountId: scope.accountId,
+        machine: { active: false } });
+      storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata!, displayName: 'Stopped copy Machine' } }]);
+    });
+    let answer: ((confirmed: boolean) => void) | undefined;
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => new Promise(resolve => { answer = resolve; }));
+    const retire = vi.fn(async () => {
+      // Home's graph push can beat the Action settlement to this client.
+      storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [source, target], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+      return offlineRetireReceipt.ok && 'result' in offlineRetireReceipt ? offlineRetireReceipt.result : offlineRetireReceipt;
+    });
     rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
       if (method === 'projects.worker.copy.retire') return await retire();
       throw new Error(`unexpected_rpc:${method}`);
     });
-    const menu = () =>
-      screen.findAll(
-        (node) =>
-          typeof node.props.onSelect === 'function' &&
-          Array.isArray(node.props.items) &&
-          node.props.items.some((item: { id: string }) => item.id === 'files'),
-      )[0]!;
+    const menu = () => screen.findAll(node => typeof node.props.onSelect === 'function'
+      && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'files'))[0]!;
     await vi.waitFor(() => expect(menu()).toBeTruthy());
-    await act(async () => {
-      menu().props.onSelect('keep');
-    });
-    // The banner itself, not the notice owner that passes its testID down.
-    const notice = () =>
-      screen.findAllByTestId('work.copies.notice:proven-worker-target').find(node => typeof node.props.title === 'string')?.props;
-    // Lengths, never instances: a failed match must not pretty-print the rendered tree.
+    await act(async () => { menu().props.onSelect('keep'); });
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(retire).not.toHaveBeenCalled();
+    await act(async () => { answer?.(true); });
+    const notice = () => screen.findAllByTestId('work.copies.notice:proven-worker-target')
+      .find(node => typeof node.props.title === 'string')?.props;
     await vi.waitFor(() => expect(retire).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(String(notice()?.title ?? screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props.title))
-      .toBe('projectWorkers.copyDefinitionRetired'));
-    expect(notice()?.description).toBe('projectWorkers.removeUncheckedUnnamed');
+    await vi.waitFor(() => expect(notice()?.description).toBe('projectWorkers.removeUnchecked(Stopped copy Machine)'));
     expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBe(0);
-    await act(async () => {
-      notice()?.onDismiss();
-    });
+    await act(async () => { notice()?.onDismiss(); });
     expect(screen.findAllByTestId('work.copies.notice:proven-worker-target').length).toBe(0);
   });
 

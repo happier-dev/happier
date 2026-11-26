@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "result": {
+    "status": "retired",
+    "uncheckedMachineIds": [
+      "target-parent"
+    ]
+  }
+}
