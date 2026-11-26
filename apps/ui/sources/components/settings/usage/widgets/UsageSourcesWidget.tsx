@@ -3,7 +3,8 @@ import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isUsageSourceMissing, selectUsageSourceDiscoveryInventory, matchesUsageSourceAccountingScope, USAGE_SOURCE_CONSENT_DISCLOSURE, type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import { UsageSourceInventoryScopeSchema, type UsageSourceInventoryScope } from '@happier-dev/protocol/inputs/usageQuery';
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { isJsonObject, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/resolveBundledAgentIdFromContributionIdentity';
 import { Modal } from '@/modal';
@@ -51,6 +52,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { useUsageDisclosureCommand } from './usageMountedControls';
 import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { projectActionResultForCurrentUiCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import type { CurrentUiContextVoiceInvocationOutcome } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /**
@@ -149,8 +152,8 @@ export function UsageSourcesMachines(
   const [stateProjection, setStateProjection] = React.useState<Readonly<{
     lifetime: ServerAccountScopeLifetime; key: string; states: ReadonlyMap<string, UsageSourcesMachineReport>;
   }> | null>(null);
-  const retries = React.useRef(new Map<string, (context?: ActionExecutorContext) => void>());
-  const reportState = React.useCallback((machineId: string, report: UsageSourcesMachineReport, retry?: (context?: ActionExecutorContext) => void) => {
+  const retries = React.useRef(new Map<string, UsageSourcesController['discover']>());
+  const reportState = React.useCallback((machineId: string, report: UsageSourcesMachineReport, retry?: UsageSourcesController['discover']) => {
     if (retry) retries.current.set(machineId, retry); else retries.current.delete(machineId);
     setStateProjection(previous => {
       const current = previous?.lifetime === props.lifetime && previous.key === projectionKey ? previous : null;
@@ -174,7 +177,12 @@ export function UsageSourcesMachines(
   const consentable = online.some(machine => states?.get(machine.id)?.consentable === true);
   const commands = useCurrentUiContextLocalCommands(!props.compact && unreadable.length ? [{ key: 'retry',
     title: `${t('usage.board.sources.machinesUnreadable')}: ${t('common.retry')}`,
-    invoke: (_input, context) => { for (const machine of unreadable) retries.current.get(machine.id)?.(context); } }] : []);
+    invoke: async (_input, context) => {
+      const results = await Promise.all(unreadable.map(machine => retries.current.get(machine.id)?.(context)));
+      const unsettled = results.find(result => result !== undefined && (!result.ok || isDeferredApprovalResult(result)));
+      if (unsettled) return projectActionResultForCurrentUiCommand(unsettled);
+      return results.every(result => result?.ok === true) ? { ok: true, result: { status: 'refreshed' } } : false;
+    } }] : []);
   if (machines.length === 0 && props.machines.length === 0 && inventoryStatus !== 'idle') {
     return inventoryStatus === 'loading'
       ? <ItemLoadStateRows state={{ kind: 'loading' }} testID={`${props.testID}.loading`} />
@@ -322,7 +330,7 @@ const MachineSources = React.memo(function MachineSources(
     agentIds: readonly string[];
     accountingSources: readonly string[];
     wide: boolean;
-    onState(machineId: string, report: UsageSourcesMachineReport, retry?: (context?: ActionExecutorContext) => void): void;
+    onState(machineId: string, report: UsageSourcesMachineReport, retry?: UsageSourcesController['discover']): void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -366,7 +374,7 @@ const MachineSources = React.memo(function MachineSources(
   // Consent is asked where a source can be added or resumed (or is counted and can be stopped).
   const consentable = state === 'content' && [...tracked, ...found].some(row => row.status.kind !== 'unsupported' && row.status.kind !== 'failed'
     || row.source.consent === 'enabled');
-  const retry = React.useCallback((context?: ActionExecutorContext) => { void controller?.discover(context); }, [controller]);
+  const retry = controller?.discover;
   React.useEffect(() => { props.onState(props.machineId, { state, consentable }, state === 'unreadable' ? retry : undefined); },
     [props.onState, props.machineId, state, consentable, retry]);
   React.useEffect(() => { if (state === 'content') measure(); }, [state, measure]);
@@ -402,7 +410,7 @@ const MachineSources = React.memo(function MachineSources(
       {/* A failed re-read is the machine's, said once here; each source below keeps its own last-known status (R140). */}
       {snapshot.machineReadFailed ? (
         <SurfaceFreshnessLine testID={`${props.testID}.readFailed`} tone="warning" reason={t('usage.board.sources.machineReadFailed')}
-          action={{ label: t('common.retry'), onPress: () => retry(), testID: `${props.testID}.readFailed.retry` }} />
+          action={{ label: t('common.retry'), onPress: () => { void retry?.(); }, testID: `${props.testID}.readFailed.retry` }} />
       ) : null}
       {snapshot.approval || (controller && listed.length + missing.length > 0) ? <View style={styles.machineBody}
         onLayout={event => { if (near) { const height = event.nativeEvent.layout.height; setBodyHeight(previous => previous === height ? previous : height); } }}>
@@ -437,6 +445,31 @@ type SourceRowProps = Readonly<{
   testID: string;
 }>;
 
+function useSourceFolderPrompt(controller: UsageSourcesController, sourceId: string, root: string | null, agent: string, machineName: string) {
+  const Bridge = useCurrentUiContextCommandBridge();
+  return React.useCallback(async (context: ActionExecutorContext): Promise<CurrentUiContextVoiceInvocationOutcome> => {
+    let confirmedContext: ActionExecutorContext | undefined;
+    const next = await Modal.prompt(
+      t('usage.board.sources.folderPromptTitle'),
+      t('usage.board.sources.folderPromptMessage', { agent, machine: machineName }),
+      { defaultValue: root ?? '', placeholder: root ?? '~', commandBridge: Bridge,
+        onConfirmContext: confirming => { confirmedContext = confirming; } },
+    );
+    if (next === null) return { ok: false, code: 'cancelled', errorCode: 'cancelled' };
+    const proposed = next.trim();
+    if (!proposed || proposed === root) return { ok: true, result: { status: 'unchanged' } };
+
+    // The Machine expands and validates the path with its own home-directory owner.
+    const outcome = projectActionResultForCurrentUiCommand(await controller.setRoot(sourceId, proposed, confirmedContext ?? context));
+    if (!outcome.ok) return outcome;
+    const result = outcome.result;
+    // The controller already admitted the refreshed source or a pending approval.
+    return isJsonObject(result) && result.source !== undefined
+      ? { ...outcome, result: { status: 'changed', source: result.source } }
+      : outcome;
+  }, [controller, sourceId, root, agent, machineName, Bridge]);
+}
+
 /** Shared identity and effects of one source row: its name, folder and the Actions behind its controls. */
 function useSourceRow(props: SourceRowProps, visible = true) {
   const { source, controller } = props;
@@ -445,18 +478,7 @@ function useSourceRow(props: SourceRowProps, visible = true) {
   const busy = props.snapshot.pending.some(operation => operation.sourceId === source.sourceId && operation.actionId !== 'usage.sources.get');
   const folder = source.root.path ? formatPathRelativeToHome(source.root.path, props.homeDir) : t('usage.board.sources.defaultFolder');
   const accessibilityContext = `${folder}, ${props.machineName}`;
-  const Bridge = useCurrentUiContextCommandBridge();
-  const changeFolder = React.useCallback(async (context: ActionExecutorContext) => {
-    let confirmedContext: ActionExecutorContext | undefined;
-    const next = await Modal.prompt(
-      t('usage.board.sources.folderPromptTitle'),
-      t('usage.board.sources.folderPromptMessage', { agent, machine: props.machineName }),
-      { defaultValue: source.root.path ?? '', placeholder: source.root.path ?? '~', commandBridge: Bridge,
-        onConfirmContext: confirming => { confirmedContext = confirming; } },
-    );
-    // The Machine expands and validates the path with its own home-directory owner.
-    if (next !== null && next.trim().length > 0 && next.trim() !== source.root.path) await controller.setRoot(source.sourceId, next.trim(), confirmedContext ?? context);
-  }, [controller, source.sourceId, source.root.path, agent, props.machineName, Bridge]);
+  const changeFolder = useSourceFolderPrompt(controller, source.sourceId, source.root.path, agent, props.machineName);
   const commands = useCurrentUiContextLocalCommands(visible && !busy ? [{ key: 'change-folder',
     title: t('usage.board.sources.changeFolder'), description: `${props.testID}.folder`,
     invoke: (_input, context) => changeFolder(context) }] : []);
@@ -598,15 +620,7 @@ function MissingSourceRow(props: Readonly<{ source: UsageSourceV1; controller: U
   serverId: string; busy: boolean; testID: string }>) {
   const agentId = usageSourceAgentKey(props.source);
   const agent = usageAgentTitle(agentId);
-  const Bridge = useCurrentUiContextCommandBridge();
-  const choose = async (context: ActionExecutorContext) => {
-    let confirmedContext: ActionExecutorContext | undefined;
-    const next = await Modal.prompt(t('usage.board.sources.folderPromptTitle'),
-      t('usage.board.sources.folderPromptMessage', { agent, machine: props.machineName }),
-      { defaultValue: '', placeholder: '~', commandBridge: Bridge,
-        onConfirmContext: confirming => { confirmedContext = confirming; } });
-    if (next !== null && next.trim().length > 0) await props.controller.setRoot(props.source.sourceId, next.trim(), confirmedContext ?? context);
-  };
+  const choose = useSourceFolderPrompt(props.controller, props.source.sourceId, null, agent, props.machineName);
   const commands = useCurrentUiContextLocalCommands(!props.busy ? [{ key: 'choose-folder',
     title: t('usage.board.sources.changeFolder'), description: `${props.testID}.folder`,
     invoke: (_input, context) => choose(context) }] : []);

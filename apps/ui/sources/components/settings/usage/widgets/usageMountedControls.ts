@@ -2,13 +2,21 @@ import * as React from 'react';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { t } from '@/text';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionResultForCurrentUiCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 /** A mounted Details disclosure owns its exact-read demand until it closes. */
 export const UsageExactHistoryDemandContext = React.createContext<(() => () => void) | null>(null);
 
-export function useUsageRetryCommand(onRetry: (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) => unknown, enabled: boolean): () => void {
+export type UsageRetryRead = (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) =>
+    ActionExecuteResult | void | Promise<ActionExecuteResult | void>;
+
+export function useUsageRetryCommand(onRetry: UsageRetryRead, enabled: boolean): () => void {
     const commands = useCurrentUiContextLocalCommands(enabled ? [{ key: 'retry', title: t('common.retry'),
-        invoke: async (_input, callerContext) => { await onRetry(callerContext, { failedOnly: true }); } }] : []);
+        invoke: async (_input, callerContext) => {
+            const outcome = await onRetry(callerContext, { failedOnly: true });
+            return outcome ? projectActionResultForCurrentUiCommand(outcome) : false;
+        } }] : []);
     return React.useCallback(() => { void commands.invoke('retry'); }, [commands.invoke]);
 }
 

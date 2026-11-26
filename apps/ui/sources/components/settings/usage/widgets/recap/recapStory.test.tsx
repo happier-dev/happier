@@ -132,6 +132,14 @@ describe('recap story mode (L6 T4)', () => {
         expect(screen.findByTestId('usage-recap-story-slide-usage')).toBeTruthy();
         expect(screen.findByTestId('usage-recap-story-share')).toBeTruthy();
 
+        const back = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.back'));
+        expect(back).toBeDefined();
+        await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+            input: { commandId: back!.id }, context: { surface: 'agent' } })).toMatchObject({
+            ok: true, result: { value: { status: 'unchanged' } },
+        }); });
+        expect(screen.findByTestId('usage-recap-story-slide-usage')).toBeTruthy();
+
         const forward = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.continue'));
         expect(forward).toBeDefined();
         await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',

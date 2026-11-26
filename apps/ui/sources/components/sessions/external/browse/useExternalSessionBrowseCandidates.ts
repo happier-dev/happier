@@ -18,6 +18,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
+import { HappyError } from '@/utils/errors/errors';
 import {
     resolveExternalSessionBrowseRpcErrorMessage,
     resolveExternalSessionBrowseThrownErrorMessage,
@@ -324,11 +325,15 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         continuations: Set<string>;
     }>({ scopeKey: currentScopeKey, continuations: new Set<string>() });
 
+    type PageSettlement = { ok: true; value: { status: 'loaded' | 'unchanged' } } | { ok: false; code: string };
     const loadCandidates = React.useCallback(async (opts?: Readonly<{
         continuation?: CandidateContinuation;
         append?: boolean;
         callerContext?: ActionExecutorContext;
-    }>) => {
+    }>): Promise<PageSettlement> => {
+        const unchanged = { ok: true, value: { status: 'unchanged' } } as const;
+        const loaded = { ok: true, value: { status: 'loaded' } } as const;
+        const cancelled = { ok: false, code: 'cancelled' } as const;
         const append = opts?.append === true;
         const requestedContinuation = opts?.continuation ?? null;
         const requestedCursor = requestedContinuation?.cursor ?? null;
@@ -360,7 +365,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 setError(null);
                 setCancelled(false);
             }
-            return;
+            return unchanged;
         }
 
         let abortController: AbortController;
@@ -396,7 +401,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 setAutoLinkPolicyScope(null);
                 setError(null);
                 setCancelled(false);
-                return;
+                return unchanged;
             }
             abortController = new AbortController();
             activeScopeAbortControllerRef.current = abortController;
@@ -441,10 +446,10 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 continuations: new Set<string>(),
             };
         } else {
-            if (!hasValidScope) return;
+            if (!hasValidScope) return unchanged;
             abortController = activeScopeAbortControllerRef.current ?? new AbortController();
         }
-        if (!machineId || !providerId || !scopedSource) return;
+        if (!machineId || !providerId || !scopedSource) return unchanged;
         const accountCurrentness = activeScopeAccountCurrentnessRef.current;
         const accountScopeIsCurrent = () => accountCurrentness?.isCurrent() !== false;
         const currentGeneration = loadGenerationRef.current;
@@ -453,7 +458,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             currentScopeKey,
             requestedContinuation ? readCandidateContinuationKey(requestedContinuation) : null,
         ]);
-        if (activePageRequestKeysRef.current.has(pageRequestKey)) return;
+        if (activePageRequestKeysRef.current.has(pageRequestKey)) return unchanged;
         activePageRequestKeysRef.current.add(pageRequestKey);
 
         if (append) {
@@ -704,7 +709,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         try {
             const initialSearchMode = shouldStartWithFastSearch ? 'fast' : requestedSearchMode;
             const pageResult = await requestCandidatePage(initialSearchMode);
-            if (!pageResult) return;
+            if (!pageResult) return cancelled;
             const { result } = pageResult;
 
             /**
@@ -722,21 +727,20 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     scopeKey: currentScopeKey,
                     continuations: new Set<string>(),
                 };
-                await loadCandidates({ callerContext: opts?.callerContext });
-                return;
+                return await loadCandidates({ callerContext: opts?.callerContext });
             }
 
             const ok = applyResult(result, append ? 'append' : 'replace', initialSearchMode);
-            if (!ok || !shouldStartWithFastSearch || !result.ok || !result.searchIncomplete) {
-                return;
-            }
+            if (!result.ok) return { ok: false, code: result.errorCode };
+            if (!ok) return cancelled;
+            if (!shouldStartWithFastSearch || !result.searchIncomplete) return loaded;
 
             setLoading(false);
             setSearchAugmenting(true);
             try {
                 requestObservedPreparation = false;
                 let augmentedPageResult = await requestCandidatePage('full');
-                if (!augmentedPageResult) return;
+                if (!augmentedPageResult) return cancelled;
                 const observedEmptySearchCursors = new Set<string>();
                 while (
                     augmentedPageResult.result.ok
@@ -750,7 +754,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     }
                     observedEmptySearchCursors.add(continuationCursor);
                     const continuationPage = await requestCandidatePage('full', continuationCursor);
-                    if (!continuationPage) return;
+                    if (!continuationPage) return cancelled;
                     augmentedPageResult = continuationPage;
                 }
                 const fullSearchIsComplete = augmentedPageResult.result.ok
@@ -771,7 +775,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     || loadGenerationRef.current !== currentGeneration
                     || !accountScopeIsCurrent()
                 ) {
-                    return;
+                    return cancelled;
                 }
                 if (requestObservedPreparation) {
                     /**
@@ -790,13 +794,14 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 }
                 // Otherwise keep fast search results visible if slower augmentation fails.
             }
+            return loaded;
         } catch (loadError) {
             if (
                 abortController.signal.aborted
                 || loadGenerationRef.current !== currentGeneration
                 || !accountScopeIsCurrent()
             ) {
-                return;
+                return cancelled;
             }
             loadedScopeKeyRef.current = currentScopeKey;
             setLoadedScopeKey(currentScopeKey);
@@ -810,6 +815,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 }
                 setNextPage(null);
             }
+            return { ok: false, code: loadError instanceof HappyError ? loadError.code ?? 'internal_error' : 'internal_error' };
         } finally {
             activePageRequestKeysRef.current.delete(pageRequestKey);
             if (!abortController.signal.aborted && loadGenerationRef.current === currentGeneration) {
@@ -836,8 +842,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
     }, []);
 
     const loadMore = React.useCallback(async (callerContext?: ActionExecutorContext) => {
-        if (!nextPage || loadingMore) return;
-        await loadCandidates({ continuation: nextPage, append: true, callerContext });
+        if (!nextPage || loadingMore) return { ok: true, value: { status: 'unchanged' } } as const;
+        return loadCandidates({ continuation: nextPage, append: true, callerContext });
     }, [loadCandidates, loadingMore, nextPage]);
     const cancelPreparation = React.useCallback(() => {
         loadGenerationRef.current += 1;

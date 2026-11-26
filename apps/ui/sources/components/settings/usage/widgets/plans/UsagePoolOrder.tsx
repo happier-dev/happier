@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 import { ConnectedServicePoolSelectionGetResponseV1Schema, type ConnectedServicePoolSelectionV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -767,6 +768,16 @@ function PoolWhyPopover(
 const EMPTY_COMPARISON: PluginUiResourceSnapshot = Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended' });
 const COMPARISON_STRATEGIES = ['manual', 'priority', 'least_limited', 'expiry_first'] as const;
 
+function readComparisonResponse(snapshot: PluginUiResourceSnapshot) {
+  if (isPluginUiResourceReadAuthorityLost(snapshot) || !snapshot.value) return null;
+  try {
+    const parsed = ConnectedServicePoolSelectionGetResponseV1Schema.safeParse(JSON.parse(new TextDecoder().decode(snapshot.value.bytes)));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The open detail owns only the question. The shared Resource and selector own its answer. */
 function PoolComparison(props: WhyProps) {
   const text = usePlanText();
@@ -789,10 +800,20 @@ function PoolComparison(props: WhyProps) {
   const subscribe = React.useCallback((listener: () => void) => entry?.subscribe(listener, true) ?? (() => {}), [entry]);
   const getSnapshot = React.useCallback(() => entry?.getSnapshot() ?? EMPTY_COMPARISON, [entry]);
   const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const result = React.useMemo(() => lifetime?.isCurrent() && !isPluginUiResourceReadAuthorityLost(snapshot) && snapshot.value
-    ? ConnectedServicePoolSelectionGetResponseV1Schema.safeParse(JSON.parse(new TextDecoder().decode(snapshot.value.bytes))) : null,
-  [lifetime, snapshot]);
-  const response = result?.success ? result.data : null;
+  const response = React.useMemo(() => lifetime?.isCurrent() ? readComparisonResponse(snapshot) : null, [lifetime, snapshot]);
+  const retry = async (_input: unknown, callerContext: ActionExecutorContext) => {
+    if (!entry || !lifetime?.isCurrent()) return { ok: false as const, code: 'usage_scope_unavailable', errorCode: 'usage_scope_unavailable' };
+    const read = await entry.refresh({ callerContext });
+    if (!lifetime.isCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+    if (read.error) {
+      const code = read.error.code ?? 'connected_account_daemon_runtime_unavailable';
+      return { ok: false as const, code, errorCode: code };
+    }
+    const answer = readComparisonResponse(read);
+    if (!answer) return { ok: false as const, code: 'connected_account_daemon_response_invalid', errorCode: 'connected_account_daemon_response_invalid' };
+    if ('status' in answer) return { ok: false as const, code: answer.code, errorCode: answer.code };
+    return { ok: true as const, result: { status: 'refreshed' } };
+  };
   // Only witnessed future clocks are offered; selecting one does not assert that a vendor quota refills then.
   const moments = [...new Set([
     ...props.accounts.filter(account => props.pool.accountKeys.includes(account.key)).flatMap(account => account.windows.map(window => window.resetAtMs)),
@@ -814,7 +835,7 @@ function PoolComparison(props: WhyProps) {
     } },
     ...moments.map(time => ({ key: `moment:${time}`, title: formatMoment(time, props.nowMs),
       invoke: () => { setAtMs(time); setAsked(true); setMomentOpen(false); } })),
-    ...(asked && snapshot.error ? [{ key: 'retry', title: t('common.retry'), invoke: async () => { await entry?.refresh(); } }] : []),
+    ...(asked && snapshot.error ? [{ key: 'retry', title: t('common.retry'), invoke: retry }] : []),
   ]);
   return <View style={styles.pool} testID={id}>
     <Text accessibilityRole="header" style={[styles.strong, text.title]}>{t('usage.board.plans.comparisonTitle')}</Text>

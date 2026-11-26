@@ -57,7 +57,7 @@ import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/wor
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { projectUsageOptionFacts, resolveUsageProjectTitles } from '@happier-dev/protocol/usage/usageFilterOptions';
-import { useUsageDisclosureCommand, useUsageRetryCommand } from './usageMountedControls';
+import { useUsageDisclosureCommand, useUsageRetryCommand, type UsageRetryRead } from './usageMountedControls';
 import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -608,7 +608,7 @@ const USAGE_ACCOUNTING_SOURCES = ['accounting'] as const;
 export function UsageBodyNoUsage(props: Readonly<{
   slice: UsageQueryResultSlice;
   testID: string;
-  onRetry: (callerContext?: ActionExecutorContext) => void;
+  onRetry: UsageRetryRead;
   /** The shape the body will take, so its first read holds that room. */
   readingShape?: React.ComponentProps<typeof UsageBodyReading>['shape'];
 }>) {
@@ -666,7 +666,7 @@ export function isUsageReadFailed(slice: UsageQueryResultSlice, sources: readonl
  */
 export function UsageBodyReadFailed(props: Readonly<{
   testID: string;
-  onRetry: (callerContext?: ActionExecutorContext) => void;
+  onRetry: UsageRetryRead;
 }> & (Readonly<{ slice: UsageQueryResultSlice; sources: readonly string[] }>
   | Readonly<{ errorCode: string }>)) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
@@ -1111,7 +1111,7 @@ export function UsageCoverageLine(
   props: Readonly<{
     slice: UsageQueryResultSlice;
     sources: readonly string[];
-    onRetry?: (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) => void | Promise<unknown>;
+    onRetry?: UsageRetryRead;
     testID: string;
   }>,
 ) {

@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import type { UsageRecapDeliveryOutcome } from '@happier-dev/protocol/usage/usageRecap';
 import { log } from '@/log';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
@@ -12,13 +13,14 @@ import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/
  */
 
 /** Shares a written cache file, reporting whether the platform actually took it. */
-async function shareUsageExportCacheFile(input: Readonly<{
+type UsageTextDocument = Readonly<{
     content: string;
     fileName: string;
-    mimeType?: string;
+    mimeType: string;
     isCurrent?: () => boolean;
-}>): Promise<boolean> {
-    if (input.isCurrent?.() === false) return false;
+}>;
+
+async function shareUsageExportCacheFile(input: UsageTextDocument): Promise<UsageRecapDeliveryOutcome> {
     try {
         const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: input.fileName });
         if (!sink.ok) throw new Error(sink.error);
@@ -27,19 +29,21 @@ async function shareUsageExportCacheFile(input: Readonly<{
             await sink.writeBytes(new TextEncoder().encode(input.content));
             await sink.close();
             const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: input.fileName, mimeType: input.mimeType, isCurrent: input.isCurrent });
-            if (result.status !== 'shared') return false;
+            if (result.status === 'canceled') return { kind: 'cancelled' };
+            if (result.status === 'unavailable') return { kind: 'unavailable', reason: 'delivery_target_unavailable' };
             retainCacheFile = result.retainCacheFile;
-            return true;
+            return result.completion === 'confirmed' ? { kind: 'delivered' }
+                : { kind: 'failed', reason: 'outcome_unobservable', handoff: 'presented' };
         } finally {
-            if (!retainCacheFile) await sink.cleanup();
+            if (!retainCacheFile) await sink.cleanup().catch(() => { /* The sink reports cleanup beside the settled result. */ });
         }
     } catch (error) {
         log.log(`Failed to export usage cache file: ${error instanceof Error ? error.message : String(error)}`);
-        return false;
+        return input.isCurrent?.() === false ? { kind: 'cancelled' } : { kind: 'failed', reason: 'delivery_failed' };
     }
 }
 
-function downloadTextOnWeb(content: string, fileName: string, mimeType: string): boolean {
+function downloadTextOnWeb(content: string, fileName: string, mimeType: string): void {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     try {
@@ -74,19 +78,20 @@ function downloadTextOnWeb(content: string, fileName: string, mimeType: string):
             }
         }, 1000);
     }
-    return true;
 }
 
 /** Downloads on web, shares from the native cache elsewhere. */
-export async function exportUsageTextDocument(input: Readonly<{
-    content: string;
-    fileName: string;
-    mimeType: string;
-    isCurrent?: () => boolean;
-}>): Promise<boolean> {
-    if (input.isCurrent?.() === false) return false;
+export async function deliverUsageTextDocument(input: UsageTextDocument): Promise<UsageRecapDeliveryOutcome> {
+    if (input.isCurrent?.() === false) return { kind: 'cancelled' };
     if (Platform.OS === 'web') {
-        return downloadTextOnWeb(input.content, input.fileName, input.mimeType);
+        downloadTextOnWeb(input.content, input.fileName, input.mimeType);
+        return { kind: 'delivered' };
     }
     return await shareUsageExportCacheFile(input);
+}
+
+/** Existing calendar and Team export buttons acknowledge the platform handoff. */
+export async function exportUsageTextDocument(input: UsageTextDocument): Promise<boolean> {
+    const result = await deliverUsageTextDocument(input);
+    return result.kind === 'delivered' || result.kind === 'failed' && result.handoff === 'presented';
 }

@@ -6,7 +6,7 @@ import {
   type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 import type { AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
-import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
@@ -166,15 +166,17 @@ export function useWidgetAreaLayouts(
     [execute, interest, isCurrent, scope],
   );
 
-  const load = React.useCallback(async (callerContext?: ActionExecutorContext) => {
-    if (!surface || !isCurrent()) return null;
+  const load = React.useCallback(async (callerContext?: ActionExecutorContext): Promise<ActionExecuteFailure
+    | Readonly<{ ok: true; result: { layouts: readonly WidgetAreaLayoutSummaryV1[] } }>> => {
+    const cancelled = { ok: false, errorCode: 'cancelled', error: 'cancelled' } as const;
+    if (!surface || !isCurrent()) return { ok: false, errorCode: 'widget_area_scope_unavailable', error: 'widget_area_scope_unavailable' };
     const current = ++generation.current;
     let outcome: ActionExecuteResult;
     try {
       outcome = await run('widgets.area.layout.list', { surface }, undefined, callerContext);
     } catch (error) {
-      if (!isCurrent() || current !== generation.current || interest.controller.signal.aborted) return null;
-      if (error instanceof Error && error.name === 'AbortError') return null;
+      if (!isCurrent() || current !== generation.current || interest.controller.signal.aborted) return cancelled;
+      if (error instanceof Error && error.name === 'AbortError') return cancelled;
       outcome = { ok: false, errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string'
         ? error.code : 'widget_area_unavailable', error: t('errors.operationFailed') };
     }
@@ -183,8 +185,8 @@ export function useWidgetAreaLayouts(
           'widgets.area.layout.list'
         ].safeParse(outcome.result)
       : null;
-    if (!isCurrent() || current !== generation.current) return null;
-    if (!outcome.ok && outcome.errorCode === 'cancelled') return null;
+    if (!isCurrent() || current !== generation.current) return cancelled;
+    if (!outcome.ok && outcome.errorCode === 'cancelled') return outcome;
     const authorityLost = !outcome.ok && isPluginUiResourceReadAuthorityLost({
       freshness: 'unknown', pending: 'idle', subscription: 'ended',
       error: { code: outcome.errorCode, message: outcome.error ?? outcome.errorCode ?? '' },
@@ -199,8 +201,14 @@ export function useWidgetAreaLayouts(
           readFailure: { reasonCode: outcome.ok ? 'invalid_action_output' : outcome.errorCode ?? 'widget_area_unavailable' } });
       return previous.observation === observation && previous.state === state ? previous : { observation, state };
     });
-    return parsed?.success ? parsed.data.layouts : null;
+    if (!outcome.ok) return outcome;
+    return parsed?.success ? { ok: true, result: parsed.data }
+      : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
   }, [interest, isCurrent, observation, run, surface, surfaceKey, retained]);
+  const reload = React.useCallback(async (callerContext?: ActionExecutorContext) => {
+    const outcome = await load(callerContext);
+    return outcome.ok ? outcome.result.layouts : null;
+  }, [load]);
 
   React.useEffect(() => {
     setInventory(previous => previous.observation === observation
@@ -285,7 +293,7 @@ export function useWidgetAreaLayouts(
       readFailure: state.readFailure ? { ...state.readFailure, retry: load } : undefined,
       approvalId: approval.approvalId,
       approvalPending: approval.approvalPending,
-      reload: load,
+      reload,
       select,
       prepareToShare: (dashboard: WidgetAreaLayoutSummaryV1): Promise<ProjectDashboardMutation> =>
         dashboard.isPreset && dashboard.revision === null
@@ -328,6 +336,6 @@ export function useWidgetAreaLayouts(
           position,
         }, retry),
     }),
-    [approval.approvalId, approval.approvalPending, load, mutate, run, select, state, surface],
+    [approval.approvalId, approval.approvalPending, load, mutate, reload, run, select, state, surface],
   );
 }

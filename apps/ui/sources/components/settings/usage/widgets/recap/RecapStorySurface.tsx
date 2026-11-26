@@ -258,25 +258,28 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
         [props.cacheSavings, props.filters, props.viewModel, props.query, props.recap],
     );
 
-    const slide = slides[Math.min(index, Math.max(0, slides.length - 1))];
+    const activeIndex = Math.min(index, Math.max(0, slides.length - 1));
+    const slide = slides[activeIndex];
     // ONE signature accent (D-1); per-slide identity comes from gradient
     // geometry + choreography, never from a different hue.
     const accentColor = usageSignatureAccent(theme);
     const activityCell = useUsageActivityGridTooltip(accentColor, slide?.visual?.kind === 'activityMatrix' ? slide.visual.rowSize : 7, slide?.label ?? t('usage.activity'));
 
     const goForward = React.useCallback(() => {
-        setIndex((current) => {
-            if (current >= slides.length - 1) {
-                props.onDismiss?.();
-                return current;
-            }
-            return current + 1;
-        });
-    }, [props, slides.length]);
+        if (activeIndex < slides.length - 1) {
+            setIndex(activeIndex + 1);
+            return { ok: true, result: { status: 'changed' } } as const;
+        }
+        if (!props.onDismiss) return { ok: true, result: { status: 'unchanged' } } as const;
+        props.onDismiss();
+        return { ok: true, result: { status: 'closed' } } as const;
+    }, [activeIndex, props.onDismiss, slides.length]);
 
     const goBack = React.useCallback(() => {
-        setIndex((current) => Math.max(0, current - 1));
-    }, []);
+        if (activeIndex === 0) return { ok: true, result: { status: 'unchanged' } } as const;
+        setIndex(activeIndex - 1);
+        return { ok: true, result: { status: 'changed' } } as const;
+    }, [activeIndex]);
 
     const share = React.useCallback((invocation: CurrentUiContextCommandInvocation) => {
         props.onShare?.(invocation);

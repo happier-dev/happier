@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
@@ -32,8 +33,27 @@ export type UsageWidgetBodyModel = Readonly<{
     freshness: PluginUiResourceSnapshot['freshness']; updatingPreviousPeriod: boolean;
     /** The shown facts' own read is in flight. Another source still outstanding is that source's state, not this. */
     refreshing: boolean;
-    refresh(callerContext?: ActionExecutorContext, options?: { failedOnly: true }): Promise<void>;
+    refresh(callerContext?: ActionExecutorContext, options?: { failedOnly: true }): Promise<ActionExecuteResult | void>;
 }>;
+
+/** Page and body recovery use the settled Resource read that supplied the rendered facts. */
+export async function retryUsageWidgetResource(
+    entry: UsageQueryResourceEntry | null,
+    lifetime: ServerAccountScopeLifetime | null,
+    options: Parameters<UsageQueryResourceEntry['refresh']>[0],
+    select = (slices: readonly UsageQueryResultSlice[]) => slices,
+): Promise<ActionExecuteResult> {
+    const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
+    if (!entry || !lifetime?.isCurrent()) return failure('action_account_scope_changed');
+    const read = await entry.refresh(options);
+    if (!lifetime.isCurrent()) return failure('action_account_scope_changed');
+    if (read.error) return failure(read.error.code ?? 'usage_query_failed');
+    if (!read.value) return { ok: true, result: { status: 'unchanged' } };
+    const slices = select(decodeUsageQueryResource(read.value).results);
+    const code = slices.flatMap(slice => slice.sources)
+        .find(source => source.status !== 'unsupported' && source.errorCode)?.errorCode;
+    return code ? failure(code) : { ok: true, result: { status: 'refreshed' } };
+}
 const EMPTY_SNAPSHOT: PluginUiResourceSnapshot = Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended' });
 type UsageWidgetBodySnapshot = Readonly<Pick<PluginUiResourceSnapshot, 'freshness' | 'error'> & {
     pending: boolean; readActivity: boolean;
@@ -241,9 +261,10 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
     const sourceError = slice?.sources.find(source => source.errorCode);
     const error = React.useMemo(() => snapshot.error ?? (sourceError
         ? { code: sourceError.errorCode!, message: sourceError.errorCode! } : null), [snapshot.error, sourceError]);
-    const refresh = React.useCallback(async (callerContext?: ActionExecutorContext, options?: { failedOnly: true }) => {
-        if (lifetime?.isCurrent()) await entry?.refresh({ callerContext, failedOnly: options?.failedOnly });
-    }, [entry, lifetime]);
+    const refresh = React.useCallback((callerContext?: ActionExecutorContext, options?: { failedOnly: true }) =>
+        retryUsageWidgetResource(entry, lifetime, { callerContext, failedOnly: options?.failedOnly },
+            slices => slices.flatMap(value => acceptsSlice(value) && rows.some(row => row.key === value.key)
+                ? [projectSlice(value, undefined)] : [])), [entry, lifetime, acceptsSlice, rows, projectSlice]);
     // The batch may still be reading private detail or allowance after accounting
     // settles. Those sources keep their own pending state; they do not re-read
     // the already shown accounting. Before the first progress snapshot, retain

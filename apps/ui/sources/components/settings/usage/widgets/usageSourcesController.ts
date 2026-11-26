@@ -164,9 +164,14 @@ export function createUsageSourcesController(options: Readonly<{
         operations.set(controller, operation);
         publish({ ...snapshot, pending: [...operations.values()], error: null, approval: null, machineReadFailed: false });
         try {
+            let discovered: readonly UsageSourceV1[] | undefined;
             const result = await execute(actionId, input, {
-                ...(callerContext ?? { surface: 'ui' as const }), serverId: target.serverId, expectedAccountId: options.lifetime.scope.accountId,
+                ...(callerContext ?? { surface: 'ui' as const }),
+                serverId: target.serverId, expectedAccountId: options.lifetime.scope.accountId,
                 signal: controller.signal,
+                ...(actionId === 'usage.sources.discover' && callerContext ? {
+                    captureUsageSourceDiscovery: (sources: readonly UsageSourceV1[]) => { discovered = sources; },
+                } : {}),
             });
             if (!current()) return failure('action_account_scope_changed');
             if (!operations.has(controller)) return failure('cancelled');
@@ -179,7 +184,7 @@ export function createUsageSourcesController(options: Readonly<{
                 publish({ ...snapshot, approval: approval.data });
                 return result;
             }
-            const data = parseUsageSourceActionResult(actionId, input, result.result);
+            const data = parseUsageSourceActionResult(actionId, input, discovered ? { sources: discovered } : result.result);
             if (!data) {
                 const invalid = failure(isRead(actionId) ? 'usage_source_response_invalid' : 'usage_source_mutation_outcome_unknown');
                 publishFailure(actionId, sourceId, invalid);

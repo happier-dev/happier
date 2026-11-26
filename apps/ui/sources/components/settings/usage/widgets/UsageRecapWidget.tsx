@@ -4,7 +4,8 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { formatHappierDataValue, UsageRecapBody, type UsageRecapHighlight } from '@happier-dev/plugin-ui/presentation';
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { UsageExportFieldSchema, UsageFileResultSchema, type UsageExportInput } from '@happier-dev/protocol/usage/usageExport';
 import { composeUsageRecap } from '@happier-dev/protocol/usage/composeUsageRecap';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -18,9 +19,11 @@ import { buildUsageRecapCardModels } from '@/sync/domains/usage/recap/buildUsage
 import { ClipboardWriteResultSchema } from '@happier-dev/protocol/actions/clipboardActionFamily';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { getPreferredLanguage, t } from '@/text';
-import { exportUsageTextDocument } from '../usageExportFile';
+import { deliverUsageTextDocument } from '../usageExportFile';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { projectActionResultForCurrentUiCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import type { CurrentUiContextVoiceInvocationOutcome } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -56,11 +59,11 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
   const shownKey = getUsageQueryKey(shownQuery);
   const delivery = React.useRef<AbortController | null>(null);
   const [exporting, setExporting] = React.useState<UsageExportInput['format'] | null>(null);
-  const [exportFailed, setExportFailed] = React.useState(false);
+  const [exportNotice, setExportNotice] = React.useState<'exportFailed' | 'deliveryUnconfirmed' | null>(null);
   const [exportsOpen, setExportsOpen] = React.useState(false);
   const Bridge = useCurrentUiContextCommandBridge();
   React.useEffect(() => {
-    setExportFailed(false);
+    setExportNotice(null);
     setExporting(null);
     return () => { delivery.current?.abort(); delivery.current = null; };
   }, [shownKey, props.serverId]);
@@ -69,38 +72,45 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     return field.success ? [field.data] : [];
   }), [props.slice.accounting]);
   const execution = useMountedActionExecution(props.serverId);
-  const exportFacts = async (format: UsageExportInput['format'], invocation: CurrentUiContextCommandInvocation, commandSignal?: AbortSignal) => {
-    if (!execution.isCurrent()) return;
+  const exportFacts = async (format: UsageExportInput['format'], invocation: CurrentUiContextCommandInvocation,
+    commandSignal?: AbortSignal): Promise<CurrentUiContextVoiceInvocationOutcome> => {
+    if (!execution.isCurrent()) return { ok: false, code: 'stale_surface' };
     const controller = new AbortController();
     delivery.current?.abort();
     delivery.current = controller;
     const cancellation = mergeAbortSignals([controller.signal, commandSignal]);
     const isCurrent = () => !cancellation.signal.aborted && execution.isCurrent();
+    const settle = (outcome: ActionExecuteResult) => {
+      if (isCurrent()) {
+        setExportNotice(outcome.ok || outcome.errorCode === 'cancelled' || isActionApprovalDeclinedErrorCode(outcome.errorCode)
+          ? null : outcome.errorCode === 'outcome_unobservable' ? 'deliveryUnconfirmed' : 'exportFailed');
+      }
+      return projectActionResultForCurrentUiCommand(outcome);
+    };
+    const refuse = (errorCode: string) => settle({ ok: false, errorCode, error: errorCode });
     setExporting(format);
-    setExportFailed(false);
+    setExportNotice(null);
     try {
       const executed = await invocation.execute(execution, 'usage.export', {
         query: shownQuery, format, fields: format === 'text' ? ['totals']
           : [...new Set([...exportFields, 'contributions' as const])],
       }, { signal: cancellation.signal });
-      if (!isCurrent()) return;
-      if (!executed.ok) {
-        // A declined approval is the person's own answer, not a failed export.
-        if (!isActionApprovalDeclinedErrorCode(executed.errorCode)) throw new Error(executed.errorCode);
-        return;
-      }
+      if (!executed.ok || isDeferredApprovalResult(executed)) return settle(executed);
+      if (!isCurrent()) return refuse('cancelled');
       const file = UsageFileResultSchema.parse(executed.result);
       const content = new TextDecoder().decode(decodeBase64(file.base64));
-      let delivered: boolean;
       if (format === 'text') {
         const copied = await invocation.execute(execution, 'clipboard.write', { text: content }, { signal: cancellation.signal });
-        delivered = copied.ok && ClipboardWriteResultSchema.safeParse(copied.result).success;
-      } else {
-        delivered = await exportUsageTextDocument({ content, fileName: file.fileName, mimeType: file.mediaType, isCurrent });
+        if (!copied.ok || isDeferredApprovalResult(copied)) return settle(copied);
+        const receipt = ClipboardWriteResultSchema.safeParse(copied.result);
+        return receipt.success ? settle({ ...copied, result: receipt.data }) : refuse('invalid_action_output');
       }
-      if (isCurrent()) setExportFailed(!delivered);
+      const fileDelivery = await deliverUsageTextDocument({ content, fileName: file.fileName, mimeType: file.mediaType, isCurrent });
+      if (fileDelivery.kind === 'cancelled') return refuse('cancelled');
+      if (fileDelivery.kind === 'delivered') return settle({ ok: true, result: fileDelivery });
+      return settle({ ok: false, errorCode: fileDelivery.reason, error: fileDelivery.reason, details: fileDelivery });
     } catch {
-      if (isCurrent()) setExportFailed(true);
+      return refuse(isCurrent() ? 'delivery_failed' : 'cancelled');
     } finally {
       cancellation.dispose();
       if (delivery.current === controller) { delivery.current = null; setExporting(null); }
@@ -246,7 +256,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
           actions={exportActions}
         />
       </>}
-      notice={exportFailed ? <SurfaceFreshnessLine testID={`${props.testID}.exportNotice`} tone="warning"
-        reason={t('usage.board.recap.exportFailed')} /> : null} />
+      notice={exportNotice ? <SurfaceFreshnessLine testID={`${props.testID}.exportNotice`} tone="warning"
+        reason={t(`usage.board.recap.${exportNotice}`)} /> : null} />
   );
 }

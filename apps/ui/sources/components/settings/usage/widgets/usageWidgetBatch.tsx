@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext, type WidgetFrameDemand } from '@/components/widgets/frame/widgetFrameDemand';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
@@ -33,6 +34,7 @@ import {
   useUsageWidgetQuerySliceSelection,
   useUsageWidgetResource,
   useUsageWidgetResourceSubscription,
+  retryUsageWidgetResource,
   type UsageWidgetBodyModel,
   type UsageWidgetResource,
   type UsageWidgetSliceProjection,
@@ -571,11 +573,12 @@ function useUsageWidgetCostBasis(resource: UsageWidgetResource | null): UsageWid
  * The page's one Retry for a failed shared read, said beside the header's "Couldn't read …" fact. Every body
  * reads the same batch entry, so re-reading it is what each body's own Retry would do; outside a page, null.
  */
-export function useUsageWidgetPageRetry(): (() => void) | null {
+export function useUsageWidgetPageRetry(): ((callerContext?: ActionExecutorContext) => Promise<ActionExecuteResult>) | null {
     const batch = React.useContext(UsageWidgetBatchContext);
     const entry = batch?.resource.entry ?? null;
     const lifetime = batch?.resource.lifetime ?? null;
-    return React.useMemo(() => entry ? () => { if (lifetime?.isCurrent()) void entry.refresh({ failedOnly: true }); } : null, [entry, lifetime]);
+    return React.useMemo(() => entry ? (callerContext?: ActionExecutorContext) =>
+        retryUsageWidgetResource(entry, lifetime, { callerContext, failedOnly: true }) : null, [entry, lifetime]);
 }
 
 /**

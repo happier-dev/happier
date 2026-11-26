@@ -6062,9 +6062,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           : { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const request = { actionId: id, input } as UsageSourceActionRequest;
         const result = await deps.usageSourceAction(request, ctx);
-        return readActionFailureEnvelope(result) ?? { ok: true, result: 'sources' in result
-          ? projectUsageSourcesDelivery(result, 'sourceId' in input ? input.sourceId : undefined, ctx.surface)
-          : result };
+        const refusal = readActionFailureEnvelope(result);
+        if (refusal) return refusal;
+        if (!('sources' in result)) return { ok: true, result };
+        if (id === 'usage.sources.discover') ctx.captureUsageSourceDiscovery?.(result.sources);
+        return { ok: true, result: projectUsageSourcesDelivery(result, 'sourceId' in input ? input.sourceId : undefined, ctx.surface) };
       }
       const connectedServiceActionId = isActionFamilyId(actionId, ConnectedServiceConfigurationActionIdV1Schema) ? actionId : null;
       if (connectedServiceActionId !== null) {

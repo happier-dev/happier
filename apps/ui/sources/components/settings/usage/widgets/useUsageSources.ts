@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createUsageSourcesController, type UsageSourcesController, type UsageSourcesSnapshot } from './usageSourcesController';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -16,7 +16,7 @@ const subscribeUnavailable = () => () => {};
 type MountedController = Readonly<{
     machineId: string;
     lifetime: ServerAccountScopeLifetime;
-    executor: UsageSourcesHookOptions['executor'];
+    execute: NonNullable<UsageSourcesHookOptions['executor']>['execute'];
     controller: UsageSourcesController;
 }>;
 
@@ -33,8 +33,12 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
             controllerRef.current?.deliverDismiss(...args) ?? { status: 'unavailable' as const },
     }), [machineId, lifetime]);
     const mountedExecution = useMountedActionExecution(lifetime?.scope, { executorOptions });
-    const executor = options.executor ?? mountedExecution;
-    const execute = executor.execute;
+    const { execute: executeFromUi, executeForCaller } = mountedExecution;
+    const executeMounted = useCallback<MountedController['execute']>((actionId, input, context) =>
+        context && (context.surface !== 'ui' || context.authority || context.actionCaller)
+            ? executeForCaller(actionId, input, context)
+            : executeFromUi(actionId, input, context), [executeForCaller, executeFromUi]);
+    const execute = options.executor?.execute ?? executeMounted;
     const ready = options.executor !== undefined || mountedExecution.ready;
     const [mounted, setMounted] = useState<MountedController | null>(null);
     useEffect(() => {
@@ -42,7 +46,7 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
         // Creation after commit avoids leaking lifetime subscriptions from a discarded render.
         const controller = createUsageSourcesController({ machineId, lifetime, executor: { execute } });
         controllerRef.current = controller;
-        setMounted({ machineId, lifetime, executor, controller });
+        setMounted({ machineId, lifetime, execute, controller });
         return () => {
             if (controllerRef.current === controller) controllerRef.current = null;
             controller.dispose();
@@ -50,7 +54,7 @@ export function useUsageSourcesController(options: UsageSourcesHookOptions): Rea
     }, [machineId, lifetime, execute]);
     // The next render cannot label the previous Machine/Account's rows as its own,
     // even before the effect retires the old controller.
-    const controller = mounted?.machineId === machineId && mounted.lifetime === lifetime && mounted.executor?.execute === execute
+    const controller = mounted?.machineId === machineId && mounted.lifetime === lifetime && mounted.execute === execute
         ? mounted.controller : null;
     const snapshot = useSyncExternalStore(controller?.subscribe ?? subscribeUnavailable,
         controller?.getSnapshot ?? readUnavailable, controller?.getSnapshot ?? readUnavailable);

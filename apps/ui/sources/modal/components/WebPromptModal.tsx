@@ -66,8 +66,8 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
         didResolveRef.current = true;
         onConfirm(value);
         onClose();
-        return true;
-    }, [config.onConfirmContext, onClose, onConfirm]);
+        return config.onAnswer ? config.onAnswer(value, context) : true;
+    }, [config.onAnswer, config.onConfirmContext, onClose, onConfirm]);
 
     useEffect(() => {
         // Auto-focus the input when modal opens. A prompt closed before the timer fires must not

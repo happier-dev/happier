@@ -26,6 +26,9 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { projectActionResultForCurrentUiCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { UsageActionPorts } from '@happier-dev/protocol/actions/executor/usageActions';
 import {
@@ -252,7 +255,7 @@ function UsageRecapImageOutput(
   const fromProfile = imageSource === 'public_profile';
   const { setStyle, setFormat, setPeriod, setFields, setSourceSelection } = props;
   const [state, setState] = React.useState<ComposeState>({ kind: 'composing' });
-  const [composeAttempt, retryCompose] = React.useReducer((attempt: number) => attempt + 1, 0);
+  const composeController = React.useRef<AbortController | null>(null);
   const [delivery, setDelivery] = React.useState<
     'copy' | 'save' | 'share' | null
   >(null);
@@ -274,81 +277,80 @@ function UsageRecapImageOutput(
   const selectedFields = React.useMemo(() => USAGE_RECAP_FIELDS.filter(field => fields.includes(field)), [fieldsKey]);
   React.useEffect(() => () => deliveryController.current?.abort(), [style, format, selectedFields, period, sourceSelection, imageSource, compositionQuery, props.serverId]);
 
-  // Every selected presentation is admitted with its period and fields by the same compose Action.
-  React.useEffect(() => {
-    const controller = new AbortController();
+  // Selection changes and explicit Retry use the same admitted compose operation.
+  const compose = React.useCallback(async (
+    origin = props.invocation.current,
+    commandSignal?: AbortSignal,
+  ): Promise<ActionExecuteResult> => {
     const { execute, isCurrent, binding, resolution } = executionRef.current;
-    const origin = props.invocation.current;
-    const retirement = binding?.onRetire(() => {
-      controller.abort();
-      setState({ kind: 'failed', code: 'usage_scope_unavailable' });
-    });
-    // A new style, format, period or field set keeps the last card and its style tiles until it is composed.
+    const failure = (code: string): ActionExecuteResult => ({ ok: false, error: code, errorCode: code });
+    if (!binding && resolution.kind === 'resolving') return failure('usage_scope_unavailable');
+    composeController.current?.abort();
+    const controller = new AbortController();
+    composeController.current = controller;
+    const cancellation = mergeAbortSignals([controller.signal, commandSignal]);
     setState(previous => {
       const shown = previous.kind === 'ready' ? previous.result : previous.kind === 'composing' ? previous.shown : undefined;
       return shown ? { kind: 'composing', shown } : { kind: 'composing' };
     });
-    // The Account binding resolves asynchronously; composing waits for it rather than failing early.
-    if (!binding && resolution.kind === 'resolving') return () => controller.abort();
-    void (async () => {
+    try {
       if (!isCurrent()) {
         setState({ kind: 'failed', code: 'usage_scope_unavailable' });
-        return;
+        return failure('action_account_scope_changed');
       }
-      const operation = { signal: controller.signal };
-      if (fromProfile) {
-        // The captured Account's current public profile: the public Action reads no private Usage.
-        const input = { source: { kind: 'public_profile' as const }, style, format, selectedFields: selectedFields.filter(isPublicRecapField) };
-        const executed = origin
-          ? await origin.execute(executionRef.current, 'usage.recap.compose', input, operation)
-          : await execute('usage.recap.compose', input, operation);
-        if (controller.signal.aborted || !isCurrent()) return;
-        if (!executed.ok) { setState({ kind: 'failed', code: queryFailureDiagnostic(executed) }); return; }
-        const parsed = UsageRecapComposeResultSchema.safeParse(executed.result);
-        if (!parsed.success) { setState({ kind: 'failed', code: 'usage_recap_result_invalid' }); return; }
-        setState(parsed.data.kind === 'composed' ? { kind: 'ready', result: parsed.data, query: null }
-          : { kind: 'unavailable', reason: parsed.data.reason });
-        return;
-      }
-      const nowMs = Date.now();
-      const offset = compositionQuery.timeZoneOffsetMinutes ?? 0;
-      const query = UsageQuerySchema.parse({
+      const operation = { signal: cancellation.signal };
+      const query = fromProfile ? null : UsageQuerySchema.parse({
         ...compositionQuery,
         granularity: getUsagePeriodDefinition(period).granularity,
-        period: resolveUsageQueryPeriod({ period: { relative: period }, timeZoneOffsetMinutes: offset }, nowMs),
+        period: resolveUsageQueryPeriod({
+          period: { relative: period }, timeZoneOffsetMinutes: compositionQuery.timeZoneOffsetMinutes ?? 0,
+        }, Date.now()),
       });
-      const input = {
-          query,
-          sourceSelection,
-          style,
-          format,
-          selectedFields: [...selectedFields],
-        };
-      const executed = origin
-        ? await origin.execute(executionRef.current, 'usage.recap.private.compose', input, operation)
-        : await execute('usage.recap.private.compose', input, operation);
-      if (controller.signal.aborted || !isCurrent()) return;
+      const run = (actionId: 'usage.recap.compose' | 'usage.recap.private.compose', input: unknown) => origin
+        ? origin.execute(executionRef.current, actionId, input, operation)
+        : execute(actionId, input, operation);
+      const executed = query === null
+        ? await run('usage.recap.compose', {
+          style, format, source: { kind: 'public_profile' }, selectedFields: selectedFields.filter(isPublicRecapField),
+        })
+        : await run('usage.recap.private.compose', { style, format, query, sourceSelection, selectedFields });
+      if (!isCurrent()) return failure('action_account_scope_changed');
+      if (cancellation.signal.aborted) return failure('cancelled');
       if (!executed.ok) {
         setState({ kind: 'failed', code: queryFailureDiagnostic(executed) });
-        return;
+        return executed;
       }
+      if (isDeferredApprovalResult(executed)) return executed;
       const parsed = UsageRecapComposeResultSchema.safeParse(executed.result);
       if (!parsed.success) {
         setState({ kind: 'failed', code: 'usage_recap_result_invalid' });
-        return;
+        return failure('usage_recap_result_invalid');
       }
-      setState(
-        parsed.data.kind === 'composed'
-          ? { kind: 'ready', result: parsed.data, query }
-          : { kind: 'unavailable' },
-      );
-    })().catch(() => {
-      if (!controller.signal.aborted && isCurrent()) {
-        setState({ kind: 'failed', code: 'usage_recap_compose_failed' });
-      }
+      const result = parsed.data;
+      setState(result.kind === 'composed' ? { kind: 'ready', result, query } : { kind: 'unavailable', reason: result.reason });
+      return { ok: true, result: result.kind === 'composed' ? { status: 'refreshed' } : { status: 'unavailable', reason: result.reason } };
+    } catch {
+      if (!isCurrent()) return failure('action_account_scope_changed');
+      if (cancellation.signal.aborted) return failure('cancelled');
+      setState({ kind: 'failed', code: 'usage_recap_compose_failed' });
+      return failure('usage_recap_compose_failed');
+    } finally {
+      cancellation.dispose();
+      if (composeController.current === controller) composeController.current = null;
+    }
+  }, [style, format, period, sourceSelection, fromProfile, selectedFields, compositionQuery, props.invocation]);
+
+  React.useEffect(() => {
+    void compose();
+    const retirement = execution.binding?.onRetire(() => {
+      composeController.current?.abort();
+      setState({ kind: 'failed', code: 'usage_scope_unavailable' });
     });
-    return () => { retirement?.dispose(); controller.abort(); };
-  }, [style, format, period, sourceSelection, imageSource, selectedFields, compositionQuery, execution.binding, composeAttempt]);
+    return () => {
+      retirement?.dispose();
+      composeController.current?.abort();
+    };
+  }, [compose, execution.binding]);
 
   const composed =
     state.kind === 'ready' ? state.result : null;
@@ -369,8 +371,10 @@ function UsageRecapImageOutput(
 
   const deliver = React.useCallback(
     async (intent: 'copy' | 'save' | 'share', invocation: CurrentUiContextCommandInvocation, commandSignal?: AbortSignal) => {
-      if (!composed || state.kind !== 'ready' || !cardRef.current) return;
-      if (!executionIsCurrent()) return;
+      if (!executionIsCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+      if (!composed || state.kind !== 'ready' || !cardRef.current) {
+        return { ok: false as const, code: 'usage_recap_export_unavailable', errorCode: 'usage_recap_export_unavailable' };
+      }
       const controller = new AbortController();
       deliveryController.current?.abort();
       deliveryController.current = controller;
@@ -397,11 +401,14 @@ function UsageRecapImageOutput(
           : await invocation.execute(execution, 'usage.recap.private.deliver',
             { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent }, render);
         cancellation.signal.throwIfAborted();
-        if (!executionIsCurrent() || !executed.ok) throw new Error('usage_recap_export_unavailable');
+        if (!executionIsCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+        if (!executed.ok) {
+          setNotice(t('usage.board.recap.exportFailed'));
+          return projectActionResultForCurrentUiCommand(executed);
+        }
+        if (isDeferredApprovalResult(executed)) return projectActionResultForCurrentUiCommand(executed);
         const result = UsageRecapDeliveryResultSchema.parse(executed.result);
-        if (result.compose.kind !== 'composed') throw new Error('usage_recap_export_unavailable');
-        setState({ kind: 'ready', result: result.compose, query: state.query });
-        if (cancellation.signal.aborted || !executionIsCurrent()) return;
+        if (result.compose.kind === 'composed') setState({ kind: 'ready', result: result.compose, query: state.query });
         setNotice(
           result.kind === 'cancelled' ? null : result.kind === 'delivered'
             ? intent === 'copy'
@@ -411,8 +418,15 @@ function UsageRecapImageOutput(
               ? t('usage.board.recap.deliveryUnconfirmed')
               : t('usage.board.recap.exportFailed'),
         );
+        if (result.kind === 'delivered') return { ok: true as const, result: { status: 'delivered' } };
+        const code = result.kind === 'cancelled' ? 'cancelled' : result.reason;
+        return { ok: false as const, code, errorCode: code,
+          ...(result.kind === 'failed' && result.handoff ? { details: { handoff: result.handoff } } : {}) };
       } catch {
-        if (!cancellation.signal.aborted && executionIsCurrent()) setNotice(t('usage.board.recap.exportFailed'));
+        if (cancellation.signal.aborted) return { ok: false as const, code: 'cancelled', errorCode: 'cancelled' };
+        if (!executionIsCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+        setNotice(t('usage.board.recap.exportFailed'));
+        return { ok: false as const, code: 'usage_recap_export_unavailable', errorCode: 'usage_recap_export_unavailable' };
       } finally {
         cancellation.dispose();
         if (deliveryController.current === controller) {
@@ -457,7 +471,8 @@ function UsageRecapImageOutput(
       title: `${t('usage.board.recap.fieldsLabel')}: ${t(`usage.board.recap.field_${field}`)}`,
       invoke: (input: PluginUiJsonValueV1 | undefined, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; toggle(field, typeof input === 'boolean' ? input : !fields.includes(field)); } })),
     ...(state.kind === 'failed' ? [{ key: 'retry', title: t('common.retry'),
-      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; retryCompose(); } }] : []),
+      invoke: async (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) =>
+        projectActionResultForCurrentUiCommand(await compose(invocation, context.signal)) }] : []),
     ...(composed && delivery === null ? (['copy', 'save', 'share'] as const).map(intent => ({ key: `deliver:${intent}`,
       title: t(`usage.board.recap.${intent}`), invoke: (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => deliver(intent, invocation, context.signal) })) : []),
   ], { foregroundOverlay: true });

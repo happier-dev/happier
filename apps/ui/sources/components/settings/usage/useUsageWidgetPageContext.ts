@@ -1,10 +1,12 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { UsageQuerySchema, getUsageQueryKey, type UsageAccountingMetric, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useOptionalCurrentUiContextReader, usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import type { CurrentUiContextMountedEnrichment, CurrentUiContextMountedCommand } from '@/components/appShell/currentUiContext/currentUiContextModel';
-import { executeMountedCurrentUiContextCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { executeMountedCurrentUiContextCommand, projectActionResultForCurrentUiCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommandDefinitions, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { USAGE_PERIODS, getUsagePeriodDefinition, type UsagePeriod } from '@/sync/api/account/usagePeriods';
@@ -136,8 +138,8 @@ export type UsageWidgetPagePublicationInput = Readonly<{
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
     /** The existing area Action has no cancellation port; true means acknowledged success. */
     selectLayout?: (layoutId: string, callerContext?: ActionExecutorContext) => boolean | Promise<boolean>;
-    retryRead?: (callerContext?: ActionExecutorContext) => void | Promise<unknown>;
-    retryLayouts?: (callerContext?: ActionExecutorContext) => Promise<unknown>;
+    retryRead?: (callerContext?: ActionExecutorContext) => Promise<ActionExecuteResult>;
+    retryLayouts?: (callerContext?: ActionExecutorContext) => Promise<ActionExecuteResult>;
     filterCommands?: readonly Readonly<{ field: string; id: string; title: string; invoke(callerContext?: ActionExecutorContext): boolean | Promise<boolean> }>[];
     /** The shown wide window's history read (`useUsageHistory`); its Read now and Cancel are page commands. */
     history?: UsageHistoryModel | null;
@@ -200,13 +202,10 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const historyAbsorbed = describedHistory?.failed === true && input.retryRead !== undefined;
     const historyRead = historyAbsorbed ? null : describedHistory;
     const historyTitle = historyRead ? t(historyRead.operation === 'cancel' ? 'usage.board.page.historyCancelCommand' : 'usage.board.page.historyReadCommand') : null;
-    const runHistory = React.useCallback((operation: 'read' | 'cancel', invocation?: CurrentUiContextCommandInvocation): boolean => {
+    const runHistory = React.useCallback(async (operation: 'read' | 'cancel', invocation?: CurrentUiContextCommandInvocation): Promise<ActionExecuteResult> => {
         const history = latest.current.history;
-        if (!canChange() || !history) return false;
-        // The read lasts as long as the window's history needs. Its progress and settlement are the
-        // history state the page shows, so the command returns once started instead of holding its caller.
-        void (operation === 'cancel' ? history.cancel(invocation) : history.readNow(invocation)).catch(() => {});
-        return true;
+        if (!canChange() || !history) return { ok: false, errorCode: 'stale_surface', error: 'stale_surface' };
+        return operation === 'cancel' ? history.cancel(invocation) : history.readNow(invocation);
     }, [canChange]);
 
     const definitions = useCurrentUiContextLocalCommandDefinitions([
@@ -220,14 +219,21 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
             invoke: async (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => {
                 // One Retry for everything the page could not read: the shared reads, the Sessions and the views.
                 const current = latest.current;
-                if (historyAbsorbed) runHistory('read', invocation);
-                await Promise.all([current.retryRead?.(context), current.retryLayouts?.(context)]);
-                return true;
+                const outcomes = await Promise.all([current.retryRead?.(context), current.retryLayouts?.(context),
+                    historyAbsorbed ? runHistory('read', invocation) : undefined]);
+                const unsettled = outcomes.find(outcome => outcome !== undefined && (!outcome.ok || isDeferredApprovalResult(outcome)));
+                return unsettled ? projectActionResultForCurrentUiCommand(unsettled) : { ok: true, result: { status: 'refreshed' } } as const;
             } }] : []),
         ...(historyRead && historyTitle ? [{ key: pageCommandKey('history', historyRead.operation), title: historyTitle,
-            invoke: (_input: unknown, _context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => runHistory(historyRead.operation, invocation) }] : []),
+            invoke: async (_input: unknown, _context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) =>
+                projectActionResultForCurrentUiCommand(await runHistory(historyRead.operation, invocation)) }] : []),
         ...(input.retryLayouts && !input.retryRead ? [{ key: pageCommandKey('retry', 'layouts'), title: `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`,
-            invoke: async (_input?: unknown, context?: ActionExecutorContext) => { await input.retryLayouts!(context); return true; } }] : []),
+            invoke: async (_input?: unknown, context?: ActionExecutorContext) => {
+                const outcome = await input.retryLayouts!(context);
+                return outcome.ok && !isDeferredApprovalResult(outcome)
+                    ? { ok: true, result: { status: 'refreshed' } } as const
+                    : projectActionResultForCurrentUiCommand(outcome);
+            } }] : []),
     ], canChange);
     const publication = React.useMemo(() => {
         if (!canChange()) return null;

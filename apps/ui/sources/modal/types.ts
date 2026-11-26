@@ -69,6 +69,8 @@ export interface PromptModalConfig extends BaseModalConfig {
     inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
     /** The mounted confirm command's actor, before the prompt settles its existing string result. */
     onConfirmContext?: (context: ActionExecutorContext) => void;
+    /** For a prompt that owns a write, let Confirm return that operation's settlement. */
+    onAnswer?: (value: string | null, context?: ActionExecutorContext) => ReturnType<CurrentUiContextLocalCommand['invoke']>;
 }
 
 export type CustomModalInjectedProps = Readonly<{
@@ -275,6 +277,7 @@ export interface IModal {
         inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
         commandBridge?: BaseModalConfig['commandBridge'];
         onConfirmContext?: PromptModalConfig['onConfirmContext'];
+        onAnswer?: PromptModalConfig['onAnswer'];
     }): Promise<string | null>;
     show<C extends CustomModalComponentType<any>>(config: CustomModalShowConfig<C>): string;
     update<P extends CustomModalInjectedProps>(

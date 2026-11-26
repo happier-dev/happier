@@ -372,7 +372,7 @@ const renderScreen = async (node: Parameters<typeof renderScreenAtHost>[0]) => (
   }),
 });
 
-async function invokePlanCommand(title: string, input?: string) {
+async function invokePlanCommand(title: string, input?: string, expected: object = { ok: true }) {
   const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
   const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
   if (!read.ok) throw new Error(read.errorCode);
@@ -380,7 +380,7 @@ async function invokePlanCommand(title: string, input?: string) {
   expect(command, title).toBeDefined();
   await act(async () => {
     expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id, ...(input === undefined ? {} : { input }) },
-      context: { surface: 'agent' } })).toMatchObject({ ok: true });
+      context: { surface: 'agent' } })).toMatchObject(expected);
   });
 }
 
@@ -1569,6 +1569,12 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   await act(async () => { await comparisonEntry.refresh(); });
   expect.soft(screen.findHostByTestId(`${comparison}.candidate.work`), 'a failed replacement keeps the admitted comparison').toBeTruthy();
   expect.soft(screen.getTextContent()).toContain(t('usage.board.plans.usedFirstReadFailed'));
+  const beforeRetry = storage.getState().settings.actionsSettingsV1;
+  await act(async () => { storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+    v: 1, actions: { ...beforeRetry.actions, 'connectedServices.pools.selection.get': { disabledSurfaces: ['agent'] } },
+  }) } })); });
+  await invokePlanCommand(t('common.retry'), undefined, { ok: false, errorCode: 'action_disabled' });
+  await act(async () => { storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: beforeRetry } })); });
   const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
   const failedQuotaSource = `quota:${createCanonicalJsonSigningInput(quota[0]!.source)}`;
   const retryQuota = vi.fn(async () => {});

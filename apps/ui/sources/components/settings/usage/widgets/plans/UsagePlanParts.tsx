@@ -38,9 +38,8 @@ import {
   UsageBodyReading,
 } from '../usageBodyKit';
 import { useUsageWidgetPageHasCoverageDetail } from '../usageWidgetBatch';
-import { useUsageDisclosureCommand, useUsageRetryCommand } from '../usageMountedControls';
+import { useUsageDisclosureCommand, useUsageRetryCommand, type UsageRetryRead } from '../usageMountedControls';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { UsagePlanAccount, UsagePlanWindow } from './usagePlansModel';
 import type { UsagePlanAccountName } from './useUsagePlans';
 import { formatMoment } from '@/utils/datetime/formatMoment';
@@ -172,7 +171,7 @@ export function UsagePlanAccountStates(props: Readonly<{
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
   slice: UsageQueryResultSlice;
   testID: string;
-  onRetry(callerContext?: ActionExecutorContext): void | Promise<unknown>;
+  onRetry: UsageRetryRead;
   /** True when nothing else is drawn in the body: a pending read then holds the body's room. */
   replacesContent?: boolean;
   /** The headline already names this pending read; hold the footer's room quietly. */
@@ -427,7 +426,7 @@ export function UsagePlansNothingRead(
      */
     promise: string;
     ownsCause?: boolean;
-    onRetry?: (callerContext?: ActionExecutorContext) => void | Promise<unknown>;
+    onRetry?: UsageRetryRead;
   }>,
 ) {
   const router = useRouter();

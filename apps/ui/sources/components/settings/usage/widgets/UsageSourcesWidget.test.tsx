@@ -31,6 +31,7 @@ import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import { getStorage } from '@/sync/domains/state/storage';
+import type { Modal } from '@/modal';
 
 it('does not call a failed Machine census an empty fleet', async () => {
   getStorage().setState({ machineListStatusByServerId: { home: 'error' } });
@@ -55,7 +56,7 @@ it('retains source inventory but withdraws execution from machines with locked c
 });
 
 const confirm = vi.fn<(title: string, message?: string) => Promise<boolean>>();
-const prompt = vi.fn<() => Promise<string | null>>();
+const prompt = vi.fn<(options: Parameters<typeof Modal.prompt>[2]) => Promise<string | null>>();
 const machineHostRenders = vi.hoisted(() => new Map<string, number>());
 vi.mock('react-native', async () => {
   const React = await import('react');
@@ -88,7 +89,7 @@ vi.mock(
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
       spies: {
         confirm: (title: string, message?: string) => confirm(title, message),
-        prompt: () => prompt(),
+        prompt: (_title, _message, options) => prompt(options),
       },
     }).module,
 );
@@ -119,6 +120,7 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
   let current = initial;
   let discovery = initialDiscovery;
   let discoveryFails = false;
+  let rootWriteFails = false;
   let discoveryHeld: Promise<never> | null = null;
   const settings = ActionsSettingsV1Schema.parse({
     v: 1,
@@ -152,6 +154,7 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
         }
         if (request.actionId === 'usage.sources.history.delete') return { success: true, deletedEventCount: 3 };
         if (request.actionId === 'usage.sources.root.set') {
+          if (rootWriteFails) return { ok: false, errorCode: 'usage_source_unavailable', error: 'usage_source_unavailable' };
           current = { ...current, root: { kind: request.input.root === null ? 'default' : 'override', path: request.input.root ?? found.root.path }, consent: 'disabled', status: 'found' };
           return { source: current };
         }
@@ -161,14 +164,15 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
     readActionsSettings: () => settings,
   } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
   return { calls, executor, setDiscovery: (sources: readonly UsageSourceV1[]) => { discovery = sources; },
+    failRootWrite: (fails = true) => { rootWriteFails = fails; },
     failDiscovery: (fails = true) => { discoveryFails = fails; },
     holdDiscovery: () => { discoveryHeld = new Promise<never>(() => {}); } };
 }
 
-async function mount(executor: ReturnType<typeof machineBoundary>['executor'], input = { agents: [] as string[], machines: ['mac'], sources: [] as string[] }, otherMachine = false) {
+async function mount(executor: ReturnType<typeof machineBoundary>['executor'], input = { agents: [] as string[], machines: ['mac'], sources: [] as string[] }, otherMachine = false, scopeLifetime = lifetime) {
   return renderScreen(
     <UsageSourcesMachines
-      lifetime={lifetime}
+      lifetime={scopeLifetime}
       serverId="home"
       executor={executor}
       testID="sources"
@@ -189,6 +193,19 @@ async function setCounted(screen: Screen, card: string, value: boolean) {
 async function chooseOption(screen: Screen, card: string, option: string) {
   const menu = screen.findAllByType(ItemRowActions).find(node => node.props.overflowTriggerTestID === `${card}.options`)!;
   await act(async () => { await menu.props.actions.find((action: { id: string }) => action.id === `${card}.${option}`).onPress(); });
+}
+
+async function invokeMountedCommand(title: string) {
+  const context = { surface: 'agent' } as const;
+  const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context });
+  if (!read.ok) throw new Error(read.errorCode);
+  const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === title);
+  if (!command) throw new Error(`Missing mounted command: ${title}`);
+  const request = { actionId: 'ui.current_context.command.invoke', input: { commandId: command.id }, context } as const;
+  let result: Awaited<ReturnType<typeof executeCurrentUiContextAction>> | undefined;
+  await act(async () => { result = await executeCurrentUiContextAction(request); });
+  if (!result) throw new Error('Mounted command did not settle');
+  return result;
 }
 
 let home: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
@@ -232,19 +249,65 @@ describe('Usage Sources body', () => {
     await screen.unmount();
   });
 
-  it('opens the same Source folder prompt from an agent command', async () => {
-    const boundary = machineBoundary();
+  it.each(['found', 'missing'] as const)('reports the actual settlement of the mounted %s Source folder prompt', async (kind) => {
+    const initial: UsageSourceV1 = kind === 'found' ? found : {
+      ...found, root: { kind: 'default', path: null }, status: 'unavailable',
+    };
+    const boundary = machineBoundary(initial);
     const screen = await mount(boundary.executor);
-    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.source.claude-default')).toBeTruthy());
-    const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
-    if (!read.ok) throw new Error(read.errorCode);
-    const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === t('usage.board.sources.changeFolder'));
-    expect(command).toBeDefined();
+    const card = 'sources.machine.mac';
+    const initialRow = kind === 'found' ? `${card}.source.claude-default` : `${card}.missing.claude-default`;
+    if (kind === 'missing') {
+      await vi.waitFor(() => expect(screen.findByTestId(`${card}.missing.toggle`)).toBeTruthy());
+      await screen.pressByTestIdAsync(`${card}.missing.toggle`);
+    }
+    await vi.waitFor(() => expect(screen.findByTestId(initialRow)).toBeTruthy());
+    const invoke = () => invokeMountedCommand(t('usage.board.sources.changeFolder'));
     prompt.mockResolvedValueOnce(null);
-    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
-      input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
-    expect(prompt).toHaveBeenCalledOnce();
+    const cancelled = await invoke();
+    prompt.mockResolvedValueOnce(` ${initial.root.path ?? ''} `);
+    const unchanged = await invoke();
     expect(boundary.calls).not.toContain('usage.sources.root.set');
+
+    const newRoot = '/Users/ada/work/confirmed';
+    const confirmFolder = () => prompt.mockImplementationOnce(async options => {
+      options?.onConfirmContext?.({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+      return newRoot;
+    });
+    boundary.failRootWrite();
+    confirmFolder();
+    const failed = await invoke();
+    expect(screen.findByTestId(initialRow)).toBeTruthy();
+    expect(screen.findByTestId(`${card}.source.claude-default.add`)?.props.accessibilityLabel ?? '').not.toContain('~/work/confirmed');
+
+    boundary.failRootWrite(false);
+    confirmFolder();
+    const changed = await invoke();
+    expect(screen.findByTestId(`${card}.source.claude-default.add`)?.props.accessibilityLabel).toContain('~/work/confirmed');
+    expect(boundary.calls.filter(id => id === 'usage.sources.root.set')).toHaveLength(2);
+    expect.soft(cancelled).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect.soft(unchanged).toMatchObject({ ok: true, result: { value: { status: 'unchanged' } } });
+    expect.soft(failed).toMatchObject({ ok: false, errorCode: 'usage_source_unavailable' });
+    expect.soft(changed).toMatchObject({ ok: true, result: { value: { status: 'changed', source: {
+      sourceId: initial.sourceId, root: { kind: 'override', path: newRoot },
+    } } } });
+    await screen.unmount();
+  });
+  it('reports the mounted Retry read failure and recovers after the Machine answers', async () => {
+    const boundary = machineBoundary();
+    boundary.failDiscovery();
+    const screen = await mount(boundary.executor, undefined, false, { ...lifetime });
+    await vi.waitFor(() => expect(screen.findByTestId('sources.unreadableMachines')).toBeTruthy());
+    const invoke = () => invokeMountedCommand(`${t('usage.board.sources.machinesUnreadable')}: ${t('common.retry')}`);
+    const failed = await invoke();
+    expect(failed).toMatchObject({ ok: false, errorCode: 'usage_source_unavailable' });
+    await vi.waitFor(() => expect(screen.findByTestId('sources.unreadableMachines')).toBeTruthy());
+    expect(screen.findByTestId('sources.unreadableMachines')).toBeTruthy();
+    boundary.failDiscovery(false);
+    const retried = await invoke();
+    expect(retried, JSON.stringify({ retried, machineReads: boundary.calls })).toMatchObject({ ok: true, result: { value: { status: 'refreshed' } } });
+    expect(screen.findByTestId('sources.machine.mac.source.claude-default')).toBeTruthy();
+    await screen.unmount();
   });
   it('discovers every Machine but mounts source controls only for visible Machine rows', async () => {
     const machines = Array.from({ length: 8 }, (_, i) => ({ id: `machine-${i}`, name: `Machine ${i}`, online: true }));

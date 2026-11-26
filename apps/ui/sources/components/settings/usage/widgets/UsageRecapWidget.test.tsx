@@ -202,8 +202,8 @@ describe('Recap table/text controls through the admitted export Action', () => {
     }) } })); });
     const summary = commandReader!.readCurrentUiContext()!.commands.find(command => command.title === t('common.copyWithLabel', { label: t('usage.summary.title') }));
     expect(summary).toBeDefined();
-    await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
-      input: { commandId: summary!.id }, context: { surface: 'agent' } }); });
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: summary!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'action_disabled' }); });
     expect(home!.requests.some(request => request.path === '/v2/usage/query')).toBe(true);
     expect(clipboard).not.toHaveBeenCalled();
     expect(screen.findByTestId('recap.exportNotice')).toBeTruthy();

@@ -50,7 +50,7 @@ const accounting: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
   cost: { reportedUsd: 3, estimatedUsd: 0, currency: 'USD' } } };
 
 async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], query = normalizeUsageQuery({ agents: ['claude', 'codex'] }), beforeRender?: () => void,
-  options: Readonly<{ publicProfiles?: boolean; onClose?: () => void; initialOutput?: 'badge'; modal?: boolean }> = {}) {
+  options: Readonly<{ publicProfiles?: boolean; onClose?: () => void; initialOutput?: 'badge' | 'profile_link'; modal?: boolean }> = {}) {
   await import('@/sync/ops/actions/defaultActionExecutor');
   const features = createRootLayoutFeaturesResponse();
   if (options.publicProfiles) features.features.account = { ...features.features.account, publicProfiles: { enabled: true } };
@@ -80,7 +80,9 @@ async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], qu
   }
   beforeRender?.();
   const screen = await renderMountedCurrentUiContext(options.modal ? <ModalHost /> : <Host />,
-    { withModalProvider: options.modal });
+    { withModalProvider: options.modal, createNodeMock: element => (
+      (element.props as { testID?: string }).testID === 'usage-recap-composer.card' ? {} : null
+    ) });
   if (options.modal) await act(async () => { openModal(); });
   return { screen, updateQuery };
 }
@@ -108,6 +110,20 @@ describe('recap composer through authorized query and composition', () => {
     await act(async () => { choice(screen, 'usage-recap-source').props.onSelectTab('whole_usage'); });
     await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.card')).not.toBeNull());
     expect(reads.length).toBeGreaterThan(before);
+  });
+
+  it('returns the mounted delivery refusal without claiming a private image was saved', async () => {
+    const { screen } = await mount(request => request.path === '/v2/usage/query' ? Response.json(accounting) : undefined);
+    await vi.waitFor(() => expect(screen.findByTestId('usage-recap-composer.save')?.props.accessibilityState.disabled).toBe(false));
+    act(() => { storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { 'usage.recap.private.deliver': { disabledSurfaces: ['agent'] } },
+    }) } })); });
+    const save = commandReader!.readCurrentUiContext()!.commands.find(command => command.title === 'usage.board.recap.save');
+    expect(save).toBeDefined();
+    await act(async () => {
+      expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+        input: { commandId: save!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    });
   });
 
   it('lets agents and visible controls choose the same mounted image presentation, retiring departed output commands', async () => {
@@ -436,13 +452,40 @@ describe('recap composer public outputs', () => {
     }) } })); });
     const copy = commandReader!.readCurrentUiContext()!.commands.find(command => command.title === 'common.copy');
     expect(copy).toBeDefined();
-    await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
-      input: { commandId: copy!.id }, context: { surface: 'agent' } }); });
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: copy!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'action_disabled' }); });
     expect(clipboard).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(textOf(screen.findByTestId('usage-recap-share.note'))).toBe('publicIdentity.share.copyFailed'));
     clipboard.mockResolvedValueOnce(undefined);
     await screen.pressByTestIdAsync('usage-recap-share.copy');
     await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith('markdown|badge|tokens|auto'));
+  });
+
+  it.each([
+    ['private card', 'usage.recap.private.compose', undefined],
+    ['profile link', 'account.public_profile.get', 'profile_link'],
+    ['badge', 'account.public_profile.embed.get', 'badge'],
+  ] as const)('keeps the read refusal on the mounted %s Retry', async (_name, actionId, initialOutput) => {
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, 'now');
+    const read = publicHome(true, []);
+    const { screen } = await mount(request => {
+      const failedPath = initialOutput === 'badge' ? '/v1/account/public-profile/embed' : '/v1/account/public-profile';
+      return initialOutput && request.path === failedPath
+        ? Response.json({ error: 'temporary_unavailable' }, { status: 503 })
+        : read(request);
+    }, undefined, () => {
+      if (!initialOutput) clock.mockImplementation(() => new Error().stack?.includes('featureDecision') ? now() : Number.NaN);
+    }, { publicProfiles: true, initialOutput });
+    clock.mockRestore();
+    const retryCommand = () => commandReader!.readCurrentUiContext()!.commands.find(command => command.title === 'common.retry');
+    await vi.waitFor(() => expect(retryCommand()).toBeDefined());
+    act(() => { storage.setState(current => ({ settings: { ...current.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1, actions: { [actionId]: { disabledSurfaces: ['agent'] } },
+    }) } })); });
+    await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+      input: { commandId: retryCommand()!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'action_disabled' }); });
+    expect(screen.findAllByType(SurfaceStateCard).some(node => String(node.props.diagnosticCode).includes('action_disabled'))).toBe(true);
   });
 
   it('offers Image, Profile link, Badge and Card only where public profiles are enabled', async () => {

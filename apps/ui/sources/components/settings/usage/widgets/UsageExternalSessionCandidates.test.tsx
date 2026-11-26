@@ -131,8 +131,19 @@ describe('Usage shared outside-session candidates', () => {
             v: 1, approvalWaivedSurfaces: { 'sessions.external.link.ensure': ['ui', 'agent'] },
         }) } }));
         const originalRpc = rpc.getMockImplementation();
-        rpc.mockImplementation(async call => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE
-            ? { ok: true, sessionId: 'continued', created: true } : originalRpc?.(call));
+        let candidateReads = 0;
+        rpc.mockImplementation(async call => {
+            if (call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)
+                return { ok: true, sessionId: 'continued', created: true };
+            if (call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST) {
+                candidateReads++;
+                if (candidateReads === 2) return { ok: false, errorCode: 'agent_unavailable', error: 'Agent unavailable' };
+                if (candidateReads === 1) return { ok: true, candidates: [
+                    { remoteSessionId: 'outside', title: 'Native work', updatedAtMs: 100 },
+                ], nextCursor: 'outside-next' };
+            }
+            return originalRpc?.(call);
+        });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'usage-account' }, isCurrent: () => true,
             onRetire: () => ({ dispose() {} }) };
         const source = { serverId, machineId: 'machine-1', sourceId: 'source', agent: { pluginId: 'acme.review', localId: 'archive' },
@@ -140,18 +151,20 @@ describe('Usage shared outside-session candidates', () => {
             consent: 'disabled' as const, status: 'found' as const, coverage: 'unknown' as const, pendingCount: 0, asOfMs: null };
         const screen = await renderScreen(<UsageExternalSessionCandidates source={source} lifetime={lifetime} online testID="outside" />);
         await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.browse')).toBeTruthy(); });
-        const invoke = async (title: string) => {
+        const invoke = async (title: string, expected: object = { ok: true }) => {
             const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
             if (!read.ok) throw new Error(read.errorCode);
             const parsed = (await import('@happier-dev/protocol/plugins/ui/currentUiContext')).CurrentUiContextSnapshotV1Schema.parse(read.result);
             const command = parsed.commands.find(row => row.title === title);
             expect(command, `mounted command for ${title}`).toBeDefined();
             await act(async () => { expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
-                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject(expected); });
             return command!.id;
         };
         await invoke('externalSessions.browseTitle');
         await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('outside.continue.outside')).toBeTruthy(); });
+        await invoke('externalSessions.settingsTitle: common.next', { ok: false, errorCode: 'agent_unavailable' });
+        expect(screen.findByTestId('outside.continue.outside')).toBeTruthy();
         const previousContinue = await invoke('usage.board.sources.continueInHappier: Native work');
         expect(rpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE)).toHaveLength(1);
         await screen.update(<UsageExternalSessionCandidates source={{ ...source, sourceId: 'next-source' }} lifetime={lifetime} online testID="outside" />);

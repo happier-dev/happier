@@ -320,6 +320,7 @@ class ModalManagerClass implements IModal {
             inputType: options?.inputType,
             commandBridge: options?.commandBridge,
             onConfirmContext: options?.onConfirmContext,
+            onAnswer: options?.onAnswer,
         } as ModalShowConfig);
 
         return new Promise<string | null>((resolve) => {

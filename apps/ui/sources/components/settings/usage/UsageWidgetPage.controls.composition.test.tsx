@@ -84,7 +84,8 @@ const NO_COST_BASES = [] as const;
 let showExtraFilter = false;
 let historyModel: UsageHistoryModel | null = null;
 let historyFact: ReturnType<typeof usePublishUsageWidgetPageContext>['history'] = null;
-let pageRetryRead: (() => Promise<void>) | undefined;
+let pageRetryRead: Parameters<typeof usePublishUsageWidgetPageContext>[0]['retryRead'];
+let pageRetryLayouts: Parameters<typeof usePublishUsageWidgetPageContext>[0]['retryLayouts'];
 let publishedRetryRead: ReturnType<typeof usePublishUsageWidgetPageContext>['retryRead'] | null = null;
 let publishedSelectLayout: ReturnType<typeof usePublishUsageWidgetPageContext>['selectLayout'] | null = null;
 const publicationContentCounter = createRenderCommitCounter();
@@ -102,7 +103,7 @@ function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayou
         selectLayout: async layoutId => { setSelected(layoutId); await Promise.resolve(); return true; },
         filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex', invoke: () => page.setScope({ agents: ['codex'] }) },
             ...(showExtraFilter ? [{ field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => page.setScope({ agents: ['claude'] }) }] : [])],
-        history: historyModel, ...(pageRetryRead ? { retryRead: pageRetryRead } : {}) });
+        history: historyModel, retryRead: pageRetryRead, retryLayouts: pageRetryLayouts });
     historyFact = published.history;
     publishedRetryRead = published.retryRead;
     publishedSelectLayout = published.selectLayout;
@@ -147,7 +148,7 @@ async function mount(children: React.ReactNode, retireOnSelection = false, withM
     return { screen, retire: () => screen.update(tree(null)) };
 }
 afterEach(async () => {
-    showExtraFilter = false; historyModel = null; historyFact = null; pageRetryRead = undefined; publishedRetryRead = null;
+    showExtraFilter = false; historyModel = null; historyFact = null; pageRetryRead = undefined; pageRetryLayouts = undefined; publishedRetryRead = null;
     routeBoundary.push = undefined; installDisconnectedServerSocketBoundary();
     standardCleanup(); unregister?.(); unregister = undefined; reader = null;
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
@@ -360,7 +361,10 @@ it('publishes visible body recovery and navigation through their mounted owner a
     let opened = 0;
     const props = bodyProps({ queries: [normalizeUsageQuery({})], sources: [{ source: 'work', status: 'error' }] });
     const { screen, retire } = await mount(<>
-        <UsageCoverageLine slice={props.slice} sources={['work']} onRetry={() => { retried++; }} testID="body-retry" />
+        <UsageCoverageLine slice={props.slice} sources={['work']} onRetry={() => {
+            retried++;
+            return { ok: true, result: { status: 'refreshed' } };
+        }} testID="body-retry" />
         <UsageBodyInsufficient title="No account" testID="body-navigation"
             action={{ label: 'Open account', onPress: () => { opened++; } }} />
     </>);
@@ -651,7 +655,7 @@ it('says a page read failure and unreadable Sessions once, with one Retry that r
     historyModel = { state, notRead: 3,
         readNow: async () => { calls.push('history'); return { ok: true, result: state }; },
         cancel: async () => { calls.push('cancel'); return { ok: true, result: state }; } };
-    pageRetryRead = async () => { calls.push('page'); };
+    pageRetryRead = async () => { calls.push('page'); return { ok: true, result: { status: 'refreshed' } }; };
     await mount(null);
     // The page failure carries the unreadable Sessions: no second failure fact and no second Retry.
     expect(historyFact).toBeNull();
@@ -661,4 +665,43 @@ it('says a page read failure and unreadable Sessions once, with one Retry that r
     await act(async () => { await publishedRetryRead!(); });
     await flushHookEffects({ cycles: 4 });
     expect(calls.sort()).toEqual(['history', 'page']);
+});
+
+it('returns the history owner’s refusal when the mounted Cancel command cannot stop a read', async () => {
+    const state = {
+        status: 'reading' as const,
+        progress: { selected: 40, notRead: 3, completed: 37, failed: 0 },
+    };
+    let attempted = false;
+    historyModel = {
+        state, notRead: 3,
+        readNow: async () => ({ ok: true, result: state }),
+        cancel: async () => {
+            attempted = true;
+            return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        },
+    };
+    await mount(null);
+    const cancel = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.historyCancelCommand'));
+    expect(cancel).toBeDefined();
+    await act(async () => {
+        const outcome = await executeCurrentUiContextAction({
+            actionId: 'ui.current_context.command.invoke', input: { commandId: cancel!.id }, context: { surface: 'agent' },
+        });
+        expect(attempted).toBe(true);
+        expect(outcome).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+    });
+});
+
+it.each(['views only', 'combined'])('returns the saved-views read refusal from the %s mounted Retry', async mode => {
+    if (mode === 'combined') pageRetryRead = async () => ({ ok: true, result: { status: 'refreshed' } });
+    pageRetryLayouts = async () => ({ ok: false, errorCode: 'widget_area_unavailable', error: 'widget_area_unavailable' });
+    await mount(null);
+    const title = mode === 'combined' ? t('usage.board.page.retryRead') : `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`;
+    const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === title);
+    expect(command).toBeDefined();
+    await act(async () => {
+        expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id },
+            context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'widget_area_unavailable' });
+    });
 });

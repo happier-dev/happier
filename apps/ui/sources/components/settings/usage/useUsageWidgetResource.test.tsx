@@ -174,7 +174,7 @@ describe('Usage widget shared Resource selection', () => {
                 invoke: (context?: ActionExecutorContext) => filter.select(option.id, context),
             })));
             const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [],
-                filterCommands: commands, retryRead: model.error ? model.refresh : undefined });
+                filterCommands: commands, retryRead: model.error ? async context => (await model.refresh(context))! : undefined });
             const admitted = filters.map(filter => ({ ...filter,
                 select: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => published.selectFilter(filter.field, id, context, invocation) }));
             mounted.reader = useOptionalCurrentUiContextReader();
@@ -233,7 +233,7 @@ describe('Usage widget shared Resource selection', () => {
             expect(posts(), 'held Agent choice cannot reacquire its data under UI authority').toBe(beforeChoice);
             const retry = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.retryRead'));
             expect(retry).toBeDefined();
-            await invoke(retry!.id, 'ui');
+            expect(await invoke(retry!.id, 'ui')).toMatchObject({ ok: true, result: { value: { status: 'refreshed' } } });
             await expect.poll(() => mounted.model?.pending).toBe(false);
             await expect.poll(() => mounted.model?.slice?.accounting).toBeDefined();
             expect(mounted.model?.error).toEqual(initialError);
@@ -512,7 +512,7 @@ describe('Usage widget shared Resource selection', () => {
                 initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null,
                     queryOverrides: readUsageWidgetQueryOverrides(query) } });
             const selected = page.scope.agents.length > 0;
-            const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], retryRead: context => model?.refresh(context), filterCommands: selected ? [] : [{
+            const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], retryRead: async context => (await model!.refresh(context))!, filterCommands: selected ? [] : [{
                 field: 'agents', id: 'codex', title: 'Agent origin selection', invoke: (callerContext?: ActionExecutorContext) => {
                     receivedContext = callerContext;
                     return page.setScope({ agents: ['codex'] }, callerContext);
@@ -551,7 +551,7 @@ describe('Usage widget shared Resource selection', () => {
             const retryCommand = reader!.readCurrentUiContext()!.commands.find(row => row.title === t('usage.board.page.retryRead'))!;
             await act(async () => {
                 expect(await createDefaultActionExecutor().execute('ui.current_context.command.invoke',
-                    { commandId: retryCommand.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+                    { commandId: retryCommand.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
             });
             await expect.poll(() => model?.pending).toBe(false);
             expect.soft(model?.error?.code, 'nested quota Retry still sees the actual agent caller').toBe('action_disabled');
@@ -781,7 +781,7 @@ describe('Usage widget shared Resource selection', () => {
             held = createDeferred<void>();
             amount = 4;
             const beforePending = posts();
-            let refresh: Promise<void> | undefined;
+            let refresh: ReturnType<UsageWidgetBodyModel['refresh']> | undefined;
             await act(async () => { refresh = model!.refresh(); });
             await expect.poll(posts).toBe(beforePending + 1);
             const admittedSignal = signals.at(-1);

@@ -128,44 +128,50 @@ export function useCorePageWidgetAreaLayoutBar(
   const newLayoutConfirmText = input.newLayoutConfirmText ?? t('common.create');
   const source = ready?.surface ?? binding.surface;
   const commandBridge = useCurrentUiContextCommandBridge();
-  const createNamedView = React.useCallback(async (callerContext?: ActionExecutorContext) => {
-    let confirmedContext = callerContext;
-    const name = (
-      await Modal.prompt(t('usage.board.page.newViewTitle'), newLayoutBody, {
-        commandBridge,
-        onConfirmContext: context => { confirmedContext = context; },
-        placeholder: t('usage.board.page.newViewPlaceholder'),
-        confirmText: newLayoutConfirmText,
-      })
-    )?.trim();
-    if (!name || !source) return;
-    const created = await layouts.create(name, source, undefined, confirmedContext);
-    const layoutId =
-      created.ok && created.dashboard?.surface.owner.kind === 'corePage'
-        ? created.dashboard.surface.owner.layoutId
-        : undefined;
-    if (layoutId) await select(layoutId, confirmedContext);
+  const createNamedView = React.useCallback((callerContext: ActionExecutorContext) => {
+    if (!source) return false;
+    void Modal.prompt(t('usage.board.page.newViewTitle'), newLayoutBody, {
+      commandBridge,
+      placeholder: t('usage.board.page.newViewPlaceholder'),
+      confirmText: newLayoutConfirmText,
+      onAnswer: async (value, confirmedContext = callerContext) => {
+        if (value === null) return { ok: false, code: 'cancelled', errorCode: 'cancelled' };
+        const name = value.trim();
+        if (!name) return { ok: true, result: { status: 'unchanged' } };
+        const created = await layouts.create(name, source, undefined, confirmedContext);
+        if (!created.ok) return { ok: false, code: created.errorCode, errorCode: created.errorCode };
+        if (created.approvalPending) return { ok: true, result: { status: 'pending' } };
+        const owner = created.dashboard?.surface.owner;
+        if (owner?.kind === 'corePage' && owner.layoutId) await select(owner.layoutId, confirmedContext);
+        return { ok: true, result: { status: 'changed' } };
+      },
+    });
+    return { ok: true, result: { status: 'opened' } } as const;
   }, [commandBridge, layouts, newLayoutBody, newLayoutConfirmText, source, select]);
   const selected = options.find((option) => option.id === selectedId) ?? null;
-  const renameNamedView = React.useCallback(async (callerContext?: ActionExecutorContext) => {
+  const renameNamedView = React.useCallback((callerContext: ActionExecutorContext) => {
     const summary = selected?.summary;
-    if (!selected || !summary) return;
-    let confirmedContext = callerContext;
-    const name = (
-      await Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
-        commandBridge,
-        onConfirmContext: context => { confirmedContext = context; },
-        defaultValue: selected.name,
-        confirmText: t('common.save'),
-      })
-    )?.trim();
-    if (name && name !== selected.name) await layouts.rename(summary, name, undefined, confirmedContext);
+    if (!selected || !summary) return false;
+    void Modal.prompt(t('usage.board.page.renameViewTitle'), undefined, {
+      commandBridge,
+      defaultValue: selected.name,
+      confirmText: t('common.save'),
+      onAnswer: async (value, confirmedContext = callerContext) => {
+        if (value === null) return { ok: false, code: 'cancelled', errorCode: 'cancelled' };
+        const name = value.trim();
+        if (!name || name === selected.name) return { ok: true, result: { status: 'unchanged' } };
+        const renamed = await layouts.rename(summary, name, undefined, confirmedContext);
+        if (!renamed.ok) return { ok: false, code: renamed.errorCode, errorCode: renamed.errorCode };
+        return { ok: true, result: { status: renamed.approvalPending ? 'pending' : 'changed' } };
+      },
+    });
+    return { ok: true, result: { status: 'opened' } } as const;
   }, [commandBridge, layouts, selected]);
   const commands = useCurrentUiContextLocalCommands([
     ...(ready?.canEdit ? [{ key: 'create', title: t('usage.board.page.newViewTitle'),
-      invoke: (_input: unknown, context: ActionExecutorContext) => { void createNamedView(context); return true; } }] : []),
+      invoke: (_input: unknown, context: ActionExecutorContext) => createNamedView(context) }] : []),
     ...(ready?.canEdit && selected?.summary ? [{ key: 'rename', title: t('usage.board.page.renameViewTitle'),
-      invoke: (_input: unknown, context: ActionExecutorContext) => { void renameNamedView(context); return true; } }] : []),
+      invoke: (_input: unknown, context: ActionExecutorContext) => renameNamedView(context) }] : []),
   ], { unbound: 'local' });
   const create = React.useCallback(async () => { await commands.invoke('create'); }, [commands.invoke]);
   const rename = React.useCallback(async () => { await commands.invoke('rename'); }, [commands.invoke]);

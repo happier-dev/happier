@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { Image } from 'expo-image';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import {
   PublicEmbedResultV1Schema,
   type PublicEmbedInputV1,
@@ -15,6 +16,11 @@ import {
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { projectActionResultForCurrentUiCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import type { CurrentUiContextVoiceInvocationOutcome } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -106,24 +112,22 @@ function useCopyText(execution: Execution, text: string | null) {
   const [copying, setCopying] = React.useState(false);
   React.useEffect(() => setNotice(null), [text]);
   const { isCurrent } = execution;
-  const copy = React.useCallback(async (invocation: CurrentUiContextCommandInvocation) => {
-    if (text === null) return;
+  const copy = React.useCallback(async (invocation: CurrentUiContextCommandInvocation): Promise<CurrentUiContextVoiceInvocationOutcome> => {
+    if (text === null || !isCurrent()) return { ok: false, code: 'stale_surface' };
     setCopying(true);
     setNotice(null);
-    let next: CopyNotice = 'failed';
     try {
       const result = await invocation.execute(execution, 'clipboard.write', { text });
-      next = result.ok
-        ? 'copied'
-        : isActionApprovalDeclinedErrorCode(result.errorCode)
-          ? null
-          : 'failed';
+      if (isCurrent()) setNotice(result.ok
+        ? (isDeferredApprovalResult(result) ? null : 'copied')
+        : (isActionApprovalDeclinedErrorCode(result.errorCode) ? null : 'failed'));
+      return projectActionResultForCurrentUiCommand(result);
     } catch {
-      // A lost or refused delivery is a failure; it never becomes a copied check.
+      if (isCurrent()) setNotice('failed');
+      return { ok: false, code: 'clipboard_unavailable', errorCode: 'clipboard_unavailable' };
+    } finally {
+      if (isCurrent()) setCopying(false);
     }
-    if (!isCurrent()) return;
-    setNotice(next);
-    setCopying(false);
   }, [execution, isCurrent, text]);
   const commands = useCurrentUiContextLocalCommands(text !== null && !copying
     ? [{ key: 'copy', title: t('common.copy'),
@@ -224,44 +228,61 @@ function ProfileLinkOutput(
   props: Readonly<{ execution: Execution; openProfile: () => void; invocation: React.MutableRefObject<CurrentUiContextCommandInvocation | undefined> }>,
 ) {
   const { theme } = useUnistyles();
+  const execution = React.useRef(props.execution);
+  execution.current = props.execution;
   const { execute, ready } = props.execution;
   const [state, setState] = React.useState<LinkState>({ kind: 'loading' });
-  const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
+  const readController = React.useRef<AbortController | null>(null);
+  const read = React.useCallback(async (origin = props.invocation.current, commandSignal?: AbortSignal): Promise<CurrentUiContextVoiceInvocationOutcome> => {
+    readController.current?.abort();
+    const controller = new AbortController();
+    readController.current = controller;
+    const binding = execution.current;
+    const cancellation = mergeAbortSignals([controller.signal, commandSignal, binding.getSignal()]);
+    const operation = { signal: cancellation.signal };
+    const refuse = (code: string) => ({ ok: false, code, errorCode: code } as const);
+    try {
+      const result = origin
+        ? await origin.execute(binding, 'account.public_profile.get', {}, operation)
+        : await execute('account.public_profile.get', {}, operation);
+      if (!binding.isCurrent()) return refuse('action_account_scope_changed');
+      if (cancellation.signal.aborted) return refuse('cancelled');
+      if (!result.ok) {
+        setState({ kind: 'failed', code: result.errorCode });
+        return projectActionResultForCurrentUiCommand(result);
+      }
+      if (isDeferredApprovalResult(result)) return projectActionResultForCurrentUiCommand(result);
+      const parsed = PublicProfileOwnerReadV1Schema.safeParse(result.result);
+      if (!parsed.success) {
+        setState({ kind: 'failed', code: 'public_profile_result_invalid' });
+        return refuse('public_profile_result_invalid');
+      }
+      setState({ kind: 'ready', read: parsed.data });
+      return { ok: true, result: { status: parsed.data.kind } };
+    } catch {
+      if (!binding.isCurrent()) return refuse('action_account_scope_changed');
+      if (cancellation.signal.aborted) return refuse('cancelled');
+      setState({ kind: 'failed', code: 'public_profile_read_failed' });
+      return refuse('public_profile_read_failed');
+    } finally {
+      cancellation.dispose();
+      if (readController.current === controller) readController.current = null;
+    }
+  }, [execute, props.invocation]);
   const commands = useCurrentUiContextLocalCommands(state.kind === 'failed'
     ? [{ key: 'retry', title: t('common.retry'),
-      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; retry(); } }] : [], { foregroundOverlay: true });
+      invoke: (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => read(invocation, context.signal) }] : [], { foregroundOverlay: true });
   React.useEffect(() => {
     if (!ready) return;
-    let live = true;
-    const origin = props.invocation.current;
-    void (async () => {
-      const operation = { signal: props.execution.getSignal() };
-      const result = origin
-        ? await origin.execute(props.execution, 'account.public_profile.get', {}, operation)
-        : await execute('account.public_profile.get', {}, operation);
-      if (!live) return;
-      if (!result.ok)
-        return setState({ kind: 'failed', code: result.errorCode });
-      const parsed = PublicProfileOwnerReadV1Schema.safeParse(result.result);
-      setState(
-        parsed.success
-          ? { kind: 'ready', read: parsed.data }
-          : { kind: 'failed', code: 'public_profile_result_invalid' },
-      );
-    })().catch(() => {
-      if (live)
-        setState({ kind: 'failed', code: 'public_profile_read_failed' });
-    });
-    return () => {
-      live = false;
-    };
-  }, [execute, ready, attempt]);
+    void read();
+    return () => readController.current?.abort();
+  }, [read, ready]);
 
-  const read = state.kind === 'ready' ? state.read : null;
-  const record = read?.kind === 'ready' ? read.record : null;
+  const profile = state.kind === 'ready' ? state.read : null;
+  const record = profile?.kind === 'ready' ? profile.record : null;
   const published =
     record?.state === 'published' && record.restriction === null;
-  const urls = published ? (read?.context.urls ?? null) : null;
+  const urls = published ? (profile?.context.urls ?? null) : null;
   const { notice, copying, copy } = useCopyText(
     props.execution,
     urls?.page ?? null,
@@ -270,9 +291,9 @@ function ProfileLinkOutput(
     return <Unpublished kind="profile_link" openProfile={props.openProfile} />;
 
   const fieldColors = resolveFieldBoxColors(theme, 'idle', 'document');
-  const name = read?.context.identity.name;
-  const handle = read?.context.handle ?? '';
-  const service = read?.context.service?.displayName ?? '';
+  const name = profile?.context.identity.name;
+  const handle = profile?.context.handle ?? '';
+  const service = profile?.context.service?.displayName ?? '';
   return (
     <RecapComposerFrame
       stage={
@@ -398,7 +419,7 @@ type EmbedState =
   | Readonly<{ kind: 'failed'; code: string }>;
 
 class EmbedReadError extends Error {
-  constructor(readonly code: string) {
+  constructor(readonly code: string, readonly outcome?: ActionExecuteResult) {
     super(code);
   }
 }
@@ -418,8 +439,69 @@ function EmbedOutput(
   const [syntax, setSyntax] = React.useState<Syntax>('markdown');
   const [metricMenuOpen, setMetricMenuOpen] = React.useState(false);
   const [state, setState] = React.useState<EmbedState>({ kind: 'loading' });
-  const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
+  const activeRead = React.useRef<AbortController | null>(null);
+  const executionRef = React.useRef(props.execution);
+  executionRef.current = props.execution;
   const { kind } = props;
+  const refresh = React.useCallback(async (origin = props.invocation.current, commandSignal?: AbortSignal) => {
+    const execution = executionRef.current;
+    if (!execution.isCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+    activeRead.current?.abort();
+    const controller = new AbortController();
+    activeRead.current = controller;
+    const cancellation = mergeAbortSignals([controller.signal, commandSignal, execution.getSignal()]);
+    // A new choice keeps the shown previews and snippet until the Home formats the new one.
+    setState(previous => ({
+      kind: 'loading',
+      shown: previous.kind === 'ready' ? previous : previous.kind === 'loading' ? previous.shown : undefined,
+    }));
+    const read = async (input: Readonly<{ theme: EmbedTheme; syntax: Syntax }>): Promise<PublicEmbedResultV1> => {
+      const request = kind === 'badge' ? { kind, metric, ...input } : { kind, ...input };
+      const operation = { signal: cancellation.signal };
+      const result = origin
+        ? await origin.execute(execution, 'account.public_profile.embed.get', request, operation)
+        : await execute('account.public_profile.embed.get', request, operation);
+      if (!result.ok) throw new EmbedReadError(result.errorCode, result);
+      const parsed = PublicEmbedResultV1Schema.safeParse(result.result);
+      if (!parsed.success) throw new EmbedReadError('public_profile_embed_result_invalid');
+      return parsed.data;
+    };
+    try {
+      const [snippet, light, dark] = await Promise.all([
+        read({ theme: embedTheme, syntax }),
+        read({ theme: 'light', syntax: 'url' }),
+        read({ theme: 'dark', syntax: 'url' }),
+      ]);
+      if (!execution.isCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+      if (cancellation.signal.aborted) return { ok: false as const, code: 'cancelled', errorCode: 'cancelled' };
+      if (snippet.kind === 'unavailable' || light.kind === 'unavailable' || dark.kind === 'unavailable') {
+        const reason = snippet.kind === 'unavailable' ? snippet.reason : light.kind === 'unavailable' ? light.reason :
+          dark.kind === 'unavailable' ? dark.reason : undefined;
+        if (reason === undefined) throw new EmbedReadError('public_profile_embed_result_invalid');
+        setState({ kind: 'unavailable', reason });
+        return { ok: true as const, result: { status: 'unavailable', reason } };
+      }
+      setState({ kind: 'ready', snippet, light: light.url, dark: dark.url });
+      return { ok: true as const, result: { status: 'refreshed' } };
+    } catch (error) {
+      if (!execution.isCurrent()) return { ok: false as const, code: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+      if (cancellation.signal.aborted) return { ok: false as const, code: 'cancelled', errorCode: 'cancelled' };
+      const code = error instanceof EmbedReadError ? error.code : 'public_profile_embed_failed';
+      setState({ kind: 'failed', code });
+      return error instanceof EmbedReadError && error.outcome
+        ? projectActionResultForCurrentUiCommand(error.outcome)
+        : { ok: false as const, code, errorCode: code };
+    } finally {
+      cancellation.dispose();
+      if (activeRead.current === controller) activeRead.current = null;
+    }
+  }, [execute, kind, metric, embedTheme, syntax, props.invocation]);
+  React.useEffect(() => {
+    if (!ready) return;
+    void refresh();
+    return () => activeRead.current?.abort();
+  }, [ready, refresh]);
+
   const metricLabel = (id: Metric) => t(`publicIdentity.share.metric_${METRIC_KEYS[id]}`);
   const commands = useCurrentUiContextLocalCommands([
     ...(kind === 'badge' ? METRICS.map(id => ({ key: `metric:${id}`,
@@ -434,70 +516,8 @@ function EmbedOutput(
     ...(kind === 'badge' ? [{ key: 'metric-menu', title: t('publicIdentity.share.shows'),
       invoke: (input?: PluginUiJsonValueV1) => setMetricMenuOpen(typeof input === 'boolean' ? input : !metricMenuOpen) }] : []),
     ...(state.kind === 'failed' || state.kind === 'unavailable' ? [{ key: 'retry', title: t('common.retry'),
-      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; retry(); } }] : []),
+      invoke: (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => refresh(invocation, context.signal) }] : []),
   ], { foregroundOverlay: true, contextKey: kind });
-
-  React.useEffect(() => {
-    if (!ready) return;
-    let live = true;
-    const origin = props.invocation.current;
-    // A new choice keeps the shown previews and snippet until the Home formats the new one.
-    setState((previous) => ({
-      kind: 'loading',
-      shown:
-        previous.kind === 'ready'
-          ? previous
-          : previous.kind === 'loading'
-            ? previous.shown
-            : undefined,
-    }));
-    const read = async (
-      input: Readonly<{ theme: EmbedTheme; syntax: Syntax }>,
-    ): Promise<PublicEmbedResultV1> => {
-      const request = kind === 'badge' ? { kind, metric, ...input } : { kind, ...input };
-      const operation = { signal: props.execution.getSignal() };
-      const result = origin
-        ? await origin.execute(props.execution, 'account.public_profile.embed.get', request, operation)
-        : await execute('account.public_profile.embed.get', request, operation);
-      if (!result.ok) throw new EmbedReadError(result.errorCode);
-      const parsed = PublicEmbedResultV1Schema.safeParse(result.result);
-      if (!parsed.success)
-        throw new EmbedReadError('public_profile_embed_result_invalid');
-      return parsed.data;
-    };
-    void (async () => {
-      const [snippet, light, dark] = await Promise.all([
-        read({ theme: embedTheme, syntax }),
-        read({ theme: 'light', syntax: 'url' }),
-        read({ theme: 'dark', syntax: 'url' }),
-      ]);
-      if (!live) return;
-      const unavailable = [snippet, light, dark].find(
-        (result) => result.kind === 'unavailable',
-      );
-      if (unavailable?.kind === 'unavailable')
-        return setState({ kind: 'unavailable', reason: unavailable.reason });
-      if (
-        snippet.kind !== 'ready' ||
-        light.kind !== 'ready' ||
-        dark.kind !== 'ready'
-      )
-        return;
-      setState({ kind: 'ready', snippet, light: light.url, dark: dark.url });
-    })().catch((error: unknown) => {
-      if (live)
-        setState({
-          kind: 'failed',
-          code:
-            error instanceof EmbedReadError
-              ? error.code
-              : 'public_profile_embed_failed',
-        });
-    });
-    return () => {
-      live = false;
-    };
-  }, [execute, ready, kind, metric, embedTheme, syntax, attempt]);
 
   const shown =
     state.kind === 'ready'

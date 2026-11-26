@@ -2607,7 +2607,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 }
                 if (reference.hostRead === 'connectedServices.pools.selection.get') {
                     const input = ConnectedServicePoolSelectionGetRequestV1Schema.parse(reference.input);
-                    const result = await withUiConnectedServiceReader(sharedContext, options?.signal, (_readQuota, readSelection) => readSelection(input));
+                    const result = await withUiConnectedServiceReader(readContext, options?.signal, (_readQuota, readSelection) => readSelection(input));
                     requireCurrent(sharedContext, options?.signal);
                     const bytes = new TextEncoder().encode(JSON.stringify(result));
                     const digest = computePluginUiArtifactSha256DigestV1(bytes);
@@ -2952,8 +2952,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         // take the previous progress as a successful terminal answer.
                         throw failure;
                     }
-                    // Settle retained facts for the mounted view before rejecting the read.
-                    if (!options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
+                    // A malformed answer settles through the Resource's typed refusal. Publishing
+                    // a finished projection here can let an Action take that fallback first.
+                    if (code !== 'usage_query_result_invalid' && !options?.signal?.aborted && sharedContext.accountLifetime.isCurrent()) {
                         await Promise.resolve(progressContent).catch(() => undefined);
                         const shown = entry.getSnapshot().value;
                         const batch = shown ? decodeUsageQueryResource(shown) : undefined;

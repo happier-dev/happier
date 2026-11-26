@@ -7,7 +7,7 @@ import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '@/d
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import { USAGE_WIDGET_PRESET_IDS } from '@/components/settings/usage/usageWidgetPresets';
-import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { readPresentationNotice, readPresentationNotices, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageWidgetPageContext, readUsageWidgetPageScope } from '@/components/settings/usage/usageWidgetPageContext';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -176,14 +176,14 @@ it('opens named-view prompts through their mounted owner and preserves the actua
     }
     const screen = await renderMountedCurrentUiContext(<Page />, { withModalProvider: true });
     const command = (title: string) => mounted.reader?.readCurrentUiContext()?.commands.find(row => row.title === title);
-    const invoke = async (title: string, value?: { value: string }, ui = false) => {
+    const invoke = async (title: string, value?: { value: string }, ui = false, expected: object = { ok: true }) => {
         const current = command(title);
         expect(current, title).toBeDefined();
         await act(async () => {
             expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
                 { commandId: current!.id, ...(value ? { input: value } : {}) },
                 ui ? { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }
-                    : { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+                    : { surface: 'agent', authority: 'account_automation' })).toMatchObject(expected);
         });
     };
     try {
@@ -194,7 +194,7 @@ it('opens named-view prompts through their mounted owner and preserves the actua
         setActionPolicy(normalizeActionsSettingsV1({ v: 1, actions: {
             [ACTION_ID_FAMILIES_V1.widgets[23]]: { disabledSurfaces: ['agent'] },
         }, approvalWaivedSurfaces: { [ACTION_ID_FAMILIES_V1.widgets[23]]: ['ui'] } }));
-        await invoke(t('common.create'));
+        await invoke(t('common.create'), undefined, false, { ok: false, errorCode: 'action_disabled' });
         await vi.waitFor(() => expect(command(createTitle)).toBeDefined());
         expect(mounted.bar?.layouts.some(row => row.name === 'Agent refused view')).toBe(false);
         await act(async () => { await mounted.bar!.create(); });
@@ -206,7 +206,7 @@ it('opens named-view prompts through their mounted owner and preserves the actua
         await vi.waitFor(() => expect(command(t('common.save'))).toBeDefined());
         const cancelLabel: unknown = screen.findByTestId('web-prompt-cancel')?.props.accessibilityLabel;
         if (typeof cancelLabel !== 'string') throw new Error('Expected a labelled Cancel control in the Rename prompt');
-        await invoke(cancelLabel);
+        await invoke(cancelLabel, undefined, false, { ok: false, errorCode: 'cancelled' });
         await vi.waitFor(() => expect(command(renameTitle)).toBeDefined());
         expect(mounted.bar?.selectedName).toBe('Personal view');
     } finally { await screen.unmount(); }
@@ -420,39 +420,47 @@ it('refreshes the layout inventory when its host preset changes', async () => {
     } finally { await hook.unmount(); }
 });
 
+async function mountNamedViewPrompt(
+    pageId: string,
+    presets: NonNullable<Parameters<typeof useCorePageWidgetAreaBinding>[0]['presets']>,
+    displayPresets: Parameters<typeof useCorePageWidgetAreaLayoutBar>[0]['presets'] = presets,
+) {
+    const input = { serverId: runtime.serverId, pageId, area: 'main', context: {}, presets };
+    let bar!: ReturnType<typeof useCorePageWidgetAreaLayoutBar>;
+    function Page() {
+        const binding = useCorePageWidgetAreaBinding(input);
+        const area = useWidgetAreaLayout(binding.port!, input.context);
+        bar = useCorePageWidgetAreaLayoutBar({ binding, area, presets: displayPresets });
+        return null;
+    }
+    const screen = await renderMountedCurrentUiContext(<Page />, { withModalProvider: true });
+    const submitName = async (name: string) => {
+        await vi.waitFor(() => expect(screen.findByTestId('web-prompt-input')).not.toBeNull());
+        await act(async () => { screen.findByTestId('web-prompt-input')!.props.onChangeText(name); });
+        await screen.pressByTestIdAsync('web-prompt-confirm');
+    };
+    return { screen, bar: () => bar, submitName };
+}
+
 it.each([
     { pageId: 'machines', presetId: 'overview' },
     { pageId: 'public-profile', presetId: 'minimal' },
 ])('shows the acknowledged personal preset name through the $pageId layout inventory and Rename Action', async ({ pageId, presetId }) => {
-    const { Modal } = await import('@/modal');
-    const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue('My view');
     setActionPolicy(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'widgets.area.layout.rename': ['ui'] } }));
     const presets = [{ id: presetId, name: 'Canonical stock', items: [] }];
     const displayPresets = [{ id: presetId, name: 'Translated stock' }];
-    const input = { serverId: runtime.serverId, pageId, area: 'main', context: {}, presets };
-    const hook = await renderHook(() => {
-        const binding = useCorePageWidgetAreaBinding(input);
-        const area = useWidgetAreaLayout(binding.port!, input.context);
-        return useCorePageWidgetAreaLayoutBar({ binding, area, presets: displayPresets });
-    });
+    const { screen, bar, submitName } = await mountNamedViewPrompt(pageId, presets, displayPresets);
     try {
-        await vi.waitFor(() => expect(hook.getCurrent().actions?.rename).toBeTypeOf('function'));
-        expect(hook.getCurrent().selectedName).toBe('Translated stock');
-        await act(async () => {
-            const rename = hook.getCurrent().actions?.rename;
-            if (!rename) throw new Error('Expected the selected layout Rename action');
-            await rename();
-        });
-        await vi.waitFor(() => expect(hook.getCurrent().selectedName).toBe('My view'));
-        expect(hook.getCurrent().layouts).toMatchObject([{ id: presetId, name: 'My view', isPreset: true }]);
-        prompt.mockResolvedValue(null);
-        await act(async () => {
-            const rename = hook.getCurrent().actions?.rename;
-            if (!rename) throw new Error('Expected the selected layout Rename action');
-            await rename();
-        });
-        expect(prompt.mock.calls.at(-1)?.[2]).toMatchObject({ defaultValue: 'My view' });
-    } finally { prompt.mockRestore(); await hook.unmount(); }
+        await vi.waitFor(() => expect(bar().actions?.rename).toBeTypeOf('function'));
+        expect(bar().selectedName).toBe('Translated stock');
+        await act(async () => { await bar().actions!.rename!(); });
+        await submitName('My view');
+        await vi.waitFor(() => expect(bar().selectedName).toBe('My view'));
+        expect(bar().layouts).toMatchObject([{ id: presetId, name: 'My view', isPreset: true }]);
+        await act(async () => { await bar().actions!.rename!(); });
+        await vi.waitFor(() => expect(screen.findByTestId('web-prompt-input')?.props.value).toBe('My view'));
+        await screen.pressByTestIdAsync('web-prompt-cancel');
+    } finally { await screen.unmount(); }
 });
 
 it('keeps personal layout actions among personal neighbors and selects through the page command', async () => {
@@ -501,43 +509,34 @@ it('keeps personal layout actions among personal neighbors and selects through t
 });
 
 it.each(['public-profile', 'usage'])('creates and selects a copied view through the %s layout bar', async pageId => {
-    const { Modal } = await import('@/modal');
-    const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue('Quiet week');
     const presets = [{ id: 'minimal', name: 'Minimal', items: [] }];
-    const input = { serverId: runtime.serverId, pageId, area: 'main', context: {}, presets };
-    const hook = await renderHook(() => {
-        const binding = useCorePageWidgetAreaBinding(input);
-        const area = useWidgetAreaLayout(binding.port!, input.context);
-        return useCorePageWidgetAreaLayoutBar({ binding, area, presets });
-    });
+    const { screen, bar, submitName } = await mountNamedViewPrompt(pageId, presets);
     try {
-        await vi.waitFor(() => expect(hook.getCurrent().onCreate).toBeTypeOf('function'));
-        await act(async () => { await hook.getCurrent().create(); });
-        await vi.waitFor(() => expect(hook.getCurrent().selectedName).toBe('Quiet week'));
-        expect(hook.getCurrent().layouts).toHaveLength(2);
+        await vi.waitFor(() => expect(bar().onCreate).toBeTypeOf('function'));
+        await act(async () => { await bar().create(); });
+        await submitName('Quiet week');
+        await vi.waitFor(() => expect(bar().selectedName).toBe('Quiet week'));
+        expect(bar().layouts).toHaveLength(2);
         expect(readPresentationNotice()?.severity).not.toBe('error');
-    } finally { prompt.mockRestore(); await hook.unmount(); }
+    } finally { await screen.unmount(); }
 });
 
 it('reports the typed refusal when a new view is created but cannot be selected', async () => {
-    const { Modal } = await import('@/modal');
-    const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue('Quiet week');
-    setActionPolicy(normalizeActionsSettingsV1({ v: 1, actions: {
+    setActionPolicy(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'widgets.area.layout.create': ['ui'] }, actions: {
         'widgets.area.layout.select': { disabledSurfaces: ['ui'] },
     } }));
     const presets = [{ id: 'minimal', name: 'Minimal', items: [] }];
-    const input = { serverId: runtime.serverId, pageId: 'public-profile', area: 'main', context: {}, presets };
-    const hook = await renderHook(() => {
-        const binding = useCorePageWidgetAreaBinding(input);
-        const area = useWidgetAreaLayout(binding.port!, input.context);
-        return useCorePageWidgetAreaLayoutBar({ binding, area, presets });
-    });
+    const { screen, bar, submitName } = await mountNamedViewPrompt('public-profile', presets);
     try {
-        await vi.waitFor(() => expect(hook.getCurrent().onCreate).toBeTypeOf('function'));
-        await act(async () => { await hook.getCurrent().create(); });
-        expect(hook.getCurrent().selectedId).toBe('minimal');
-        expect(readPresentationNotice()).toMatchObject({ severity: 'error' });
-    } finally { prompt.mockRestore(); await hook.unmount(); }
+        await vi.waitFor(() => expect(bar().onCreate).toBeTypeOf('function'));
+        await act(async () => { await bar().create(); });
+        await submitName('Quiet week');
+        await vi.waitFor(() => expect(bar().layouts.map(layout => layout.name)).toContain('Quiet week'));
+        await vi.waitFor(() => expect(readPresentationNotices()).toContainEqual(expect.objectContaining({
+            key: 'widget-area-layout:outcome', severity: 'error',
+        })));
+        expect(bar().selectedId).toBe('minimal');
+    } finally { await screen.unmount(); }
 });
 
 it.each([500, 503, 'AbortError', 'invalidRecord', 'batch503', 'batch403'] as const)('never restores Costs after Work HTTP %s and Retry reads Work', async status => {

@@ -3,7 +3,7 @@ import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contribut
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { createPluginSurfaceActionFailureError } from '@/components/plugins/surfaces/actionFailure';
+import { createPluginSurfaceActionFailureError, projectPluginActionFailure } from '@/components/plugins/surfaces/actionFailure';
 import { withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { CurrentUiContextVoiceToolPort, CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
@@ -19,6 +19,21 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 import { executeCapturedScopeContributedAction } from './contributedActionInvocation';
 import type { CurrentUiContextCommandInvokeInput, CurrentUiContextCommandInvokeOutput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+
+/** Deliver an ordinary Action's typed settlement through its mounted command. */
+export function projectActionResultForCurrentUiCommand(outcome: ActionExecuteResult): CurrentUiContextVoiceInvocationOutcome {
+    if (!outcome.ok) {
+        const details = PluginJsonValueV2Schema.safeParse(outcome.details);
+        return {
+            ...projectPluginActionFailure({ ...outcome, code: outcome.errorCode, message: outcome.error,
+                details: details.success ? details.data : undefined }),
+            errorCode: outcome.errorCode,
+            automationNotices: outcome.automationNotices,
+        };
+    }
+    return { ok: true, result: projectNativeJsonValueForTransport(outcome.result ?? null), automationNotices: outcome.automationNotices };
+}
 
 type PortFactory = (surface: PluginSurfaceActionInvocationSurface, hostAction?: PluginSurfaceHostActionBinding) => CurrentUiContextVoiceToolPort | null;
 let mountedPortFactory: PortFactory | null = null;
