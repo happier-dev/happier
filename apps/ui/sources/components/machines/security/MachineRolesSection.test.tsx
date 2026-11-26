@@ -28,12 +28,15 @@ const toggle = (screen: Awaited<ReturnType<typeof render>>, roleId: string) => {
 };
 
 describe('Machine roles section', () => {
-  it('presents an unconfirmed role change without discarding the outcome returned to the Agent', async () => {
+  it.each([
+    { status: 'outcomeUnknown', title: 'machineDetailPage.roles.title', message: 'errors.scmOutcomeUnknown' },
+    { status: 'locked', title: 'machineDetailPage.roles.saveFailed', message: 'machine.lockedMachine' },
+  ])('presents the role change result $status without discarding the outcome returned to the Agent', async ({ status, title, message }) => {
     const serverId = await homes.addHome({ name: 'Roles', serverUrl: 'https://roles.test',
       serverIdentityId: 'srv_roles', accountId: 'account-a', currentAccount: true });
     await homes.setActionPolicy(serverId, 'machines.roles.set', 'agent', 'allowed');
     await homes.setActionPolicy(serverId, 'machines.roles.set', 'ui', 'allowed');
-    boundary.rpc.mockResolvedValue({ status: 'outcomeUnknown' });
+    boundary.rpc.mockResolvedValue({ status });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { Modal } = await import('@/modal');
     const alert = vi.spyOn(Modal, 'alert');
@@ -50,12 +53,12 @@ describe('Machine roles section', () => {
         .resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
       expect(boundary.rpc).not.toHaveBeenCalled();
       await expect(executor.execute('machines.roles.set', input, { ...context, expectedAccountId: 'account-a' }))
-        .resolves.toMatchObject({ ok: true, result: { status: 'outcomeUnknown' } });
+        .resolves.toMatchObject({ ok: true, result: { status } });
       boundary.rpc.mockClear();
       await act(async () => { await editor.getCurrent().setRole('sessions', false); });
       expect(boundary.rpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: RPC_METHODS.MACHINES_ROLES_SET,
         payload: expect.objectContaining({ policy: input.policy }) }));
-      expect(alert).toHaveBeenCalledWith('machineDetailPage.roles.title', 'errors.scmOutcomeUnknown');
+      expect(alert).toHaveBeenCalledWith(title, message);
       expect(editor.getCurrent().shownActive.has('sessions')).toBe(true);
     } finally { await editor.unmount(); await homes.reset(); boundary.rpc.mockReset(); alert.mockRestore(); }
   });

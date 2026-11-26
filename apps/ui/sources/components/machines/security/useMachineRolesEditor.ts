@@ -58,7 +58,7 @@ export function useMachineRolesEditor(input: Readonly<{
                     Modal.alert(t('machineDetailPage.roles.title'), t('errors.scmOutcomeUnknown'));
                     break;
                 case 'locked':
-                    Modal.alert(t('machineDetailPage.roles.saveFailed'), t('machineDetailPage.lockedMachine'));
+                    Modal.alert(t('machineDetailPage.roles.saveFailed'), t('machine.lockedMachine'));
                     break;
                 case 'invalid':
                     Modal.alert(t('machineDetailPage.roles.saveFailed'), t('errors.invalidFormat'));
