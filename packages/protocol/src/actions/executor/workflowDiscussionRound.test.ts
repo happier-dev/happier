@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createWorkflowDiscussionRoundFixture as fixture } from '../../../testkit/workflowDiscussionRound.js';
+import { ReviewCommentListActionRequestV1Schema } from '../../reviews/comments/actions.js';
+import { isWorkflowSessionScopeTargetV1 } from '../../workflows/workflowSessionScopeV1.js';
 import { WorkflowDiscussionRoundProjectResultV1Schema } from '../../workflows/workflowDiscussionRoundV1.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
@@ -62,10 +64,19 @@ describe('Discussion round projection demand', () => {
     let sessionReads = 0;
     const scopes: unknown[] = [];
     const executor = createActionExecutor({ ...f.deps,
-      resolveSessionReference: async () => { sessionReads += 1; return { kind: 'unique', address: f.address }; },
-      // Review transport is the boundary; accepted-frame reads and admission stay real.
-      reviewCommentAction: async args => {
-        scopes.push(args.reviewCommentPrincipal?.workflowScope);
+      resolveSessionReference: async ({ sessionId }: Parameters<NonNullable<ActionExecutorDeps['resolveSessionReference']>>[0]) => {
+        sessionReads += 1;
+        return sessionId ? { kind: 'unique', address: { ...f.address, sessionId } } : { kind: 'none' };
+      },
+      // Model the Home review transport. It enforces the scope projected by the
+      // executor, as covered by the composed Home review-scope test.
+      reviewCommentAction: async ({ input, reviewCommentPrincipal }: Parameters<NonNullable<ActionExecutorDeps['reviewCommentAction']>>[0]) => {
+        const { sessionId } = ReviewCommentListActionRequestV1Schema.parse(input);
+        const scope = reviewCommentPrincipal?.workflowScope;
+        if (!isWorkflowSessionScopeTargetV1({ scope, sessionId })) {
+          return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+        }
+        scopes.push(scope);
         return { items: [], cursor: null };
       },
     } as unknown as ActionExecutorDeps);
@@ -77,11 +88,11 @@ describe('Discussion round projection demand', () => {
       expect(scopes.at(-1)).toMatchObject({ actionRequestId: context.actionRequestId, sessions: [f.address] });
     }
     expect(await executor.execute('reviews.comments.list', { sessionId: 'unrelated-session' }, context))
-      .toMatchObject({ ok: false });
+      .toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
     expect(scopes).toHaveLength(2);
     f.miswire();
     expect(await executor.execute('reviews.comments.list', { sessionId: f.address.sessionId }, context))
-      .toMatchObject({ ok: false });
+      .toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
     expect(scopes).toHaveLength(2);
   });
   it('keeps an original-parent failed descendant retryable', async () => {

@@ -594,10 +594,13 @@ describe('Discussion participant publication policy', () => {
 
   it('declines a private draft through the existing decision transition without publication', async () => {
     const h = harness();
-    await h.executor.execute('discussion.reply', input, context);
+    expect(await h.executor.execute('discussion.reply', input, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(await h.executor.execute('approval.request.decide', { artifactId: 'private-draft', decision: 'reject' },
-      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'alice' }))
-      .toMatchObject({ ok: true, result: { status: 'rejected' } });
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'deciding-device-profile', serverIdentityId: 'srv_home', runtimeAccountId: 'alice' }))
+      .toMatchObject({ ok: true, result: { status: 'rejected',
+        delivery: { status: 'accepted', localId: 'approval-result:private-draft' } } });
     expect(h.stored()?.status).toBe('rejected');
     expect(h.publications).toEqual([]);
   });

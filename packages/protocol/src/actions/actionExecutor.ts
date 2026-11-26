@@ -6616,7 +6616,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
               : invalidActionOutputFailure(parsed.error);
           };
           const resolveTypedFieldOptions = async (field: Parameters<typeof resolveTypedInputFieldOptions>[0]['field'], ownerId: string): Promise<ActionExecuteResult | null> => {
-            if (!field.inputType || 'hostType' in field.inputType) return null;
+            if (!field.inputType) return null;
+            if ('hostType' in field.inputType) {
+              if (field.options !== undefined || readInputFieldOptionsSourceId(field) || directOptionsSourceId) return null;
+              return { ok: true, result: { actionId: ownerId, fieldPath, optionsSourceId: null, options: [] } };
+            }
             if (!deps.resolveInputType && deps.readAdmittedInputTypeOptions) {
               return readAdmittedOptions(deps.readAdmittedInputTypeOptions);
             }
