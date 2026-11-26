@@ -344,10 +344,12 @@ function createHomeGovernanceActionSpecs() {
     inputHints: { fields: HOME_POLICY_FIELDS },
     approvalPresentation: {
       summary: () => null,
-      inputHints: { fields: HOME_POLICY_FIELDS.map(field => field.path === TEAM_PROVIDER_KINDS_PATH
-        ? { ...field, widget: 'multiselect', options: Object.entries(MANAGED_IDENTITY_PROVIDER_KIND_LABELS)
-          .map(([value, label]) => ({ value, label })) }
-        : field) },
+      inputHints: { fields: HOME_POLICY_FIELDS.map(field => {
+        if (field.path !== TEAM_PROVIDER_KINDS_PATH) return field;
+        const { listSeparator: _listSeparator, ...reviewField } = field;
+        return { ...reviewField, widget: 'multiselect', options: Object.entries(MANAGED_IDENTITY_PROVIDER_KIND_LABELS)
+          .map(([value, label]) => ({ value, label })) };
+      }) },
       referenceForField: (path, value, _input, parent) => {
         if (path === 'sessionDefaults.approvalProfileId' && (value === null || typeof value === 'string' && value.trim())) {
           return { kind: 'approvalProfile', id: value };
