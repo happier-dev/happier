@@ -60,7 +60,7 @@ import {
     verifyRunnerAgentBindingAgainstGeneration,
 } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
 import type {
-    AgentSessionRunnerBindingV1,
+    AgentExecutionRunRunnerBindingV1,
 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import {
     resolveManagedProviderRuntimeExecutable,
@@ -837,7 +837,7 @@ export function createRunnerManagedServiceEndpointProjectionBinding(
 export async function createRunnerManagedServiceInvocationOwner(input: Readonly<{
     paths: PluginStorePaths;
     authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
-    retainedAgent: AgentSessionRunnerBindingV1;
+    retainedAgent: AgentExecutionRunRunnerBindingV1;
     developmentOccurrenceId?: string;
     admittedBundledDevelopmentAgent?: PluginAgentContributionV2;
 }>): Promise<Readonly<{

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 // The fixture's real publication policy imports fs; load it before replacing that boundary.
 const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
@@ -13,6 +15,9 @@ vi.mock('node:fs', async (importOriginal) => {
 import { withAdmittedSessionRun, type AdmittedSessionRunFixture } from './testkit/admittedSessionRun';
 
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { resolveBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
@@ -20,9 +25,12 @@ import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContri
 import { createNativeSessionBoundary } from './testkit/nativeSessionContext';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
+import { createExecutionRunRpcActionDeps, createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
+import { CLAWPATCH_PLUGIN } from '../../../../../../../packages/plugins/review-slices/src/manifest';
 
 const presentUser = { verifiedPeerAuthority: 'present_user' } as const;
 const readRun = async (fixture: AdmittedSessionRunFixture, runId: string) => fixture.bridge
@@ -42,6 +50,90 @@ const rawStart = (fixture: AdmittedSessionRunFixture, input: Record<string, unkn
   }, presentUser);
 
 describe('ExecutionRunHostBridge admitted registry integration', () => {
+  it('admits an attached execution-only Review through the public Action', async () => {
+    await withAdmittedSessionRun({ directOwner: true,
+      prepareAccountRoleOverrides: true,
+      runtimePluginIds: [CLAWPATCH_PLUGIN.manifest.id, 'happier.agent.codex', 'happier.scm.backend.git'],
+      nativeToolEnvironment: { HAPPIER_JS_RUNTIME_PATH: process.execPath },
+      run: async fixture => {
+        runScmExecutable(fixture.directory, 'git', ['init']);
+        const dependency = CLAWPATCH_PLUGIN.manifest.contributes?.managedDependencies?.find(item => item.id === 'review-executable');
+        const source = dependency?.sources.find(item => item.kind === 'managedJavaScriptPackage');
+        if (!dependency || source?.kind !== 'managedJavaScriptPackage') throw new Error('Missing managed clawpatch package declaration');
+        // Seed the installed vendor boundary. The empty map is a completed
+        // native Review with no slices, so it needs no model credentials.
+        const packageRoot = join(fixture.directory, 'tools', 'providers', source.installId,
+          'current', 'workspace', 'node_modules', source.packageName);
+        await mkdir(packageRoot, { recursive: true });
+        await writeFile(join(packageRoot, 'package.json'), JSON.stringify({
+          name: source.packageName, version: source.version, bin: { [dependency.executable]: 'review.cjs' },
+        }));
+        await writeFile(join(packageRoot, 'review.cjs'), `const fs = require('node:fs');
+          const path = require('node:path');
+          const args = process.argv.slice(2);
+          const state = args[args.indexOf('--state-dir') + 1];
+          if (args.includes('--version')) process.stdout.write(${JSON.stringify(source.version)});
+          else if (args[0] === 'init') {
+            fs.mkdirSync(state, { recursive: true });
+            fs.writeFileSync(path.join(state, 'project.json'), '{}');
+          } else if (args[0] === 'map') fs.mkdirSync(path.join(state, 'features'), { recursive: true });
+          else process.exitCode = 1;`);
+        const bridge = fixture.bridge!;
+        const deps = createExecutionRunRpcActionDeps({ manager: bridge,
+          context: {
+            cwd: fixture.directory,
+            sessionId: fixture.session.sessionId,
+            serverId: fixture.requesterWorkAttributionV1.serverId,
+            serverUrl: fixture.serverHttpBaseUrl,
+            readPromptCredentials: async () => fixture.credentials,
+            readRequesterWorkAttributionV1: async () => fixture.requesterWorkAttributionV1,
+            runtimeAccountId: fixture.requesterWorkAttributionV1.accountId,
+          },
+          isExecutionRunsEnabled: () => true,
+          policy: resolveExecutionRunPolicy({ defaults: {
+            boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null,
+          } }),
+        });
+        const records = createInMemoryReviewRecordPortV1();
+        const runnerAgentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const execute = createActionExecutor({
+          reviewRecords: () => records,
+          // Supply the remote inventory result at the Action boundary. The
+          // daemon still resolves and loads the real executable contribution.
+          reviewEnginesList: async () => ({ items: [{ value: 'clawpatch',
+            engineId: 'clawpatch', label: 'clawpatch', enabled: true, retentionPolicy: 'ephemeral' }] }),
+          executionRunStart: deps.executionRunStart,
+          executionRunCheckProtocolV2: deps.executionRunCheckProtocolV2,
+        });
+        const result = await execute.execute(REVIEW_START_ACTION_ID_V1, {
+          sessionId: fixture.session.sessionId,
+          cwd: fixture.directory,
+          scope: 'repository',
+          instructions: 'Review this repository.',
+          reviewRound: { reviewId: 'attached-clawpatch-review', roundOrdinal: 1 },
+          reviewers: [{ kind: 'engine', engineId: 'clawpatch', runnerAgentTarget, connectedServices: null,
+            modelSelection: { agentTargetKey: resolveBackendTargetKeyV2(runnerAgentTarget),
+              providerConnectionId: null, modelId: 'machine-login-model' } }],
+        }, { surface: 'ui' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+          result: { results: [{ ok: true, result: { runId: expect.any(String) } }] } });
+        const payload = result.ok && result.result as { results: [{ result: { runId: string } }] };
+        if (!payload) throw new Error('Missing attached Review Run');
+        const { runId } = payload.results[0].result;
+        try {
+          expect(bridge.getPublic(runId)).toMatchObject({ intent: 'review', profileId: `${CLAWPATCH_PLUGIN.manifest.id}/review` });
+          expect(fixture.daemonObservations).toEqual(expect.arrayContaining([
+            expect.objectContaining({ operation: 'execution_run.snapshot.acquire_v1', status: 200 }),
+            expect.objectContaining({ operation: 'execution_run.review_scm_scope.resolve_v1', status: 200 }),
+          ]));
+          expect(fixture.nativeOpen).not.toHaveBeenCalled();
+        } finally {
+          await bridge.stop(runId);
+          await bridge.waitForTerminal(runId);
+        }
+      } });
+  });
+
   it('validates default contributed Review options at admission before creating a Run', async () => {
     await withAdmittedSessionRun({ directOwner: true, profile: true, profileIntent: 'review', run: async fixture => {
       const agentId = readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(

@@ -3,8 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createRunnerExecutionRunProfileCatalog } from '@/agent/runtime/session/process/runnerExecutionRunSnapshot';
+import { createNativeAgentExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
 import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
-import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { AgentSessionRunnerBindingV1Schema, createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { loadRetainedAgentRuntimeLeaf } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -16,8 +19,80 @@ import { assertExecutionRunStructuredOutputModelAllowed } from '@/agent/runtime/
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { resolveExecutionRunRuntimeBackendTarget } from '@/agent/runtime/bridges/executionRun/backendTargets';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { CLAWPATCH_PLUGIN } from '../../../../../packages/plugins/review-slices/src/manifest';
+import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prepareAgentRuntimeSessionBridge';
 
 describe('runner execution-run snapshot SCM preparation', () => {
+  it('retains the execution-only Review engine through the same snapshot as an ordinary Agent', async () => {
+    const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+      pluginIds: ['happier.agent.codex', CLAWPATCH_PLUGIN.manifest.id],
+    } });
+    const snapshots = createRunnerExecutionRunSnapshots({ machineId: 'machine-1', controller: runtime.controller });
+    const target = (pluginId: string, localId: string) => {
+      const backend = resolveExecutionRunRuntimeBackendTarget({ kind: 'agent', identity: { pluginId, localId } },
+        runtime.registry.contributes);
+      if (!backend) throw new Error(`Missing admitted backend for ${pluginId}/${localId}`);
+      return readBackendTargetRefV2(backend);
+    };
+    try {
+      const parentTarget = target('happier.agent.codex', 'codex');
+      const parent = await resolveRunnerAgentSessionDescriptorForLease({ target: parentTarget, lease: runtime.lease });
+      const retainedAgent = parent && runtime.registry.agentRuntimesByAgentId.get(parent.agentId)?.sessionRunnerFactoryBinding;
+      if (!retainedAgent) throw new Error('Missing admitted Session runner binding');
+      const sessionId = 'review-parent';
+      const context: Parameters<AgentRuntimeDaemonServiceRoutes['dispatch']>[1] = {
+        sessionId, runner: { pid: 123, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'review-parent' },
+        retainedAgent, invocationContext: { cwd: runtime.happyHomeDir, environment: {}, providerBindingActive: false },
+        trackedSession: { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: sessionId },
+        isCurrent: async () => true,
+      };
+      const acquire = async (backendTarget: typeof parentTarget) => {
+        const response = AgentRuntimeDaemonServiceResponseV1Schema.parse(await snapshots.dispatch(
+          AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1, context: { token: 'A'.repeat(43), sessionId },
+            operation: { kind: 'execution_run.snapshot.acquire_v1', backendTarget } }), context));
+        if (!response.ok || response.result.kind !== 'execution_run.snapshot' || !response.result.agent) {
+          throw new Error('Missing retained Agent snapshot');
+        }
+        return response.result.agent;
+      };
+      expect((await acquire(parentTarget)).binding).toEqual(retainedAgent);
+      const { binding, descriptor } = await acquire(target(CLAWPATCH_PLUGIN.manifest.id, 'clawpatch'));
+      expect(AgentSessionRunnerBindingV1Schema.safeParse(binding).success).toBe(false);
+      const leaf = await loadRetainedAgentRuntimeLeaf({
+        paths: resolvePluginStorePaths({ happyHomeDir: runtime.happyHomeDir }),
+        binding,
+        developmentOccurrenceId: descriptor.occurrenceId,
+        admittedBundledDevelopmentAgent: descriptor.agentDeclaration.definition,
+      });
+      try {
+        const signal = new AbortController().signal;
+        const engine = await leaf.factory({
+          plugin: { id: binding.pluginId, version: binding.pluginVersion },
+          agent: { id: binding.localAgentId }, signal,
+        });
+        const host = createNativeAgentExecutionRunHostRuntime({
+          runtime: engine, supportsResume: false,
+          lease: { ...binding, occurrenceId: descriptor.occurrenceId, isCurrent: () => true },
+          options: { cwd: runtime.happyHomeDir, runId: 'review-engine', backendId: binding.agentId,
+            scope: 'session_owned', permissionMode: 'read_only',
+            start: { intent: 'review', intentInput: { scope: 'repository' },
+              runClass: 'bounded', retentionPolicy: 'ephemeral' } },
+        });
+        try {
+          await host.provisionRuntime({ initialPrompt: 'Review the repository' });
+          await expect(host.waitForTurnCompletion!()).rejects.toMatchObject({
+            executionRunErrorCode: 'clawpatch_scope_unsupported',
+          });
+        } finally { await host.dispose(); }
+      } finally { await leaf.dispose(); }
+    } finally {
+      await snapshots.dispose();
+      await runtime.dispose();
+    }
+  });
+
   it('reads declared model variants through one retained snapshot and refuses unavailable configured targets', async () => {
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
       // This RPC fixture owns one Agent; retain real physical admission without

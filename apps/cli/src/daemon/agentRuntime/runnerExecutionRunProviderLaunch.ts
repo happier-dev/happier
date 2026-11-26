@@ -9,6 +9,7 @@ import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope'
 import type { DirectManagedProviderEndpointPreparer } from '@/providers/lifecycle/prepareDirectLaunch';
 import type { RunnerExecutionRunSnapshotV1 } from '@/agent/runtime/session/process/executionRunSnapshotProtocol';
 import { logger } from '@/ui/logger';
+import { readExecutionRunFactoryBinding } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import {
     prepareExecutionRunProviderLaunch,
     type ExecutionRunProviderSelectionInput,
@@ -70,7 +71,7 @@ export function createRunnerExecutionRunProviderLaunchServices(input: Readonly<{
         }
         const registration = input.runtimeRegistryLease.registry.agentRuntimesByAgentId.get(request.agentId);
         if (!registration) return 'agent_registration_missing';
-        if (!isDeepStrictEqual(input.agent.binding, registration.sessionRunnerFactoryBinding)) return 'agent_factory_binding_mismatch';
+        if (!isDeepStrictEqual(input.agent.binding, readExecutionRunFactoryBinding(registration))) return 'agent_factory_binding_mismatch';
         return registration.isCurrent() ? null : 'agent_registration_retired';
     };
     const resolve = async (request: ExecutionRunProviderLaunchRequest) => {

@@ -4904,6 +4904,13 @@ and its
 
 ## Execution Run launch selection
 
+In 0.3 development source, a Session-attached Run snapshots the selected
+Agent's factory binding from the admitted Plugin runtime lease. For an
+execution-only Agent, the binding names its registration in that Plugin
+source. The runner resolves the factory through the retained activation
+owner, using the same Agent registration as detached execution. Session
+bootstrap uses its existing Session runner binding.
+
 In unreleased 0.3 source, engine Runs receive the materializer's selected runner
 Connected Account purposes alongside the runner Agent owner's translated launch
 material. Machine login is used only without a selected runner account. An

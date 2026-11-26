@@ -39,6 +39,8 @@ import { createProviderLaunchResourceScope } from "@/providers/lifecycle/resourc
 import { createDaemonShutdownCancellationDomains } from "@/daemon/startup/shutdownCancellationDomains";
 import { resolveTrackedSessionCatalogAgentId } from "@/daemon/sessions/resolveTrackedSessionCatalogAgentId";
 import { currentAgentBindingMatchesRetainedRunner } from "@/plugins/runtime/retainedPluginSourceAttestation";
+import { readExecutionRunFactoryBinding } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
+import { isActivatedExecutionRunFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { createRunnerDaemonPluginServicesHost, createRunnerDaemonPluginServicesPreparationError, type RunnerDaemonCurrentGlobalActionExecutor, type RunnerDaemonCurrentGlobalExternalSessionsOwner, type RunnerDaemonCurrentGlobalMcpOwner } from "@/daemon/agentRuntime/runnerDaemonPluginServicesHost";
 import { materializeRunnerManagedProviderAgentBinding } from "@/daemon/agentRuntime/materializeRunnerManagedProviderAgentBinding";
 import { authorizeTrackedRunnerAgentDaemonServiceOperation } from "@/daemon/agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation";
@@ -122,7 +124,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             message: 'Execution Run executable snapshot is unavailable' });
         }
         if (
-          !tracked ||
+          !tracked || isActivatedExecutionRunFactoryBinding(admittedRunnerAgent) ||
           !authorizeTrackedRunnerAgentDaemonServiceOperation({
             tracked,
             sessionId,
@@ -221,10 +223,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
           } catch {
             isCurrent = false;
           }
-          const binding =
-            registration?.hasPrimaryRuntime === true
-              ? registration.sessionRunnerFactoryBinding
-              : undefined;
+          const binding = runSnapshot ? readExecutionRunFactoryBinding(registration) : registration?.sessionRunnerFactoryBinding;
           const currentRegistrationIsExact = Boolean(
             registration &&
             registration.hasPrimaryRuntime &&
@@ -511,7 +510,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     tracked,
                     sessionId,
                     runner,
-                    retainedAgent,
+                    retainedAgent: admittedRunnerAgent,
                     witness: undefined,
                     allowIdleCurrentGeneration: true,
                   }) &&
@@ -850,7 +849,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   tracked,
                   sessionId,
                   runner,
-                  retainedAgent,
+                  retainedAgent: admittedRunnerAgent,
                   witness: undefined,
                   allowIdleCurrentGeneration: true,
                 }) &&

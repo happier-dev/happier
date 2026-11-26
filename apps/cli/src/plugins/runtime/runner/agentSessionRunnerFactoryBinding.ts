@@ -56,6 +56,31 @@ export const AgentSessionRunnerBindingV1Schema = z.union([
     HostDeclarativeAcpRunnerBindingV1Schema,
 ]);
 
+// An execution-only Agent registers its factory in activate(api). Its retained
+// binding identifies that registration in the admitted source, with no leaf locator.
+export const ActivatedExecutionRunFactoryBindingV1Schema = z.extend(
+    z.pick(AgentSessionRunnerFactoryBindingV1Schema, {
+        v: true, pluginId: true, pluginVersion: true, agentId: true, localAgentId: true, sourceCustody: true,
+    }),
+    { kind: z.literal('activated_execution_run_factory_v1') },
+);
+
+export const AgentExecutionRunRunnerBindingV1Schema = z.union([
+    AgentSessionRunnerBindingV1Schema,
+    ActivatedExecutionRunFactoryBindingV1Schema,
+]);
+
+export type ActivatedExecutionRunFactoryBindingV1 = Readonly<z.infer<typeof ActivatedExecutionRunFactoryBindingV1Schema>>;
+export type AgentExecutionRunRunnerBindingV1 = AgentSessionRunnerBindingV1 | ActivatedExecutionRunFactoryBindingV1;
+
+export function isActivatedExecutionRunFactoryBinding(binding: AgentExecutionRunRunnerBindingV1): binding is ActivatedExecutionRunFactoryBindingV1 {
+    return 'kind' in binding && binding.kind === 'activated_execution_run_factory_v1';
+}
+
+export function verifyAgentExecutionRunRunnerBindingV1(value: unknown): AgentExecutionRunRunnerBindingV1 {
+    return Object.freeze(AgentExecutionRunRunnerBindingV1Schema.parse(value));
+}
+
 export type AgentSessionRunnerFactoryBindingV1 = Readonly<{
     v: 1;
     pluginId: string;

@@ -76,6 +76,7 @@ import type {
     AgentInvocationTurnAdmissionWitness,
 } from '@/plugins/runtime/invocation/services/types';
 import type {
+    AgentExecutionRunRunnerBindingV1,
     AgentSessionRunnerBindingV1,
 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type {
@@ -163,7 +164,7 @@ type Invocation = {
     readonly key: string;
     readonly sessionId: string;
     readonly runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-    readonly retainedAgent: AgentSessionRunnerBindingV1;
+    readonly retainedAgent: AgentExecutionRunRunnerBindingV1;
     readonly executionRunSnapshotId?: string;
     readonly runnerRetainedAgent?: AgentSessionRunnerBindingV1;
     readonly services: PluginServices;
@@ -401,7 +402,7 @@ function hasExactInvocationAuthority(
     invocation: Invocation,
     sessionId: string,
     runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
-    retainedAgent: AgentSessionRunnerBindingV1,
+    retainedAgent: AgentExecutionRunRunnerBindingV1,
 ): boolean {
     return invocation.sessionId === sessionId
         && isDeepStrictEqual(invocation.runner, runner)
@@ -431,7 +432,7 @@ function result(
 
 type ManagedAgentServiceSupervisionAuthority = Readonly<{
         sessionId: string; runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-        retainedAgent: AgentSessionRunnerBindingV1; invocationId: string;
+        retainedAgent: AgentExecutionRunRunnerBindingV1; invocationId: string;
         executionRunSnapshotId?: string; runnerRetainedAgent?: AgentSessionRunnerBindingV1; signal?: AbortSignal;
 }>;
 
@@ -440,7 +441,7 @@ export type RunnerDaemonPluginServicesHost = Readonly<{
     readManagedProviderSupervisionAuthority(input: Readonly<{
         sessionId: string;
         runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-        retainedAgent: AgentSessionRunnerBindingV1;
+        retainedAgent: AgentExecutionRunRunnerBindingV1;
         contributionId: string;
         operationClaimId: string;
         serverId?: string;
@@ -454,7 +455,7 @@ export type RunnerDaemonPluginServicesHost = Readonly<{
         executionRunSnapshotId?: string;
         runnerRetainedAgent?: AgentSessionRunnerBindingV1;
         runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-        retainedAgent: AgentSessionRunnerBindingV1;
+        retainedAgent: AgentExecutionRunRunnerBindingV1;
         operation: RunnerDaemonPluginServiceOperationV1;
         signal?: AbortSignal;
     }>): Promise<RunnerDaemonPluginServiceResultV1>;
@@ -491,7 +492,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         executionRunSnapshotId?: string;
         runnerRetainedAgent?: AgentSessionRunnerBindingV1;
         runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-        retainedAgent: AgentSessionRunnerBindingV1;
+        retainedAgent: AgentExecutionRunRunnerBindingV1;
         invocationId: string;
         executionRunCwd?: string;
         witness: AgentInvocationTurnAdmissionWitness | undefined;
@@ -543,7 +544,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
     const requireInvocation = (
         sessionId: string,
         runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
-        retainedAgent: AgentSessionRunnerBindingV1,
+        retainedAgent: AgentExecutionRunRunnerBindingV1,
         operation: Readonly<{ kind: RunnerDaemonPluginServiceOperationV1['kind']; invocationId: string }>,
         runAuthority: Readonly<{
             executionRunSnapshotId?: string;
@@ -912,7 +913,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             executionRunSnapshotId?: string;
             runnerRetainedAgent?: AgentSessionRunnerBindingV1;
             runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-            retainedAgent: AgentSessionRunnerBindingV1;
+            retainedAgent: AgentExecutionRunRunnerBindingV1;
             operation: RunnerDaemonPluginServiceOperationV1;
             signal?: AbortSignal;
         }>,
@@ -3013,7 +3014,7 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
         authorityInput: Readonly<{
             sessionId: string;
             runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
-            retainedAgent: AgentSessionRunnerBindingV1;
+            retainedAgent: AgentExecutionRunRunnerBindingV1;
             contributionId: string;
             operationClaimId: string;
             serverId?: string;

@@ -63,6 +63,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createSkillStore } from '@/prompts/skills/store/skillStore';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import { prepareActiveAccountRoleOverrides } from '@/settings/prompts/hydratePromptLibraryCatalog';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createRunnerExecutionRunSnapshots } from '@/daemon/agentRuntime/runnerExecutionRunSnapshots';
@@ -116,6 +117,7 @@ type AdmittedSessionRunOptions = Readonly<{
   directOwner?: boolean;
   /** Account settings returned by the real Home settings boundary. */
   accountSettings?: Readonly<Record<string, unknown>>;
+  prepareAccountRoleOverrides?: boolean;
   reviewComments?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['reviewComments'];
   readRoleArtifact?: (artifactId: string) => import('@happier-dev/protocol/prompts/roles/roleArtifactV1').RoleArtifactV1 | null;
   runReportPolicy?: import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowPolicyV1;
@@ -702,6 +704,10 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   ]);
   expect(acpCatalog, `Observed ACP catalog: ${JSON.stringify(acpCatalog)}`).toMatchObject({ status: 'ready' });
   expect(mcpCatalog, `Observed MCP catalog: ${JSON.stringify(mcpCatalog)}`).toMatchObject({ status: 'ready' });
+  if (options?.prepareAccountRoleOverrides) {
+    expect(await prepareActiveAccountRoleOverrides({ credentials, scopeKey: accountBootstrap.scopeKey,
+      lifetimeToken: accountLifetime })).toMatchObject({ status: 'ready' });
+  }
   const accountSettings = getActiveAccountSettingsSnapshot();
   if (!accountSettings || accountSettings.scopeKey !== accountBootstrap.scopeKey
     || getActiveAccountSettingsSnapshotLifetimeToken() !== accountLifetime) {

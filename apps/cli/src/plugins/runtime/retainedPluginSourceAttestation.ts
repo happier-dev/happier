@@ -19,7 +19,7 @@ import { readBundledPluginManifestInput } from '../projection/registry/builtIn/m
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 import type { CanonicalPluginManifest } from '../manifest/types';
 import type { PluginStorePaths } from '../store/paths';
-import type { AgentSessionRunnerBindingV1 } from './runner/agentSessionRunnerFactoryBinding';
+import type { AgentExecutionRunRunnerBindingV1, AgentSessionRunnerBindingV1 } from './runner/agentSessionRunnerFactoryBinding';
 import { createAgentSessionRunnerFactoryBinding } from './runner/agentSessionRunnerFactoryBinding';
 import { readRetainedBundledAgentFactory } from './retainedBundledAgentFactory';
 import { readPluginRegistryCommitRecord } from '../store/registry/commitRecord';
@@ -211,7 +211,7 @@ export async function attestFreshRunnerAgentBinding(params: Readonly<{
 
 export function retainedAgentSourceMatchesRunner(
     runnerSnapshotIdentity: string,
-    binding: AgentSessionRunnerBindingV1,
+    binding: AgentExecutionRunRunnerBindingV1,
 ): boolean {
     const custody = binding.sourceCustody;
     if (custody.kind === 'development') {
@@ -231,8 +231,8 @@ export function retainedAgentSourceMatchesRunner(
 /** A current registration supplies policy; the retained runner supplies its own attested code. */
 export function currentAgentBindingMatchesRetainedRunner(params: Readonly<{
     runnerSnapshotIdentity: string;
-    currentBinding: AgentSessionRunnerBindingV1;
-    retainedBinding: AgentSessionRunnerBindingV1;
+    currentBinding: AgentExecutionRunRunnerBindingV1;
+    retainedBinding: AgentExecutionRunRunnerBindingV1;
 }>): boolean {
     if (!retainedAgentSourceMatchesRunner(
         params.runnerSnapshotIdentity,

@@ -56,7 +56,7 @@ import type { createConnectedAccountContributionRegistry, ConnectedAccountRuntim
 import type { ConnectedAccountHostRuntimeInvoker } from '../connectedAccounts/runtimeInvoker';
 import type { StablePluginManagedDependenciesHost } from '../invocation/services/managedDependencies';
 import type { RetainedRunnerAgentServiceBinding } from '../runner/loadRetainedAgentRuntimeLeaf';
-import type { AgentSessionRunnerBindingV1 } from '../runner/agentSessionRunnerFactoryBinding';
+import type { AgentExecutionRunRunnerBindingV1, AgentSessionRunnerBindingV1 } from '../runner/agentSessionRunnerFactoryBinding';
 import type { createManagedServicesOwner } from '../invocation/services/managedServicesOwner';
 import type { CurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
 import type { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdoptedHealthCheckBatch';
@@ -493,7 +493,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): Promise<import('../lifecycle/contributions/backgroundServiceProcessServices').PreparedBackgroundServiceProcessOperationServices>;
     /** Reuses exact retained/current-source attestation for daemon-owned services. */
     attestRetainedRunnerAgentServiceBinding?(params: Readonly<{
-        binding: AgentSessionRunnerBindingV1;
+        binding: AgentExecutionRunRunnerBindingV1;
         runnerSnapshotIdentity: string;
     }>): Promise<RetainedRunnerAgentServiceBinding>;
     /** Exact retained-G structural declarations for daemon-replacement recovery. */
@@ -508,7 +508,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     }> | null>;
     createRetainedRunnerAgentInvocationServices?(
         params: Readonly<{
-            binding: AgentSessionRunnerBindingV1;
+            binding: AgentExecutionRunRunnerBindingV1;
             runnerSnapshotIdentity?: string;
             sessionId: string;
             exactPurposeBindingSubjectId?: string;
@@ -543,7 +543,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * generation-private and never enter this path. */
     createRetainedRunnerAgentCurrentGlobalActionsService?(
         params: Readonly<{
-            binding: AgentSessionRunnerBindingV1;
+            binding: AgentExecutionRunRunnerBindingV1;
             runnerSnapshotIdentity?: string;
             sessionId: string;
             correlationId: string;
@@ -558,7 +558,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * Runner Agent identity. The selected registry owns current lookup. */
     createRetainedRunnerAgentCurrentGlobalMcpService?(
         params: Readonly<{
-            binding: AgentSessionRunnerBindingV1;
+            binding: AgentExecutionRunRunnerBindingV1;
             runnerSnapshotIdentity?: string;
             sessionId: string;
             correlationId: string;
@@ -571,7 +571,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
      * boundary; every method routes through the published current owner. */
     createRetainedRunnerAgentCurrentGlobalExternalSessionsService?(
         params: Readonly<{
-            binding: AgentSessionRunnerBindingV1;
+            binding: AgentExecutionRunRunnerBindingV1;
             runnerSnapshotIdentity?: string;
             sessionId: string;
             correlationId: string;

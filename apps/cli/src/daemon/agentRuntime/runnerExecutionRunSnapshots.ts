@@ -19,6 +19,7 @@ import { createRunnerExecutionRunProviderLaunchServices, projectRunnerExecutionR
 import { readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
 import { areExecutionRunBackendTargetsEqual } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import { convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readExecutionRunFactoryBinding } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 
 type Context = Parameters<AgentRuntimeDaemonServiceRoutes['dispatch']>[1];
 type Request = Parameters<AgentRuntimeDaemonServiceRoutes['dispatch']>[0];
@@ -68,7 +69,7 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           const descriptor = backendId ? await resolveRunnerAgentSessionDescriptorForLease({
             target: operation.backendTarget!, lease: snapshot.runtimeRegistryLease }) : null;
           const registration = descriptor ? snapshot.runtimeRegistry.agentRuntimesByAgentId.get(descriptor.agentId) : null;
-          const binding = registration?.hasPrimaryRuntime ? registration.sessionRunnerFactoryBinding : undefined;
+          const binding = readExecutionRunFactoryBinding(registration);
           if (operation.backendTarget && (!descriptor || !binding || !registration?.isCurrent())) return unavailable();
           const projection = RunnerExecutionRunSnapshotV1Schema.parse({ kind: 'execution_run.snapshot', snapshotId: randomUUID(),
             ...(descriptor && binding ? { agent: { descriptor, binding } } : {}),
@@ -100,7 +101,7 @@ export function createRunnerExecutionRunSnapshots(input: Readonly<{ machineId: s
           || !areExecutionRunBackendTargetsEqual(retained.backendTarget, operation.backendTarget)) return unavailable();
         const registration = retained.snapshot.runtimeRegistry.agentRuntimesByAgentId.get(agent.descriptor.agentId);
         const isCurrent = async () => read(snapshotId!, context) === retained && await context.isCurrent()
-          && isDeepStrictEqual(agent.binding, registration?.sessionRunnerFactoryBinding) && registration?.isCurrent();
+          && isDeepStrictEqual(agent.binding, readExecutionRunFactoryBinding(registration)) && registration?.isCurrent();
         if (!await isCurrent()) return unavailable();
         const catalogEntry = await retained.snapshot.runtimeRegistry.acquireAgentCatalogEntry?.(agent.descriptor.agentId);
         if (!catalogEntry || !await isCurrent()) return unavailable();

@@ -533,7 +533,7 @@ import {
   transformSessionInputThroughRuntimeRegistry,
 } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { loadRetainedAgentRuntimeLeaf, verifyRunnerAgentBindingAgainstGeneration, type RetainedRunnerAgentServiceBinding } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
-import type { AgentSessionRunnerBindingV1 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { isActivatedExecutionRunFactoryBinding, type AgentExecutionRunRunnerBindingV1 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
@@ -7222,7 +7222,7 @@ export async function startDaemonSessionControlRuntime(
     params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry,
   });
   const withRetainedRunnerAgentServiceBinding = async <T>(
-    binding: AgentSessionRunnerBindingV1,
+    binding: AgentExecutionRunRunnerBindingV1,
     runnerSnapshotIdentity: string,
     operation: (attested: RetainedRunnerAgentServiceBinding) => Promise<T>,
   ): Promise<T> => {
@@ -13076,7 +13076,7 @@ export async function startDaemonSessionControlRuntime(
             || request.operation.kind === 'mcp.plugin.discover'
             || request.operation.kind === 'mcp.plugin.close') {
             try {
-              if (request.operation.kind !== 'mcp.plugin.close') {
+              if (request.operation.kind !== 'mcp.plugin.close' && !runSnapshot) {
                 const decision = await authorizeRunnerAgentNewTurn({ retainedAgent });
                 if (decision.status !== 'admitted') return { ok: false as const, error: {
                   code: 'agent_runtime_daemon_service_generation_not_current', message: 'Runner Agent generation is not current' } };
@@ -13208,7 +13208,7 @@ export async function startDaemonSessionControlRuntime(
           }
           if (request.operation.kind === 'session.open.attest') {
             const tracked = trackedSession;
-            if (!tracked || tracked.happySessionId !== sessionId) {
+            if (!tracked || tracked.happySessionId !== sessionId || isActivatedExecutionRunFactoryBinding(retainedAgent)) {
               return {
                 ok: false as const,
                 error: {
@@ -13564,6 +13564,9 @@ export async function startDaemonSessionControlRuntime(
             );
           if (facetOperation.success) {
             try {
+              if (isActivatedExecutionRunFactoryBinding(retainedAgent)) {
+                throw new PluginError({ code: 'agent_runtime_daemon_facet_unavailable' });
+              }
               return {
                 ok: true as const,
                 result: await runnerAgentDaemonFacetService.dispatch({
@@ -13607,10 +13610,9 @@ export async function startDaemonSessionControlRuntime(
             request.operation.kind === 'model_transition.authorize' ||
             request.operation.kind === 'session.input.admit'
           ) {
-            const decision = await authorizeRunnerAgentNewTurn({
-              retainedAgent,
-            });
-            if (decision.status !== 'admitted') {
+            // Run contributions use the exact admission already held by the snapshot.
+            if (!(request.operation.kind === 'turn_contributions.resolve' && runSnapshot)
+              && (await authorizeRunnerAgentNewTurn({ retainedAgent })).status !== 'admitted') {
               return {
                 ok: false as const,
                 error: {

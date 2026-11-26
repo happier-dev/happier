@@ -54,10 +54,13 @@ import { ExternalSessionProviderFailureError } from '@/session/external/provider
 import type { ValidatedAgentSessionRunnerFactoryFactV1 } from '../../activationSources';
 import { readRetainedBundledAgentFactory } from '../../retainedBundledAgentFactory';
 import {
+    ActivatedExecutionRunFactoryBindingV1Schema,
     createAgentSessionRunnerFactoryBinding,
     createHostDeclarativeAcpRunnerBinding,
+    type ActivatedExecutionRunFactoryBindingV1,
     type AgentSessionRunnerBindingV1,
 } from '../../runner/agentSessionRunnerFactoryBinding';
+import { isMachinePluginSourceCustody } from '../../sourceAuthority';
 import {
     createHostDeclarativeAcpAgentRuntimeFactory,
 } from '../../runner/createHostDeclarativeAcpAgentRuntimeFactory';
@@ -231,14 +234,20 @@ export type AgentRuntimeRegistrationLease =
         hasPrimaryRuntime: true;
         providerBinding?: AgentProviderBindingAdapter;
         sessionRunnerFactoryBinding?: AgentSessionRunnerBindingV1;
+        activatedExecutionRunFactoryBinding?: ActivatedExecutionRunFactoryBindingV1;
         createRuntime(params: Readonly<{ signal: AbortSignal }>): Promise<AgentRuntime>;
     }>)
     | (AgentRuntimeRegistrationLeaseBase & Readonly<{
         hasPrimaryRuntime: false;
         providerBinding?: undefined;
         sessionRunnerFactoryBinding?: undefined;
+        activatedExecutionRunFactoryBinding?: undefined;
         createRuntime?: undefined;
     }>);
+
+export function readExecutionRunFactoryBinding(registration: AgentRuntimeRegistrationLease | null | undefined) {
+    return registration?.activatedExecutionRunFactoryBinding ?? registration?.sessionRunnerFactoryBinding;
+}
 
 export type AgentRuntimeOwnerDuplicate = Readonly<{
     agentId: string;
@@ -448,7 +457,7 @@ function isAgentRegistration(
     return registration.family === 'agents';
 }
 
-function assertValidAgentRuntime(
+export function assertValidAgentRuntime(
     value: AgentRuntime,
     declaredPrimary: 'sessions' | 'executionRuns' | null,
     declaresExecutionRunContextV1: boolean,
@@ -1570,6 +1579,14 @@ function createLease(params: Readonly<{
         });
     }
     const factory = params.registration.factory;
+    const activatedExecutionRunFactoryBinding = params.declaredPrimary === 'executionRuns'
+        && isMachinePluginSourceCustody(params.sourceCustody)
+        ? Object.freeze(ActivatedExecutionRunFactoryBindingV1Schema.parse({
+            kind: 'activated_execution_run_factory_v1', v: 1,
+            pluginId: params.pluginId, pluginVersion: params.pluginVersion,
+            agentId: params.agentId, localAgentId: params.localAgentId, sourceCustody: params.sourceCustody,
+        }))
+        : undefined;
     const validatedSessionRunnerFactory = params.agentSessionRunnerFactory;
     const publishedFactory = params.sourceCustody.kind === 'bundled_first_party'
         && validatedSessionRunnerFactory
@@ -1624,6 +1641,7 @@ function createLease(params: Readonly<{
         ...(sessionRunnerFactoryBinding
             ? { sessionRunnerFactoryBinding }
             : {}),
+        ...(activatedExecutionRunFactoryBinding ? { activatedExecutionRunFactoryBinding } : {}),
         async createRuntime({ signal }) {
             assertCurrent();
             runtimePromise ??= (async () => {

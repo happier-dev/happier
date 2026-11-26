@@ -7,7 +7,7 @@ import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets
 import { PluginExecutionRunProfileContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/executionRunProfiles';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
-import { AgentSessionRunnerBindingV1Schema } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
+import { AgentExecutionRunRunnerBindingV1Schema } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { AgentRuntimeDaemonSessionDescriptorV1Schema } from './agentRuntimeRunnerProtocol';
 import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
 import { ExecutionRunScmCommitMessageInputV1Schema, ExecutionRunScmCommitMessageScopeV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
@@ -73,7 +73,7 @@ export const RUNNER_EXECUTION_RUN_SNAPSHOT_OPERATIONS = lazyActionSpecArray(() =
 export const RunnerExecutionRunSnapshotV1Schema = z.strictObject({
   kind: z.literal('execution_run.snapshot'), snapshotId: z.uuid(),
   agent: z.optional(z.strictObject({ descriptor: AgentRuntimeDaemonSessionDescriptorV1Schema,
-    binding: AgentSessionRunnerBindingV1Schema })),
+    binding: AgentExecutionRunRunnerBindingV1Schema })),
   profiles: z.array(z.strictObject({ pluginId: z.string().check(z.minLength(1)),
     sourceCustody: asHostProtocolZod(PluginSourceCustodyV1Schema),
     definition: asHostProtocolZod(PluginExecutionRunProfileContributionV2Schema) })),

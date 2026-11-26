@@ -372,9 +372,9 @@ import {
 } from './runner/loadRetainedAgentRuntimeLeaf';
 import { isRunnerPinnedDevelopmentAgentSource, retainedAgentSourceMatchesRunner } from './retainedPluginSourceAttestation';
 import type {
-    AgentSessionRunnerBindingV1,
+    AgentExecutionRunRunnerBindingV1,
 } from './runner/agentSessionRunnerFactoryBinding';
-import { verifyAgentSessionRunnerBindingV1 } from './runner/agentSessionRunnerFactoryBinding';
+import { verifyAgentExecutionRunRunnerBindingV1 } from './runner/agentSessionRunnerFactoryBinding';
 import { createStablePluginManagedDependenciesHost } from './invocation/services/managedDependencies';
 import { createV2ManagedDependencySourceModel } from './invocation/services/managedDependencySourceModel';
 import { createProductionManagedDependencySourceAdapter } from './invocation/services/managedDependencySourceAdapters';
@@ -6538,12 +6538,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
     };
 
     const verifyRetainedRunnerAgentServiceBinding = async (
-        binding: AgentSessionRunnerBindingV1,
+        binding: AgentExecutionRunRunnerBindingV1,
         unavailableCode: string,
         runnerSnapshotIdentity?: string,
     ) => {
         try {
-            const verifiedBinding = verifyAgentSessionRunnerBindingV1(binding);
+            const verifiedBinding = verifyAgentExecutionRunRunnerBindingV1(binding);
             if (verifiedBinding.sourceCustody.kind === 'development') {
                 if (runnerSnapshotIdentity
                     && isRunnerPinnedDevelopmentAgentSource(verifiedBinding)
@@ -6649,7 +6649,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     ]);
 
     const requireCurrentGlobalRetainedAgentTarget = (
-        binding: AgentSessionRunnerBindingV1,
+        binding: AgentExecutionRunRunnerBindingV1,
     ) => {
         const target = resolveExactActivationTarget(binding.pluginId);
         if (!target) {
@@ -7197,7 +7197,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     'plugin_services_retained_managed_dependency_unavailable',
                 );
             return managedDependencies.reserveRunnerRetention(
-                verified.binding,
+                retainedAgent,
                 retainedAgentHostAccessRequests(verified),
             );
         },

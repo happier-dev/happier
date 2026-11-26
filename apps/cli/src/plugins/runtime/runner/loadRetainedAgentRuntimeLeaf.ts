@@ -17,14 +17,16 @@ import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/firstP
 
 import type { PluginStorePaths } from '../../store/paths';
 import type { CanonicalPluginManifest } from '../../manifest/types';
+import { resolvePluginDaemonEntryPath } from '../../manifest/daemonEntry';
 import {
     resolveAgentContributionQualifiedId,
     resolveContributedAgentRoutingId,
 } from '../../projection/registry/agentRoutingIdentity';
 import {
     readValidatedAgentSessionRunnerFactories,
+    assertContainedRegularGenerationFile,
 } from '../../store/registry/generationStore';
-import { loadVerifiedPluginModule, type PluginModuleNamespace } from '../loadPluginModule';
+import { loadVerifiedPluginModule, resolvePluginModuleLoadMode, type PluginModuleNamespace } from '../loadPluginModule';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { projectManifestAgentContribution } from '../../projection/registry/projectManifestAgentContribution';
 import { projectAgentConnectedAccountLaunchCatalogEntry, projectAgentExperimentalVendorResumeSupportCatalogEntry, projectAgentRuntimeInputCapacityCatalogEntry } from '../../projection/registry/agentCatalogEntryHooks';
@@ -33,13 +35,17 @@ import { resolvePluginAuthorStagingModule } from '../../authoring/sourceModule';
 import {
     createAgentSessionRunnerFactoryBinding,
     createHostDeclarativeAcpRunnerBinding,
-    verifyAgentSessionRunnerBindingV1,
-    type AgentSessionRunnerBindingV1,
+    isActivatedExecutionRunFactoryBinding,
+    verifyAgentExecutionRunRunnerBindingV1,
+    type AgentExecutionRunRunnerBindingV1,
+    type ActivatedExecutionRunFactoryBindingV1,
 } from './agentSessionRunnerFactoryBinding';
 import {
+    isPrimaryAgentContributionDefinition,
     readAgentPrimaryRuntime,
     readAgentSessionCapabilities,
 } from '../../projection/registry/agentContributionDefinition';
+import { assertValidAgentRuntime } from '../lifecycle/contributions/targetAgents';
 import {
     createHostDeclarativeAcpAgentRuntimeFactory,
 } from './createHostDeclarativeAcpAgentRuntimeFactory';
@@ -139,7 +145,7 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
             factory,
         });
     }
-    const { binding, fact } = attested;
+    const { binding } = attested;
     // A different retained source tree needs its own evaluator. The registered
     // workspace loader resolves all workspace imports against this process's tree.
     const useWorkspaceSourceLoader = attested.sourceKind === 'development'
@@ -148,7 +154,8 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         && (!params.developmentRunnerSnapshotIdentity || attested.rootPath === await resolveRetainedFirstPartyDevelopmentRoot({
             pluginId: binding.pluginId,
         }));
-    const loadModule = (entryPath: string, loadMode = fact.loadMode) => loadVerifiedPluginModule({
+    const loadModule = (entryPath: string, loadMode: 'immutable-js' | 'source-ts' =
+        attested.bindingKind === 'plugin_factory_v1' ? attested.fact.loadMode : 'immutable-js') => loadVerifiedPluginModule({
         entryPath,
         loadMode,
         generationScope: binding,
@@ -156,6 +163,25 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
         nativeFileUrlMode: 'canonical',
         useWorkspaceSourceLoader,
     });
+    if (attested.bindingKind === 'activated_execution_run_factory_v1') {
+        let disposed = false;
+        const catalog = await acquireRetainedAgentCatalogEntry({
+            attested, declaredEntry, loadModule, isCurrent: () => !disposed,
+        });
+        const factory = catalog.factory!;
+        return Object.freeze({
+            catalogEntry: catalog.catalogEntry,
+            async factory(context: Parameters<AgentRuntimeFactory>[0]) {
+                return assertValidAgentRuntime(await factory(context), 'executionRuns', false);
+            },
+            async dispose() {
+                if (disposed) return;
+                disposed = true;
+                await catalog.dispose();
+            },
+        });
+    }
+    const { fact } = attested;
     const modulePath = await realpath(join(attested.rootPath, ...fact.normalizedModulePath.split('/')));
     const moduleResolutionMs = checkpoint();
     const moduleNamespace = await loadModule(modulePath);
@@ -258,15 +284,12 @@ async function acquireRetainedAgentCatalogEntry(input: Readonly<{
     declaredEntry: AgentCatalogEntry | null;
     loadModule(entryPath: string, loadMode?: Parameters<typeof loadVerifiedPluginModule>[0]['loadMode']): Promise<PluginModuleNamespace>;
     isCurrent(): boolean;
-}>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'dispose'>> {
+}>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'dispose'> & Readonly<{ factory?: AgentRuntimeFactory }>> {
     const { attested, declaredEntry, loadModule } = input;
-    if (!declaredEntry || attested.bindingKind !== 'plugin_factory_v1') {
+    if (!declaredEntry || attested.bindingKind === 'host_declarative_acp_v1') {
         return { catalogEntry: declaredEntry, dispose: async () => {} };
     }
     const rootPath = attested.rootPath;
-    const daemonEntrypoint = attested.manifest.entrypoints?.daemon;
-    if (!daemonEntrypoint) throw new Error('Retained Agent catalog has no activation entrypoint');
-    const entryPath = resolve(rootPath, daemonEntrypoint);
     let moduleNamespace: PluginModuleNamespace;
     let resolveRelativeModule: NonNullable<Parameters<typeof activateContributionModule>[0]['resolveRelativeModule']>;
     if (attested.sourceKind === 'development' && attested.manifestAuthority === 'bundled_first_party') {
@@ -281,23 +304,37 @@ async function acquireRetainedAgentCatalogEntry(input: Readonly<{
         moduleNamespace = await source.load();
         resolveRelativeModule = source.resolveRelativeModule;
     } else {
-        moduleNamespace = await loadModule(entryPath);
+        const daemon = await resolvePluginDaemonEntryPath({ pluginRootPath: rootPath, manifest: attested.manifest,
+            resolveDevEntrypoint: attested.sourceKind === 'development' });
+        const entryPath = daemon.ok && (daemon.devDaemonEntryPath ?? daemon.daemonEntryPath);
+        if (!entryPath) throw new Error('Retained Agent catalog has no activation entrypoint');
+        const loadMode = attested.bindingKind === 'plugin_factory_v1' ? attested.fact.loadMode
+            : resolvePluginModuleLoadMode({ entryPath, useDevelopmentEntry: attested.sourceKind === 'development' });
+        if (attested.bindingKind === 'activated_execution_run_factory_v1' && attested.managedFiles) {
+            const relativePath = relative(rootPath, entryPath).split(sep).join('/');
+            const file = attested.managedFiles.find(candidate => candidate.relativePath === relativePath);
+            if (!file) throw new Error('Retained Agent activation entry is absent from its immutable generation');
+            await assertContainedRegularGenerationFile(rootPath, relativePath, 'Retained Agent activation entry',
+                { expectedByteLength: file.byteLength });
+        }
+        moduleNamespace = await loadModule(entryPath, loadMode);
         resolveRelativeModule = async module => {
             const resolved = await resolvePluginAuthorStagingModule({
-                graph: { rootPath, entryPath, loadModule }, module,
+                graph: { rootPath, entryPath, loadModule: path => loadModule(path, loadMode) }, module,
             });
-            return { ...resolved, loadMode: attested.fact.loadMode };
+            return { ...resolved, loadMode };
         };
     }
     const activation = await activateContributionModule({
         pluginId: attested.binding.pluginId, manifestAuthority: attested.manifestAuthority,
         occurrenceId: attested.cacheIdentity, manifest: attested.manifest,
-        moduleNamespace, resolveRelativeModule, isOccurrenceCurrent: () => true,
+        moduleNamespace, resolveRelativeModule, isOccurrenceCurrent: input.isCurrent,
     });
     try {
         const registration = activation.registrations.find(candidate => candidate.family === 'agents'
             && candidate.localId === attested.binding.localAgentId);
-        if (activation.status !== 'active' || registration?.family !== 'agents') {
+        if (activation.status !== 'active' || registration?.family !== 'agents'
+            || (attested.bindingKind === 'activated_execution_run_factory_v1' && !registration.value.factory)) {
             throw new Error('Retained Agent catalog registration is unavailable');
         }
         const launch = registration.value.connectedAccountLaunch;
@@ -307,6 +344,7 @@ async function acquireRetainedAgentCatalogEntry(input: Readonly<{
         }) : null;
         const cli = attested.declaredAgent.cli;
         return Object.freeze({
+            ...(registration.value.factory ? { factory: registration.value.factory } : {}),
             catalogEntry: Object.freeze({ ...declaredEntry,
                 ...(cli ? { getCliAuthSpec: async () => createNativeAgentCliAuthSpec(cli,
                     projected?.connectedAccountNativeHome) } : {}),
@@ -369,7 +407,7 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         resolveBundledPluginRoot?: typeof resolveRetainedBundledPluginRoot;
     }>,
 ): Promise<Readonly<{
-    binding: AgentSessionRunnerBindingV1;
+    binding: AgentExecutionRunRunnerBindingV1;
     sourceKind: 'managed' | 'bundled_first_party' | 'development';
     rootPath: string;
     cacheIdentity: string;
@@ -386,8 +424,13 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         bindingKind: 'host_declarative_acp_v1';
         runtime: unknown;
     }>
+    | Readonly<{
+        bindingKind: 'activated_execution_run_factory_v1';
+        binding: ActivatedExecutionRunFactoryBindingV1;
+        managedFiles: NonNullable<Awaited<ReturnType<typeof attestRetainedPluginSource>>['managedGeneration']>['record']['files'] | null;
+    }>
 )>> {
-    const binding = verifyAgentSessionRunnerBindingV1(params.binding);
+    const binding = verifyAgentExecutionRunRunnerBindingV1(params.binding);
     if (
         binding.sourceCustody.kind === 'development'
         && !params.developmentOccurrenceId?.trim()
@@ -435,7 +478,7 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             record: generation.record,
         })
         : null;
-    const hostDeclarativeAcpBinding = 'kind' in binding;
+    const hostDeclarativeAcpBinding = 'kind' in binding && binding.kind === 'host_declarative_acp_v1';
     const manifestAuthority = retainedSource?.manifestAuthority
         ?? validated?.manifestAuthority
         ?? (developmentLocator
@@ -491,6 +534,34 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             'Runner Agent binding immutable declaration source mismatch',
         );
     }
+    const proof = {
+        binding,
+        sourceKind: binding.sourceCustody.kind,
+        rootPath,
+        cacheIdentity: retainedSource?.cacheIdentity ?? `development:${params.developmentOccurrenceId}`,
+        async assertStillAvailable() {
+            if (retainedSource) {
+                await retainedSource.assertStillAvailable();
+                return;
+            }
+            if (binding.sourceCustody.kind !== 'development'
+                || await realpath(binding.sourceCustody.registeredRootId) !== developmentLocator) {
+                throw new Error('Runner development source custody changed during attestation');
+            }
+        },
+        manifest,
+        manifestAuthority,
+        declaredAgent,
+    };
+    if (isActivatedExecutionRunFactoryBinding(binding)) {
+        const admittedAgentId = resolveContributedAgentRoutingId({ pluginId: manifest.id, localId: declaredAgent.id,
+            provenance: manifestAuthority === 'bundled_first_party' ? 'first_party' : 'external' });
+        if (!isPrimaryAgentContributionDefinition(declaredAgent) || declaredAgent.primary !== 'executionRuns'
+            || admittedAgentId !== binding.agentId) {
+            throw new Error('Retained execution-only Agent registration does not match its admitted declaration');
+        }
+        return Object.freeze({ ...proof, binding, bindingKind: binding.kind, managedFiles: generation?.record.files ?? null });
+    }
     if (hostDeclarativeAcpBinding) {
         const runtime = readAgentPrimaryRuntime(declaredAgent);
         if (
@@ -537,27 +608,8 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             );
         }
         return Object.freeze({
+            ...proof,
             bindingKind: 'host_declarative_acp_v1' as const,
-            binding,
-            sourceKind: binding.sourceCustody.kind,
-            rootPath,
-            cacheIdentity: retainedSource?.cacheIdentity
-                ?? `development:${params.developmentOccurrenceId}`,
-            assertStillAvailable: async () => {
-                if (retainedSource) {
-                    await retainedSource.assertStillAvailable();
-                    return;
-                }
-                if (
-                    binding.sourceCustody.kind !== 'development'
-                    || await realpath(binding.sourceCustody.registeredRootId) !== developmentLocator
-                ) {
-                    throw new Error('Runner development source custody changed during attestation');
-                }
-            },
-            manifest,
-            manifestAuthority,
-            declaredAgent,
             runtime,
         });
     }
@@ -595,27 +647,8 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         );
     }
     return Object.freeze({
+        ...proof,
         bindingKind: 'plugin_factory_v1' as const,
-        binding,
-        sourceKind: binding.sourceCustody.kind,
-        rootPath,
-        cacheIdentity: retainedSource?.cacheIdentity
-            ?? `development:${params.developmentOccurrenceId}`,
-        assertStillAvailable: async () => {
-            if (retainedSource) {
-                await retainedSource.assertStillAvailable();
-                return;
-            }
-            if (
-                binding.sourceCustody.kind !== 'development'
-                || await realpath(binding.sourceCustody.registeredRootId) !== developmentLocator
-            ) {
-                throw new Error('Runner development source custody changed during attestation');
-            }
-        },
         fact,
-        manifest,
-        manifestAuthority,
-        declaredAgent,
     });
 }
