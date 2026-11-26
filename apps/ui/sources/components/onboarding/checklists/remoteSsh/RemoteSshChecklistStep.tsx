@@ -15,7 +15,7 @@ import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { PlanChecklistItem } from '@/components/systemTasks/planChecklist';
 import { usePlanChecklistController } from '@/components/systemTasks/planChecklist/usePlanChecklistController';
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { ValueFieldSelectItem } from '@/components/ui/forms/ValueFieldSelect';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -191,7 +191,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     const hostCatalog = useRemoteHostCatalogSnapshot(hostScope);
     const catalogHosts = hostCatalog?.data ?? EMPTY_REMOTE_HOSTS;
     const runner = props.runner ?? getSystemTasksRunner();
-    const [hostPickerOpen, setHostPickerOpen] = React.useState(false);
     const [selectedSavedRemoteHostId, setSelectedSavedRemoteHostId] = React.useState<string>(SAVED_REMOTE_HOST_NEW_ID);
     const savedDraftRef = React.useRef<SshCredentialsDraft>(draft);
     const completionHandledRef = React.useRef(false);
@@ -258,7 +257,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         }
     }, [draft.authMode]);
 
-    const remoteHostItems = React.useMemo((): DropdownMenuItem[] => ([
+    const remoteHostItems = React.useMemo((): ValueFieldSelectItem[] => ([
         { id: SAVED_REMOTE_HOST_NEW_ID, title: t('setupOnboarding.remoteHosts.newHostOption') },
         ...usableRemoteHosts.map((host) => ({
             id: host.id,
@@ -284,7 +283,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     }, []);
 
     const handleSelectSavedRemoteHostId = React.useCallback((itemId: string) => {
-        setHostPickerOpen(false);
         if (itemId === SAVED_REMOTE_HOST_NEW_ID) {
             setSelectedSavedRemoteHostId(SAVED_REMOTE_HOST_NEW_ID);
             setDraft(savedDraftRef.current);
@@ -303,7 +301,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     }, [draft, selectedSavedRemoteHostId, usableRemoteHosts]);
 
     const handleSelectConfiguredHostSuggestion = React.useCallback((suggestion: SshConfiguredHostSuggestion) => {
-        setHostPickerOpen(false);
         setCredentialEntryChosen(true);
         setSelectedSavedRemoteHostId(SAVED_REMOTE_HOST_NEW_ID);
         setDraft((current) => {
@@ -817,8 +814,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 testID={props.testID}
                 copy={copy}
                 remoteHostsCount={usableRemoteHosts.length}
-                hostPickerOpen={hostPickerOpen}
-                onChangeHostPickerOpen={setHostPickerOpen}
                 hostPickerItems={remoteHostItems}
                 selectedHostPickerId={selectedSavedRemoteHostId}
                 onSelectHostPickerId={handleSelectSavedRemoteHostId}

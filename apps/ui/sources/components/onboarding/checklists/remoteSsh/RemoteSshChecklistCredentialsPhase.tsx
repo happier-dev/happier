@@ -6,24 +6,22 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { SshAuthMode, SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { SelectableRow } from '@/components/ui/lists/SelectableRow';
+import { ValueFieldSelect, type ValueFieldSelectItem } from '@/components/ui/forms/ValueFieldSelect';
+import { MachineEnrollFieldLabel } from '@/components/ui/forms/MachineEnrollTextField';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Typography } from '@/constants/Typography';
 
 import type { RemoteSshChecklistCopy } from './copy';
 import { remoteSshChecklistStyles } from './styles';
 import { StepForm } from '@/components/onboarding/unauthShell/StepFormParts';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 export type RemoteSshChecklistCredentialsPhaseProps = Readonly<{
     testID?: string;
     copy: RemoteSshChecklistCopy;
 
     remoteHostsCount: number;
-    hostPickerOpen: boolean;
-    onChangeHostPickerOpen: (open: boolean) => void;
-    hostPickerItems: readonly DropdownMenuItem[];
+    hostPickerItems: readonly ValueFieldSelectItem[];
     selectedHostPickerId: string;
     onSelectHostPickerId: (itemId: string) => void;
     usingSavedHost: boolean;
@@ -74,28 +72,17 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
         // The step's fields in its 420 px form column (lab direction A "New host"), groups 16 px apart.
         <StepForm testID={props.testID}>
             {props.remoteHostsCount > 0 ? (
-                <View style={styles.sectionBlock}>
-                    <DropdownMenu
-                        open={props.hostPickerOpen}
-                        onOpenChange={props.onChangeHostPickerOpen}
+                // A saved host is a field like the ones under it (owner 2026-11-26): the field select on the form
+                // column, each saved host's address in its menu.
+                <View style={styles.fieldBlock}>
+                    <MachineEnrollFieldLabel>{t('setupOnboarding.remoteHosts.hostPickerTitle')}</MachineEnrollFieldLabel>
+                    <ValueFieldSelect
+                        testID={props.testID ? `${props.testID}-remote-host-picker` : 'remote-ssh-checklist-remote-host-picker'}
+                        label={t('setupOnboarding.remoteHosts.hostPickerTitle')}
+                        fill
                         items={props.hostPickerItems}
                         selectedId={props.selectedHostPickerId}
                         onSelect={props.onSelectHostPickerId}
-                        placement="bottom"
-                        matchTriggerWidth={true}
-                        variant="slim"
-                        trigger={({ toggle, selectedItem }) => (
-                            <SelectableRow
-                                testID={props.testID ? `${props.testID}-remote-host-picker` : 'remote-ssh-checklist-remote-host-picker'}
-                                variant="selectable"
-                                selected={props.hostPickerOpen}
-                                onPress={toggle}
-                                left={<Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />}
-                                title={selectedItem?.title ?? t('setupOnboarding.remoteHosts.hostPickerTitle')}
-                                subtitle={selectedItem?.subtitle ?? t('setupOnboarding.remoteHosts.hostPickerSubtitle')}
-                                right={<Icon name="caret-down" size={16} color={theme.colors.text.secondary} />}
-                            />
-                        )}
                     />
                 </View>
             ) : null}

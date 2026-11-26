@@ -500,7 +500,7 @@ it('saved-host onboarding completion keeps Relay access behind the bound Home Ac
     await act(async () => { await controller.current?.onPrimary?.(); });
     expect(controller.current?.stepId).toBe('host_relay_remote');
     await waitForHomeGovernance(() => expect(screen.findByTestId('onboarding-wizard-remote-ssh-remote-host-picker')).not.toBeNull());
-    await act(async () => { screen.findByType(DropdownMenu).props.onSelect(host.id); });
+    await act(async () => { screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'onboarding-wizard-remote-ssh-remote-host-picker')!.props.onSelect(host.id); });
     expect(controller.current?.primaryDisabled).toBe(false);
     await act(async () => { await controller.current?.onPrimary?.(); });
     expect(controller.current?.primaryDisabled).toBe(false);

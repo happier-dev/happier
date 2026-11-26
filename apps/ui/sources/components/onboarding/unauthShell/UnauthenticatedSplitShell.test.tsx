@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { glyphFieldDurationS, glyphFrame } from '@happier-dev/brand/glyph-scene';
+import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
 import { Text, TextInput } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -359,11 +360,11 @@ describe('UnauthenticatedSplitShell', () => {
             );
             const slot = later.findByTestId('unauth-shell-footer-accessory');
             expect(slot?.findAll((node) => node.props?.testID === 'footer-accessory').length).toBeGreaterThan(0);
-            // In the scroll column after the step, right-aligned: it takes its own row instead of floating over a title.
+            // After the step's column, right-aligned in the band over the planet: its own row, never over a title.
             const slotStyle = flattenStyle(slot?.props.style);
             expect(slotStyle.position).toBeUndefined();
             expect(slotStyle.justifyContent).toBe('flex-end');
-            const column = later.findByTestId('unauth-shell-workflow-scroll');
+            const column = later.findByTestId('unauth-shell-workflow-pane');
             const order = column
                 ?.findAll((node) => (
                     node.props?.testID === 'unauth-shell-step-transition'
@@ -373,6 +374,29 @@ describe('UnauthenticatedSplitShell', () => {
                 .filter((testID, index, all) => all.indexOf(testID) === index);
             expect(order).toEqual(['unauth-shell-step-transition', 'unauth-shell-footer-accessory']);
             await later.unmount();
+        }
+    });
+
+    it('ends a step\'s scrolling column above the planet so a tall form never runs into its glyphs', async () => {
+        for (const layout of ['desktop', 'compact'] as const) {
+            setLayoutFixture(layout);
+            const pane = layout === 'desktop' ? { width: 1224, height: 765 } : { width: 390, height: 844 };
+            const screen = await renderScreen(
+                <UnauthenticatedSplitShell stepId="host_relay_remote" isWelcomeStep={false}>
+                    <FakeBody label="ssh form" />
+                </UnauthenticatedSplitShell>,
+            );
+            await act(async () => {
+                const layoutEvent = { nativeEvent: { layout: { x: 0, y: 0, ...pane } } };
+                screen.findHostByTestId('welcome-atmosphere')?.props.onLayout(layoutEvent);
+                screen.findHostByTestId('unauth-shell-workflow-pane')?.props.onLayout(layoutEvent);
+            });
+            const limb = welcomePlanetPose('deep', pane, { phone: layout === 'compact' }).limb;
+            const band = flattenStyle(screen.findHostByTestId('unauth-shell-planet-band')?.props.style);
+            // The scroll viewport is the pane above this band: it stops a clearance above the planet's limb.
+            expect(pane.height - Number(band.minHeight)).toBeLessThan(limb);
+            expect(pane.height - Number(band.minHeight)).toBeGreaterThan(limb - 48);
+            await screen.unmount();
         }
     });
 

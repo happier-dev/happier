@@ -9,7 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { MachineEnrollFieldLabel, MachineEnrollFieldSupport, MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
-import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 export type SshAuthMode = 'agent' | 'keyfile' | 'password';
@@ -343,31 +343,29 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
             )}
 
             {stepLayout ? (
-                // A step lists the ways to sign in as option F cards, each saying what it means (lab direction A
-                // "New host": the choice as a list, not a segmented control).
+                // A step's way to sign in is one field like the ones above it (owner 2026-11-26: a dropdown, not a
+                // list): the field select spans the form column, and its menu says what each way means.
                 <View style={{ gap: space.s6 }}>
                     <MachineEnrollFieldLabel>{t('settings.machineEnrollRemoteSshAuthMethodLabel')}</MachineEnrollFieldLabel>
-                    <SelectionTiles
-                        variant="card"
-                        density="compact"
-                        surface="sheet"
-                        maximumColumns={1}
-                        accessibilityLabel={t('settings.machineEnrollRemoteSshAuthMethodLabel')}
-                        testIdPrefix={testIDs.sshAuthMethod ?? resolveTestID('sshAuthMethod')}
-                        options={authTabs.map((tab) => ({
+                    <ValueFieldSelect
+                        testID={testIDs.sshAuthMethod ?? resolveTestID('sshAuthMethod')}
+                        label={t('settings.machineEnrollRemoteSshAuthMethodLabel')}
+                        fill
+                        disabled={formDisabled}
+                        items={authTabs.map((tab) => ({
                             id: tab.id,
-                            testID: `${testIDs.sshAuthMethod ?? resolveTestID('sshAuthMethod')}:${tab.id}`,
                             title: tab.label,
-                            // Every way says what it means, so choosing one never moves the form (the tiles' own rule).
                             subtitle: t(tab.id === 'keyfile'
                                 ? 'addFlows.sshSignInKeyFile'
                                 : tab.id === 'password'
                                     ? 'addFlows.sshSignInPassword'
                                     : 'addFlows.sshSignInAgent'),
-                            disabled: formDisabled,
                         }))}
-                        value={value.authMode}
-                        onChange={(next) => { if (next) handleAuthModeChange(next); }}
+                        selectedId={value.authMode}
+                        onSelect={(next) => {
+                            const mode = authTabs.find((tab) => tab.id === next)?.id;
+                            if (mode) handleAuthModeChange(mode);
+                        }}
                     />
                 </View>
             ) : isFormLayout ? (

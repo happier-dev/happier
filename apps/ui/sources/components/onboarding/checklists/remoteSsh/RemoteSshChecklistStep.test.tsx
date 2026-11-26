@@ -110,6 +110,22 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', async () => {
 const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
 const { useWizardChromeOverrides } = await import('@/components/onboarding/hooks/useWizardChromeOverrides');
 
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+
+/** The step's sign-in way is a field select: its menu (a boundary stand-in above) hands the chosen id to the form. */
+function authMethodSelect(screen: RenderedScreen) {
+    const [select] = screen.findAll((node) => node.props?.testID === 'remote-ssh-step-ssh-sshAuthMethod'
+        && typeof node.props?.onSelect === 'function');
+    if (!select) throw new Error('Expected the authentication method select');
+    return select as unknown as { props: { selectedId: string; onSelect: (id: string) => void } };
+}
+
+async function chooseAuthMethod(screen: RenderedScreen, mode: 'agent' | 'keyfile' | 'password') {
+    await act(async () => {
+        authMethodSelect(screen).props.onSelect(mode);
+    });
+}
+
 function createRunner({
     snapshot,
     snapshotsByTaskId,
@@ -266,10 +282,7 @@ describe('RemoteSshChecklistStep', () => {
             },
         }));
 
-        const passwordAuthChoice = screen.findByProps({ testID: 'remote-ssh-step-ssh-sshAuthMethod:password' }) as unknown as { props: { onPress?: () => void } };
-        await act(async () => {
-            passwordAuthChoice.props.onPress?.();
-        });
+        await chooseAuthMethod(screen, 'password');
 
         expect(screen.findAllByTestId('remote-ssh-step-save-password')).toHaveLength(0);
     });
@@ -290,10 +303,7 @@ describe('RemoteSshChecklistStep', () => {
             },
         }));
 
-        const passwordAuthChoice = screen.findByProps({ testID: 'remote-ssh-step-ssh-sshAuthMethod:password' }) as unknown as { props: { onPress?: () => void } };
-        await act(async () => {
-            passwordAuthChoice.props.onPress?.();
-        });
+        await chooseAuthMethod(screen, 'password');
 
         expect(screen.findByTestId('remote-ssh-step-save-password')).toBeTruthy();
     });
@@ -314,10 +324,7 @@ describe('RemoteSshChecklistStep', () => {
             },
         }));
 
-        const keyfileAuthChoice = screen.findByProps({ testID: 'remote-ssh-step-ssh-sshAuthMethod:keyfile' }) as unknown as { props: { onPress?: () => void } };
-        await act(async () => {
-            keyfileAuthChoice.props.onPress?.();
-        });
+        await chooseAuthMethod(screen, 'keyfile');
 
         expect(screen.findByTestId('remote-ssh-step-save-private-key')).toBeTruthy();
         expect(screen.findAllByTestId('remote-ssh-step-save-password')).toHaveLength(0);
@@ -340,7 +347,7 @@ describe('RemoteSshChecklistStep', () => {
         }));
 
         expect(screen.findAllByTestId('remote-ssh-step-remote-host-picker')).toHaveLength(0);
-        expect(screen.findByProps({ testID: 'remote-ssh-step-ssh-sshAuthMethod:agent' })).toBeTruthy();
+        expect(authMethodSelect(screen).props.selectedId).toBe('agent');
     });
 
     it('forwards an encrypted private key from the wizard form into the bootstrap task spec when keyfile auth is selected', async () => {
@@ -371,10 +378,7 @@ describe('RemoteSshChecklistStep', () => {
             return primary;
         };
 
-        const keyfileAuthChoice = screen.findByProps({ testID: 'remote-ssh-step-ssh-sshAuthMethod:keyfile' }) as unknown as { props: { onPress?: () => void } };
-        await act(async () => {
-            keyfileAuthChoice.props.onPress?.();
-        });
+        await chooseAuthMethod(screen, 'keyfile');
 
         await act(async () => {
             screen.changeTextByTestId('remote-ssh-step-ssh-sshPrivateKeyMaterialInput', 'MY_PRIVATE_KEY');
@@ -452,7 +456,8 @@ describe('RemoteSshChecklistStep', () => {
             return primary;
         };
 
-        const hostPicker = screen.findByType('DropdownMenu' as never) as unknown as { props: { onSelect: (id: string) => void } };
+        const hostPicker = screen.findAll((node) => node.props?.testID === 'remote-ssh-step-remote-host-picker'
+            && typeof node.props?.onSelect === 'function')[0] as unknown as { props: { onSelect: (id: string) => void } };
         await act(async () => {
             hostPicker.props.onSelect('rh1');
         });

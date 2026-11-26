@@ -19,9 +19,10 @@ export const remoteSshChecklistStyles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'left',
     },
-    sectionBlock: {
+    // A field's label over its control, the form's 6 px (lab direction A rhythm 6 / 16 / 24).
+    fieldBlock: {
         width: '100%',
-        gap: theme.space.s10,
+        gap: theme.space.s6,
     },
     promptCard: {
         width: '100%',

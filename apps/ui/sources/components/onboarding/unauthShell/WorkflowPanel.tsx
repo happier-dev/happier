@@ -2,7 +2,7 @@ import * as React from 'react';
 import { ScrollView, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { WelcomePlanetState } from '@happier-dev/brand/planet-placement';
+import { welcomePlanetPose, type WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
 import { useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
@@ -206,6 +206,19 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const welcomeScrollMinimum = props.isWelcomeStep && scrollOverflow > 0 && welcomeScrollHeight > 0
         ? { minHeight: welcomeScrollHeight + scrollOverflow }
         : undefined;
+    // A step's column scrolls in the sky above the planet: its viewport ends a clearance above the limb the
+    // atmosphere draws (the same pose owner), so a tall form scrolls there instead of running into the glyphs. The
+    // band under it holds only the pane's corner accessory. The welcome lays out its own doors above the planet.
+    const [paneSize, setPaneSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+    const onPaneLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        setPaneSize(current => current?.width === width && current.height === height ? current : { width, height });
+    }, []);
+    const planetBand = !props.isWelcomeStep && !isFullBleed && paneSize
+        ? Math.max(0, Math.round(paneSize.height
+            - welcomePlanetPose(props.planetState ?? 'deep', paneSize, { phone: isMobile }).limb
+            + theme.space.s24))
+        : 0;
     const { onColumnLayout } = props;
     const onOpeningLayout = useFirstOpenContentLayout();
     const onStepLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -223,6 +236,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             testID={props.testID ?? 'unauth-shell-workflow-pane'}
             // The pane is transparent: the shell's welcome atmosphere draws the page behind it.
             style={styles.paneOuter}
+            onLayout={onPaneLayout}
         >
             {showMobileWordmark ? (
                 <View
@@ -363,24 +377,6 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         >
                             {props.children}
                         </StepMotionLayer>
-                        {props.footerAccessory ? (
-                            <View
-                                testID="unauth-shell-footer-accessory"
-                                style={[
-                                    styles.footerAccessoryRow,
-                                    isMobile
-                                        ? isFullBleed
-                                            ? {
-                                                paddingRight: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right,
-                                                paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
-                                            }
-                                            : null
-                                        : styles.footerAccessoryRowDesktop,
-                                ]}
-                            >
-                                {props.footerAccessory}
-                            </View>
-                        ) : null}
                     </>
                 )}
                 {props.isWelcomeStep ? (
@@ -412,6 +408,27 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     </>
                 ) : null}
             </ScrollView>
+            {props.isWelcomeStep ? null : (
+                <View testID="unauth-shell-planet-band" pointerEvents="box-none"
+                    style={[styles.planetBand, { minHeight: planetBand }]}>
+                    {props.footerAccessory ? (
+                        <View
+                            testID="unauth-shell-footer-accessory"
+                            style={[
+                                styles.footerAccessoryRow,
+                                isMobile
+                                    ? {
+                                        paddingRight: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right,
+                                        paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
+                                    }
+                                    : styles.footerAccessoryRowDesktop,
+                            ]}
+                        >
+                            {props.footerAccessory}
+                        </View>
+                    ) : null}
+                </View>
+            )}
             </WideStepColumnContext.Provider>
             </StepBackContext.Provider>
             </ShellWelcomeOverflowContext.Provider>
@@ -468,6 +485,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 3,
         minHeight: 0,
     },
+    planetBand: {
+        justifyContent: 'flex-end',
+    },
     footerSpacer: {
         flex: 1,
         // Allow the spacer to collapse below its natural height on short
@@ -484,7 +504,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingTop: 20,
         minHeight: 20 + FOOTER_CONTROL_SIZE_PX,
     },
+    // The welcome footer's corner: the links' inset from the pane's side, their 28 px from its bottom.
     footerAccessoryRowDesktop: {
+        paddingRight: DESKTOP_WORDMARK_INSET_PX,
         paddingBottom: 28,
         minHeight: 20 + FOOTER_CONTROL_SIZE_PX + 28,
     },
