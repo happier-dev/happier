@@ -8,6 +8,7 @@ import {
     useSessionCockpitBottomChromeHeight,
     useSessionCockpitComposerChromeHeight,
     useSessionCockpitComposerChromeTop,
+    useSessionCockpitComposerChromeRightInset,
     useReportSessionCockpitFloatingBottomChromeHeight,
     useReportSessionCockpitTranscriptBottomClearance,
     useSessionCockpitPetRect,
@@ -79,6 +80,9 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const composerChromeHeight = useSessionCockpitComposerChromeHeight();
     const composerChromeTop = useSessionCockpitComposerChromeTop();
+    // The float belongs to the session column: it rests where the composer ends, so a pane docked
+    // beside the column (Info, Files) moves it instead of being covered by it.
+    const columnRightInset = useSessionCockpitComposerChromeRightInset();
     const keyboardHeight = useKeyboardHeight();
     const viewport = useWindowDimensions();
     const petRect = useSessionCockpitPetRect();
@@ -144,6 +148,10 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
         ? VOICE_ORB_BODY_SIZE
         : phone ? Math.max(0, viewport.width - ISLAND_EDGE * 2) : VOICE_ISLAND_DESKTOP.width;
     const height = orb ? VOICE_ORB_BODY_SIZE : phone ? VOICE_ISLAND_PHONE.height : VOICE_ISLAND_DESKTOP.height;
+    // The open glance takes the container's place (lab: the glance replaces the capsule), so the call's
+    // state and any request show once. The container stays mounted: the glance anchors to it and
+    // returns focus there when it closes.
+    const glanceShown = open && (voice.live || Boolean(voice.ended));
     return (
         <View
             pointerEvents="box-none"
@@ -156,6 +164,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 height={height}
                 restingBottomInset={restingBottomInset}
                 edgeInset={orb ? ORB_EDGE : ISLAND_EDGE}
+                columnRightInset={columnRightInset}
                 minimumTop={FLOAT_MIN_TOP + insets.top}
                 interactionPaddingHorizontal={orb ? resolveVoiceOrbInteractionPadding(Platform.OS, voice.live || Boolean(voice.ended) || readAloud.phase !== 'idle') : 0}
                 restCentred={!orb && phone}
@@ -168,7 +177,14 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                 onBottomReservationChange={reservesComposerSpace ? reportBottomReservation : reportTranscriptClearance}
                 avoidRects={avoidRects}
             >
-                {(render) => orb ? (
+                {(render) => (
+                    <View
+                        testID="voice-presence-capsule"
+                        pointerEvents={glanceShown ? 'none' : 'box-none'}
+                        aria-hidden={glanceShown}
+                        style={glanceShown ? styles.yielded : undefined}
+                    >
+                    {orb ? (
                     <VoiceOrb
                         voice={voice}
                         readAloud={readAloud}
@@ -190,9 +206,12 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
                         onOpenSection={toggleSection}
                         shouldSuppressPress={render.shouldSuppressPress}
                     />
+                    )}
+                    </View>
                 )}
             </VoicePresenceFloat>
-            <VoiceGlancePopover open={open && (voice.live || Boolean(voice.ended))} anchorRef={anchorRef} placement="top" onRequestClose={close} />
+            {/* Pinned to the container's bottom edge: the glance stands where the container was. */}
+            <VoiceGlancePopover open={glanceShown} anchorRef={anchorRef} placement="top" gap={-height} onRequestClose={close} />
         </View>
     );
 }
@@ -211,4 +230,5 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
         zIndex: VOICE_ORB_Z_INDEX,
     },
+    yielded: { opacity: 0 },
 });

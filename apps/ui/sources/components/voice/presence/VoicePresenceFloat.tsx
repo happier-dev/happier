@@ -48,6 +48,8 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
     restingBottomInset: number;
     /** Distance from the host's edges at rest and while dragged. */
     edgeInset: number;
+    /** Where the session column ends, in from the host's right edge; the float rests and docks inside it. */
+    columnRightInset?: number;
     /** Highest the container may climb (clears the title strip / status bar). */
     minimumTop: number;
     /** Physical native hit area around the logical container; does not alter its dock/drag anchor. */
@@ -81,6 +83,7 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
         containerHeight: height,
         restingBottomInset: props.restingBottomInset,
         edgeInset: props.edgeInset,
+        columnRightInset: props.columnRightInset,
         minimumTop: props.minimumTop,
         bottomMargin: 0,
         restCentred: props.restCentred,

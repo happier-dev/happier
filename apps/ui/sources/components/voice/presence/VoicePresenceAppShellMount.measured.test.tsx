@@ -94,6 +94,13 @@ function FramedDesktopComposer() {
     return null;
 }
 
+/** The same band with the Info pane docked at the right: the session column (and its composer) ends 360 px short of the window edge. */
+function FramedDesktopComposerBesideInfoPane(props: Readonly<{ rightInset: number }>) {
+    const report = useReportSessionCockpitComposerChromeHeight(true);
+    React.useEffect(() => { report(208, 900 - 651, props.rightInset); }, [props.rightInset, report]);
+    return null;
+}
+
 /** What the transcript and the composer each reserve, as the shell publishes them. */
 function Reservations() {
     const transcript = useSessionCockpitTranscriptBottomClearance();
@@ -192,6 +199,35 @@ describe('phone Island shell clearance', () => {
             const y = float[float.length - 1].transform.find((entry: { translateY?: number }) => entry.translateY !== undefined).translateY;
             // The composer band starts at y 651 (its meters at 665): the float rests above it.
             expect(y + float[0].height).toBeLessThanOrEqual(651);
+        } finally { await screen.unmount(); }
+    });
+
+    it.each(['island', 'orb'] as const)('anchors the desktop %s to the session column where the composer ends, moving with the Info pane', async (container) => {
+        viewport.width = 1440;
+        viewport.height = 900;
+        getStorage().setState((state) => ({ localSettings: { ...state.localSettings, voicePresenceContainer: container } }));
+        const scene = (rightInset: number) => <SessionCockpitChromeRegistryProvider>
+            <FramedDesktopComposerBesideInfoPane rightInset={rightInset} /><VoicePresenceAppShellMount />
+        </SessionCockpitChromeRegistryProvider>;
+        const rightEdge = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+            await act(async () => { screen.findByTestId('voice-presence-float-host')!.props.onLayout({ nativeEvent: { layout: { width: 1440, height: 900 } } }); });
+            const frame = screen.findByTestId('voice-presence-float-body')!.props.style[0];
+            await act(async () => { screen.findByTestId('voice-presence-float-body')!.props.onLayout({ nativeEvent: { layout: { width: frame.width, height: frame.height } } }); });
+            const float = screen.findByTestId('voice-presence-float-body')!.props.style;
+            const x = float[float.length - 1].transform.find((entry: { translateX?: number }) => entry.translateX !== undefined).translateX;
+            return x + float[0].width;
+        };
+        const screen = await renderScreen(scene(360));
+        try {
+            // The Info pane starts at x 1080: the float ends where the composer ends, one gutter in, never over the pane.
+            const besidePane = await rightEdge(screen);
+            expect(besidePane).toBeLessThanOrEqual(1080);
+            expect(besidePane).toBeGreaterThanOrEqual(1080 - 16);
+            // The pane closes: the column (and the float with it) reaches the window edge again.
+            await screen.update(scene(0));
+            const alone = await rightEdge(screen);
+            expect(alone).toBeGreaterThanOrEqual(1440 - 16);
+            expect(alone - besidePane).toBe(360);
         } finally { await screen.unmount(); }
     });
 

@@ -93,6 +93,23 @@ describe('VoiceSetupPanel', () => {
         expect(handlers.onAllowMicrophone).not.toHaveBeenCalled();
     });
 
+    it('marks a site-blocked microphone as needing you and checks again through the permission request', async () => {
+        // A browser has no system settings to open: the producer passes no settings action.
+        const handlers = { ...actions(), onOpenSystemSettings: null };
+        screen = await renderScreen(
+            <VoiceSetupPanel testID="setup" model={model({ done: [true, true, false, false], microphone: 'denied' })} actions={handlers} />,
+        );
+
+        // The blocked step is drawn in the rail's attention mood (lab TS: warning tone), not a neutral numeral.
+        const rail = screen.find((node) => Array.isArray(node.props?.steps) && typeof node.props?.renderStateGlyph === 'function');
+        expect(rail.props.steps.find((step: { key: string }) => step.key === 'microphone')?.state).toBe('waiting');
+        const text = screen.getTextContent();
+        expect(text).toContain(t('voiceMoments.setupMicrophoneDeniedDetailSite'));
+        expect(text).not.toContain(t('voiceMoments.setupMicrophoneDeniedDetail'));
+        screen.pressByTestId('voice-setup.step.microphone.checkAgain');
+        expect(handlers.onAllowMicrophone).toHaveBeenCalledTimes(1);
+    });
+
     it('says a missing microphone plainly and checks again on press, instead of an Allow that does nothing', async () => {
         const handlers = actions();
         const facts = model({ done: [true, true, false, false], microphone: 'unavailable' });

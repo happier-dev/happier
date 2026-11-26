@@ -18406,6 +18406,7 @@ const voiceMomentsTranslations = { ca: {
         setupMicrophoneDone: 'Micròfon permès',
         setupMicrophoneDeniedTitle: 'El micròfon està desactivat per a Happier',
         setupMicrophoneDeniedDetail: 'Activa’l a la configuració del sistema i torna aquí.',
+        setupMicrophoneDeniedDetailSite: 'Permet el micròfon per a aquest lloc al navegador i torna-ho a comprovar.',
         setupMicrophoneMissingTitle: 'No s’ha trobat cap micròfon',
         setupMicrophoneMissingDetail: 'Connecta un micròfon o uns auriculars i torna-ho a comprovar.',
         setupMicrophoneCheckAgain: 'Torna-ho a comprovar',

@@ -18392,6 +18392,7 @@ const voiceMomentsTranslations = { it: {
         setupMicrophoneDone: 'Microfono consentito',
         setupMicrophoneDeniedTitle: 'Il microfono è disattivato per Happier',
         setupMicrophoneDeniedDetail: 'Attivalo nelle impostazioni di sistema, poi torna qui.',
+        setupMicrophoneDeniedDetailSite: 'Consenti il microfono per questo sito nel browser, poi controlla di nuovo.',
         setupMicrophoneMissingTitle: 'Nessun microfono trovato',
         setupMicrophoneMissingDetail: 'Collega un microfono o delle cuffie, poi controlla di nuovo.',
         setupMicrophoneCheckAgain: 'Controlla di nuovo',

@@ -25,7 +25,7 @@ export type SessionCockpitChromeRegistration = Readonly<{
 
 type SessionCockpitChromeRegister = (registration: SessionCockpitChromeRegistration) => () => void;
 type SessionCockpitBottomChromeHeightSetter = (height: number) => void;
-type SessionCockpitComposerChromeMeasurement = Readonly<{ height: number; topFromBottom: number }>;
+type SessionCockpitComposerChromeMeasurement = Readonly<{ height: number; topFromBottom: number; rightInset: number }>;
 type SessionCockpitComposerChromeReporter = (id: string, measurement: SessionCockpitComposerChromeMeasurement | null) => void;
 
 /**
@@ -145,6 +145,8 @@ const SessionCockpitTranscriptBottomClearanceReporterContext = React.createConte
 const SessionCockpitComposerChromeHeightContext = React.createContext(0);
 /** Where that band starts: its measured top edge as a distance up from the window's bottom edge. */
 const SessionCockpitComposerChromeTopContext = React.createContext(0);
+/** Where the session column ends: the composer band's right edge as a distance in from the window's right edge. */
+const SessionCockpitComposerChromeRightInsetContext = React.createContext(0);
 const SessionCockpitComposerChromeReporterContext = React.createContext<SessionCockpitComposerChromeReporter>(NOOP_REPORT_COMPOSER_CHROME);
 const SessionCockpitDismissingSessionIdContext = React.createContext<string | null>(null);
 const SessionCockpitDismissControllerContext = React.createContext<SessionCockpitDismissController>(NOOP_DISMISS_CONTROLLER);
@@ -333,9 +335,10 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
             }
             const height = roundedNonNegative(measurement.height);
             const topFromBottom = roundedNonNegative(measurement.topFromBottom);
+            const rightInset = roundedNonNegative(measurement.rightInset);
             const previous = current[id];
-            if (previous?.height === height && previous.topFromBottom === topFromBottom) return current;
-            return { ...current, [id]: { height, topFromBottom } };
+            if (previous?.height === height && previous.topFromBottom === topFromBottom && previous.rightInset === rightInset) return current;
+            return { ...current, [id]: { height, topFromBottom, rightInset } };
         });
     }, []);
 
@@ -352,6 +355,15 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
             if (topFromBottom > highest) highest = topFromBottom;
         }
         return highest;
+    }, [composerChromeById]);
+    // While two composers are mounted (a session sliding in), the inset one wins: a float anchored to
+    // it stays clear of a pane beside either column.
+    const composerChromeRightInset = React.useMemo(() => {
+        let widest = 0;
+        for (const { rightInset } of Object.values(composerChromeById)) {
+            if (rightInset > widest) widest = rightInset;
+        }
+        return widest;
     }, [composerChromeById]);
 
     const dismissController = React.useMemo<SessionCockpitDismissController>(() => ({
@@ -377,6 +389,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                             <SessionCockpitComposerChromeReporterContext.Provider value={reportComposerChromeHeight}>
                                 <SessionCockpitComposerChromeHeightContext.Provider value={composerChromeHeight}>
                                 <SessionCockpitComposerChromeTopContext.Provider value={composerChromeTop}>
+                                <SessionCockpitComposerChromeRightInsetContext.Provider value={composerChromeRightInset}>
                                     <SessionCockpitDismissControllerContext.Provider value={dismissController}>
                                         <SessionCockpitDismissingSessionIdContext.Provider value={dismissingSessionId}>
                                             <SessionCockpitChromeRegistrationContext.Provider value={registrationStore}>
@@ -392,6 +405,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                                             </SessionCockpitChromeRegistrationContext.Provider>
                                         </SessionCockpitDismissingSessionIdContext.Provider>
                                     </SessionCockpitDismissControllerContext.Provider>
+                                </SessionCockpitComposerChromeRightInsetContext.Provider>
                                 </SessionCockpitComposerChromeTopContext.Provider>
                                 </SessionCockpitComposerChromeHeightContext.Provider>
                             </SessionCockpitComposerChromeReporterContext.Provider>
@@ -518,13 +532,23 @@ export function useSessionCockpitComposerChromeTop(): number {
 }
 
 /**
+ * Where the session column ends on the right: the composer band's right edge as a distance in from
+ * the window's right edge (0 when unmeasured or none is on screen). A pane docked beside the column
+ * (Info, Files) moves it; a floating companion anchored here moves with the column and never rests
+ * over that pane.
+ */
+export function useSessionCockpitComposerChromeRightInset(): number {
+    return React.useContext(SessionCockpitComposerChromeRightInsetContext);
+}
+
+/**
  * Publishes one composer's measured band to the shell — its height and, when the composer can
  * measure it, its top edge up from the window's bottom — and withdraws it on unmount.
  *
  * `enabled` is the caller's own answer to "is this a bottom-anchored app-shell composer": a composer
  * inside a modal is covered by the modal itself and must not push shell overlays around.
  */
-export function useReportSessionCockpitComposerChromeHeight(enabled: boolean): (height: number | null, topFromBottom?: number) => void {
+export function useReportSessionCockpitComposerChromeHeight(enabled: boolean): (height: number | null, topFromBottom?: number, rightInset?: number) => void {
     const id = React.useId();
     const report = React.useContext(SessionCockpitComposerChromeReporterContext);
 
@@ -538,9 +562,9 @@ export function useReportSessionCockpitComposerChromeHeight(enabled: boolean): (
     }, [id, report]);
 
     // `null` withdraws a composer that is mounted but not rendered (a hidden workspace screen).
-    return React.useCallback((height: number | null, topFromBottom?: number) => {
+    return React.useCallback((height: number | null, topFromBottom?: number, rightInset?: number) => {
         if (!enabled) return;
-        report(id, height === null ? null : { height, topFromBottom: topFromBottom ?? 0 });
+        report(id, height === null ? null : { height, topFromBottom: topFromBottom ?? 0, rightInset: rightInset ?? 0 });
     }, [enabled, id, report]);
 }
 

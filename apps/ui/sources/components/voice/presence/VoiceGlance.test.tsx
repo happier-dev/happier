@@ -461,6 +461,31 @@ describe('VoiceGlance', () => {
         expect(voice.onPrimaryAction).toHaveBeenCalledTimes(1);
     });
 
+    it('drops "Open the conversation" on that conversation\'s own page, keeping the way to talk again', async () => {
+        const idle = resolveVoiceAttemptControl({
+            surfaceState: 'idle', tone: 'neutral', status: 'disconnected', sessionId: null, canStop: false,
+            muted: false, capturing: false, startAdmitted: true, hasRecovery: false,
+        });
+        const conversation = { serverId: 'home-a', sessionId: 'voice-23' };
+        const voice: VoiceAttemptControlProjection = {
+            ...attempt(), ...idle, statusWord: 'Voice ended', canOpenConversation: true,
+            openConversationSessionAddress: conversation,
+            ended: { sessionId: 'voice-1', adapterId: 'local_direct', startedAt: 1_000, endedAt: 253_000, reason: { kind: 'stopped' as const }, conversationSessionAddress: conversation, targetSessionAddress: null, transcriptMode: null, accountScope: null, conversationScope: null },
+        };
+        screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
+        expect(screen.findByTestId('voice-glance-open-conversation')).not.toBeNull();
+        await screen.unmount();
+        await act(async () => { setFocusedSessionId(conversation.sessionId, conversation.serverId); });
+        try {
+            screen = await renderScreen(<VoiceGlance model={surface(voice, { canBargeIn: false })} presentation="popover" />);
+            expect(screen.findByTestId('voice-glance-open-conversation')).toBeNull();
+            screen.pressByTestId('voice-glance-start-again');
+            expect(voice.onPrimaryAction).toHaveBeenCalledTimes(1);
+        } finally {
+            await act(async () => { setFocusedSessionId(null); });
+        }
+    });
+
     it.each(['companion', 'popover', 'sheet'] as const)('keeps a reading that outlives a clean End presented with its own Stop in the %s', async (presentation) => {
         const idle = resolveVoiceAttemptControl({
             surfaceState: 'idle', tone: 'neutral', status: 'disconnected', sessionId: null, canStop: false,

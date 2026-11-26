@@ -18268,6 +18268,7 @@ const voiceMomentsTranslations = { 'zh-Hant': {
         setupMicrophoneDone: '已允許麥克風',
         setupMicrophoneDeniedTitle: 'Happier 的麥克風已關閉',
         setupMicrophoneDeniedDetail: '在系統設定中開啟後回到這裡。',
+        setupMicrophoneDeniedDetailSite: '在瀏覽器中允許此網站使用麥克風，然後再檢查一次。',
         setupMicrophoneMissingTitle: '找不到麥克風',
         setupMicrophoneMissingDetail: '連接麥克風或耳機後再檢查一次。',
         setupMicrophoneCheckAgain: '再檢查一次',

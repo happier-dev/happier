@@ -18449,6 +18449,7 @@ const voiceMomentsTranslations = { fr: {
         setupMicrophoneDone: 'Micro autorisé',
         setupMicrophoneDeniedTitle: 'Le micro est désactivé pour Happier',
         setupMicrophoneDeniedDetail: 'Active-le dans les réglages système, puis reviens ici.',
+        setupMicrophoneDeniedDetailSite: 'Autorise le micro pour ce site dans ton navigateur, puis vérifie à nouveau.',
         setupMicrophoneMissingTitle: 'Aucun micro trouvé',
         setupMicrophoneMissingDetail: 'Branche un micro ou un casque, puis vérifie à nouveau.',
         setupMicrophoneCheckAgain: 'Vérifier à nouveau',

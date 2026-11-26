@@ -28,6 +28,8 @@ export type VoiceMomentsTranslation = Readonly<{
     setupMicrophoneDone: string;
     setupMicrophoneDeniedTitle: string;
     setupMicrophoneDeniedDetail: string;
+    /** A browser has no system settings to open: the site's own microphone permission is the way back. */
+    setupMicrophoneDeniedDetailSite: string;
     setupMicrophoneMissingTitle: string;
     setupMicrophoneMissingDetail: string;
     setupMicrophoneCheckAgain: string;
@@ -109,6 +111,7 @@ export const voiceMomentsTranslationsEnglish = { en: {
         setupMicrophoneDone: 'Microphone allowed',
         setupMicrophoneDeniedTitle: 'The microphone is off for Happier',
         setupMicrophoneDeniedDetail: 'Turn it on in your system settings, then come back here.',
+        setupMicrophoneDeniedDetailSite: 'Allow the microphone for this site in your browser, then check again.',
         setupMicrophoneMissingTitle: 'No microphone found',
         setupMicrophoneMissingDetail: 'Connect a microphone or headset, then check again.',
         setupMicrophoneCheckAgain: 'Check again',

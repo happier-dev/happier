@@ -92,8 +92,10 @@ export function resolveVoicePresenceAvailableRect(input: Readonly<{
     edgeInset: number;
     minimumTop: number;
     bottomMargin?: number;
+    /** Where the session column ends, in from the host's right edge (see `resolveVoicePresenceGeometry`). */
+    columnRightInset?: number;
 }>): FrameRect {
-    const right = Math.max(0, input.hostWidth - nonNegative(input.edgeInset));
+    const right = Math.max(0, input.hostWidth - nonNegative(input.columnRightInset ?? 0) - nonNegative(input.edgeInset));
     const bottom = Math.max(0, input.hostHeight - nonNegative(input.restingBottomInset) - nonNegative(input.bottomMargin ?? 0));
     const x = Math.min(right, nonNegative(input.edgeInset));
     const y = Math.min(bottom, nonNegative(input.minimumTop));
@@ -110,11 +112,19 @@ export function resolveVoicePresenceGeometry(input: Readonly<{
     edgeInset?: number;
     minimumTop?: number;
     bottomMargin?: number;
+    /**
+     * Where the session column ends, as a distance in from the host's right edge: the composer's right
+     * edge (lab: the capsule aligns to the composer, never over a pane). A pane docked beside the column
+     * (Info, Files) moves it in, and the float moves with the column instead of resting on that pane.
+     * `0` (unmeasured, or no column on screen) is the window edge.
+     */
+    columnRightInset?: number;
     /** Other current shell companions, including a floating Island or pet. */
     avoidRects?: readonly FrameRect[];
     restCentred?: boolean;
 }>): Readonly<{ restingPoint: CompanionPoint; dragBounds: CompanionDragBounds; availableRect: FrameRect; fits: boolean }> {
-    const maxX = Math.max(0, input.hostWidth - nonNegative(input.edgeInset ?? VOICE_ORB_EDGE) - nonNegative(input.containerWidth));
+    const maxX = Math.max(0, input.hostWidth - nonNegative(input.columnRightInset ?? 0)
+        - nonNegative(input.edgeInset ?? VOICE_ORB_EDGE) - nonNegative(input.containerWidth));
     const maxY = Math.max(0, input.hostHeight - nonNegative(input.restingBottomInset)
         - nonNegative(input.bottomMargin ?? VOICE_ORB_BOTTOM) - nonNegative(input.containerHeight));
     const minX = Math.min(maxX, nonNegative(input.edgeInset ?? VOICE_ORB_EDGE));

@@ -18422,6 +18422,7 @@ const voiceMomentsTranslations = { ru: {
         setupMicrophoneDone: 'Микрофон разрешён',
         setupMicrophoneDeniedTitle: 'Микрофон для Happier выключен',
         setupMicrophoneDeniedDetail: 'Включите его в настройках системы и вернитесь сюда.',
+        setupMicrophoneDeniedDetailSite: 'Разрешите микрофон для этого сайта в браузере и проверьте ещё раз.',
         setupMicrophoneMissingTitle: 'Микрофон не найден',
         setupMicrophoneMissingDetail: 'Подключите микрофон или гарнитуру и проверьте снова.',
         setupMicrophoneCheckAgain: 'Проверить снова',

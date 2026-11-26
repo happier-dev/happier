@@ -18268,6 +18268,7 @@ const voiceMomentsTranslations = { 'zh-Hans': {
         setupMicrophoneDone: '已允许麦克风',
         setupMicrophoneDeniedTitle: 'Happier 的麦克风已关闭',
         setupMicrophoneDeniedDetail: '在系统设置中开启后回到这里。',
+        setupMicrophoneDeniedDetailSite: '在浏览器中允许此网站使用麦克风，然后再检查一次。',
         setupMicrophoneMissingTitle: '未找到麦克风',
         setupMicrophoneMissingDetail: '连接麦克风或耳机后再检查一次。',
         setupMicrophoneCheckAgain: '再检查一次',

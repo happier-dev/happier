@@ -79,7 +79,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
             reportComposerChromeHeight(height);
             return;
         }
-        node.measureInWindow((_x, y, width, measuredHeight) => {
+        node.measureInWindow((x, y, width, measuredHeight) => {
             if (composerHeightRef.current !== height) return;
             // A composer in a display:none screen measures 0×0 at the window origin: it is not on
             // screen, so it is no obstacle. Publishing its "top" (the whole window) would lift every
@@ -89,8 +89,11 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                 return;
             }
             const lift = Math.max(0, layout.bottomInset.value - safeAreaBottom);
-            const top = Dimensions.get('window').height - y - lift;
-            reportComposerChromeHeight(height, Number.isFinite(top) ? top : 0);
+            const windowSize = Dimensions.get('window');
+            const top = windowSize.height - y - lift;
+            // Where the session column ends: a pane docked beside it (Info, Files) moves this edge in.
+            const rightInset = windowSize.width - (x + width);
+            reportComposerChromeHeight(height, Number.isFinite(top) ? top : 0, Number.isFinite(rightInset) ? rightInset : 0);
         });
     }, [layout, reportComposerChromeHeight, safeAreaBottom]);
     const { height: windowHeight } = useWindowDimensions();

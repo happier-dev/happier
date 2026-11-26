@@ -18328,6 +18328,7 @@ const voiceMomentsTranslations = { ja: {
         setupMicrophoneDone: 'マイクを許可済み',
         setupMicrophoneDeniedTitle: 'Happierのマイクがオフです',
         setupMicrophoneDeniedDetail: 'システム設定でオンにしてから、ここに戻ってください。',
+        setupMicrophoneDeniedDetailSite: 'ブラウザーでこのサイトのマイクを許可してから、もう一度確認してください。',
         setupMicrophoneMissingTitle: 'マイクが見つかりません',
         setupMicrophoneMissingDetail: 'マイクまたはヘッドセットを接続してから、もう一度確認してください。',
         setupMicrophoneCheckAgain: 'もう一度確認',

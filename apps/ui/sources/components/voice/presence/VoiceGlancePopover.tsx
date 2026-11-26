@@ -37,6 +37,11 @@ export const VoiceGlancePopover = React.memo(function VoiceGlancePopover(props: 
     open: boolean;
     anchorRef: React.RefObject<View | null>;
     placement: 'bottom' | 'top';
+    /**
+     * Distance from the anchor (default 8). A container the glance replaces passes minus its own
+     * height, so the glance's edge lands on the container's far edge instead of floating beyond it.
+     */
+    gap?: number;
     onRequestClose: () => void;
     testID?: string;
 }>): React.ReactElement | null {
@@ -47,6 +52,7 @@ export const VoiceGlancePopover = React.memo(function VoiceGlancePopover(props: 
 type VoiceGlanceOverlayProps = Readonly<{
     anchorRef: React.RefObject<View | null>;
     placement: 'bottom' | 'top';
+    gap?: number;
     onRequestClose: () => void;
     testID?: string;
 }>;
@@ -74,7 +80,7 @@ export function VoiceGlanceOverlay(props: VoiceGlanceOverlayProps & Readonly<{ m
             focusReturnRef={props.anchorRef}
             boundaryRef={null}
             placement={props.placement}
-            gap={8}
+            gap={props.gap ?? 8}
             edgePadding={{ horizontal: GLANCE_EDGE, vertical: GLANCE_EDGE }}
             portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
             maxWidthCap={VOICE_GLANCE_POPOVER_WIDTH + 2 * GLANCE_EDGE}

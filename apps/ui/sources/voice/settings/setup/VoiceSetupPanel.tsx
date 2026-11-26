@@ -225,9 +225,19 @@ type StepContext = Readonly<{
     sideBySide: boolean;
 }>;
 
-/** SetupSteps draws done · current · upcoming; blocked and working are the current step's two moods. */
-function stepMarker(state: VoiceSetupFacts['steps'][number]['state']): 'done' | 'current' | 'upcoming' {
+/**
+ * SetupSteps draws done · current · upcoming, and `waiting` for a step that needs the reader: a
+ * blocked step (the microphone turned off, a service that needs fixing) takes the rail's attention
+ * mood instead of a neutral numeral (lab TS). Working is the current step's quiet mood.
+ */
+function stepMarker(state: VoiceSetupFacts['steps'][number]['state']): 'done' | 'current' | 'upcoming' | 'waiting' {
+    if (state === 'blocked') return 'waiting';
     return state === 'done' || state === 'upcoming' ? state : 'current';
+}
+
+/** The step being worked on, in any of its moods: the only one that asks for anything. */
+function isCurrentStep(state: VoiceSetupFacts['steps'][number]['state']): boolean {
+    return state !== 'done' && state !== 'upcoming';
 }
 
 function buildStep(
@@ -239,7 +249,7 @@ function buildStep(
     const testID = `voice-setup.step.${step.id}`;
     switch (step.id) {
         case 'service': {
-            const choosing = stepMarker(step.state) === 'current' || context.changingService;
+            const choosing = isCurrentStep(step.state) || context.changingService;
             if (choosing) {
                 return {
                     key: step.id,
@@ -300,7 +310,7 @@ function buildStep(
                         : t('voiceMoments.setupReadinessDone'),
                 };
             }
-            const current = stepMarker(step.state) === 'current';
+            const current = isCurrentStep(step.state);
             const reason = model.readiness?.reason ?? (current ? t('voiceMoments.setupReadinessUnknown') : undefined);
             const action = model.readiness?.action ?? t('voiceMoments.setupReadinessCheck');
             return {
@@ -319,7 +329,7 @@ function buildStep(
         }
         case 'microphone': {
             if (step.state === 'done') return { key: step.id, testID, state: 'done', title: t('voiceMoments.setupMicrophoneDone') };
-            const current = stepMarker(step.state) === 'current';
+            const current = isCurrentStep(step.state);
             // No microphone connected: nothing was denied, so say so and check again on press.
             if (step.state === 'blocked' && model.facts.microphonePermission === 'unavailable') {
                 return {
@@ -340,12 +350,17 @@ function buildStep(
                 };
             }
             const denied = step.state === 'blocked';
+            // A browser has no system settings to open (the producer passes none): the way back is the
+            // site's own microphone permission, and Check again asks for it through the same request.
+            const siteBlocked = denied && !actions.onOpenSystemSettings;
             return {
                 key: step.id,
                 testID,
                 state: stepMarker(step.state),
                 title: denied ? t('voiceMoments.setupMicrophoneDeniedTitle') : t('voiceMoments.setupMicrophoneTitle'),
-                detail: current ? (denied ? t('voiceMoments.setupMicrophoneDeniedDetail') : t('voiceMoments.setupMicrophoneDetail')) : undefined,
+                detail: !current ? undefined
+                    : siteBlocked ? t('voiceMoments.setupMicrophoneDeniedDetailSite')
+                        : denied ? t('voiceMoments.setupMicrophoneDeniedDetail') : t('voiceMoments.setupMicrophoneDetail'),
                 body: !current ? undefined : denied ? (
                     actions.onOpenSystemSettings ? (
                         <RoundButton
@@ -354,7 +369,15 @@ function buildStep(
                             title={t('voiceMoments.setupOpenSystemSettings')}
                             onPress={actions.onOpenSystemSettings}
                         />
-                    ) : undefined
+                    ) : (
+                        <RoundButton
+                            testID={`${testID}.checkAgain`}
+                            size="small"
+                            leading={<MicGlyph />}
+                            title={t('voiceMoments.setupMicrophoneCheckAgain')}
+                            onPress={actions.onAllowMicrophone}
+                        />
+                    )
                 ) : (
                     <RoundButton
                         testID={`${testID}.allow`}
@@ -372,7 +395,7 @@ function buildStep(
                 return { key: step.id, testID, state: 'current', title: t('voiceMoments.setupTryTitle'), body: context.renderTry };
             }
             if (step.state === 'done') return { key: step.id, testID, state: 'done', title: t('voiceMoments.setupTryDone') };
-            const current = stepMarker(step.state) === 'current';
+            const current = isCurrentStep(step.state);
             return {
                 key: step.id,
                 testID,

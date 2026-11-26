@@ -343,6 +343,8 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
   const voice = props.model.attemptControl;
   const ended = voice.ended!;
   const readAloud = props.reading?.readAloud ?? null;
+  // On the conversation's own page the way back is already where the person is: only talking again remains.
+  const conversationOnScreen = useVoiceTargetOnScreen(voice.openConversationSessionAddress);
   // Continued on another device (lab C1): the conversation moved; this device only let its own
   // microphone go. Viewer-relative words from the same formatter the transcript note uses.
   const continued =
@@ -397,7 +399,7 @@ const VoiceGlanceEnded = React.memo(function VoiceGlanceEnded(
             testID={`${props.testID}-read-aloud-stop`}
           />
         ) : null}
-        {voice.canOpenConversation ? (
+        {voice.canOpenConversation && !conversationOnScreen ? (
           <RoundButton
             testID={`${props.testID}-open-conversation`}
             display="secondary"
