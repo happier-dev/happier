@@ -667,6 +667,19 @@ describe('WorkflowRunContent', () => {
     expect(calm).toBeDefined();
     expect(markColor(held)).toBe(calm);
   });
+  it('shows why a paused Run is waiting for someone to resume its origin Session', async () => {
+    const invocation = createWorkflowInvocationIndexFixture({
+      id: 'origin-hold', parentRecordId: 'root', lifecycle: 'needs_attention',
+    });
+    const progress = openedLeafProgress(invocation.id).get(invocation.id)!;
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'paused', attentionRequired: true }),
+      invocations: [invocation], selectedInvocationId: null, firstFailedInvocationResolution: 'resolved',
+      invocationProgressById: new Map([[invocation.id, { ...progress, reason: { code: 'held_by_person' } }]]),
+    });
+    expect(screen.findByTestId('workflow-run-failure-reason')?.props.children).toContain('errors.sessionHeldByPerson');
+  });
+
   it('makes Stop the one primary of an interrupted Run with nothing to resume (FIN-DESIGN-REVIEW H3)', async () => {
     const screen = await renderContent({
       run: createWorkflowRunSummaryFixture({

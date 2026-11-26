@@ -1138,7 +1138,7 @@ describe('production daemon detached Workflow admission', () => {
     finally { releaseDetached = async () => {}; }
   });
 
-  it.each(['bound', 'misbound', 'missing-home'] as const)('completes Session then detached leaves through the admitted Run receiver (%s)', async binding => {
+  it.each(['bound', 'misbound', 'missing-home', 'stopped-guest'] as const)('completes Session then detached leaves through the admitted Run receiver (%s)', async binding => {
     // Registered before the installed fixture so its shutdown, bootstrap and
     // Home cleanup finish before these surrounding boundaries are restored.
     onTestFinished(() => {
@@ -1146,6 +1146,9 @@ describe('production daemon detached Workflow admission', () => {
       vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); reloadConfiguration(); resetInMemoryAccountSettingsContextForTests();
     });
     const accountId = 'requester';
+    const stoppedGuest = binding === 'stopped-guest';
+    const custodianAccountId = stoppedGuest ? 'other-machine-owner' : accountId;
+    const machineRole = stoppedGuest ? 'use' : 'manage';
     const machineId = 'machine';
     const runId = 'detached-owner-run';
     const homeId = 'srv_detached_home';
@@ -1164,6 +1167,7 @@ describe('production daemon detached Workflow admission', () => {
     mocks.io.mockImplementation(nativeSocketClient.io);
     const installed = await createInstalledProjectAgentLaunchFixture({ prepareProject: false, preserveLaunchEnvironment: true,
       serverId, homeServerIdentityId: homeId, accountActionCredentials: credentials, accountSettings: settings,
+      machineAccess: { custodianAccountId, role: machineRole },
       machineRpcMethods: [RPC_METHODS.CAPABILITIES_DESCRIBE],
       agentIsolationEnabled: false, agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) } });
     const directory = installed.f.directory;
@@ -1264,8 +1268,9 @@ describe('production daemon detached Workflow admission', () => {
       workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
     const sessionId = 'detached-sibling-session';
     let sessionLocalId = '';
-    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: true,
+    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active: !stoppedGuest,
       metadata: JSON.stringify({ machineId, path: directory, runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} },
+        ...(stoppedGuest ? { sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 1 } } : {}),
         sessionCreationCorrespondenceV1: buildSessionCreationCorrespondence({
           identity: { callerCreationNamespace: 'detached-sibling', creationKey: sessionId },
           recipe: { execution: { machineId, directory: { kind: 'path', path: directory } },
@@ -1281,8 +1286,8 @@ describe('production daemon detached Workflow admission', () => {
       throw new Error(`Unexpected sibling Session RPC: ${request.method}`);
     });
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
-      { kind: 'step', id: 'session', document: { text: 'Session first', references: [], attachments: [] }, input: [],
-        execution: { conversation: { kind: 'existing_session', sessionId, machineId } }, result: { kind: 'text' } },
+      ...(stoppedGuest ? [] : [{ kind: 'step' as const, id: 'session', document: { text: 'Session first', references: [], attachments: [] }, input: [],
+        execution: { conversation: { kind: 'existing_session' as const, sessionId, machineId } }, result: { kind: 'text' as const } }]),
       { kind: 'step', id: 'review', document: { text: 'fixture', references: [], attachments: [] }, input: [],
         execution: { roleId: role.roleId, connectedServices: pool }, result: { kind: 'text' } },
     ] };
@@ -1291,12 +1296,15 @@ describe('production daemon detached Workflow admission', () => {
       roleOverrides: [{ roleId: role.roleId, engine: { agentTargetKey: buildBackendTargetKeyV2(agentTarget) } }],
       context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
         workspaceTarget: { project: { machineId, directory, checkoutRootPath: directory } },
-        origin: { kind: 'direct', authenticatedStarterV1: { requestRef: 'detached-starter', requester: { serverId, accountId } } },
+        origin: { kind: 'direct', ...(stoppedGuest ? { originSessionId: sessionId } : {}),
+          authenticatedStarterV1: { requestRef: 'detached-starter', requester: { serverId, accountId } } },
         authorization: { principal: { kind: 'host' } } },
       admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
     if (!materialized.ok) throw new Error(materialized.error.code);
-    expect(materialized.snapshot.materializedLeaves).toMatchObject([{ executionTarget: { kind: 'session' } }, { executionTarget: { kind: 'detached_run' },
-      selection: { agentTarget, connectedServices: pool } }]);
+    expect(materialized.snapshot.materializedLeaves).toMatchObject([
+      ...(stoppedGuest ? [] : [{ executionTarget: { kind: 'session' } }]),
+      { executionTarget: { kind: 'detached_run' }, selection: { agentTarget, connectedServices: pool } },
+    ]);
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: materialized.snapshot }));
     const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
@@ -1372,7 +1380,7 @@ describe('production daemon detached Workflow admission', () => {
       if (path === `/v1/machines/${machineId}`) return { status: 200, data: { machine: MachinePublishedRowV1Schema.parse({
         id: machineId, managedMachineRef: null, metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
         storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId: installationIdentity.installationId,
-        access: { custodian: { accountId, displayName: 'Machine custodian' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+        access: { custodian: { accountId: custodianAccountId, displayName: 'Machine custodian' }, role: machineRole, resourceMode: 'plain', accessState: 'ready' },
       }) } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), []) };
@@ -1403,8 +1411,8 @@ describe('production daemon detached Workflow admission', () => {
         throw new Error('Unexpected detached Workflow socket request');
       }
       return { ok: true, result: await receiver.handleRequest({ method: payload.method, params: {},
-        callerAuthority: 'account_automation', machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId,
-          machineId, installationId: installationIdentity.installationId, role: 'manage', encryptionMode: 'plain' } }) };
+        callerAuthority: 'account_automation', machineAdmission: { actorAccountId: accountId, custodianAccountId,
+          machineId, installationId: installationIdentity.installationId, role: machineRole, encryptionMode: 'plain' } }) };
     } });
     mocks.io.mockImplementation((...args: Parameters<typeof nativeSocketClient.io>) =>
       args[0] === installed.f.channel.serverUrl ? nativeSocketClient.io(...args) : rpcSocket);
@@ -1414,8 +1422,8 @@ describe('production daemon detached Workflow admission', () => {
         ? { ...requesterWorkAttributionV1, installationId: 'different-installation' } : requesterWorkAttributionV1,
       boundary: { serverId, serverHttpBaseUrl: home, happyHomeDir: directory,
         getObservedServerIdentityId: async () => binding === 'missing-home' ? null : homeId },
-      machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId,
-        installationId: installationIdentity.installationId, role: 'manage', encryptionMode: 'plain' },
+      machineAdmission: { actorAccountId: accountId, custodianAccountId, machineId,
+        installationId: installationIdentity.installationId, role: machineRole, encryptionMode: 'plain' },
       isCurrent: async () => true,
       transport: { machineId, invoke: async (method, input, options) => {
         nativeRequests.push(method);
@@ -1425,7 +1433,7 @@ describe('production daemon detached Workflow admission', () => {
           requesterIdentities.push(selectHostRequesterExecutionIdentity({
             sessionRequester: requester?.attribution,
             sessionRequesterHomeServerIdentityId: requester?.homeServerIdentityId,
-            hostHomeServerIdentityId: homeId, sessionCustodianAccountId: accountId,
+            hostHomeServerIdentityId: homeId, sessionCustodianAccountId: custodianAccountId,
           }));
         }
         const response = await receiver.invokeLocal(method, input, options);
@@ -1446,11 +1454,22 @@ describe('production daemon detached Workflow admission', () => {
       managedMachineAction,
       machineAdmissionTransport: async request => { sessionLocalId = request.localId;
         return { status: 'accepted', localId: request.localId }; },
-      machineActionDirectTargetTransport: transport.transport });
+      machineActionDirectTargetTransport: transport.transport,
+      ...(stoppedGuest ? { resolveActionRequesterContext: transport.resolveActionRequesterContext } : {}) });
     const coordinating = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope, signal: observation.signal,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
     coordination = coordinating;
     void coordinating.catch(() => undefined);
+    if (stoppedGuest) {
+      await Promise.race([nativeOpened, coordinating]);
+      finishNative?.();
+      const result = await coordinating;
+      expect(nativeRequests, JSON.stringify({ result, receiverRefusals })).toContain(SESSION_RPC_METHODS.EXECUTION_RUN_START);
+      expect(requesterIdentities).toEqual([expect.objectContaining({ kind: 'isolated',
+        requester: expect.objectContaining({ accountId }), separationRequired: true })]);
+      expect(receiverRefusals).not.toContain('execution_run_target_unavailable');
+      return;
+    }
     if (binding === 'bound') {
       await Promise.race([nativeOpened, coordinating.then(result => {
         throw new Error(`Detached leaf never reached native open: ${JSON.stringify({ result, nativeRequests, receiverRefusals,

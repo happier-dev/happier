@@ -586,6 +586,33 @@ describe('workflow coordinator', () => {
       kind: 'session', sessionId: 'origin', localInputId: 'exact-origin-input' }, input: { document: authored.document, input: [], renderedText: 'Frozen origin input' } })]);
   });
 
+  it('pauses on a stopped origin and resumes the same unoffered invocation', async () => {
+    let stopped = true;
+    const offers: string[] = [];
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace, executeStep: async params => {
+      await params.beforeInputAdmission();
+      if (stopped) return { kind: 'needs_attention', code: 'held_by_person', message: 'Session is held after explicit Stop' };
+      expect(params.observationOnly).toBeUndefined();
+      const exact = { kind: 'session' as const, sessionId: 'origin', localInputId: 'origin-input' };
+      await params.onOriginInputOffered!(exact, 'Frozen origin input');
+      offers.push(params.invocation.logicalInvocationRecordId);
+      await params.onInputAccepted(exact);
+      return { kind: 'completed', result: 'done' };
+    } });
+    const run = { runId: 'stopped-origin', definition: definition([
+      { ...step('origin-work'), execution: { conversation: { kind: 'origin_session' as const } } }]),
+      inputs: {}, executionTarget, authorization, originSessionId: 'origin' };
+    await expect(coordinator.run(run)).resolves.toEqual({ state: 'paused', reason: 'held_by_person' });
+    const held = [...store.records.values()].find(row => row.blockId === 'origin-work')!;
+    expect(held).toMatchObject({ lifecycle: 'needs_attention', reason: 'held_by_person', reasonMessage: 'Session is held after explicit Stop' });
+    expect(held.execution).toBeUndefined();
+    expect(offers).toEqual([]);
+    stopped = false;
+    await expect(coordinator.run(run)).resolves.toEqual({ state: 'succeeded' });
+    expect(offers).toEqual([held.recordId]);
+  });
+
   it.each(['withdrawn', 'unavailable', 'dispatched'] as const)('keeps an offered origin row under Pause until authoritative withdrawal (%s)', async (answer) => {
     let control: 'running' | 'pause_requested' = 'running';
     const store = { ...createInMemoryWorkflowCoordinatorStore(), readControl: async () => control };

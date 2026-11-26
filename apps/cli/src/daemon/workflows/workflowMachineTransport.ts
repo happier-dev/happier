@@ -100,6 +100,7 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
     },
     transport: {
       machineId: input.transport.machineId,
+      workflowRunId: input.runId,
       ...(input.transport.machineServiceAction ? { machineServiceAction: async request => {
         if (request.context.executionRunWorkflowRunId && !await prepare(request.context)) {
           return { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };

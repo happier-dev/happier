@@ -1004,8 +1004,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // See failures (FIN-DESIGN-C4 R5), once: not again beside the card that says it (WAVE-ACCEPT-1118D c1).
     // An interrupted Run parked on a failed step says the same retained cause under its status.
     const runProblem = failurePresentation == null ? resolveWorkflowRunProblemPresentation(props.run) : null;
-    const failureReason = runProblem?.message ?? ((props.run.state !== 'failed' && props.run.state !== 'interrupted')
-        || failurePresentation == null || failureStepBeside ? null : formatWorkflowRunFailureCauseLine(failurePresentation));
+    const stoppedOrigin = props.run.state === 'paused' && failurePresentation?.recovery.failureCause?.kind === 'reported_failure'
+        && failurePresentation.recovery.failureCause.code === 'held_by_person';
+    const failureReason = runProblem?.message ?? (stoppedOrigin ? t('errors.sessionHeldByPerson')
+        : ((props.run.state !== 'failed' && props.run.state !== 'interrupted') || failurePresentation == null || failureStepBeside
+            ? null : formatWorkflowRunFailureCauseLine(failurePresentation)));
     const failureReasonPending = failureReason === null
         && (props.run.state === 'failed' || props.run.state === 'interrupted')
         && props.firstFailedInvocationResolution === 'loading' && (phone || props.selectedInvocationId === null);

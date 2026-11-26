@@ -2422,9 +2422,12 @@ async function executeStepBlock(
   }
   const path = { blockId: step.id, scope };
   const producerBinding = createWorkflowProducerBinding({ runId: context.runId, store: context.deps.store, frame });
+  const heldBeforeOriginInput = conversationBinding.kind === 'origin_session' && existing?.lifecycle === 'needs_attention'
+    && existing.reason === 'held_by_person' && !existing.execution;
   const rejoining = existing !== undefined
     && existing.lifecycle !== 'pending'
-    && existing.lifecycle !== 'waiting_for_capacity';
+    && existing.lifecycle !== 'waiting_for_capacity'
+    && !heldBeforeOriginInput;
   const intent = existing ?? {
     key, recordId: context.deps.allocateInvocationRecordId(), acceptedAtMs: Date.now(), runId: context.runId, blockId: step.id, memberOrdinal, ...(parentKey ? { parentKey } : {}),
     path, blockKind: 'step' as const, attempt: 0, lifecycle: 'pending' as const, resultContract: step.result,
@@ -2950,6 +2953,10 @@ async function executeStepBlock(
         await context.deps.store.commitFact({ key, lifecycle: 'pending' });
         throw new WorkflowControlBoundary('paused');
       }
+    }
+    if (!failStopClosure && isOriginInput && !durableExecution && execution.kind === 'needs_attention' && execution.code === 'held_by_person') {
+      await context.deps.store.commitFact({ key, lifecycle: 'needs_attention', reason: execution.code, reasonMessage: execution.message });
+      throw new WorkflowControlBoundary('paused', execution.code);
     }
     const unresolvedOrigin = isOriginInput && execution.kind === 'needs_attention'
       ? await context.deps.store.read(key) : undefined;

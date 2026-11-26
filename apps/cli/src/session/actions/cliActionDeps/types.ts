@@ -153,6 +153,8 @@ export type MachineServiceActionDirectTargetInvocation = Parameters<NonNullable<
 
 export type MachineActionDirectTargetTransport = Readonly<{
   machineId: string;
+  /** Private transport bound to a claimed Workflow Run. */
+  workflowRunId?: string;
   /** The installed custodian runs cleanup and Home deletion under the original operation. */
   sessionDelete?: (request: import('@/daemon/sessions/sessionDeleteAction').NativeSessionDeleteRequest) => Promise<unknown>;
   /** Exact receiving daemon's native setup leaf; composition stays at the Action owner. */

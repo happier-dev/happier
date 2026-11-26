@@ -144,12 +144,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       || opts?.requesterWorkAttributionV1 !== undefined || opts?.causalPermissionAuthority !== undefined
       || opts?.effectiveCallerPermissionMode !== undefined;
 
-  const admitExecutionRunContext = async (
-    opts?: ExecutionRunActionTransportOptions,
-  ): Promise<LocalSessionRpcActionContext | null> => {
-    if (!await canUseLocalRuntimeAccount(opts?.runtimeAccountContext
-      ?? { ...opts, serverId: opts?.serverId ?? params.serverId }, readAccountIdFromToken(params.token), params.serverId)) return null;
-    return {
+  const projectExecutionRunContext = (opts?: ExecutionRunActionTransportOptions): LocalSessionRpcActionContext => ({
       ...(opts?.reviewedChildActionContext ? { reviewedChildActionContext: opts.reviewedChildActionContext } : {}),
       ...(opts?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: opts.admittedHostWorkflowRequester } : {}),
       ...(opts?.surface ? { surface: opts.surface } : {}),
@@ -174,7 +169,12 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
       ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
       ...(opts?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: opts.requesterWorkAttributionV1 } : {}),
-    };
+  });
+
+  const admitExecutionRunContext = async (opts?: ExecutionRunActionTransportOptions): Promise<LocalSessionRpcActionContext | null> => {
+    const permitted = await canUseLocalRuntimeAccount(opts?.runtimeAccountContext
+      ?? { ...opts, serverId: opts?.serverId ?? params.serverId }, readAccountIdFromToken(params.token), params.serverId);
+    return permitted ? projectExecutionRunContext(opts) : null;
   };
 
   const callDetachedExecutionRunRpc = async (
@@ -206,7 +206,9 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         return failure('execution_run_target_unavailable', 'noRunCreated');
       }
       if (direct?.machineId === target.machineId) {
-        const localActionContext = await admitExecutionRunContext(opts);
+        // The claimed transport supplies the Run starter’s custody at the receiver.
+        const localActionContext = opts?.workflowRunId && direct.workflowRunId === opts.workflowRunId
+          ? projectExecutionRunContext(opts) : await admitExecutionRunContext(opts);
         if (!localActionContext) return failure('execution_run_target_unavailable', 'noRunCreated');
         const actionAutomationPort = host.readActionAutomationPort?.();
         result = await direct.invoke(method, request, {

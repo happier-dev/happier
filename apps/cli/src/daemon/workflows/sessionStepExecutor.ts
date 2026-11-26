@@ -903,6 +903,9 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
         return { kind: 'failed', code: error.code, message: error.message };
       }
       if (params.signal?.aborted) return settleBeforeAdmissionAfterAbort();
+      if (error instanceof WorkflowSessionCompositionError && error.code === 'held_by_person' && prepared.inputPath === 'origin_session') {
+        return { kind: 'needs_attention', code: error.code, message: error.message };
+      }
       if (error instanceof WorkflowSessionCompositionError && (error.code === 'approval_required' || error.code === 'approval_unavailable')) {
         return { kind: 'needs_attention', code: error.code };
       }
@@ -1362,6 +1365,7 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
             if (resumed.code === 'held_by_person' && params.step.inputMode !== 'none' && prepared.inputPath !== 'origin_session') {
               return prepared.existing;
             }
+            if (resumed.code === 'held_by_person') throw new WorkflowSessionCompositionError(resumed.code, resumed.message);
             const reason = resumed.spawnRefusalReason;
             const launchDetail = resumed.errorDetail?.kind === 'launch_error' ? resumed.errorDetail : undefined;
             const custodyRefusal = readRequesterSessionCustodyRefusalCode(reason);

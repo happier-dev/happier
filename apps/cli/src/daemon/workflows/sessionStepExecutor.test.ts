@@ -1975,6 +1975,39 @@ describe('workflow Session step executor', () => {
       reasonDetails: { reason: 'session_unavailable', expected: { kind: 'session', ids: ['origin'] } } });
   });
 
+  it('keeps a passive Workflow continuation held by the person’s explicit Stop', async () => {
+    const sessionId = 'origin';
+    const machineId = 'machine-1';
+    const read = readiness.get.getMockImplementation()!;
+    readiness.get.mockImplementation(async (url: string) => {
+      const response = await read(url);
+      if (!url.endsWith(`/v2/sessions/${sessionId}`)) return response;
+      return { ...response, data: { session: { ...response.data.session, active: false, metadata: JSON.stringify({
+        machineId, path: '/repo', sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 1 },
+      }) } } };
+    });
+    const onOriginInputOffered = vi.fn();
+    const machineAdmissionTransport = vi.fn();
+    const execute = createProductionWorkflowSessionStepExecutor({
+      credentials: { token: 'token', encryption: null }, machineId, machineAdmissionTransport,
+      createFreshConversation: async () => { throw new Error('origin cannot be replaced'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId, machineId, directory: '/repo' }),
+    });
+    await expect(execute({
+      runId: 'run-1', originSessionId: sessionId,
+      step: { kind: 'step', id: 'a', document: { text: 'work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'a', scope: [] },
+        attempt: '0', logicalInvocationRecordId: 'logical-1' },
+      input: { text: 'work', references: [], attachments: [], values: [] }, execution: { conversation: { kind: 'origin_session' } },
+      executionTarget: { kind: 'session' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {}, onInputAccepted: async () => {}, onOriginInputOffered,
+    })).resolves.toMatchObject({ kind: 'needs_attention', code: 'held_by_person', message: expect.any(String) });
+    expect(onOriginInputOffered).not.toHaveBeenCalled();
+    expect(machineAdmissionTransport).not.toHaveBeenCalled();
+  });
+
   it('fences Session enqueue after asynchronous conversation preparation', async () => {
     const admissionClosed = new Error('pause_won');
     let closed = false;
