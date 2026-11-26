@@ -832,6 +832,7 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
           // The Home Automation index is the network boundary; selection stays real.
           seed: async () => { automationReads++; return { v: 1, rows: [] }; },
           start: async () => ({ runs: [], notices: [] }),
+          settle: async () => [],
         }),
         executionRunStart: async (_sessionId, start) => {
           const input = { ...start, sessionId: 'original-session' };
