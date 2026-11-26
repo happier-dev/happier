@@ -31,6 +31,7 @@ export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
         commits: {
             titleKey: 'settingsSourceControl.page.commits.title',
             settings: {
+                gitIdentity: {},
                 commitStrategy: {},
                 commitMessageGenerator: {},
                 commitMessageAgent: { storage: commitMessageAgentStorage },

@@ -5903,6 +5903,7 @@ const enSettingsAttachments = {
 };
 
 const enSettingsSourceControl = {
+    gitIdentity: {"title": "Git identity", "description": "Commits made from Happier use this name and email; a repository’s own setting wins. Leave both empty to use Git configuration.", "email": "Email"},
   page: {
     description: 'How commits, pushes and diffs work in your sessions, and how Happier explains changes.',
     commits: {

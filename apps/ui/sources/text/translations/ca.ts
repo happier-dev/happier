@@ -5228,6 +5228,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
     settingsSourceControl: {
+    gitIdentity: {"title": "Identitat de Git", "description": "Els commits del Happier fan servir aquest nom i correu; preval la configuració del repositori. Deixa els dos camps buits per fer servir la configuració de Git.", "email": "Correu electrònic"},
         page: {
             description: "Com funcionen els commits, els pushes i els diffs a les teves sessions, i com Happier explica els canvis.",
             commits: {

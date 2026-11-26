@@ -5398,6 +5398,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   settingsSourceControl: {
+    gitIdentity: {"title": "Tożsamość Git", "description": "Commity z Happier używają tego imienia i adresu e-mail; ustawienia repozytorium mają pierwszeństwo. Pozostaw oba pola puste, aby używać konfiguracji Git.", "email": "E-mail"},
     page: {
       description: "Jak działają commity, pushe i diffy w twoich sesjach oraz jak Happier objaśnia zmiany.",
       commits: {

@@ -5884,6 +5884,7 @@ localTailscale: {
   },
 
   settingsSourceControl: {
+    gitIdentity: {"title": "Git の作成者情報", "description": "Happier のコミットにはこの名前とメールアドレスを使います。リポジトリの設定が優先されます。両方を空にすると Git の設定を使います。", "email": "メールアドレス"},
     page: {
       description: "セッションでのコミット、プッシュ、差分の動作と、Happier による変更の説明。",
       commits: {

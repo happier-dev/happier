@@ -4705,6 +4705,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     settingsSourceControl: {
+    gitIdentity: {"title": "Git 身分", "description": "從 Happier 建立的提交使用此姓名和電子郵件；儲存庫本身的設定優先。兩項留空則使用 Git 設定。", "email": "電子郵件"},
         page: {
             description: "工作階段中的提交、推送和差異如何運作，以及 Happier 如何解釋變更。",
             commits: {

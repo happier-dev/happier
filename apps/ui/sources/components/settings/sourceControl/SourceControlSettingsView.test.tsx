@@ -146,6 +146,31 @@ const { AgentInputChipPickerPopover } = await import('@/components/sessions/agen
 const { LLM_TASK_RUNNER_AUTO_OPTION_ID } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
 
 describe('SourceControlSettingsView', () => {
+    it('saves both Git identity fields together and allows clearing the preference', async () => {
+        await restoreViewAccount();
+        const screen = await renderView(<SourceControlSettingsView />);
+        try {
+            const name = screen.findByTestId('settings.sourceControl.gitIdentity.name');
+            const email = screen.findByTestId('settings.sourceControl.gitIdentity.email');
+            expect(name).not.toBeNull();
+            expect(email).not.toBeNull();
+            await act(async () => {
+                name!.props.onChangeText('Alex Example');
+                email!.props.onChangeText('alex@example.test');
+            });
+            expect(storage.getState().settings.scmGitIdentity).toBeNull();
+            await screen.pressByTestIdAsync('settings.sourceControl.gitIdentity.save');
+            await vi.waitFor(() => expect(storage.getState().settings.scmGitIdentity).toEqual({
+                name: 'Alex Example', email: 'alex@example.test',
+            }));
+            await act(async () => {
+                screen.findByTestId('settings.sourceControl.gitIdentity.name')!.props.onChangeText('');
+                screen.findByTestId('settings.sourceControl.gitIdentity.email')!.props.onChangeText('');
+            });
+            await screen.pressByTestIdAsync('settings.sourceControl.gitIdentity.save');
+            await vi.waitFor(() => expect(storage.getState().settings.scmGitIdentity).toBeNull());
+        } finally { await screen.unmount(); }
+    });
     it('discovers the Review quality preference through the Settings Action', async () => {
         await restoreViewAccount();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');

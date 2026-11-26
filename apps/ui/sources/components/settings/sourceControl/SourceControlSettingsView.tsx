@@ -34,6 +34,7 @@ import {
     shouldConfirmRemoteOperation,
 } from '@/scm/settings/remoteConfirmationPolicy';
 import { CommitMessageInstructionsSetting } from './CommitMessageInstructionsSetting';
+import { GitIdentitySetting } from './GitIdentitySetting';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
@@ -355,6 +356,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 title={t('settingsSourceControl.page.commits.title')}
                 description={t('settingsSourceControl.page.commits.description')}
             >
+                <GitIdentitySetting />
                 <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.commitStrategy}>
                     <SegmentedChoiceItem<ScmCommitStrategy>
                         subtitleLines={0}

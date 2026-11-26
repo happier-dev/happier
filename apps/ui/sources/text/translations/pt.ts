@@ -5662,6 +5662,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   settingsSourceControl: {
+    gitIdentity: {"title": "Identidade Git", "description": "Os commits do Happier usam este nome e e-mail; a configuração do repositório tem prioridade. Deixe ambos os campos vazios para usar a configuração do Git.", "email": "E-mail"},
     page: {
       description: "Como commits, pushes e diffs funcionam nas suas sessões, e como o Happier explica as alterações.",
       commits: {
