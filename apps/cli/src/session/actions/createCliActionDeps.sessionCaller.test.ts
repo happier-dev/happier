@@ -152,6 +152,7 @@ describe('daemon Account Action Session caller context', () => {
       const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' } as const;
       const input = { sessionId: fixture.sessionId, serverId: 'home', expectedMetadataRevision: 4, approvalProfileId: 'builtin:apply-safe' };
       expect(await executor.execute('session.approval_profile.set', input, context)).toEqual({ ok: true,
+        automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
         result: { ok: true, sessionId: fixture.sessionId, approvalProfileId: 'builtin:apply-safe', version: 5 } });
       const caller = { ...context, defaultSessionId: fixture.sessionId,
         actionCaller: { kind: 'session' as const, sessionId: fixture.sessionId, starterDepth: 2, turnDepth: 3 } };
@@ -339,7 +340,8 @@ describe('daemon Account Action Session caller context', () => {
       const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
       const id = ActionIdSchema.parse('session.control.switch');
       const executor = createActionExecutor(deps);
-      expect(await executor.execute(id, { to: 'remote' }, context)).toEqual({ ok: true, result: { switched: true } });
+      expect(await executor.execute(id, { to: 'remote' }, context)).toEqual({ ok: true, result: { switched: true },
+        automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }] });
       expect(remote).toBe(true);
       subscription.unsubscribe();
       expect(await executor.execute(id, { to: 'remote' }, context))
@@ -1218,7 +1220,8 @@ describe('daemon Account Action Session caller context', () => {
       }
       expect(await executor.execute('session.notes.set', input, { ...context,
         sessionInputSource: { sourceSessionId: sessionId, sourceTurnId: 'original-turn' } }))
-        .toEqual({ ok: true, result: { updated: true } });
+        .toEqual({ ok: true, result: { updated: true },
+          automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }] });
       expect(forwarded).toMatchObject([{ sessionId, method: 'session.notes.set', input,
         origin: { v: 1, caller: { kind: 'session', sessionId, starterDepth: 2, turnDepth: 3 },
           sourceTurnId: 'original-turn', requestId: 'original-request', callerPermissionMode: 'default' } }]);
