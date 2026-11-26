@@ -70,6 +70,7 @@ export type ApprovalReviewFactsInput = Readonly<{
  */
 export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   fields?: React.ComponentProps<typeof ActionApprovalFieldsCard> | null;
+  presetSubject?: React.ComponentProps<typeof ActionApprovalFieldsCard>['presetSubject'];
   computer?: ComputerActionApproval | null;
   onChooseComputerTarget?: () => void;
   handoffTarget?: React.ReactNode;
@@ -148,7 +149,7 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     : edit ? <ItemGroup title={t('approvals.details')}><SectionContentRow>
       <ArtifactEditProposalReview proposal={edit} testID={`${testID}.doc-edit-proposal`} />
     </SectionContentRow></ItemGroup> : generic ? props.fields === undefined && fields
-      ? <ActionApprovalFieldsCard presentation={fields} request={request} anatomy="page" serverId={serverId} />
+      ? <ActionApprovalFieldsCard presentation={fields} request={request} anatomy="page" serverId={serverId} presetSubject={props.presetSubject} />
       : props.fields ? <ActionApprovalFieldsCard {...props.fields} /> : null : null}
     {reboot.kind === 'machineReboot' ? <PreparedMachineRebootFacts review={reboot} serverId={serverId} testID={`${testID}.reboot`} /> : null}
     <ApprovalIncludedSteps preview={preview} serverId={serverId} testID={`${testID}.included-steps`} />

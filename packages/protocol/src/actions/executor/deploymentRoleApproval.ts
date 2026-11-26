@@ -74,6 +74,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
   executeAdmittedAction?: HostReviewedChildrenPreparationV1['executeAdmittedAction'];
   prepareExecutionContext?: HostReviewedChildrenPreparationV1['prepareExecutionContext'];
   approvalPreview?: HostReviewedChildrenPreparationV1['approvalPreview'];
+  nativeConfirmationSubject?: HostReviewedChildrenPreparationV1['nativeConfirmationSubject'];
   admittedReviewedChild?: true;
   requiredByPolicy?: true;
   reviewRequired: boolean }> | ActionExecuteResult> {
@@ -217,6 +218,7 @@ export async function prepareHostReviewedChildrenV1(params: Readonly<{
     ...(prepared?.input === undefined ? {} : { input: prepared.input }),
     ...(prepared?.prepareExecutionContext ? { prepareExecutionContext: prepared.prepareExecutionContext } : {}),
     ...(approvalPreview === undefined ? {} : { approvalPreview }),
+    ...(prepared?.nativeConfirmationSubject === undefined ? {} : { nativeConfirmationSubject: prepared.nativeConfirmationSubject }),
     ...(prepared?.executeAdmittedAction ? { executeAdmittedAction: prepared.executeAdmittedAction } : {}),
     reviewRequired: personReviewRequired || !reviewAccepted && policies.some(policy => (policy.requiredActionIds?.length ?? 0) > 0) };
 }

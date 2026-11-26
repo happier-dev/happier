@@ -1580,6 +1580,8 @@ export type HostReviewedChildrenPreparationV1 = HostReviewedChildrenPlanV1 & Rea
   input?: unknown;
   /** Admitted domain content disclosed with the parent review, never an effect operand. */
   approvalPreview?: import('../../json/strictJsonValue.js').JsonValue;
+  /** Display name already opened by admission for native confirmation. Never persisted or transported. */
+  nativeConfirmationSubject?: Readonly<{ reference: Readonly<{ kind: 'machinePreset'; id: string; homeId: string }>; name: string }>;
   /** Enrich the admitted requester before the host binds its reviewed-child port. Never transported. */
   prepareExecutionContext?: (context: ActionExecutorContext) => Promise<ActionExecutorContext>;
   executeAdmittedAction?: (request: ActionAdmittedExecutionV1) => Promise<ActionExecuteResult>;
@@ -3185,6 +3187,7 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown;
     context: ActionExecutorContext;
     preview?: unknown;
+    nativeConfirmationSubject?: HostReviewedChildrenPreparationV1['nativeConfirmationSubject'];
     /** A failed required read can be retried inside the same confirmation. */
     reviewRecovery?: Readonly<{
       failure: ActionExecuteFailure;

@@ -3973,7 +3973,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     if ('ok' in childrenPreparation) return childrenPreparation;
     if (childrenPreparation.input !== undefined) admittedInput = childrenPreparation.input;
     const { plan: hostReviewedChildren, policies: childPolicies, approvalPreview: childrenApprovalPreview, executeAdmittedAction: executePreparedChildren,
-      admittedReviewedChild: preparedChildAdmission } = childrenPreparation;
+      admittedReviewedChild: preparedChildAdmission, nativeConfirmationSubject } = childrenPreparation;
     const executeAdmittedAction = preparedHostReviewedChildren?.executeAdmittedAction ?? executePreparedChildren;
     const prepareExecutionContext = preparedHostReviewedChildren?.prepareExecutionContext ?? childrenPreparation.prepareExecutionContext;
     let admittedReviewedChild = preparedChildAdmission;
@@ -4345,7 +4345,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             if (serviceStartReview?.ok === false) return serviceStartReview;
             const pluginInstallReview = actionId === 'plugins.install'
               ? readPluginInstallApprovalPendingReview(policyReview.preview) : null;
-            const confirmed = recovering || await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
+            const confirmed = recovering || await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview,
+              ...(nativeConfirmationSubject === undefined ? {} : { nativeConfirmationSubject }) });
             if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
             if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
             // Review projections omit live-only operands. Keep execution on

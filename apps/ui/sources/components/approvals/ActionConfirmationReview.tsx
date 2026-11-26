@@ -22,6 +22,7 @@ import { describeDeploymentBackupConfigureDecision, describeDeploymentReviewDeci
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
 export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'> & Readonly<{
   principalNames?: ReadonlyMap<string, string>;
+  presetSubject?: React.ComponentProps<typeof ApprovalReviewFacts>['presetSubject'];
 }>;
 
 type TypedConfirmation = Readonly<{ text: string; placeholder?: string; instruction?: string }>;
@@ -116,6 +117,7 @@ function ConfirmationReviewModal(props: ConfirmationReviewModalProps) {
           actionArgs={props.actionArgs}
           preview={retryResult?.ok ? retryResult.preview : props.preview}
           principalNames={props.principalNames}
+          presetSubject={props.presetSubject}
           serverId={props.serverId}
           testID="actions.confirmation-review"
           summaryPlacement={props.summaryPlacement}
@@ -178,6 +180,7 @@ export function confirmActionReview(
         actionArgs: input.actionArgs,
         preview: input.preview,
         principalNames: input.principalNames,
+        presetSubject: input.presetSubject,
         serverId: input.serverId,
         confirmLabel: decision?.approve ?? input.confirmLabel,
         irreversible: input.irreversible,

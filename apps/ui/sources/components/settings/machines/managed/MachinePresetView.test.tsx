@@ -2901,6 +2901,7 @@ describe('reachable preset detail', () => {
       expect(harness.artifacts(serverId).list()).toEqual([]);
     expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
     expect(harness.requestsFor('/v1/machines/presets/get'), 'Save admission reads the incumbent once').toHaveLength(2);
+    expect(modalHost.getTextContent()).toContain(preset.name);
     const { publishHomeAccountChange } =
       await import('@/sync/runtime/orchestration/homeAccountChange');
     await act(async () => publishHomeAccountChange(scopeId));

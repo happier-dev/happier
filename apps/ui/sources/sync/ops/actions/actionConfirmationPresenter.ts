@@ -29,11 +29,12 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
   accountRoleAction?: ReturnType<typeof createAccountRoleActionExecutorV1> | null;
 }>): ConfirmationPresenter {
   const accountRoleAction = opts?.accountRoleAction;
-  return async ({ actionId, input, context, preview, reviewRecovery }) => {
+  return async ({ actionId, input, context, preview, nativeConfirmationSubject, reviewRecovery }) => {
     accountContext.assertCurrent();
     throwIfAborted(context.signal);
     if (opts?.presentUserActionConfirmation) {
       const confirmed = await opts.presentUserActionConfirmation({ actionId, input, context, ...(preview === undefined ? {} : { preview }),
+        ...(nativeConfirmationSubject === undefined ? {} : { nativeConfirmationSubject }),
         ...(reviewRecovery ? { reviewRecovery } : {}) });
       if (context.signal?.aborted) return false;
       accountContext.assertCurrent();
@@ -72,6 +73,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
     const confirmed = reviewFacts
       ? await reviewFacts.confirmActionReview({ actionId, actionArgs: input, preview,
         summaryPlacement: 'host',
+        presetSubject: nativeConfirmationSubject,
         title: actionId === 'account.delete' ? t('settingsAccount.deleteAccountConfirmTitle') : presentation.title ?? t('approvals.untitled'),
         summary: reviewRecovery ? null : confirmationSummary || null,
         ...(reviewRecovery ? { reviewRecovery: {

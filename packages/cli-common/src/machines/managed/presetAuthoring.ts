@@ -110,7 +110,12 @@ export async function prepareManagedMachinePresetAuthoringV1(
   const sealedDraft = authored === value.content ? {} : { contentEncryptionMode: mode, content: authored, recipients };
   const preparedInput = 'patch' in input ? { ...input, patch: { ...input.patch, ...sealedDraft, configurationRevision, setupRevision } }
     : { ...input, ...sealedDraft, configurationRevision, setupRevision };
-  const prepared: HostReviewedChildrenPreparationV1 = { children: [], input: preparedInput };
+  const prepared: HostReviewedChildrenPreparationV1 = {
+    children: [],
+    input: preparedInput,
+    ...(previous ? { nativeConfirmationSubject: { reference: { kind: 'machinePreset', id: input.id, homeId: input.homeId },
+      name: previous.name } } : {}),
+  };
   if (!content.launch) return prepared;
   if (content.authorEffectReview) {
     if (previous && sameStrictJsonValue(previous.launch, content.launch)
@@ -140,7 +145,7 @@ export async function prepareManagedMachinePresetAuthoringV1(
     : await deps.custody.withE2eeAccountKey(key => captureManagedMachinePresetAuthorEffectReviewV1({ ...capture,
       mode: 'e2ee', recipients, ...key, randomBytes: deps.randomBytes }));
   if (!captured) return failure('content_unavailable');
-  return { children: [], input: 'patch' in preparedInput ? { ...preparedInput, patch: { ...preparedInput.patch,
+  return { ...prepared, input: 'patch' in preparedInput ? { ...preparedInput, patch: { ...preparedInput.patch,
     contentEncryptionMode: mode, recipients, content: captured } }
     : { ...preparedInput, content: captured }, approvalPreview: projectNativeJsonValueForTransport({ authorEffectReview: optionProjection.effectReview }) };
 }

@@ -143,6 +143,8 @@ type ApprovalValueSource = Readonly<{ reference: ApprovalReference; serverId: st
  */
 export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFieldsCard(props: Readonly<{
     presentation: ApprovalFieldsPresentation;
+    /** The incumbent name already opened by this native confirmation's Save admission. */
+    presetSubject?: Readonly<{ reference: Extract<ApprovalReference, { kind: 'machinePreset' }>; name: string }>;
     /** The original request supplies identity for domain-owned live review facts. */
     request?: ApprovalFieldsRequest;
     anatomy?: 'card' | 'page';
@@ -286,6 +288,7 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
                 description={fieldRows.length > 0 ? props.description : undefined} testID={props.testID}>
                 {fieldRows.map((row, index) => row.kind === 'value' ? (
                     <ApprovalValueItem key={row.key} row={row} columns={columns} extras={rows[index]!}
+                        presetSubject={props.presetSubject}
                         testID={props.testID ? `${props.testID}.rows.row:${row.key}` : undefined} />
                 ) : row.kind === 'entries' ? (
                     // A structured value is still one argument: the same row as its siblings, the
@@ -556,11 +559,19 @@ function ApprovalValueItem(props: Readonly<{
     row: Extract<HappierApprovalFieldRow<ApprovalValueSource>, { kind: 'value' }>;
     columns: boolean;
     extras: ApprovalFieldRow;
+    presetSubject?: React.ComponentProps<typeof ActionApprovalFieldsCard>['presetSubject'];
     testID?: string;
 }>) {
     const { row, columns, extras } = props;
     const source = row.source;
-    const reading = useApprovalReferenceReading(source?.reference, row.value, source?.serverId ?? null, source?.exactRead ? EXACT_READ : undefined);
+    const reference = source?.reference;
+    const presetSubject = props.presetSubject;
+    const admittedName = reference?.kind === 'machinePreset' && presetSubject
+        && reference.id === presetSubject.reference.id && reference.homeId === presetSubject.reference.homeId
+        ? presetSubject.name : undefined;
+    const resolved = useApprovalReferenceReading(admittedName === undefined ? reference : undefined,
+        row.value, source?.serverId ?? null, source?.exactRead ? EXACT_READ : undefined);
+    const reading = admittedName === undefined ? resolved : { text: admittedName, named: true, session: undefined };
     const label = nameApprovalReferenceLabel(row.label, source?.reference);
     const unnamed = isUnnamedApprovalReference(source?.reference, reading);
     const note = unnamed ? [t('approvals.referenceNameUnavailable'), extras.note].filter(Boolean).join('\n') : extras.note;
