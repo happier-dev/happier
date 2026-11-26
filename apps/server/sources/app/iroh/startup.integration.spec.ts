@@ -284,4 +284,65 @@ describe('Home Iroh startup through real publication, HTTP and persistence', () 
             expect((await fetch(`${origin}/v1/auth/challenge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
         } finally { await app.close(); }
     });
+
+    it('republishes and avoids transient public descriptor omission when active endpoint directAddresses change in place', async () => {
+        process.env.HAPPIER_SERVER_LIGHT_DATA_DIR = join(harness.baseDir, 'direct-addresses-republish');
+        const env = { ...process.env, HAPPIER_DB_PROVIDER: 'sqlite' };
+        const continuityStore = createHomeConnectionDescriptorContinuityStoreForServer(env);
+        if (!continuityStore) throw new Error('Expected durable Home continuity');
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+        const ingress = installHomeIrohIngress(app);
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app as AppFastify);
+        featuresRoutes(app as AppFastify, { homeConnectionDescriptorContinuityStore: continuityStore });
+
+        let directAddresses = ['192.0.2.10:41000'];
+        vi.mocked(native.getEndpointStatus).mockImplementation(async () => ({
+            endpointId: ENDPOINT_ID,
+            directAddresses: [...directAddresses],
+            active: true,
+        }));
+
+        try {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            const listener = resolveBoundServerListener(app);
+            const ingressPort = await ingress.listen();
+            await prepareHomeIrohStartup(env)({ listener, ingressPort, continuityStore });
+
+            const initialPublic = await readCommittedHomeConnectionDescriptor({ env, continuityStore });
+            expect(initialPublic?.revision).toBe(1);
+            expect(initialPublic?.endpoints).toEqual([{ kind: 'iroh', endpointId: ENDPOINT_ID, relayUrls: ['https://relay.example.test'] }]);
+
+            // Simulate directAddresses changing on the active endpoint while the in-process committed cache is unprimed.
+            resetHomeConnectionDescriptorRevisionOwnerForTests();
+            directAddresses = ['198.51.100.9:54321'];
+            const afterInPlaceMutation = await readCommittedHomeConnectionDescriptor({ env, continuityStore });
+            expect(afterInPlaceMutation).toBeDefined();
+            expect(afterInPlaceMutation?.revision).toBe(2);
+            expect(afterInPlaceMutation?.endpoints).toEqual([{ kind: 'iroh', endpointId: ENDPOINT_ID, relayUrls: ['https://relay.example.test'] }]);
+
+            // Subsequent directAddresses change observed via getHomeIrohEndpointState triggers automatic republication.
+            directAddresses = ['203.0.113.44:54321'];
+            await getHomeIrohEndpointState();
+            await vi.waitFor(async () => {
+                expect((await continuityStore.read())?.revision).toBe(3);
+            });
+
+            const featuresRes = await fetch(`${origin}/v1/features`);
+            expect(featuresRes.status).toBe(200);
+            const featuresPayload = FeaturesResponseSchema.parse(await featuresRes.json());
+            expect(featuresPayload.homeConnectionDescriptor?.revision).toBe(3);
+            expect(featuresPayload.homeConnectionDescriptor?.endpoints).toEqual([
+                { kind: 'iroh', endpointId: ENDPOINT_ID, relayUrls: ['https://relay.example.test'] },
+            ]);
+        } finally {
+            vi.mocked(native.getEndpointStatus).mockImplementation(async () => ({
+                endpointId: ENDPOINT_ID,
+                directAddresses: ['192.0.2.10:41000'],
+                active: true,
+            }));
+            await app.close();
+        }
+    });
 });

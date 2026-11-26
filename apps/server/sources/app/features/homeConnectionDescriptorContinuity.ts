@@ -93,17 +93,32 @@ export function createHomeConnectionDescriptorContinuityStoreForServer(
 const CONTENT_KEY_PATTERN = /^v1:([in]):([0-9a-f]{64})$/;
 const SIMPLE_CACHE_VALUE_MAX_LENGTH = 191;
 
+function canonicalizeEndpointForContentKey(endpoint: HomeConnectionEndpointV1): HomeConnectionEndpointV1 {
+    if (endpoint.kind === 'https') {
+        return { kind: 'https', url: endpoint.url };
+    }
+    return {
+        kind: 'iroh',
+        endpointId: endpoint.endpointId,
+        ...(endpoint.relayUrls ? { relayUrls: endpoint.relayUrls } : {}),
+        ...(endpoint.directAddresses ? { directAddresses: endpoint.directAddresses } : {}),
+    };
+}
+
 export function createHomeConnectionDescriptorContentKey(params: Readonly<{
     homeServerIdentityId: string;
     canonicalServerUrl: string;
     endpoints: readonly HomeConnectionEndpointV1[];
 }>): string {
+    // Preserve the canonical key order across raw composed endpoints and
+    // Zod-parsed descriptors (z.extend places `kind` last on parsed Iroh entries).
+    const canonicalEndpoints = params.endpoints.map(canonicalizeEndpointForContentKey);
     const canonicalContent = JSON.stringify([
         params.homeServerIdentityId,
         params.canonicalServerUrl,
-        params.endpoints,
+        canonicalEndpoints,
     ]);
-    const irohMarker = params.endpoints.some((endpoint) => endpoint.kind === 'iroh') ? 'i' : 'n';
+    const irohMarker = canonicalEndpoints.some((endpoint) => endpoint.kind === 'iroh') ? 'i' : 'n';
     return `v1:${irohMarker}:${createHash('sha256').update(canonicalContent).digest('hex')}`;
 }
 

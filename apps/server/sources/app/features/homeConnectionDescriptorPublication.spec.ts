@@ -42,6 +42,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import type { HomeIrohEndpointState } from "@/app/iroh/homeIrohEndpoint";
 import { projectHomeReachability } from "@/app/home/reachability/homeReachability";
+import { logger } from "@/utils/logging/log";
 
 import {
     composeHomeConnectionDescriptor,
@@ -1075,5 +1076,106 @@ describe("home connection descriptor production read path", () => {
         });
         expect(recovered?.revision).toBe(1);
         expect(recovered?.endpoints[0]).toMatchObject({ endpointId: "a".repeat(64) });
+    });
+
+    it("keeps committedDescriptor coherent across readRequiredAuthenticatedHomeConnectionDescriptor when directAddresses later change", async () => {
+        const continuityStore = createFileHomeConnectionDescriptorContinuityStore(continuityPath());
+        let directAddresses = ["192.168.1.10:4242"];
+        const liveIroh = (): HomeIrohEndpointState => ({
+            status: "active",
+            snapshot: {
+                endpoint: {
+                    endpointId: "a".repeat(64),
+                    relayUrls: ["https://relay.example.test"],
+                    directAddresses: [...directAddresses],
+                },
+            },
+            failureReason: null,
+        });
+
+        const initial = await readHomeConnectionDescriptor({
+            env,
+            continuityStore,
+            visibility: "authenticated",
+            resolveIrohEndpointState: liveIroh,
+        });
+        expect(initial?.revision).toBe(1);
+
+        // Required authenticated read observes a directAddresses update and commits rev 2.
+        directAddresses = ["198.51.100.10:4242"];
+        const requiredCommit = await readRequiredAuthenticatedHomeConnectionDescriptor({
+            env,
+            continuityStore,
+            resolveIrohEndpointState: liveIroh,
+        });
+        expect(requiredCommit?.revision).toBe(2);
+
+        // Active endpoint directAddresses mutate again before the next public read.
+        directAddresses = ["203.0.113.20:4242"];
+        const publicProjection = await readCommittedHomeConnectionDescriptor({
+            env,
+            continuityStore,
+            resolveIrohEndpointState: liveIroh,
+        });
+        expect(publicProjection).toEqual({
+            v: 1,
+            homeServerIdentityId: "srv_home",
+            canonicalServerUrl: "https://home.example.test",
+            revision: 2,
+            endpoints: [{
+                kind: "iroh",
+                endpointId: "a".repeat(64),
+                relayUrls: ["https://relay.example.test"],
+            }],
+        });
+    });
+
+    it("logs a non-secret warning when public committed read omits a descriptor due to continuity contentKey mismatch", async () => {
+        const continuityStore = createFileHomeConnectionDescriptorContinuityStore(continuityPath());
+        const write = vi.spyOn(continuityStore, "write");
+        const initial = await readHomeConnectionDescriptor({
+            env,
+            continuityStore,
+            visibility: "authenticated",
+            resolveIrohEndpointState: activeIroh,
+        });
+        expect(initial?.revision).toBe(1);
+        write.mockClear();
+
+        // Simulate unprimed process where live facts diverge from committed continuity with no publisher running.
+        restart();
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+        try {
+            const omitted = await readCommittedHomeConnectionDescriptor({
+                env,
+                continuityStore,
+                resolveIrohEndpointState: () => ({
+                    status: "active",
+                    snapshot: {
+                        endpoint: {
+                            endpointId: "a".repeat(64),
+                            relayUrls: ["https://relay.example.test"],
+                            directAddresses: ["203.0.113.99:9999"],
+                        },
+                    },
+                    failureReason: null,
+                }),
+            });
+            expect(omitted).toBeUndefined();
+            expect(write).not.toHaveBeenCalled();
+            expect(warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    module: "iroh",
+                    diagnostic: "home_connection_descriptor_continuity_mismatch",
+                    continuityRevision: 1,
+                }),
+                expect.any(String),
+            );
+            const serializedWarn = JSON.stringify(warn.mock.calls);
+            expect(serializedWarn).not.toContain("203.0.113.99:9999");
+            expect(serializedWarn).not.toContain("192.168.1.10:4242");
+        } finally {
+            warn.mockRestore();
+        }
     });
 });

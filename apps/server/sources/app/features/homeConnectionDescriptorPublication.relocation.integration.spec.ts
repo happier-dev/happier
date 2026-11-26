@@ -5,6 +5,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { upsertAccountHomeDirectoryEntry } from "@/app/accountDirectory/accountDirectoryService";
 import { createHomeConnectionDescriptorContinuityStoreForServer } from "./homeConnectionDescriptorContinuity";
 import {
+    readCommittedHomeConnectionDescriptor,
     reserveRelocatedHomeConnectionDescriptor,
     resetHomeConnectionDescriptorRevisionOwnerForTests,
 } from "./homeConnectionDescriptorPublication";
@@ -62,5 +63,47 @@ describe("relocation descriptor authority", () => {
             env: { ...process.env, HAPPIER_PUBLIC_SERVER_URL: "" },
             continuityStore, minimumOuterRevisionExclusive: 31, irohEndpoint: null,
         })).rejects.toThrow();
+    });
+
+    it("keeps committedDescriptor coherent after reserveRelocatedHomeConnectionDescriptor when directAddresses later change", async () => {
+        const continuityStore = createHomeConnectionDescriptorContinuityStoreForServer(process.env)!;
+        const reserved = await reserveRelocatedHomeConnectionDescriptor({
+            env: process.env,
+            continuityStore,
+            minimumOuterRevisionExclusive: 40,
+            irohEndpoint: {
+                endpointId: "b".repeat(64),
+                relayUrls: ["https://relay.example.test"],
+                directAddresses: ["192.168.1.2:4242"],
+            },
+        });
+        expect(reserved.revision).toBeGreaterThan(40);
+
+        // Even if live directAddresses subsequently differ, public committed projection serves the reserved generation.
+        const publicProjection = await readCommittedHomeConnectionDescriptor({
+            env: process.env,
+            continuityStore,
+            resolveIrohEndpointState: () => ({
+                status: "active",
+                snapshot: {
+                    endpoint: {
+                        endpointId: "b".repeat(64),
+                        relayUrls: ["https://relay.example.test"],
+                        directAddresses: ["203.0.113.77:5555"],
+                    },
+                },
+                failureReason: null,
+            }),
+        });
+        expect(publicProjection).toEqual({
+            v: 1,
+            homeServerIdentityId: reserved.homeServerIdentityId,
+            canonicalServerUrl: reserved.canonicalServerUrl,
+            revision: reserved.revision,
+            endpoints: [
+                { kind: "https", url: "https://destination.example.test" },
+                { kind: "iroh", endpointId: "b".repeat(64), relayUrls: ["https://relay.example.test"] },
+            ],
+        });
     });
 });

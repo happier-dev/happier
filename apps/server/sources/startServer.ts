@@ -455,6 +455,7 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
                 listener: resolveBoundServerListener(api),
                 ingressPort: api.getDecorator<number | null>('homeIrohIngressPort'),
                 continuityStore: homeConnectionDescriptorContinuityStore,
+                resolveCurrentEnv: () => readHomeConfigEnv(),
             });
         }
 

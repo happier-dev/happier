@@ -14,6 +14,7 @@ import {
     markHomeIrohEndpointStartupUnavailable,
     registerHomeIrohComposition,
     stopHomeIrohEndpoint,
+    subscribeHomeIrohEndpointStateChange,
 } from './homeIrohEndpoint';
 import { verifyPersonalHomeExposureProof } from './personalHomeExposureProof';
 import { readHomeIrohTopologyFailure } from './topology';
@@ -33,7 +34,9 @@ export function prepareHomeIrohStartup(env: NodeJS.ProcessEnv) {
         listener: BoundServerListener | null;
         ingressPort: number | null;
         continuityStore: HomeConnectionDescriptorContinuityStore | null;
+        resolveCurrentEnv?: () => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
     }>): Promise<void> => {
+        let unsubscribeEndpointStateChange: (() => void) | null = null;
         try {
             if (topologyFailure) {
                 // Public discovery reads committed facts only. Publish the
@@ -57,7 +60,11 @@ export function prepareHomeIrohStartup(env: NodeJS.ProcessEnv) {
                 markHomeIrohEndpointStartupUnavailable('exposure_proof_missing');
                 return;
             }
-            onShutdown('iroh', () => stopHomeIrohEndpoint());
+            onShutdown('iroh', async () => {
+                unsubscribeEndpointStateChange?.();
+                unsubscribeEndpointStateChange = null;
+                await stopHomeIrohEndpoint();
+            });
             registerHomeIrohComposition({
                 env,
                 apiPort: params.ingressPort,
@@ -70,14 +77,63 @@ export function prepareHomeIrohStartup(env: NodeJS.ProcessEnv) {
                 continuityStore: params.continuityStore,
             });
             if (retired || state?.status === 'active') {
+                const continuityStore = params.continuityStore;
                 // Commit through the sole publisher before discovery.
                 await readHomeConnectionDescriptor({
                     env,
-                    continuityStore: params.continuityStore,
+                    continuityStore,
                     visibility: 'authenticated',
+                });
+                let republicationInFlight = false;
+                let queuedStatus: 'active' | 'failed' | null = null;
+                const scheduleRepublication = (nextStatus: 'active' | 'failed') => {
+                    if (republicationInFlight) {
+                        queuedStatus = nextStatus;
+                        return;
+                    }
+                    republicationInFlight = true;
+                    log(
+                        {
+                            module: 'iroh',
+                            level: 'info',
+                            diagnostic: 'home_connection_descriptor_republish_triggered',
+                            irohStatus: nextStatus,
+                        },
+                        'Active Home Iroh endpoint state changed; republishing Home connection descriptor',
+                    );
+                    void readHomeConnectionDescriptor({
+                        env,
+                        ...(params.resolveCurrentEnv ? { resolveEnv: params.resolveCurrentEnv } : {}),
+                        continuityStore,
+                        visibility: 'authenticated',
+                    }).catch((error: unknown) => {
+                        log(
+                            {
+                                module: 'iroh',
+                                level: 'warn',
+                                diagnostic: 'home_connection_descriptor_republish_failed',
+                                detail: error instanceof Error ? error.message : String(error),
+                            },
+                            'Home connection descriptor republication after endpoint state change failed',
+                        );
+                    }).finally(() => {
+                        republicationInFlight = false;
+                        if (queuedStatus) {
+                            const followUpStatus = queuedStatus;
+                            queuedStatus = null;
+                            scheduleRepublication(followUpStatus);
+                        }
+                    });
+                };
+                unsubscribeEndpointStateChange = subscribeHomeIrohEndpointStateChange((nextState) => {
+                    if (nextState.status === 'active' || nextState.status === 'failed') {
+                        scheduleRepublication(nextState.status);
+                    }
                 });
             }
         } catch {
+            unsubscribeEndpointStateChange?.();
+            unsubscribeEndpointStateChange = null;
             await stopHomeIrohEndpoint().catch(() => {
                 log({ module: 'iroh', level: 'warn' }, 'Home Iroh cleanup remains pending');
             });

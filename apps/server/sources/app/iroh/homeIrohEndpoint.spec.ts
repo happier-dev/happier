@@ -472,6 +472,58 @@ describe('home Iroh endpoint composition', () => {
         expect(JSON.parse(await readFile(continuityPathFor(dataDir), 'utf-8'))).toEqual(continuityFixture());
     });
 
+    it('notifies state-change subscribers when direct addresses change or refresh fails closed, and stops after unsubscribe', async () => {
+        await writeKeyFixture(dataDir);
+        await writeContinuityFixture(dataDir, continuityFixture());
+        const owner = await loadOwnerModule();
+        const native = createNativeFake();
+
+        const observed: Array<{ status: string; directAddresses?: readonly string[] }> = [];
+        const unsubscribe = owner.subscribeHomeIrohEndpointStateChange((next) => {
+            observed.push({
+                status: next.status,
+                directAddresses: next.snapshot?.endpoint.directAddresses,
+            });
+        });
+
+        await owner.ensureHomeIrohEndpoint({ env: envFor(dataDir), apiPort: API_PORT, native });
+        // Unchanged refresh does not notify.
+        await owner.getHomeIrohEndpointState();
+        expect(observed).toEqual([]);
+
+        // Changed directAddresses notifies subscribers with the new active state.
+        native.getEndpointStatus.mockResolvedValue({
+            endpointId: VALID_ENDPOINT_ID,
+            directAddresses: ['198.51.100.9:54321'],
+            active: true,
+        });
+        await owner.getHomeIrohEndpointState();
+        expect(observed).toEqual([{ status: 'active', directAddresses: ['198.51.100.9:54321'] }]);
+
+        // Unsubscribed listener receives no further updates.
+        unsubscribe();
+        native.getEndpointStatus.mockResolvedValue({
+            endpointId: VALID_ENDPOINT_ID,
+            directAddresses: ['203.0.113.9:54321'],
+            active: true,
+        });
+        await owner.getHomeIrohEndpointState();
+        expect(observed).toHaveLength(1);
+
+        // A subscriber added before fail-closed refresh receives the failed state.
+        const failedObserved: string[] = [];
+        owner.subscribeHomeIrohEndpointStateChange((next) => {
+            failedObserved.push(next.status);
+        });
+        native.getEndpointStatus.mockResolvedValue({
+            endpointId: DRIFTED_ENDPOINT_ID,
+            directAddresses: ['203.0.113.9:54321'],
+            active: true,
+        });
+        await owner.getHomeIrohEndpointState();
+        expect(failedObserved).toEqual(['failed']);
+    });
+
     it('keeps endpoint facts stable when refreshed status is unchanged', async () => {
         await writeKeyFixture(dataDir);
         await writeContinuityFixture(dataDir, continuityFixture());

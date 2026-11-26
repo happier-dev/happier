@@ -123,6 +123,37 @@ let lifecycleState: HomeIrohEndpointState = NOT_COMPOSED_STATE;
 /** Where this server composes Iroh, registered once by `startServer` (plan §3.2, AM-2). */
 let composition: HomeIrohComposition | null = null;
 
+export type HomeIrohEndpointStateChangeListener = (state: HomeIrohEndpointState) => void;
+
+const stateChangeListeners = new Set<HomeIrohEndpointStateChangeListener>();
+
+/**
+ * Registers a listener invoked when an active Home Iroh endpoint refreshes into
+ * a different state (for example, updated direct-address hints or a fail-closed
+ * refresh). Listeners are notified synchronously and must not block the refresh.
+ */
+export function subscribeHomeIrohEndpointStateChange(
+    listener: HomeIrohEndpointStateChangeListener,
+): () => void {
+    stateChangeListeners.add(listener);
+    return () => {
+        stateChangeListeners.delete(listener);
+    };
+}
+
+function notifyHomeIrohEndpointStateChange(state: HomeIrohEndpointState): void {
+    for (const listener of [...stateChangeListeners]) {
+        try {
+            listener(state);
+        } catch (error) {
+            log(
+                { module: 'iroh', level: 'warn', detail: error instanceof Error ? error.message : String(error) },
+                'Home Iroh endpoint state change listener failed',
+            );
+        }
+    }
+}
+
 /**
  * Test-only state reset for this module's process singleton. Owner tests use
  * this narrow seam instead of reloading the full server module graph between
@@ -143,6 +174,7 @@ export async function resetHomeIrohEndpointStateForTests(): Promise<void> {
     lifecycleEpoch = 0;
     lifecycleState = NOT_COMPOSED_STATE;
     composition = null;
+    stateChangeListeners.clear();
 }
 
 /**
@@ -489,6 +521,7 @@ function failRefreshClosed(
     const state = failed(failureReason, error);
     lifecycleState = state;
     activeState = null;
+    notifyHomeIrohEndpointStateChange(state);
     return state;
 }
 
@@ -554,6 +587,7 @@ async function refreshActiveHomeIrohEndpointState(): Promise<HomeIrohEndpointSta
     };
     lifecycleState = state;
     activeState = { ...active, state };
+    notifyHomeIrohEndpointStateChange(state);
     return state;
 }
 

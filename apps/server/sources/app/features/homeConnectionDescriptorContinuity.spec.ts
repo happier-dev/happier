@@ -2,6 +2,7 @@ import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
 import {
     HOME_CONNECTION_DESCRIPTOR_CONTINUITY_CACHE_KEY,
@@ -312,4 +313,32 @@ describe('Home connection descriptor continuity', () => {
         expect(JSON.parse(await readFile(continuityPath, 'utf8'))).toEqual(continuity);
     });
 
+
+    it('computes the identical contentKey for raw composed endpoints and Zod-parsed Iroh descriptors', () => {
+        const rawEndpoints = [
+            { kind: 'https' as const, url: 'https://ingress.example.test' },
+            {
+                kind: 'iroh' as const,
+                endpointId: 'a'.repeat(64),
+                relayUrls: ['https://relay.example.test'],
+                directAddresses: ['192.168.1.10:4242'],
+            },
+        ];
+        const parsed = HomeConnectionDescriptorV1Schema.parse({
+            v: 1,
+            homeServerIdentityId: 'srv_home',
+            canonicalServerUrl: 'https://home.example.test',
+            revision: 1,
+            endpoints: rawEndpoints,
+        });
+        expect(createHomeConnectionDescriptorContentKey({
+            homeServerIdentityId: 'srv_home',
+            canonicalServerUrl: 'https://home.example.test',
+            endpoints: parsed.endpoints,
+        })).toBe(createHomeConnectionDescriptorContentKey({
+            homeServerIdentityId: 'srv_home',
+            canonicalServerUrl: 'https://home.example.test',
+            endpoints: rawEndpoints,
+        }));
+    });
 });

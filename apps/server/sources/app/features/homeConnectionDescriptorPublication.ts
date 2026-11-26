@@ -92,6 +92,16 @@ let supersededLocalCandidate: Readonly<{
  * memory and disk to a higher revision carrying stale facts.
  */
 let publicationTransactionChain: Promise<void> = Promise.resolve();
+let pendingPublicationTransactions = 0;
+
+function enqueuePublicationTransaction<T>(run: () => Promise<T>): Promise<T> {
+    pendingPublicationTransactions += 1;
+    const turn = publicationTransactionChain.then(run);
+    publicationTransactionChain = turn.then(() => undefined, () => undefined);
+    return turn.finally(() => {
+        pendingPublicationTransactions = Math.max(0, pendingPublicationTransactions - 1);
+    });
+}
 
 /** Test-only reset of the in-process monotonic revision owner. */
 export function resetHomeConnectionDescriptorRevisionOwnerForTests(): void {
@@ -101,6 +111,7 @@ export function resetHomeConnectionDescriptorRevisionOwnerForTests(): void {
     continuityPrimeInFlight = null;
     supersededLocalCandidate = null;
     publicationTransactionChain = Promise.resolve();
+    pendingPublicationTransactions = 0;
 }
 
 /**
@@ -323,19 +334,42 @@ function sameContinuity(
  */
 export async function readHomeConnectionDescriptor(params: Readonly<{
     env?: NodeJS.ProcessEnv;
+    /** Optional live environment resolver evaluated inside the serialized publication turn. */
+    resolveEnv?: () => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
     continuityStore: HomeConnectionDescriptorContinuityStore;
     visibility: HomeConnectionDescriptorVisibility;
     tx?: Tx;
     /** Narrow injected Iroh lifecycle boundary; production reads the live owner. */
     resolveIrohEndpointState?: () => HomeIrohEndpointState | Promise<HomeIrohEndpointState>;
 }>): Promise<HomeConnectionDescriptorV1 | undefined> {
-    const turn = publicationTransactionChain.then(async () => {
+    return await enqueuePublicationTransaction(async () => {
         return await readHomeConnectionDescriptorTransaction(params, false);
     });
-    publicationTransactionChain = turn.then(() => undefined, () => undefined);
-    const descriptor = await turn;
-    if (descriptor && params.visibility === "authenticated") committedDescriptor = descriptor;
-    return descriptor;
+}
+
+function projectMatchingCommittedDescriptor(
+    continuity: HomeConnectionDescriptorContinuity,
+    identity: string,
+    canonicalServerUrl: string,
+): HomeConnectionDescriptorV1 | undefined {
+    if (!committedDescriptor
+        || committedDescriptor.revision !== continuity.revision
+        || committedDescriptor.homeServerIdentityId !== identity
+        || createHomeConnectionDescriptorContentKey({
+            homeServerIdentityId: committedDescriptor.homeServerIdentityId,
+            canonicalServerUrl: committedDescriptor.canonicalServerUrl,
+            endpoints: committedDescriptor.endpoints,
+        }) !== continuity.contentKey) {
+        return undefined;
+    }
+    return projectComposedHomeConnectionDescriptor(committedDescriptor, {
+        homeServerIdentityId: identity,
+        canonicalServerUrl,
+        publicServerUrl: null,
+        minimumOuterRevisionExclusive: null,
+        persistedOuterRevisionOwner: continuity,
+        iroh: { status: "unavailable", snapshot: null, failureReason: null },
+    }, "public");
 }
 
 /**
@@ -352,7 +386,16 @@ export async function readCommittedHomeConnectionDescriptor(params: Readonly<{
     let continuity: HomeConnectionDescriptorContinuity | null;
     try {
         continuity = await params.continuityStore.read();
-    } catch {
+    } catch (error) {
+        log(
+            {
+                module: "iroh",
+                level: "warn",
+                diagnostic: "home_connection_descriptor_continuity_read_failed",
+                detail: error instanceof Error ? error.message : undefined,
+            },
+            "Public Home connection descriptor omitted: continuity read failed",
+        );
         return undefined;
     }
     if (!continuity) return undefined;
@@ -360,23 +403,9 @@ export async function readCommittedHomeConnectionDescriptor(params: Readonly<{
     const identity = readCachedServerIdentityIdForHotPath(env);
     const canonicalServerUrl = resolveConfiguredCanonicalServerUrl(env);
     if (!identity || !canonicalServerUrl) return undefined;
-    if (committedDescriptor
-        && committedDescriptor.revision === continuity.revision
-        && createHomeConnectionDescriptorContentKey({
-            homeServerIdentityId: committedDescriptor.homeServerIdentityId,
-            canonicalServerUrl: committedDescriptor.canonicalServerUrl,
-            endpoints: committedDescriptor.endpoints,
-        }) === continuity.contentKey
-        && committedDescriptor.homeServerIdentityId === identity) {
-        return projectComposedHomeConnectionDescriptor(committedDescriptor, {
-            homeServerIdentityId: identity,
-            canonicalServerUrl,
-            publicServerUrl: null,
-            minimumOuterRevisionExclusive: null,
-            persistedOuterRevisionOwner: continuity,
-            iroh: { status: "unavailable", snapshot: null, failureReason: null },
-        }, "public");
-    }
+    const cachedProjection = projectMatchingCommittedDescriptor(continuity, identity, canonicalServerUrl);
+    if (cachedProjection) return cachedProjection;
+
     const iroh = await (params.resolveIrohEndpointState ? params.resolveIrohEndpointState() : getHomeIrohEndpointState());
     const activeIroh = iroh.status === "active" && iroh.snapshot ? iroh.snapshot : null;
     const endpoints: HomeConnectionEndpointV1[] = [];
@@ -389,7 +418,57 @@ export async function readCommittedHomeConnectionDescriptor(params: Readonly<{
         canonicalServerUrl,
         endpoints,
     });
-    if (contentKey !== continuity.contentKey) return undefined;
+    if (contentKey !== continuity.contentKey) {
+        // Never write continuity from a public probe. If a server-owned publication
+        // is already in flight (for example, triggered by an active endpoint state
+        // change observed above), await its commit and project the committed result.
+        let awaitedInFlightPublication = false;
+        if (pendingPublicationTransactions > 0) {
+            awaitedInFlightPublication = true;
+            for (let attempt = 0; attempt < 2 && pendingPublicationTransactions > 0; attempt += 1) {
+                await publicationTransactionChain;
+            }
+            try {
+                const refreshedContinuity = await params.continuityStore.read();
+                if (refreshedContinuity) {
+                    const refreshedProjection = projectMatchingCommittedDescriptor(
+                        refreshedContinuity,
+                        identity,
+                        canonicalServerUrl,
+                    );
+                    if (refreshedProjection) return refreshedProjection;
+                    continuity = refreshedContinuity;
+                }
+            } catch (error) {
+                log(
+                    {
+                        module: "iroh",
+                        level: "warn",
+                        diagnostic: "home_connection_descriptor_continuity_read_failed",
+                        detail: error instanceof Error ? error.message : undefined,
+                    },
+                    "Public Home connection descriptor omitted: continuity re-read failed after in-flight publication",
+                );
+                return undefined;
+            }
+        }
+        log(
+            {
+                module: "iroh",
+                level: "warn",
+                diagnostic: "home_connection_descriptor_continuity_mismatch",
+                continuityRevision: continuity.revision,
+                continuityCarriesIroh: contentKeyCarriesIrohEndpoint(continuity.contentKey),
+                observedCarriesIroh: activeIroh !== null,
+                irohStatus: iroh.status,
+                hasCommittedDescriptor: committedDescriptor !== null,
+                committedRevision: committedDescriptor?.revision ?? null,
+                awaitedInFlightPublication,
+            },
+            "Public Home connection descriptor omitted: current endpoint facts do not match committed continuity",
+        );
+        return undefined;
+    }
     const parsed = HomeConnectionDescriptorV1Schema.safeParse({
         v: 1,
         homeServerIdentityId: identity,
@@ -420,14 +499,12 @@ export async function readRequiredAuthenticatedHomeConnectionDescriptor(params: 
     tx?: Tx;
     resolveIrohEndpointState?: () => HomeIrohEndpointState | Promise<HomeIrohEndpointState>;
 }>): Promise<HomeConnectionDescriptorV1 | undefined> {
-    const turn = publicationTransactionChain.then(async () => {
+    return await enqueuePublicationTransaction(async () => {
         return await readHomeConnectionDescriptorTransaction({
             ...params,
             visibility: "authenticated",
         }, true);
     });
-    publicationTransactionChain = turn.then(() => undefined, () => undefined);
-    return await turn;
 }
 
 /**
@@ -493,7 +570,7 @@ export async function reserveRelocatedHomeConnectionDescriptor(params: Readonly<
         snapshot: { endpoint: params.irohEndpoint },
         failureReason: null,
     } : { status: "retired", snapshot: null, failureReason: null };
-    const turn = publicationTransactionChain.then(async () => await readHomeConnectionDescriptorTransaction({
+    const descriptor = await enqueuePublicationTransaction(async () => await readHomeConnectionDescriptorTransaction({
         env: params.env,
         continuityStore: params.continuityStore,
         visibility: "authenticated",
@@ -501,14 +578,28 @@ export async function reserveRelocatedHomeConnectionDescriptor(params: Readonly<
         publicationIdentity: { homeServerIdentityId, canonicalServerUrl },
         minimumOuterRevisionExclusive: params.minimumOuterRevisionExclusive,
     }, true));
-    publicationTransactionChain = turn.then(() => undefined, () => undefined);
-    const descriptor = await turn;
     if (!descriptor) throw new HomeConnectionDescriptorPublicationUnavailableError();
     return descriptor;
 }
 
+function commitDescriptorAndProject(
+    composed: HomeConnectionDescriptorV1,
+    committedRevision: number,
+    facts: HomeDescriptorPublicationFacts,
+    visibility: HomeConnectionDescriptorVisibility,
+): HomeConnectionDescriptorV1 | undefined {
+    const committed = committedRevision === composed.revision
+        ? composed
+        : { ...composed, revision: committedRevision };
+    if (committed.homeServerIdentityId === facts.homeServerIdentityId) {
+        committedDescriptor = committed;
+    }
+    return projectComposedHomeConnectionDescriptor(committed, facts, visibility);
+}
+
 async function readHomeConnectionDescriptorTransaction(params: Readonly<{
     env?: NodeJS.ProcessEnv;
+    resolveEnv?: () => NodeJS.ProcessEnv | Promise<NodeJS.ProcessEnv>;
     continuityStore: HomeConnectionDescriptorContinuityStore;
     visibility: HomeConnectionDescriptorVisibility;
     tx?: Tx;
@@ -516,7 +607,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
     publicationIdentity?: Readonly<{ homeServerIdentityId: string; canonicalServerUrl: string }>;
     minimumOuterRevisionExclusive?: number;
 }>, required: boolean): Promise<HomeConnectionDescriptorV1 | undefined> {
-    const env = params.env ?? process.env;
+    const env = params.resolveEnv ? await params.resolveEnv() : (params.env ?? process.env);
     const [iroh, prime] = await Promise.all([
         params.resolveIrohEndpointState ? params.resolveIrohEndpointState() : getHomeIrohEndpointState(),
         primeDescriptorContinuity(params.continuityStore, params.tx),
@@ -575,14 +666,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
                     return undefined;
                 }
                 supersededLocalCandidate = null;
-                const externallyCommittedDescriptor = current.revision === composed.revision
-                    ? composed
-                    : { ...composed, revision: current.revision };
-                return projectComposedHomeConnectionDescriptor(
-                    externallyCommittedDescriptor,
-                    facts,
-                    params.visibility,
-                );
+                return commitDescriptorAndProject(composed, current.revision, facts, params.visibility);
             }
             const result = await params.continuityStore.write(candidateOwner, params.tx);
             continuityPrime = { status: "ready", persisted: result.continuity };
@@ -597,10 +681,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
             }
             revisionOwner = result.continuity;
             supersededLocalCandidate = null;
-            const committedDescriptor = result.continuity.revision === composed.revision
-                ? composed
-                : { ...composed, revision: result.continuity.revision };
-            return projectComposedHomeConnectionDescriptor(committedDescriptor, facts, params.visibility);
+            return commitDescriptorAndProject(composed, result.continuity.revision, facts, params.visibility);
         } catch (error) {
             if (error instanceof HomeConnectionDescriptorContinuityMalformedError) {
                 continuityPrime = { status: "unreadable" };
@@ -614,5 +695,6 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
         }
     }
     revisionOwner = candidateOwner;
+    if (!composed) committedDescriptor = null;
     return projectComposedHomeConnectionDescriptor(composed, facts, params.visibility);
 }
