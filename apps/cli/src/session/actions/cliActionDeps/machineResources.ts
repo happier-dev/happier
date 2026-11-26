@@ -50,6 +50,24 @@ export function createCliMachineResourceActionDeps(
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
   }>,
 ): Pick<ActionExecutorDeps, 'machineScheduledAction' | 'machineStorageAction' | 'machineProcessesAction' | 'machineVitalsAction' | 'machineAgentIsolationAction' | 'machineServiceAction' | 'machineServiceScope' | 'machineServiceControl' | 'machineServiceExec' | 'machineServiceLogsRead' | 'machineAdminAccessAction' | 'machineReboot' | 'machineReachabilityAction' | 'machineResourcesPolicyAction' | 'machineRolesAction' | 'machineIsolationAction' | 'machineGuardAction' | 'usageSourceAction'> {
+  // One requester selection for every Service effect and read on this receiver.
+  // Raw Machine RPC admission decides when present. A signed original root or
+  // private local custody reconciles with this receiver's held Home, its
+  // installation and this Machine; credentials never establish custody.
+  const selectServiceRequester = (actionContext: ActionExecutorContext, machineId: string) => {
+    const context = projectVerifiedExternalActionRequesterContext(actionContext as
+      NonNullable<Parameters<typeof selectHostRequesterExecutionIdentity>[0]['actionContext']>);
+    const root = context.verifiedExternalActionRequester?.authorization.binding;
+    const local = context.authenticatedLocalRootCustody ?? context.localActionContext?.authenticatedLocalRootCustody
+      ?? context.inheritedLocalActionContext?.authenticatedLocalRootCustody;
+    const custodianAccountId = root?.custodianAccountId ?? local?.accountId;
+    const installationId = params.externalActionMachineInstallationId ?? root?.installationId ?? local?.installationId;
+    const identity = selectHostRequesterExecutionIdentity({ actionContext: context,
+      hostHomeServerIdentityId: params.serverIdentityId ?? projectHomeId,
+      ...(custodianAccountId ? { hostCustodianAccountId: custodianAccountId } : {}),
+      ...(installationId ? { hostExecutionTarget: { machineId, installationId } } : {}) });
+    return { context, root, custodianAccountId, installationId, identity };
+  };
   const admitMachineService = async (serverId: string, actionContext: ActionExecutorContext, machineId: string,
     method: string): Promise<CliProjectAdmissionFailure | null> => {
     const denied = await projectAccountAdmission(serverId, actionContext);
@@ -59,25 +77,14 @@ export function createCliMachineResourceActionDeps(
     const permits = (custodian: boolean, role?: MachineAccessRoleV1) => custodian
       || required === 'manage' && role === 'manage';
     const refused = (): CliProjectAdmissionFailure => ({ ok: false, errorCode: 'access_denied', error: 'access_denied' });
-    const context = projectVerifiedExternalActionRequesterContext(actionContext as
-      NonNullable<Parameters<typeof selectHostRequesterExecutionIdentity>[0]['actionContext']>);
+    const { context, root, custodianAccountId, installationId, identity } = selectServiceRequester(actionContext, machineId);
     // Consume the ingress/Run's retained admission once, before touching a native service.
     // Remote requests retain their Machine RPC admission at the receiving host.
     if (context.machineAdmission && context.machineAdmission.machineId !== machineId) return refused();
     const admission = context.machineAdmission ?? params.savedSecretOperationContext?.machineAdmission;
     if (admission) return permits(isCustodianMachineAdmission(admission), admission.role) ? null : refused();
     if (context.executionRunWorkflowRunId && params.savedSecretOperationContext) return refused();
-    const root = context.verifiedExternalActionRequester?.authorization.binding;
-    const local = context.authenticatedLocalRootCustody ?? context.localActionContext?.authenticatedLocalRootCustody
-      ?? context.inheritedLocalActionContext?.authenticatedLocalRootCustody;
-    const custodianAccountId = root?.custodianAccountId ?? local?.accountId;
-    const installationId = params.externalActionMachineInstallationId ?? root?.installationId ?? local?.installationId;
     if (!custodianAccountId || !installationId) return refused();
-    // Private local ingress and verified original Action roots use the incumbent
-    // identity owner; credentials or an unverified binding cannot establish custody.
-    const identity = selectHostRequesterExecutionIdentity({ actionContext: context,
-      hostHomeServerIdentityId: params.serverIdentityId ?? projectHomeId, hostCustodianAccountId: custodianAccountId,
-      hostExecutionTarget: { machineId, installationId } });
     if (identity.kind === 'unknown') return refused();
     return permits(isCustodianMachineAdmission({ actorAccountId: identity.requester.accountId, custodianAccountId }),
       root?.admittedMachineRole) ? null : refused();
@@ -353,7 +360,7 @@ export function createCliMachineResourceActionDeps(
       const { withMachineServiceTarget, withMachineServiceLogTarget } = await import('@/daemon/local/services/launch/machineServiceTarget');
       const select = actionId === MACHINE_SERVICE_LOGS_READ_ACTION_ID ? withMachineServiceLogTarget : withMachineServiceTarget;
       const resource = context.machineServiceLogsResource;
-      const scopeRequester = selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId });
+      const scopeRequester = selectServiceRequester(context, direct.machineId).identity;
       return select({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
         requesterAccountId: readServiceRequesterAccountId(context), context,
         ...(scopeRequester.kind !== 'unknown' ? { requester: scopeRequester.requester } : {}),
@@ -379,7 +386,7 @@ export function createCliMachineResourceActionDeps(
         import('@/plugins/runtime/invocation/services/managedServiceNativeLogs'),
       ]);
       const resource = context.machineServiceLogsResource;
-      const logRequester = selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId });
+      const logRequester = selectServiceRequester(context, direct.machineId).identity;
       return withMachineServiceLogTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
         requesterAccountId: readServiceRequesterAccountId(context), context,
         ...(logRequester.kind !== 'unknown' ? { requester: logRequester.requester } : {}),
@@ -393,7 +400,7 @@ export function createCliMachineResourceActionDeps(
           if (allowed !== true) return allowed;
         }
         const allowIncompleteSecretMasking = canReadIncompleteSecretMaskingForHost(context)
-          && selectHostRequesterExecutionIdentity({ actionContext: context, hostHomeServerIdentityId: projectHomeId }).kind === 'owner_person';
+          && logRequester.kind === 'owner_person';
         const result = await (handle.readLogs?.({ ...(input.cursor ? { cursor: input.cursor } : {}), ...(signal ? { signal } : {}),
           ...(allowIncompleteSecretMasking ? { allowIncompleteSecretMasking: true as const } : {}) })
           ?? { kind: 'unavailable' as const, reason: 'unsupported' as const });

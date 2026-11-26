@@ -420,12 +420,15 @@ export function machineDeploymentRoleSummary<T extends RoleEnvironment>(
 
 /**
  * A failed log read's body: the cause only, beneath the "Couldn't read logs" title and beside Retry, so the state is
- * said once. An unreachable Machine is named; a cause the failure owner knows is kept; an unknown one adds nothing.
+ * said once. An unreachable Machine is named; a refused read says the same as a `denied` result, since only the
+ * person who started a terminal Service reads it; a cause the failure owner knows is kept; an unknown one adds nothing.
  */
 export function machineServiceLogReadFailureReason(error: unknown, machine: string): string | undefined {
   const record = error !== null && typeof error === 'object' ? error as Record<string, unknown> : null;
-  if (isMachineUnreachableFailureCode(record?.code ?? record?.errorCode)) {
+  const code = record?.code ?? record?.errorCode;
+  if (isMachineUnreachableFailureCode(code)) {
     return t('machineServices.logs.error.machineNotAnswering', { machine });
   }
+  if (code === 'terminal_forbidden') return t('machineServices.logs.unavailable.denied', { machine });
   return resolveActionExecutionErrorMessage(error, '', { safeToRetry: true, closedCodesOnly: true }) || undefined;
 }

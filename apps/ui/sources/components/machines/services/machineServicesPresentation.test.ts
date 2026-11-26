@@ -298,6 +298,11 @@ describe('machineServiceLogReadFailureReason (DEPLOY-REACCEPT-1113 D4)', () => {
       .toBe(resolveActionExecutionErrorMessage(error, '', { safeToRetry: true }));
   });
 
+  it('says a refused read was not allowed, keeping the code for Technical details', () => {
+    expect(machineServiceLogReadFailureReason({ code: 'terminal_forbidden', message: 'terminal_forbidden' }, 'build-box'))
+      .toBe(t('machineServices.logs.unavailable.denied', { machine: 'build-box' }));
+  });
+
   it('adds no body when the cause is unknown, so the title and Retry say it once', () => {
     expect(machineServiceLogReadFailureReason({ code: 'read_failed' }, 'build-box')).toBeUndefined();
     expect(machineServiceLogReadFailureReason(undefined, 'build-box')).toBeUndefined();
