@@ -232,7 +232,7 @@ export function useCollectionSpaceHeader<
       ? view.activeSpace.name
       : input.defaultName;
   const titleControl = (
-    <View ref={anchorRef} collapsable={false}>
+    <View ref={anchorRef} collapsable={false} style={{ flexShrink: 1, minWidth: 0 }}>
     <CollectionSpaceSwipeZone testID={`${testIDPrefix}-title-swipe`} {...swipeProps}>
     <CollectionSpaceSwipeTitle track={swipeTrack} previousLabel={spaceName(-1)} nextLabel={spaceName(1)}>
     <CollectionSpaceTitle
