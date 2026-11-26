@@ -1,4 +1,4 @@
-import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
+import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { TargetActionApprovalRequestV1Schema, StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { resolvePluginLocalizedStringV2Text as resolveLocalizedConfirmationText } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -200,15 +200,8 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       settleExecution: async ({ artifactId: admittedArtifactId, execution }) => {
         if (admittedArtifactId !== artifactId || !update) throw new Error('approval_stale');
         const executedAtMs = Math.max((deps.now ?? Date.now)(), executionClaim.updatedAtMs);
-        const terminal = TargetActionApprovalRequestV1Schema.parse({ ...executionClaim,
-          status: execution.ok ? 'executed' : 'failed', updatedAtMs: executedAtMs,
-          execution: { ...execution, executedAtMs,
-            ...(execution.errorCode === PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
-              ? { errorCode: 'approval_execution_outcome_unknown' } : {}),
-          },
-        });
-        const settled = await persistTargetActionReceipt({ request: terminal,
-          write: async request => (await update({ artifactId, request })).ok });
+        const settled = await persistTargetActionReceipt({ request: executionClaim, execution, executedAtMs,
+          write: async request => (await update({ artifactId, request: TargetActionApprovalRequestV1Schema.parse(request) })).ok });
         if (!settled) throw new Error('approval_execution_outcome_unknown');
       },
     };

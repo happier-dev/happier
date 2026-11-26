@@ -120,7 +120,7 @@ describe('target action executor', () => {
       expect(invoke.mock.calls[0]?.[0]).toMatchObject({ occurrenceId: '7', input: { value: 'original' },
         accountId: 'original-account', sourceCustody: { registeredRootId: 'original-root' } });
       expect(receipts).toHaveLength(1);
-      expect(receipts[0]).toMatchObject({ artifactId: 'authenticated-decision', execution: { ok: true, effectAttempted: true } });
+      expect(receipts[0]).toMatchObject({ artifactId: 'authenticated-decision', execution: { ok: true, result: 'current implementation' } });
     },
   );
 

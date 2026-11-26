@@ -21,8 +21,11 @@ export function projectContributedActionFailure(result: Readonly<{
     ...readPluginActionFailureAuthorPayload(result.data) };
   const error = result.actionHandlerInvocation === 'notStarted'
     ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
+  const requestId = readPluginErrorRequestIdV1(error);
+  const effectAttempted = result.actionHandlerInvocation === 'notStarted' ? false : error.data.effectAttempted;
   return { ok: false, errorCode: result.errorCode, error: result.error,
-    ...(result.actionHandlerInvocation === 'notStarted' ? { effectAttempted: false } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(effectAttempted === undefined ? {} : { effectAttempted }),
     ...(error.data.failureCause ? { failureCause: error.data.failureCause } : {}),
     details: result.details === undefined ? error.data : result.details };
 }

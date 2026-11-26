@@ -27,6 +27,7 @@ import type {
 import type { PluginInvocationServiceBinding } from './services/types';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
 import { projectTargetActionFailure, readTargetActionProjectionCollapseCause, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
+import { projectContributedActionFailure } from './actions/contributedActionFailure';
 export { projectTargetActionFailure, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
 
 export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
@@ -132,10 +133,10 @@ export type TargetActionCurrentIntentResult = Pick<ActionExecuteResult, 'automat
     artifactId?: string;
     /** Witnessed approval identity; null preserves an anonymous historical decision. */
     actor?: ActionActorV1 | null;
-    /** Captured host writer; raw input and handler output never enter this receipt. */
+    /** Captured host writer for the caller-visible outcome. */
     settleExecution?: (args: Readonly<{
       artifactId: string;
-      execution: Pick<ApprovalExecutionV2, 'ok' | 'effectAttempted' | 'errorCode' | 'operationCredentialUses'>;
+      execution: Omit<ApprovalExecutionV2, 'executedAtMs'>;
     }>) => Promise<void>;
   }
   | { status: 'deferred'; artifactId: string }
@@ -361,13 +362,15 @@ export function createTargetActionExecutor(deps: Readonly<{
         } catch { /* Diagnostics are failure-isolated from authorization and execution. */ }
         observingCredentialUse = false;
         if (settleExecution && approvalArtifactId && publicResult.status !== 'deferred') {
-          const errorCode = publicResult.status === 'executed' ? undefined : publicResult.code;
+          // The caller can receive private operands. The approval Artifact
+          // gets the result only when those operands were absent.
+          const resultIsPrivate = deps.hostConsumesExecutedValue || deps.rawDiagnosticConfidentiality?.paths.length;
+          const execution = publicResult.status === 'executed'
+            ? { ok: true, ...(resultIsPrivate ? {} : { result: publicResult.value }) }
+            : projectContributedActionFailure({ ...publicResult, errorCode: publicResult.code, error: publicResult.message });
           try {
             await settleExecution({ artifactId: approvalArtifactId, execution: {
-              ok: publicResult.status === 'executed',
-              effectAttempted: publicResult.status === 'executed' || publicResult.actionHandlerInvocation !== 'notStarted',
-              ...(errorCode === undefined ? {} : { errorCode }),
-              ...(operationCredentialUses.length ? { operationCredentialUses } : {}),
+              ...execution, ...(operationCredentialUses.length ? { operationCredentialUses } : {}),
             } });
           } catch {
             // The effect may have finished before its receipt acknowledgement

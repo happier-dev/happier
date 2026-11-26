@@ -2817,6 +2817,11 @@ Ask, then supplies its stored subject fingerprint to the existing current-intent
 gate. The gate compares it with the exact operands being replayed. The Ask and
 its execution receipt stay with the durable decision owner.
 
+The retained invocation and durable replay use the same terminal receipt
+writer. The writer retains an ordinary Action result or the refusal's code,
+cause and producer request ID when supplied. A live result that can contain
+confidential operands stays with the invocation.
+
 Terminal target-Action receipts erase live-only input, narrowed human input and
 the original Action envelope after transition admission. They retain the subject
 fingerprints, requester binding and execution outcome. The Artifact writer sends
