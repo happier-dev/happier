@@ -11,7 +11,7 @@ const canonicalServerUrl = 'https://qa-home.invalid';
 const aliasUrl = 'https://previous-home.invalid';
 
 // Browser DOM/input/observers are a platform boundary; execute the real driver.
-async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false, compact = false, tourBeforeHome = false, tourOnHome = false } = {}) {
+async function observe({ alias = false, migrationDeclined = false, blockingDialog, blockingAfterSubmit = false, confirmHomeAliasUrl, step = 'restore', accountReady = true, homeUnavailable = false, restored = false, compact = false, animationFrames = true, tourBeforeHome = false, tourOnHome = false } = {}) {
   let view = 'restore';
   let submitted = false;
   let aliasConfirmed = false;
@@ -74,7 +74,7 @@ async function observe({ alias = false, migrationDeclined = false, blockingDialo
   const location = { pathname: '/restore/manual' };
   const context = {
     document, location, HTMLInputElement: Input, Event,
-    requestAnimationFrame: callback => queueMicrotask(callback),
+    requestAnimationFrame: callback => { if (animationFrames) queueMicrotask(callback); },
     MutationObserver: class {
       constructor(callback) { this.callback = callback; }
       observe() { observers.add(this.callback); }
@@ -213,19 +213,21 @@ test('projects both descriptor revisions without returning feature payloads or U
 
 // CDP is an external transport. Account readiness comes from the actual page
 // driver; the loaded profile is a response produced by that navigation.
-async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, accountRedirectedHome = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false, signinResponses = [] } = {}) {
+async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrigin = canonicalServerUrl, internalServerUrl, status = 200, failed = false, cancelledFirst = false, bodyUnavailable = false, malformed = false, accountReady = true, accountPending = false, accountRedirectedHome = false, transientHomeUnavailable = false, restoreOutcome = 'home', foreignInCurrentDocument = false, browserDefaultOrigin, interruptedPath, navigationBeforeReply = false, childNavigation = false, cdpPath = '', profileAbsent = false, cancelWhileWaiting = false, replaceAfterLoad = false, restored = false, cancelDuringBody = false, signinResponses = [], background = false } = {}) {
   const controller = new AbortController();
   const uiUrl = 'http://qa-ui.localhost:19364';
   class BrowserSocket extends EventTarget {
     navigations = 0;
     homeOrigin = canonicalServerUrl;
     profileFinished = false;
+    foreground = !background;
     constructor() { super(); queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
     message(value) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
     send(raw) {
       const { id, method, params } = JSON.parse(raw);
       queueMicrotask(() => {
         const loaderId = `document-${this.navigations + 1}`;
+        if (method === 'Page.bringToFront') this.foreground = true;
         if (method === 'Page.navigate') {
           this.homeOrigin = browserDefaultOrigin
             ? new URL(params.url).searchParams.get('server') ?? browserDefaultOrigin
@@ -234,6 +236,12 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         if (method === 'Network.getResponseBody' && cancelDuringBody) { controller.abort(); return; }
         if (method === 'Network.getResponseBody' && bodyUnavailable) {
           this.message({ id, error: { code: -32000, message: 'No resource with given identifier found' } });
+          return;
+        }
+        if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'restore' && background) {
+          // Background tabs may suspend animation frames. Run the real form
+          // driver so success requires its actual submit and Home transition.
+          void observe({ animationFrames: this.foreground }).then(({ result }) => this.message({ id, result: { result: { value: result } } }));
           return;
         }
         if (method === 'Runtime.callFunctionOn' && params.arguments[0].value === 'restore' && restored) {
@@ -343,6 +351,12 @@ async function profileSignin({ profile = { id: 'account-owner-id' }, profileOrig
         webSocketDebuggerUrl: 'ws://127.0.0.1:9999/devtools/page/test' }] }),
   });
 }
+
+test('completes the real restore form when the selected browser tab starts in the background', async () => {
+  assert.deepEqual(await profileSignin({ background: true }), {
+    ok: true, accountIdPrefix: 'account-', homeOrigin: canonicalServerUrl,
+  });
+});
 
 test('reports the verified Account when Account settings returns to wide Home', async () => {
   assert.deepEqual(await profileSignin({ accountRedirectedHome: true }), {

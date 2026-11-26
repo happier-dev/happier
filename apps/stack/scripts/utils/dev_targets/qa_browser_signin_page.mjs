@@ -286,6 +286,8 @@ export async function runQaBrowserSigninPage({ urls, cdpHttpUrl, key, confirmHom
       await client.send('Page.setLifecycleEventsEnabled', { enabled: true });
       await client.send('Runtime.enable');
       await client.send('Network.enable');
+      // The selected tab must render the form's input-to-submit frame.
+      await client.send('Page.bringToFront');
       const navigate = async pathname => {
         const url = new URL(restoreUrl);
         url.pathname = pathname;
