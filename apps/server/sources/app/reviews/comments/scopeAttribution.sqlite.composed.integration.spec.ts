@@ -364,3 +364,192 @@ it('shows authorized Hunt history counts without inheriting another Review human
         });
     }, { authentication: 'real' });
 });
+
+it('opens one persisted finding from PR, Inbox and Review across Sessions and rounds with one human decision', async () => {
+    const { act } = await import('react-test-renderer');
+    const { materializeReviewFindings: publishFindings } = await import('../../../../../cli/src/agent/runtime/bridges/executionRun/materializeReviewFindings');
+    const { PluginUiProvider } = await import('@happier-dev/plugin-ui/advanced');
+    const { Button } = await import('@happier-dev/plugin-ui/components');
+    const { createTriageSourceV1Fixture } = await import('@happier-dev/triage-protocol/testing/v1');
+    const { REVIEW_TRIAGE_SOURCE_V1, reviewTriageLocalRefV1 } = await import('@happier-dev/triage-protocol/v1');
+    const { GithubHappierReviewSummary } = await import('../../../../../../packages/plugins/scm-github/src/ui/detail/happierReviewSummary');
+    const { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } = await import('../../../../../../packages/plugins/scm-github/src/triage/contribution');
+    const { ReviewDetail, readReviewDetailInput } = await import('../../../../../../packages/plugins/triage/src/reviews/detail');
+    const { createBoundPluginSurfaceController } = await import('../../../../../ui/sources/components/plugins/surfaces/boundPluginSurfaceController');
+    const { createCanonicalPluginReactNativeHostApiAdapter } = await import('../../../../../ui/sources/components/plugins/reactNative/hostApi');
+    const { createPluginSurfaceContextFixture } = await import('../../../../../ui/sources/dev/testkit/fixtures/pluginSurfaceContextFixture');
+    const { captureActiveServerAccountScopeLifetime } = await import('../../../../../ui/sources/sync/domains/scope/activeServerAccountScope');
+    const { readPluginAccountAvailability } = await import('../../../../../ui/sources/sync/domains/plugins/availability/projection');
+    const { getSyncSingleton } = await import('../../../../../ui/sources/sync/runtime/getSyncSingleton');
+    const { projectBundledPluginUiDeclaration } = await import('../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
+    const { installBundledPluginUiDeclarationsForTests } = await import('../../../../../ui/sources/dev/testkit/mocks/bundledPluginUiAssets');
+    const { createHomeHubArtifactHttpBoundary } = await import('../../../../../ui/sources/dev/testkit/harness/homeHubArtifactHttpBoundary');
+    const { PLUGIN_MANIFEST: githubManifest } = await import('../../../../../../packages/plugins/scm-github/src/manifest');
+    const { PLUGIN_MANIFEST: triageManifest } = await import('../../../../../../packages/plugins/triage/src/manifest');
+    const { resetReviewRunCommentsForTests } = await import('../../../../../ui/sources/sync/domains/reviews/comments/reviewRunComments');
+    const { ArtifactView } = await import('../../../../../ui/sources/components/artifacts/ArtifactView');
+    const { ReviewActivityFeed } = await import('../../../../../ui/sources/components/reviews/detail/ReviewActivityFeed');
+    const { router } = await import('expo-router');
+    const account = await db.account.upsert({ where: { id: 'alice' }, update: {}, create: { id: 'alice', encryptionMode: 'plain' } });
+    const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
+    const writers = await Promise.all([0, 1].map(async () => {
+        const machineId = randomUUID(), installationId = randomUUID(), sessionId = randomUUID(), keyPair = tweetnacl.sign.keyPair();
+        await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+        await db.session.create({ data: { id: sessionId, accountId: account.id, tag: sessionId, metadata: '{}', encryptionMode: 'plain' } });
+        return { machineId, installationId, sessionId, keyPair };
+    }));
+    await withAuthenticatedTestApp(app => {
+        registerReviewCommentRoutes(app); registerReviewReadRoutes(app); artifactsRoutes(app); registerAccountEncryptionRoutes(app);
+    }, async app => {
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        await runWithServerHttpBaseUrl(origin, async () => {
+            const artifacts = createCredentialedAccountArtifactStore({ token, encryption: null });
+            const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(artifacts));
+            const reviewId = randomUUID();
+            const materialize = async (writer: typeof writers[number], binding: Awaited<ReturnType<typeof records.start>>, localId: string, settle = true) => {
+                const execute = createCliReviewCommentActionExecutorFromCredentials({ credentials: { token, encryption: null },
+                    resolvePrincipalSigningContext: async () => ({ machineId: writer.machineId, installationId: writer.installationId,
+                        privateKeyBase64Url: Buffer.from(writer.keyPair.secretKey).toString('base64url') }) });
+                const runId = randomUUID();
+                const run: ExecutionRunState = { runId, callId: runId, sidechainId: runId, sessionId: writer.sessionId, depth: 0,
+                    intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                    instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+                    ioMode: 'request_response', status: 'running', startedAtMs: Date.now(),
+                    intentInput: { reviewRound: binding, reviewReviewerId: 'reviewer', reviewRoundSettlement: 'execution' } };
+                const normalized = normalizeStrictJsonReviewOutput({ ...run, finishedAtMs: Date.now(), rawText: JSON.stringify({
+                    summary: 'Reviewed.', reviewOutcome: 'complete', findings: [{ id: localId, title: 'Reconnect loses the subscription',
+                        summary: 'The listener is removed before reconnect completes.', severity: 'high', category: 'correctness',
+                        filePath: 'connection.ts', startLine: 8 }],
+                }) });
+                expect(normalized.status).toBe('succeeded');
+                const service = createReviewRunCommentService({ cwd: harness.baseDir,
+                    scope: { workspace: { machineId: writer.machineId, path: harness.baseDir } }, execute, reviewRecords: records });
+                const projected = await publishFindings({ run, toolResult: { output: normalized.toolResultOutput },
+                    structuredMeta: normalized.structuredMeta, expectFindings: true, reviewComments: service });
+                const result = projected.materialization;
+                expect(result).toMatchObject({ status: 'materialized', failures: [] });
+                if (!result) throw new Error('Review materialization unavailable');
+                if (settle) await service.settleRound({ ...run, status: 'succeeded', finishedAtMs: Date.now(), structuredMeta: projected.structuredMeta });
+                return result.comments[0]!.comment;
+            };
+            const start = (id: string, newRound = false) => records.start({ reviewId: id, title: 'One canonical finding',
+                subjectKind: 'repository', sourceKind: 'direct', reviewerIds: ['reviewer'], startedAt: Date.now(), newRound });
+            const first = await start(reviewId);
+            const initial = await materialize(writers[0]!, first, 'first-local-id', false);
+            const otherSession = await materialize(writers[1]!, first, 'second-local-id');
+            expect(otherSession.id).toBe(initial.id);
+            const second = await start(reviewId, true);
+            const repeated = await materialize(writers[1]!, second, 'next-round-local-id');
+            expect(repeated.id).toBe(initial.id);
+            const separate = await start(randomUUID());
+            expect((await materialize(writers[0]!, separate, 'first-local-id')).id).not.toBe(initial.id);
+            expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
+            expect(await db.reviewCommentAppearance.count({ where: { reviewId, commentId: initial.id } })).toBe(3);
+
+            const serverIdentityId = await getOrCreateServerIdentityId();
+            const openFixture = async () => {
+                // Only the app's physical package inventory is substituted. Availability
+                // admits the real authored manifests and stamps the mounted caller custody.
+                const declarations = await Promise.all([
+                    { manifest: githubManifest, packageName: '@happier-dev/plugins-scm-github' },
+                    { manifest: triageManifest, packageName: '@happier-dev/plugins-triage' },
+                ].map(({ manifest, packageName }) => projectBundledPluginUiDeclaration({ packageName,
+                    packageVersion: manifest.version, manifest, artifactGraphs: [] })));
+                if (declarations.some(declaration => !declaration)) throw new Error('Missing authored plugin declaration');
+                const restoreInventory = installBundledPluginUiDeclarationsForTests(declarations.filter(declaration => declaration !== undefined));
+                const homeBoundary = createHomeHubArtifactHttpBoundary(account.id);
+                const mounted = await createSessionFilesViewFixture({ serverUrl: origin, credentials: { token },
+                    serverIdentityId, machine: null, request: async (url, init) => {
+                    const path = new URL(String(url)).pathname;
+                    if (path.startsWith('/v1/reviews/') || path.startsWith('/v1/artifacts') || path.startsWith('/v1/account/encryption'))
+                        return fetch(url, init);
+                    return homeBoundary.request(url, init);
+                } });
+                await getSyncSingleton().refreshPluginAccountAvailability();
+                return { ...mounted, async dispose() { try { await mounted.dispose(); } finally { restoreInventory(); } } };
+            };
+            const readArtifact = async (sourceServerId: string): Promise<DecryptedArtifact> => {
+                const row = await artifacts.read(reviewId);
+                if (!row || typeof row.body !== 'string') throw new Error('Persisted Review unavailable');
+                return { id: reviewId, sourceServerId, title: 'One canonical finding', isDecrypted: true,
+                    header: { ...row.header, title: 'One canonical finding' }, body: row.body, ownerAccountId: account.id,
+                    access: 'owner', storageMode: 'plain', headerVersion: row.revision.headerVersion,
+                    bodyVersion: row.revision.bodyVersion, seq: 1, createdAt: 1, updatedAt: 1 };
+            };
+            let fixture = await openFixture();
+            const openEmbedded = async (placement: 'PR' | 'Inbox') => {
+                const lifetime = captureActiveServerAccountScopeLifetime();
+                if (!lifetime) throw new Error('Missing mounted Account');
+                const pluginId = placement === 'PR' ? 'happier.scm.forge.github' : REVIEW_TRIAGE_SOURCE_V1.pluginId;
+                const contributionId = placement === 'PR' ? GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 : REVIEW_TRIAGE_SOURCE_V1.localId;
+                const selected = await readPluginAccountAvailability(lifetime.scope).ensureCurrentAccountExecution(pluginId);
+                if (selected.kind !== 'available') throw new Error(`Review entry plugin is unavailable: ${selected.code}`);
+                const controller = createBoundPluginSurfaceController({ facts: { pluginId, contributionId,
+                    surfaceId: `entry-${placement}`, occurrenceId: selected.custodyId, placement: 'browserSurface', platform: 'web',
+                    accountExecutionOrigin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                    serverId: lifetime.scope.serverId, accountLifetime: lifetime, interactionEnabled: true, daemonInteractionEnabled: false } });
+                const surface = createPluginSurfaceContextFixture({ accountEncryptionMode: 'plain',
+                    mount: { kind: 'destination', destination: { pluginId, localId: contributionId }, container: 'appPage' }, target: { kind: 'app' } });
+                const native = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface: controller.surfaceContext,
+                    handleRequest: controller.hostApi.handleRequest, installedMethods: controller.installedMethods });
+                const unwatch = controller.subscribeResourceInvalidations(event => native.publishResourceSubscriptionEvent(event));
+                const triage = createTriageSourceV1Fixture().detailInput;
+                const input = readReviewDetailInput({ ...triage, observation: { ...triage.observation,
+                    entryRef: { ...triage.observation.entryRef, source: REVIEW_TRIAGE_SOURCE_V1, ...reviewTriageLocalRefV1(reviewId) } } });
+                const context = { plugin: { id: pluginId, version: selected.manifest.version }, surface, hostApi: native.api, signal: new AbortController().signal };
+                const screen = await fixture.render(React.createElement(PluginUiProvider, { hostApi: native.api, context: surface },
+                    placement === 'PR' ? React.createElement(GithubHappierReviewSummary, { reviewId })
+                        : React.createElement(ReviewDetail, { context, input })));
+                try {
+                    await vi.waitFor(() => expect(screen.findHostByTestId(`review-summary:row:${initial.id}`), screen.getTextContent()).not.toBeNull());
+                    await screen.pressByTestIdAsync(`review-summary:row:${initial.id}`);
+                    expect(screen.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull();
+                    const open = screen.findAllByType(Button).find(button => button.props.title === 'Open review');
+                    if (!open) throw new Error('The entry has no Open review control');
+                    await act(async () => { await open.props.onPress(); });
+                    const route = new URL(String(vi.mocked(router.push).mock.calls.at(-1)?.[0]), origin);
+                    expect(decodeURIComponent(route.pathname)).toBe(`/artifacts/${reviewId}`);
+                    expect(route.searchParams.get('serverId')).toBe(fixture.scope.serverId);
+                    return screen.getTextContent();
+                } finally { await screen.unmount(); unwatch(); native.dispose(); controller.dispose(); }
+            };
+            try {
+                await openEmbedded('PR');
+                const artifact = await readArtifact(fixture.scope.serverId);
+                const screen = await fixture.render(React.createElement(ArtifactView, { artifactId: reviewId, artifact,
+                    presentation: 'page', focusThreadId: initial.id }));
+                try {
+                    await vi.waitFor(() => expect(screen.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull());
+                    await screen.pressByTestIdAsync(`review-finding-triage:${initial.id}:reject`);
+                    await vi.waitFor(async () => expect(await db.reviewComment.findUnique({ where: { id: initial.id } }))
+                        .toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject' }));
+                } finally { await screen.unmount(); }
+                const saved = await db.reviewComment.findUniqueOrThrow({ where: { id: initial.id } });
+                const transitions = JSON.parse(saved.transitionsJson);
+                expect(transitions.filter((event: { reviewTriageStatus?: string }) => event.reviewTriageStatus === 'reject'))
+                    .toEqual([expect.objectContaining({ transitionedBy: { kind: 'user', userId: account.id }, toState: 'dismissed',
+                        serverRevision: saved.serverRevision })]);
+                // Discard the mounted projection, then require real HTTP to reopen the SQL-backed history.
+                await fixture.dispose(); standardCleanup(); resetReviewRunCommentsForTests();
+                fixture = await openFixture();
+                const inboxText = await openEmbedded('Inbox');
+                expect(inboxText).toContain(account.id);
+                expect(inboxText).toContain('Ignored');
+                const prText = await openEmbedded('PR');
+                expect(prText).toContain(account.id);
+                expect(prText).toContain('Ignored');
+                const reopened = await fixture.render(React.createElement(ArtifactView, { artifactId: reviewId,
+                    artifact: await readArtifact(fixture.scope.serverId), presentation: 'page', focusThreadId: initial.id }));
+                try {
+                    await vi.waitFor(() => expect(reopened.findHostByTestId(`review-finding:${initial.id}`)).not.toBeNull());
+                    await reopened.pressByTestIdAsync('review-detail:tab:activity');
+                    const decisions = reopened.findByType(ReviewActivityFeed).props.events.filter((event: { kind: string }) => event.kind === 'decided');
+                    expect(decisions).toEqual([expect.objectContaining({ decision: 'reject', actor: { kind: 'account', accountId: account.id } })]);
+                    expect(reopened.findHostByTestId(`review-activity:${decisions[0].id}`)).not.toBeNull();
+                } finally { await reopened.unmount(); }
+                expect((await db.reviewComment.findUniqueOrThrow({ where: { id: initial.id } })).transitionsJson).toBe(saved.transitionsJson);
+                expect(await db.reviewComment.count({ where: { reviewId } })).toBe(1);
+            } finally { standardCleanup(); await fixture.dispose(); }
+        });
+    }, { authentication: 'real' });
+});
