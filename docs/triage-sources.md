@@ -1806,8 +1806,12 @@ cannot be submitted through the ordinary `ui/mounted-v1` input.
 The active review publication draft supports `setPublicationVerdict` with a
 `verdict` from the forge's displayed choices. Unsupported verdicts return
 `rejected`. `setPublicationSummary` replaces the draft's `summary` string and
-accepts an empty string to clear it. Both operations edit the controls visible
-in GitHub, GitLab, Bitbucket and Azure DevOps. Publishing is a separate action.
+accepts an empty string to clear it. In GitHub, GitLab, Bitbucket and Azure
+DevOps, `setPublicationFindingIncluded` changes the selected findings and
+`setPublicationWalkthroughIncluded` controls whether the saved walkthrough
+accompanies the verdict summary when available. The controls read another
+proposal page on request, including when the current page has no matching
+findings. Publishing is a separate action.
 
 The detail's `selectLinkedSession` operand names a currently loaded linked
 Session and selects it in the same inline Session panel as the UI picker.

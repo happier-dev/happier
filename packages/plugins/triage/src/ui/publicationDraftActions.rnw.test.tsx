@@ -6,9 +6,11 @@ import {
   defineUiSurface,
   Tabs,
   usePluginHostApi,
+  useReviewCommentProposalsForEntry,
 } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
+  createPluginUiActionControlTestHost,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkit,
@@ -87,16 +89,14 @@ function proposal(id: string, severity: 'blocker' | 'nit', title: string) {
   >['proposals']['proposals'][number];
 }
 
-const PROPOSALS = {
-  status: 'ready' as const,
-  proposals: [
-    proposal('c1', 'blocker', 'Timer survives a manual reconnect'),
-    proposal('c2', 'nit', 'README example uses the old option name'),
-  ],
-};
+const PROPOSALS = [
+  proposal('c1', 'blocker', 'Timer survives a manual reconnect'),
+  proposal('c2', 'nit', 'README example uses the old option name'),
+];
+type Forge = 'gitlab' | 'github' | 'bitbucket' | 'azure-devops';
 
 /** The Publish sheet in the Triage detail's Reviews panel, with the real panel registry and mounted Action. */
-async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azure-devops' = 'gitlab') {
+async function mountPublishSheet(forge: Forge, emptyFirstPage = false) {
   const source = { pluginId: `happier.scm.forge.${forge}`, localId: `${forge}-forge` };
   const input = TriageDetailSurfaceInputV1Schema.parse({
     ...base,
@@ -111,6 +111,28 @@ async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azu
   const scope = createTriageEphemeralSharedScopeFixture();
   let commands: readonly TriageSourcePanelCommandV1[] = [];
   let page!: PluginUiTestkit;
+  const proposalRequests: unknown[] = [];
+  const publishedInputs: unknown[] = [];
+  const actionControls = createPluginUiActionControlTestHost(async ({ input: prepared }) => {
+    publishedInputs.push(prepared);
+    return { ok: true, result: { kind: 'rejected', reason: 'provider-rejected' } };
+  });
+  const sheet = forge === 'gitlab' || forge === 'github';
+
+  function SheetPublication() {
+    const [open, setOpen] = React.useState(true);
+    const proposals = useReviewCommentProposalsForEntry({
+      reviewId: input.admittedReview?.reviewId,
+      linkedSessionIds: input.linkedSessions.map(session => session.sessionId),
+      entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
+    });
+    return forge === 'gitlab'
+      ? <GitlabMergeRequestPublicationControls input={input} proposals={proposals} open={open} onOpenChange={setOpen} />
+      : <PullRequestReviewPublicationWrite
+          input={input} publicationProposals={proposals} open={open} onOpenChange={setOpen}
+          WriteControl={() => null} onObserved={() => {}} capabilities={{ kind: 'loading' }}
+        />;
+  }
   // What an agent's current-context command runs: the declared mounted Action, parsing its declared input.
   const invoke = (operation: TriageSourcePanelOperationV1) =>
     createTriageMountedUiActionHandler()(
@@ -128,7 +150,6 @@ async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azu
       },
     );
   function Surface() {
-    const [open, setOpen] = React.useState(true);
     const hostApi = usePluginHostApi();
     const panelActions = useTriageSourcePanelActionsV1(
       scope,
@@ -160,12 +181,7 @@ async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azu
             ariaLabel="Merge request"
           >
             <Tabs.Item value="reviews" title="Reviews">
-              {forge === 'gitlab' ? <GitlabMergeRequestPublicationControls
-                input={input} proposals={PROPOSALS} open={open} onOpenChange={setOpen}
-              /> : forge === 'github' ? <PullRequestReviewPublicationWrite
-                input={input} publicationProposals={PROPOSALS} open={open} onOpenChange={setOpen}
-                WriteControl={() => null} onObserved={() => {}} capabilities={{ kind: 'loading' }}
-              /> : forge === 'bitbucket' ? <BitbucketMutationControls
+              {sheet ? <SheetPublication /> : forge === 'bitbucket' ? <BitbucketMutationControls
                 input={input} overview={{
                   ...projectBitbucketDetailOverview(input), state: { presentation: 'active', nativeLabel: null },
                 }}
@@ -185,6 +201,7 @@ async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azu
       launchInput: input,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
+        actionControl: actionControls.handler,
         // The admitted round's saved Walkthrough, as the Review Resource carries it.
         readResource: async () => ({
           contentType: 'application/json',
@@ -195,6 +212,15 @@ async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azu
         }),
         executeAction: async ({ action, input: request }) => {
           const id = typeof action === 'string' ? action : action.localId;
+          if (id === 'reviews.comments.list') {
+            const query = request as { reviewId: string; cursor?: string };
+            proposalRequests.push(query);
+            if (emptyFirstPage && query.cursor === undefined) return {
+              items: [{ ...PROPOSALS[0], linkedRefs: [{ kind: 'pullRequest', url: 'https://example.test/another/pr' }] }],
+              cursor: 'next',
+            };
+            return { items: PROPOSALS, cursor: null };
+          }
           if (id === 'ui/mounted-v1')
             return await invoke(
               (request as { operation: TriageSourcePanelOperationV1 })
@@ -209,19 +235,17 @@ async function mountPublishSheet(forge: 'gitlab' | 'github' | 'bitbucket' | 'azu
     });
   });
   mounted.push(page);
-  return { page, invoke, commands: () => commands };
+  return { page, invoke, sheet, proposalRequests, actionControls, publishedInputs, commands: () => commands };
 }
 
 describe('the Publish sheet draft as agent Actions', () => {
-  it('runs each draft command through the mounted Action and changes the draft the person sees', async () => {
-    const sheet = await mountPublishSheet();
-    const checkbox = (name: string) =>
-      sheet.page.getByRole('checkbox', { name });
-    await vi.waitFor(async () =>
-      expect(await checkbox('Timer survives a manual reconnect')).toMatchObject(
-        { state: { checked: true } },
-      ),
-    );
+  it.each([
+    ['gitlab', 'Summary'],
+    ['github', 'Summary'],
+    ['bitbucket', 'Review summary'],
+    ['azure-devops', 'Review summary'],
+  ] as const)('edits the same mounted publication draft on %s', async (forge, summaryLabel) => {
+    const sheet = await mountPublishSheet(forge);
     const finding = (proposalId: string) =>
       sheet
         .commands()
@@ -230,7 +254,9 @@ describe('the Publish sheet draft as agent Actions', () => {
             row.operation.kind === 'setPublicationFindingIncluded' &&
             row.operation.proposalId === proposalId,
         );
-    expect(finding('c1')?.operation).toMatchObject({ included: false });
+    await vi.waitFor(() => expect(finding('c1')?.operation).toMatchObject({ included: false }));
+    expect(sheet.proposalRequests).toEqual([expect.objectContaining({ reviewId: 'admitted-review' })]);
+    expect(sheet.proposalRequests[0]).not.toHaveProperty('sessionId');
     expect(finding('c2')?.operation).toMatchObject({ included: true });
 
     await act(async () => {
@@ -238,32 +264,72 @@ describe('the Publish sheet draft as agent Actions', () => {
         status: 'applied',
       });
     });
-    await expect(
-      checkbox('Timer survives a manual reconnect'),
-    ).resolves.toMatchObject({ state: { checked: false } });
     await act(async () => {
       expect(await sheet.invoke(finding('c2')!.operation)).toEqual({
         status: 'applied',
       });
     });
-    await expect(
-      checkbox('README example uses the old option name'),
-    ).resolves.toMatchObject({ state: { checked: true } });
     expect(finding('c1')?.operation).toMatchObject({ included: true });
     expect(finding('c2')?.operation).toMatchObject({ included: false });
+    if (sheet.sheet) {
+      await expect(sheet.page.getByRole('checkbox', { name: 'Timer survives a manual reconnect' }))
+        .resolves.toMatchObject({ state: { checked: false } });
+      await expect(sheet.page.getByRole('checkbox', { name: 'README example uses the old option name' }))
+        .resolves.toMatchObject({ state: { checked: true } });
+    }
 
     // Once a verdict carries a summary, the walkthrough fold has its command too, through the same Action.
-    await changeVerdictAndSummary(sheet, 'Summary');
+    await changeVerdictAndSummary(sheet, summaryLabel);
     const walkthrough = () => sheet.commands().find((row) => row.operation.kind === 'setPublicationWalkthroughIncluded');
     await vi.waitFor(() => expect(walkthrough()?.operation).toMatchObject({ included: false }));
+    const submit = async () => {
+      await act(async () => { await sheet.actionControls.press('Submit review'); });
+      const payload = sheet.publishedInputs.at(-1);
+      expect(payload).toMatchObject({
+        publicationPlan: { entries: [{ happierCommentId: 'c2' }], verdict: { kind: 'comment' } },
+      });
+      return (payload as { publicationPlan: { verdict: { body: string } } }).publicationPlan.verdict.body;
+    };
+    if (!sheet.sheet) {
+      await act(async () => {
+        expect(await sheet.invoke({ kind: 'setPublicationSummary', summary: 'A verdict with evidence.' }))
+          .toEqual({ status: 'applied' });
+      });
+      expect(await submit()).toContain('Retry ownership');
+    }
     await act(async () => { expect(await sheet.invoke(walkthrough()!.operation)).toEqual({ status: 'applied' }); });
+    if (!sheet.sheet) {
+      expect(await submit()).not.toContain('Retry ownership');
+      expect(sheet.publishedInputs).toHaveLength(2);
+    }
     await expect(sheet.page.getByRole('switch', { name: 'Include the walkthrough' }))
       .resolves.toMatchObject({ state: { checked: false } });
     expect(walkthrough()?.operation).toMatchObject({ included: true });
-    await act(async () => { await sheet.page.press(await sheet.page.getByRole('button', { name: 'Cancel' })); });
-    expect(sheet.commands()).toEqual([]);
-    await expect(sheet.invoke({ kind: 'setPublicationSummary', summary: 'After closing' }))
-      .resolves.toEqual({ status: 'unavailable' });
+    expect(sheet.proposalRequests).toHaveLength(1);
+    if (sheet.sheet) {
+      await act(async () => { await sheet.page.press(await sheet.page.getByRole('button', { name: 'Cancel' })); });
+      expect(sheet.commands()).toEqual([]);
+      await expect(sheet.invoke({ kind: 'setPublicationSummary', summary: 'After closing' }))
+        .resolves.toEqual({ status: 'unavailable' });
+    }
+  });
+
+  it.each([
+    ['gitlab', 'Read more'],
+    ['github', 'Load more comments'],
+    ['bitbucket', 'Read more'],
+    ['azure-devops', 'Read more'],
+  ] as const)('continues past an empty matching proposals page on %s', async (forge, label) => {
+    const draft = await mountPublishSheet(forge, true);
+    await vi.waitFor(() => expect(draft.proposalRequests).toHaveLength(1));
+    const more = await draft.page.getByRole('button', { name: label });
+    expect(draft.commands().some(row => row.operation.kind === 'setPublicationFindingIncluded')).toBe(false);
+    await act(async () => { await draft.page.press(more); });
+    await vi.waitFor(() => expect(draft.commands().some(row => row.operation.kind === 'setPublicationFindingIncluded')).toBe(true));
+    expect(draft.proposalRequests).toEqual([
+      expect.objectContaining({ reviewId: 'admitted-review' }),
+      expect.objectContaining({ reviewId: 'admitted-review', cursor: 'next' }),
+    ]);
   });
 
   it.each([

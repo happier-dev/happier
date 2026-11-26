@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
+  Button,
   Divider,
   Form,
   Row,
@@ -19,6 +20,7 @@ import {
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
   useReviewPublicationSelection,
+  reviewPublicationFindingTitle,
   type PluginActionExecution,
   type PluginTranslate,
   type TextTone,
@@ -409,7 +411,7 @@ function BitbucketReviewPublicationControls({
   const { instance, localRef } = useTriageDetailRequest(input);
   const [submitExecution, setSubmitExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
   const [createExecution, setCreateExecution] = React.useState<PluginActionExecution<unknown>>({ status: 'idle' });
-  const { proposals, status } = useReviewCommentProposalsForEntry({
+  const { proposals, status, loadMore } = useReviewCommentProposalsForEntry({
     reviewId: input.admittedReview?.reviewId,
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
     entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
@@ -418,13 +420,29 @@ function BitbucketReviewPublicationControls({
   const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals);
   const [verdict, setVerdict] = React.useState<'comment' | 'approve' | 'requestChanges'>('comment');
   const [summary, setSummary] = React.useState('');
-  const { quality } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
+  const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
+  const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
   const verdictOptions = React.useMemo(() => [
     { value: 'comment', label: text('plugins.bitbucket.ui.mutations.review.comment', 'Comment') },
     { value: 'approve', label: text('plugins.bitbucket.ui.mutations.review.approve', 'Approve') },
     { value: 'requestChanges', label: text('plugins.bitbucket.ui.mutations.review.requestChanges', 'Request changes') },
   ] as const, [text]);
-  const draft = useTriageReviewPublicationDraftV1({ verdictOptions, setVerdict, setSummary });
+  const draftFindings = React.useMemo(
+    () => proposals.map((proposal) => ({ id: proposal.id, title: reviewPublicationFindingTitle(proposal) })),
+    [proposals],
+  );
+  const draftSelection = React.useMemo(
+    () => ({ findings: draftFindings, selectedIds, setSelectedIds }),
+    [draftFindings, selectedIds, setSelectedIds],
+  );
+  const walkthroughOffered = (walkthrough?.length ?? 0) > 0;
+  const draftWalkthrough = React.useMemo(
+    () => walkthroughOffered ? { included: includeWalkthrough, setIncluded: setIncludeWalkthrough } : null,
+    [includeWalkthrough, walkthroughOffered],
+  );
+  const draft = useTriageReviewPublicationDraftV1({
+    selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
+  });
 
   const selected = proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const revision = input.observation.snapshot.reviewRevision;
@@ -451,6 +469,7 @@ function BitbucketReviewPublicationControls({
         findings: selected.flatMap((proposal) => proposal.finding ? [{ ...proposal.finding, happierCommentId: proposal.id }] : []),
         reviewId: input.admittedReview?.reviewId,
         quality,
+        walkthrough: includeWalkthrough ? walkthrough : undefined,
       })) },
     };
   const single = target === null || revision === undefined || entries.length !== 1 ? null : {
@@ -470,6 +489,10 @@ function BitbucketReviewPublicationControls({
       {status === 'loading' ? <Text variant="micro" tone="neutral" valueKey="plugins.bitbucket.ui.mutations.review.loadingProposals" fallback="Reading linked review proposals…" /> : null}
       {status === 'failed' ? <Banner tone="danger" title="Review proposals are unavailable" titleKey="plugins.bitbucket.ui.mutations.review.proposalsUnavailable" /> : null}
       {status === 'ready' && proposals.length === 0 ? <Text variant="micro" tone="neutral" valueKey="plugins.bitbucket.ui.mutations.review.noProposals" fallback="No proposed review comments are linked to this pull request." /> : null}
+      {loadMore === undefined ? null : (
+        <Button title={text('plugins.triage.detailStory.showMore', 'Read more')}
+          variant="secondary" busy={status === 'loading'} onPress={loadMore} />
+      )}
       {proposals.length > 0 ? (
         <Form.Select
           label={text('plugins.bitbucket.ui.mutations.review.comments', 'Review comments')}
@@ -477,7 +500,7 @@ function BitbucketReviewPublicationControls({
           value={selectedIds}
           multiple
           required
-          onChange={(value) => { if (Array.isArray(value)) setSelectedIds(value.filter((item): item is string => typeof item === 'string')); }}
+          onChange={(value) => { if (Array.isArray(value)) draft.setSelectedIds(value.filter((item): item is string => typeof item === 'string')); }}
         />
       ) : null}
       <Form.Select
@@ -489,6 +512,13 @@ function BitbucketReviewPublicationControls({
         }}
       />
       <Form.TextField label={text('plugins.bitbucket.ui.mutations.review.summary', 'Review summary')} value={summary} onChange={setSummary} />
+      {walkthroughOffered ? (
+        <Form.Toggle
+          label={text('happier.plugin-ui.reviewPublication.includeWalkthrough', 'Include the walkthrough')}
+          value={includeWalkthrough}
+          onChange={draft.setWalkthroughIncluded}
+        />
+      ) : null}
       <Row gap="small">
         <Action.Control title={text('plugins.bitbucket.ui.mutations.review.submit', 'Submit review')} disabled={plan === null} action={SUBMIT_REVIEW_ACTION} controller={{
             prepare() {

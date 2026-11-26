@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
+  Button,
   Form,
   Row,
   Stack,
@@ -18,6 +19,7 @@ import {
   useReviewCommentProposalsForEntry,
   usePluginTranslation,
   useReviewPublicationSelection,
+  reviewPublicationFindingTitle,
   type PluginActionExecution,
   type ReviewCommentProposalWithBodyV1,
   type PluginTranslate,
@@ -284,7 +286,8 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
   const [selectedIds, setSelectedIds] = useReviewPublicationSelection(proposals.proposals);
   const [verdict, setVerdict] = React.useState<VerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
-  const { quality } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
+  const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
+  const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
   const verdictOptions = React.useMemo(() => VERDICTS.map((value) => ({
     value,
     label: value === 'none' ? text('plugins.azureDevops.ui.publication.verdict.none', 'No verdict')
@@ -292,7 +295,22 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
         : value === 'approve' ? text('plugins.azureDevops.ui.publication.verdict.approve', 'Approve')
           : text('plugins.azureDevops.ui.publication.verdict.comment', 'Comment'),
   })), [text]);
-  const draft = useTriageReviewPublicationDraftV1({ verdictOptions, setVerdict, setSummary });
+  const draftFindings = React.useMemo(
+    () => proposals.proposals.map((proposal) => ({ id: proposal.id, title: reviewPublicationFindingTitle(proposal) })),
+    [proposals.proposals],
+  );
+  const draftSelection = React.useMemo(
+    () => ({ findings: draftFindings, selectedIds, setSelectedIds }),
+    [draftFindings, selectedIds, setSelectedIds],
+  );
+  const walkthroughOffered = verdict !== 'none' && (walkthrough?.length ?? 0) > 0;
+  const draftWalkthrough = React.useMemo(
+    () => walkthroughOffered ? { included: includeWalkthrough, setIncluded: setIncludeWalkthrough } : null,
+    [includeWalkthrough, walkthroughOffered],
+  );
+  const draft = useTriageReviewPublicationDraftV1({
+    selection: draftSelection, walkthrough: draftWalkthrough, verdictOptions, setVerdict, setSummary,
+  });
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const body = summary.trim();
   const headRevision = input.observation.snapshot.reviewRevision?.headSha;
@@ -305,6 +323,7 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
       findings: selected.flatMap((proposal) => proposal.finding ? [{ ...proposal.finding, happierCommentId: proposal.id }] : []),
       reviewId: input.admittedReview?.reviewId,
       quality,
+      walkthrough: includeWalkthrough ? walkthrough : undefined,
     })) };
   const submitPayload = buildAzureSubmitReviewInputV1(input, selected, verdictValue);
   // Mirrors the public Reviews routing owner: file-scoped proposals stay provider-preflighted;
@@ -344,6 +363,10 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
       {proposals.status === 'loading' ? <Status tone="muted" label={text('plugins.azureDevops.ui.publication.loading', 'Reading proposed review comments…')} /> : null}
       {proposals.status === 'failed' ? <Banner tone="danger" title={text('plugins.azureDevops.ui.publication.proposalsFailed', 'Proposed review comments are unavailable')} /> : null}
       {proposals.status === 'ready' && proposals.proposals.length === 0 ? <Status tone="muted" label={text('plugins.azureDevops.ui.publication.empty', 'No proposed review comment is linked to this pull request yet.')} /> : null}
+      {proposals.loadMore === undefined ? null : (
+        <Button title={text('plugins.triage.detailStory.showMore', 'Read more')}
+          variant="secondary" busy={proposals.status === 'loading'} onPress={proposals.loadMore} />
+      )}
       {proposals.proposals.length === 0 ? null : (
         <Form.Select
           label={text('plugins.azureDevops.ui.publication.comments', 'Review comments')}
@@ -351,7 +374,7 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
           value={selectedIds}
           multiple
           onChange={(value) => {
-            if (Array.isArray(value)) setSelectedIds(value.filter((item): item is string => typeof item === 'string'));
+            if (Array.isArray(value)) draft.setSelectedIds(value.filter((item): item is string => typeof item === 'string'));
           }}
         />
       )}
@@ -364,6 +387,13 @@ export function AzureReviewPublicationControls({ input }: Readonly<{
         }}
       />
       <Form.TextField label={text('plugins.azureDevops.ui.publication.summary', 'Review summary')} value={summary} onChange={setSummary} />
+      {walkthroughOffered ? (
+        <Form.Toggle
+          label={text('happier.plugin-ui.reviewPublication.includeWalkthrough', 'Include the walkthrough')}
+          value={includeWalkthrough}
+          onChange={draft.setWalkthroughIncluded}
+        />
+      ) : null}
       {verdictNeedsBody ? <Text variant="micro" tone="warning" valueKey="plugins.azureDevops.ui.publication.summaryRequired" fallback="Add a summary before publishing this verdict." /> : null}
       {selectedRequiresVerdict && verdict === 'none' ? (
         <Text
