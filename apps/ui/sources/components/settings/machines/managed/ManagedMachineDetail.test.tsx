@@ -3682,8 +3682,10 @@ describe('managed Machine detail', () => {
                 expect(answers[1]).toEqual(expect.objectContaining({ taskId: 'requester-task', answer: { approved: true } }));
                 return;
             }
-            expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
-            expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
+            await vi.waitFor(() => {
+                expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
+                expect(screen.findByTestId('managed-machine.installation-prompt-decline')).toBeNull();
+            });
             expect(operationRpcBoundary.requests.filter(request => request.method === ACTION_OPERATION_RPC_METHODS_V2.list
                 || request.method === ACTION_OPERATION_RPC_METHODS_V2.get)).toHaveLength(0);
         } finally { await screen.unmount(); installationBoundary.dispose(); }
