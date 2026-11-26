@@ -754,15 +754,19 @@ describe('SessionParticipantComposer', () => {
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         let ref: Parameters<NonNullable<React.ComponentProps<typeof SessionParticipantComposer>['onComposerRefAvailable']>>[0] = null;
         agentInputSpy.mockClear();
-        await renderScreen(<PluginSurfaceFocusEligibilityProvider active={false} presentationActive>
+        const content = (presentationActive: boolean) => <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presentationActive}>
             <SessionParticipantComposer sessionId="s1" canSendMessages recipient={null} inputHidden
                 onComposerRefAvailable={(next) => { ref = next; }} submitPreparedMessage={submitPreparedMessage} />
-        </PluginSurfaceFocusEligibilityProvider>);
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(content(true));
         expect(agentInputSpy).not.toHaveBeenCalled();
         if (!ref) throw new Error('Expected participant composer identity');
 
         const scope = { serverId: 'server-1', accountId: 'account-1' };
-        activeScopeState.value = scope;
+        const mountedRef = ref;
+        expect(requestRegisteredComposerSubmit({ ref: mountedRef, scope: { ...scope, accountId: 'foreign-account' } })).toBeNull();
+        expect(requestRegisteredComposerSubmit({ ref: mountedRef, scope: { ...scope, serverId: 'foreign-home' } })).toBeNull();
+        expect(submitPreparedMessage).not.toHaveBeenCalled();
         let submitted: Awaited<ReturnType<typeof requestRegisteredComposerSubmit>> = null;
         await act(async () => {
             submitted = await requestRegisteredComposerSubmit({ ref: ref!, scope,
@@ -774,6 +778,12 @@ describe('SessionParticipantComposer', () => {
         expect(submitted).toMatchObject({ ok: true });
         expect(submitPreparedMessage).toHaveBeenCalledTimes(1);
         expect(submitPreparedMessage.mock.calls[0]![0].draft.text).toBe('Review these changes');
+
+        await screen.update(content(false));
+        expect(requestRegisteredComposerSubmit({ ref: mountedRef, scope })).toBeNull();
+        await screen.unmount();
+        expect(requestRegisteredComposerSubmit({ ref: mountedRef, scope })).toBeNull();
+        expect(submitPreparedMessage).toHaveBeenCalledTimes(1);
     });
 
     it('rehydrates process-local file drafts instead of carrying them across an Account switch', async () => {

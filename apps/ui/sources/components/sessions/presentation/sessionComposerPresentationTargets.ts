@@ -1965,6 +1965,7 @@ export function requestRegisteredComposerFocus(ref: ComposerRefV1 | symbol): boo
 /**
  * Sends one exact mounted composer's draft through that composer's own submission owner, for a host whose
  * primary sits outside the input (a sheet footer's Start). Null when no current composer can submit.
+ * The host retains that composer's Account scope even when another Home has global focus.
  */
 export function requestRegisteredComposerSubmit(request: Readonly<{
     ref: ComposerRefV1;
@@ -1972,7 +1973,7 @@ export function requestRegisteredComposerSubmit(request: Readonly<{
     /** The send's own options (a host that draws the input itself names the text it sends). */
     options?: Parameters<NonNullable<ComposerPresentationTarget['submitDraft']>>[0];
 }>): ReturnType<NonNullable<ComposerPresentationTarget['submitDraft']>> | null {
-    return readScopedMountedComposerTarget(request.ref, request.scope)?.submitDraft?.(request.options) ?? null;
+    return resolveScopedMountedComposerTarget(request.ref, request.scope)?.submitDraft?.(request.options) ?? null;
 }
 
 /** Dismisses the keyboard through the exact incumbent input's own native command. */
