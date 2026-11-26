@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { delimiter, join } from 'node:path';
+import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import tweetnacl from 'tweetnacl';
 import axios from 'axios';
 import { afterAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -13,7 +16,7 @@ import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
-import { listExecutionRunMarkersForRehydration } from '@/daemon/executionRunRegistry';
+import { listExecutionRunMarkersForRehydration, readRetainedExecutionRunRecord } from '@/daemon/executionRunRegistry';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { reloadConfiguration } from '@/configuration';
 import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
@@ -45,6 +48,26 @@ import selectedNativeReview from '../../../../../../../packages/plugins/review-p
 import { resolveReviewFollowUpAvailability } from '../../../../../../ui/sources/components/sessions/reviews/findings/reviewFollowUpAvailability';
 import { resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
 import { resolveExecutionRunRoleV1 } from '@/agent/executionRuns/profiles/review/reviewRole';
+import { CODERABBIT_PLUGIN } from '../../../../../../../packages/plugins/review-coderabbit/src/manifest';
+import { GIT_PLUGIN } from '../../../../../../../packages/plugins/scm-git/src/manifest';
+import { runWithRealGitScmRuntime } from '../../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { ApiSessionClient } from '@/api/session/sessionClient';
+import { createPlainSessionFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createApiSessionSocketStub, createSessionTranscriptHomeStub, createSessionRuntimeActivityHomeStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1,
+  SessionTranscriptObservationInputSchema, SessionTranscriptObservationBatchInputV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { createCommittedExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
+import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
+import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import { deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema,
+  ReviewCommentCommitMutationRequestV1Schema, type ReviewCommentPreparedRecordV1 } from '@happier-dev/protocol';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
+import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport } from '@/api/artifacts/accountArtifactStore';
+import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
+import { logger } from '@/ui/logger';
 
 // The CLI harness has no native theme runtime. Keep the UI owners real beneath
 // the same canonical platform boundary used by the existing composed Voice tests.
@@ -113,15 +136,46 @@ vi.mock('@/persistence', async (importOriginal) => ({
 
 describe('connected execution-run resume custody', () => {
   afterAll(async () => {
+    logger.flushSync();
     if (originalHome === undefined) delete process.env.HAPPIER_HOME_DIR;
     else process.env.HAPPIER_HOME_DIR = originalHome;
     reloadConfiguration();
     await rm(directory, { recursive: true, force: true });
   });
-  it('publishes completed native and resumable Review runRefs consumed by follow-up availability', async () => {
+  it('publishes completed native and resumable Review runRefs and retains only CodeRabbit review content', async () => runWithRealGitScmRuntime(async () => {
     let phase = 'fixture';
     let activeRunId: string | null = null;
     const providerEvents: string[] = [];
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'coderabbit-run-privacy-' });
+    onTestFinished(() => rm(repository.rootPath, { recursive: true, force: true }));
+    await writeFile(join(repository.rootPath, repository.trackedPath), 'reviewable change\n');
+    const bin = join(directory, 'coderabbit-native-bin');
+    await mkdir(bin, { recursive: true });
+    const nativeCalls = join(bin, 'calls.jsonl');
+    const privateValues = ['custodian-review@example.invalid', 'custodian-review-organization',
+      'coderabbit-review-private-token-2841', 'raw-auth-review-private-marker-5379'];
+    const nativeAuth = { type: 'status', phase: 'auth', authenticated: true, email: privateValues[0], organization: privateValues[1],
+      accessToken: privateValues[2], raw: privateValues[3] };
+    const script = join(bin, 'coderabbit.cjs');
+    await writeFile(script, `const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(nativeCalls)}, JSON.stringify({ args, hasCredential: process.env.CODERABBIT_API_KEY === ${JSON.stringify(privateValues[2])} }) + '\\n');
+if (args.join(' ') === '--version') process.stdout.write('0.9.5');
+else if (args.join(' ') === 'auth status --agent') process.stdout.write(${JSON.stringify(JSON.stringify(nativeAuth))});
+else if (args[0] === 'review') {
+  process.stderr.write(${JSON.stringify(JSON.stringify(nativeAuth))});
+  for (const event of [${JSON.stringify({ type: 'status', ...nativeAuth })},
+    ${JSON.stringify({ type: 'finding', severity: 'major', fileName: repository.trackedPath, startLine: 1, endLine: 1,
+      title: 'Validate the changed input', comment: 'Reject invalid input before applying the change.', codegenInstructions: 'Add an input validation guard.' })},
+    { type: 'complete', status: 'review_completed', outcome: 'completed', findings: 1 }]) process.stdout.write(JSON.stringify(event) + '\\n');
+} else process.exitCode = 23;
+`);
+    writeExecutableShimSync({ dir: bin, fileName: process.platform === 'win32' ? 'coderabbit.cmd' : 'coderabbit',
+      contents: process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+        : `#!/bin/sh\nexec '${process.execPath.replace(/'/g, `'\\''`)}' '${script.replace(/'/g, `'\\''`)}' "$@"\n` });
+    vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`);
+    vi.stubEnv('CODERABBIT_API_KEY', privateValues[2]);
+    onTestFinished(() => vi.unstubAllEnvs());
     const completed = (stdout = ''): PluginProcessResult => ({
       stdout: new TextEncoder().encode(stdout), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false,
       termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
@@ -210,6 +264,12 @@ describe('connected execution-run resume custody', () => {
           '.happier-plugin-build/daemon.js': 'export function activate() {}',
           'resources/review-prompt.md': await readFile(new URL('../../../../../../../packages/plugins/review-panels/resources/review-prompt.md', import.meta.url), 'utf8'),
         }, instantiateCommittedModule: () => nativeModule },
+        { manifest: CODERABBIT_PLUGIN.manifest, files: {
+          '.happier-plugin-build/daemon.js': 'export function activate() {}',
+          'resources/review-prompt.md': await readFile(new URL('../../../../../../../packages/plugins/review-coderabbit/resources/review-prompt.md', import.meta.url), 'utf8'),
+        }, instantiateCommittedModule: () => ({ activate: CODERABBIT_PLUGIN.activate }) },
+        { manifest: GIT_PLUGIN.manifest, files: { '.happier-plugin-build/daemon.js': 'export function activate() {}' },
+          instantiateCommittedModule: () => ({ activate: GIT_PLUGIN.activate }) },
         { manifest: resumable.manifest, files: {
           'agent-runtime.mjs': 'let factory; export function configure(next) { factory = next; } export function createRuntime(context) { return factory(context); }',
           'daemon.mjs': `import * as leaf from './agent-runtime.mjs';
@@ -224,13 +284,16 @@ describe('connected execution-run resume custody', () => {
         } },
       ] });
     let bridge: ExecutionRunHostBridge | null = null;
+    let transcriptClient: ApiSessionClient | null = null;
     onTestFailed(() => console.error('Review follow-up fixture', JSON.stringify({ phase, providerEvents,
       state: bridge && activeRunId ? bridge.getPublic(activeRunId) : null })));
     try {
       const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: fixture.registry });
       for (const identity of [{ pluginId: ROBOREV_PLUGIN.manifest.id, localId: 'roborev' },
+        { pluginId: CODERABBIT_PLUGIN.manifest.id, localId: 'coderabbit' },
         { pluginId: resumable.manifest.id, localId: 'reviewer' }]) {
-        const isNative = identity.pluginId === ROBOREV_PLUGIN.manifest.id;
+        const isCodeRabbit = identity.pluginId === CODERABBIT_PLUGIN.manifest.id;
+        const isNative = identity.pluginId !== resumable.manifest.id;
         const engine = await engineRegistry.resolveForAgentTarget({ kind: 'agent', identity });
         expect(engine?.agent.identity, JSON.stringify({
           diagnostics: engineRegistry.contributions.pluginDiagnosticsByPluginId[identity.pluginId],
@@ -241,23 +304,117 @@ describe('connected execution-run resume custody', () => {
         const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog({
           resolveAgentIdentity: agentId => engineRegistry.contributions.agentDefinitionsById.get(agentId)?.identity ?? null,
         });
-        bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: fixture.happyHomeDir,
+        const observations: ReturnType<typeof SessionTranscriptObservationInputSchema.parse>[] = [];
+        const comments: unknown[] = [];
+        const artifactBoundary = isCodeRabbit ? createPlainAccountArtifactHttpBoundary() : null;
+        const artifactGet = vi.mocked(axios.get).getMockImplementation();
+        const artifactPost = vi.mocked(axios.post).getMockImplementation();
+        const credentials = artifactBoundary?.credentials ?? { token: 'review-retention-fixture', encryption: null };
+        const records = artifactBoundary ? createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
+          createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => 'plain' }))) : null;
+        const reviewRound = isCodeRabbit ? await records!.start({ reviewId: 'coderabbit-privacy-review',
+          title: 'Review changed input', subjectKind: 'comparison', sourceKind: 'direct',
+          reviewerIds: [engine!.agent.id], startedAt: Date.now() }) : undefined;
+        if (isCodeRabbit) {
+          const home = createSessionTranscriptHomeStub();
+          const activity = createSessionRuntimeActivityHomeStub({ machineId: 'fixture-machine' });
+          // The Home transport/persistence boundary retains exactly what the
+          // ordinary Session writer commits; no transcript or masking owner is replaced.
+          const socket = createApiSessionSocketStub({ connected: true, emitWithAck(event, payload) {
+            const answer = home.answer(event, payload) ?? activity.answer(event, payload);
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1) observations.push(SessionTranscriptObservationInputSchema.parse(payload));
+            if (event === SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1) observations.push(...SessionTranscriptObservationBatchInputV1Schema.parse(payload).observations);
+            if (answer === null) throw new Error(`Unexpected fixture socket event: ${event}`);
+            return answer;
+          } });
+          vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ features: {}, capabilities: {
+            session: { pendingInput: { protocolVersion: 1 }, runtimeActivity: { protocolVersion: 2 }, publisherAuthority: { protocolVersion: 1 } },
+          } }), { status: 200 })));
+          vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+            if (String(url).includes('/v1/artifacts') || String(url).endsWith('/v1/account/encryption')) return artifactGet!(url, config);
+            if (String(url).endsWith('/v1/auth/ping')) return { status: 200, data: {} };
+            if (String(url).endsWith('/v1/account/encryption/currentness')) return {
+              status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+            const localId = String(url).split('/messages/by-local-id/')[1];
+            const observation = observations.find(row => row.localId === decodeURIComponent(localId ?? ''));
+            if (observation) return { status: 200, data: { message: {
+              id: `stored-${observation.localId}`, seq: observations.indexOf(observation) + 1,
+              localId: observation.localId, sidechainId: observation.sidechainId ?? null,
+              content: observation.content, createdAt: observation.createdAt, updatedAt: observation.updatedAt,
+              messageRole: observation.messageRole,
+            } } };
+            return { status: 404, data: {} };
+          });
+          let prepared: readonly ReviewCommentPreparedRecordV1[] = [];
+          vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+            if (String(url).includes('/v1/artifacts')) return artifactPost!(url, body, config);
+            const availability = absentAccountPluginAvailabilityHttpResponse(String(url), body);
+            if (availability) return availability;
+            if (String(url).endsWith('/v1/reviews/comments/mutations/prepare')) {
+              const request = ReviewCommentPrepareMutationRequestV1Schema.parse(body);
+              const result = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'owner',
+                actor: { kind: 'agent', agentId: engine!.agent.id, sessionId: 'review-owner-session' }, current: [],
+                runtime: { now: () => 1, createId: kind => kind === 'review-comment' ? 'comment-coderabbit-1' : `${kind}-1` } });
+              prepared = result.records;
+              return { status: 200, data: { v: 1, receipt: 'comment-fixture-receipt', request, ...result, replayed: false } };
+            }
+            if (String(url).endsWith('/v1/reviews/comments/mutations/commit')) {
+              const request = ReviewCommentCommitMutationRequestV1Schema.parse(body);
+              const stored = request.records.map(row => ({ v: 1, structural: prepared.find(item => item.structural.id === row.commentId)!.structural,
+                sensitiveEnvelope: row.sensitiveEnvelope }));
+              comments.push(...stored);
+              return { status: 200, data: { v: 1, comments: stored, replayed: false, failed: [] } };
+            }
+            throw new Error('Unexpected fixture Home request');
+          });
+          transcriptClient = new ApiSessionClient(credentials.token, createPlainSessionFixture({ id: 'review-owner-session' }), {
+            metadataAuthority: { kind: 'shared_editor' }, runtimePrincipalAccountId: 'fixture-account',
+            localMachineId: 'fixture-machine', durableMutationDeliveryInitiallyActive: false,
+            transport: { serverId: 'fixture-home', serverUrl: 'https://review-retention.test',
+              createSessionSocketTransport: () => ({ socket: socket as never, transport: createSocketTransportAdapter(socket as never) }) },
+          });
+        }
+        const signingKeys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
+        const reviewComments = isCodeRabbit ? createReviewRunCommentService({ cwd: repository.rootPath,
+          scope: { workspace: { machineId: 'fixture-machine', path: repository.rootPath } }, reviewRecords: records!,
+          execute: createCliReviewCommentActionExecutorFromCredentials({ credentials, resolveAccountId: () => 'owner',
+            resolveAccountEncryptionMode: async () => 'plain', resolvePrincipalSigningContext: async () => ({
+              machineId: 'fixture-machine', installationId: 'fixture-installation',
+              privateKeyBase64Url: Buffer.from(signingKeys.secretKey).toString('base64url'),
+            }) }),
+        }) : undefined;
+        const parentPermissionHandler = transcriptClient ? new ProviderEnforcedPermissionHandler(transcriptClient,
+          { logPrefix: '[coderabbit-retention-fixture]' }) : null;
+        parentPermissionHandler?.setPermissionMode('read-only');
+        if (transcriptClient && parentPermissionHandler) transcriptClient.setSessionRuntimeControls({
+          readPermissionHandler: () => parentPermissionHandler,
+        });
+        bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: isCodeRabbit ? repository.rootPath : fixture.happyHomeDir,
           happyHomeDir: fixture.happyHomeDir, resolveAccountSettings: async () => ({}),
           resolveRunReportPolicy: async () => ({ preset: 'important' }),
-          sendAcp: async () => {},
+          ...(reviewComments ? { reviewComments } : {}),
+          ...(transcriptClient && parentPermissionHandler ? { sessionInteractionHost: { session: transcriptClient,
+            machineId: 'fixture-machine', permissionHandler: parentPermissionHandler,
+            readOwnerAccountCredentials: async () => credentials } } : {}),
+          sendAcp: transcriptClient ? createCommittedExecutionRunTranscriptPublisher({
+            enqueueAgentMessageCommitted: transcriptClient.enqueueAgentMessageCommitted.bind(transcriptClient),
+            readParentToolNormalizationSource: () => null,
+          }) : async () => {},
           resolveExecutionRunProfileCatalog: () => ({ profileCatalog, engineRegistry }) });
         const sourceCustody = fixture.registry.readPluginSourceCustody?.(identity.pluginId);
         if (!sourceCustody) throw new Error('Review source was not admitted');
         phase = `start:${identity.pluginId}`;
-        const started = await bridge.start({ sessionId: null, intent: 'review', instructions: 'Review uncommitted changes.',
+        const started = await bridge.start({ sessionId: isCodeRabbit ? 'review-owner-session' : null, intent: 'review', instructions: 'Review uncommitted changes.',
           backendTarget,
           // The contributed native profile, rather than a copied request row,
           // must lower this request to its own ephemeral/streaming defaults.
           permissionMode: 'read_only', retentionPolicy: 'resumable',
           runClass: 'bounded', ioMode: 'request_response',
+          ...(isCodeRabbit ? { modelSelection: null, connectedServices: null } : {}),
           resolvedRole: resolveExecutionRunRoleV1({ roleId: 'reviewer', accountRoleOverrides: { status: 'ready', overrides: {} } }),
           ...(isNative ? { profileId: `${identity.pluginId}/review`, profileSourceCustody: sourceCustody } : {}),
           intentInput: ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine!.agent.id }],
+            ...(reviewRound ? { reviewRound, reviewRoundSettlement: 'execution', reviewReviewerId: engine!.agent.id } : {}),
             instructions: 'Review uncommitted changes.', scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' } }) });
         activeRunId = started.runId;
         phase = `wait:${identity.pluginId}`;
@@ -271,15 +428,44 @@ describe('connected execution-run resume custody', () => {
           retentionPolicy: isNative ? 'ephemeral' : 'resumable' });
         expect(resolveReviewFollowUpAvailability(published.runRef, { sessionId: 'review-owner-session' }))
           .toMatchObject({ available: !isNative });
+        if (isCodeRabbit) {
+          expect(published).toMatchObject({ reviewOutcome: 'complete', findings: [{ title: 'Validate the changed input',
+            summary: 'Reject invalid input before applying the change.', filePath: repository.trackedPath,
+            comment: { id: 'comment-coderabbit-1' } }] });
+          expect(comments).toHaveLength(1);
+          await transcriptClient!.activateDurableMutationDelivery();
+          await transcriptClient!.flushDurableMutationDelivery();
+          expect(observations.length).toBeGreaterThan(0);
+          expect(JSON.stringify(observations)).toContain('Validate the changed input');
+          const transcript = await Promise.all(observations.map(row => transcriptClient!.readCommittedTranscriptMessageByLocalId(row.localId)));
+          expect(transcript.every(row => row.type === 'found')).toBe(true);
+          expect(JSON.stringify(transcript)).toContain('Validate the changed input');
+          const retained = await readRetainedExecutionRunRecord(started.runId);
+          expect(retained?.state.status).toBe('succeeded');
+          expect(retained && readRetainedReviewFindings(retained.state)).toEqual(published);
+          const artifact = await records!.read(reviewRound!.reviewId);
+          expect(artifact?.rounds[0]).toMatchObject({ state: 'completed', runs: [{ runId: started.runId }] });
+          const calls = (await readFile(nativeCalls, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { args: string[]; hasCredential: boolean });
+          expect(calls).toContainEqual(expect.objectContaining({ args: expect.arrayContaining(['review', '--agent']), hasCredential: false }));
+          const log = await readFile(logger.getLogPath(), 'utf8');
+          expect(log.length).toBeGreaterThan(0);
+          const retainedEvidence = JSON.stringify({ observations, transcript, retained, artifact,
+            artifactStorage: [...artifactBoundary!.rows.values()], comments, published,
+            publicRun: bridge.getPublic(started.runId), log });
+          for (const value of privateValues) expect(retainedEvidence).not.toContain(value);
+        }
         await bridge.dispose();
         bridge = null;
+        await transcriptClient?.close();
+        transcriptClient = null;
       }
       expect(run.mock.calls.some(([request]) => request.args?.[0] === 'review')).toBe(true);
     } finally {
       await bridge?.dispose();
+      await transcriptClient?.close();
       await fixture.dispose();
     }
-  });
+  }));
   it('attests backend and voice resumes and publishes only their successfully resumed registrations', async () => {
     let intent: 'task' | 'agent' | 'voice_agent' = 'agent';
     transport.materialize.mockClear();

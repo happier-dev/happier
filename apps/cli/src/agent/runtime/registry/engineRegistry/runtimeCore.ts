@@ -1190,6 +1190,10 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             ...(detachedContextLeaseFactory
                                 ? { createExecutionRunContext: detachedContextLeaseFactory }
                                 : {}),
+                            ...(effectiveCreateSessionContext ? { createSessionContext: effectiveCreateSessionContext } : {}),
+                            ...(effectiveCreateSessionContext?.abortPendingPermissionRequests
+                                ? { abortPendingPermissionRequests: effectiveCreateSessionContext.abortPendingPermissionRequests }
+                                : {}),
                             ...(detachedContextLeaseFactory?.respondToPermissionRequest
                                 ? { respondToPermissionRequest: detachedContextLeaseFactory.respondToPermissionRequest }
                                 : {}),

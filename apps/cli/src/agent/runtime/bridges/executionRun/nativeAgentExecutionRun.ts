@@ -976,6 +976,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     generationSignal?: AbortSignal;
     services?: Promise<PluginServices>;
     createExecutionRunContext?: NativeAgentExecutionRunContextLeaseFactory;
+    createSessionContext?: NativeAgentSessionContextLeaseFactory;
     bindInvocationServices?: NativeAgentSessionContextLeaseFactory['bindInvocationServices'];
     respondToPermissionRequest?: NativeAgentSessionContextLeaseFactory['respondToPermissionRequest'];
     abortPendingPermissionRequests?: (reason: string) => Promise<void>;
@@ -1399,7 +1400,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     : event.kind === 'turn-cancelled'
                         ? { kind: 'run-cancelled', ...(event.diagnostic ? { diagnostic: event.diagnostic } : {}) }
                         : { kind: 'run-complete' });
-                const custody = params.createExecutionRunContext?.onTurnTerminal?.(active.turnId);
+                const custody = (params.createExecutionRunContext ?? params.createSessionContext)?.onTurnTerminal?.(active.turnId);
                 if (custody) {
                     const settlement = custody.then(settle, error => {
                         const failure = sanitizeThrownError(error, sanitizeProviderDiagnosticText, { runId });
@@ -1483,6 +1484,13 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             const initialActionAttribution = admittedInputMeta
                 ? admittedInputMeta.actionRequestAttributionV1
                 : params.options.actionRequestAttributionV1;
+            const sessionLease = !params.createExecutionRunContext && params.createSessionContext
+                ? await params.createSessionContext({ services: fallbackServices, signal,
+                    readSessionRuntime: () => null,
+                    onInteractionUnavailable: () => failRuntime(
+                        'Execution-run permission interaction target is unavailable', 'execution_run_interaction_unavailable'),
+                    ...(initialActionAttribution ? { actionRequestAttributionV1: materializeActionRequestAttributionV1(initialActionAttribution) } : {}),
+                }) : null;
             const context = params.createExecutionRunContext
                 ? (executionRunContextLease = await params.createExecutionRunContext({
                     services: fallbackServices,
@@ -1495,6 +1503,12 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     ...(!params.retainedConversation && initialActionAttribution
                         ? { actionRequestAttributionV1: materializeActionRequestAttributionV1(initialActionAttribution) } : {}),
                 })).context
+                : sessionLease
+                    ? (executionRunContextLease = { ...sessionLease, context: createNativeAgentInvocationContext({
+                        lease: params.lease, onToolNormalizationSource: params.options.onToolNormalizationSource,
+                        runId, signal: sessionLease.context.signal, services: sessionLease.context.services,
+                        invokedAtMs: sessionLease.context.invokedAtMs,
+                    }) }).context
                 : createNativeAgentInvocationContext({
                     lease: params.lease,
                     onToolNormalizationSource: params.options.onToolNormalizationSource,
