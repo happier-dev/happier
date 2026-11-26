@@ -95,7 +95,7 @@ describe('Plugins page without a chosen machine', () => {
         expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
         await screen.update(<DiscoverStatusSummary {...props} searchText={null} error="read failed" />);
         // Finite read failures use the shared registry source notice, not the result summary.
-        expect(screen.getTextContent()).toContain('common.unavailable');
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.discover.issue.index')).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('settingsPlugins.surfaces.browseEmpty');
         await screen.update(<DiscoverStatusSummary {...props} searchText="" />);
