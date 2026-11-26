@@ -5,6 +5,7 @@ import { createSessionMembershipReadFixture } from '../../sessions/read/sessionR
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
 import type { AutomationDefinitionDetail, AutomationTriggerDetail, AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
+import { getWorkflowStarterExamplesV1 } from '../../workflows/builtins/examples.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { createWorkflowTriggerActions, type WorkflowTriggerActionsDependencies } from './workflowTriggerActions.js';
 import { WorkflowSubjectsListResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
@@ -1907,6 +1908,41 @@ describe('person-saved deployment trigger consent', () => {
     } } };
     const read = () => actions.readSavedConsent({ automationId: row.id, triggerId, ownerAccountId: 'owner', operation: legacy }, caller);
     expect(await read()).toBeNull();
+  });
+
+  it('reconciles an Automatic-to-Ask deployment edit with the full editor patch', async () => {
+    const f = fixture(deploymentWorkflowDefinition());
+    const nativeAccount = { accountId: 'owner', serverId: 'home', isCurrent: async () => true };
+    const actions = createAccountWorkflowTriggerActions({ automations: f.deps.automations,
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => crypto.randomUUID(), nativeAccount });
+    const caller: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner', serverId: 'home', actionRequestId: 'save-deployment' };
+    const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'deploy-on-push');
+    if (!starter) throw new Error('Missing deploy-on-push starter');
+    const target = { kind: 'inline' as const, definition: starter.definition };
+    const inputs = { serverId: 'home', environmentId: 'staging', targetLinkId: 'runtime' };
+    const { enabled, ...trigger } = { ...deploymentEventTrigger, sourceInstanceId: 'github:repository:123' };
+    const managedGithubRepositoryId = '123';
+    const executionTarget = { kind: 'detached_run' as const };
+    const saved = await actions.add({ target, project, executionTarget, inputs, trigger: { ...trigger, enabled },
+      deployment: { branch: 'main' }, managedGithubRepositoryId, actionApproval: 'automatic' }, caller);
+    expect(saved.set.context?.actionApprovals).toHaveLength(1);
+    const triggerId = saved.triggerId!;
+    const request = { automationId: saved.set.automationId, expectedRevision: saved.set.revision, triggerId,
+      patch: { target, project, trigger, enabled, executionTarget, inputs, managedGithubRepositoryId, actionApproval: 'ask' as const } };
+    const execute = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, triggers: actions,
+      definitions: f.definitions, runs: { execute: async () => { throw new Error('Unexpected Run write'); } } });
+    const edited = await actions.update(request, caller);
+    expect(edited.set.revision).toBe(saved.set.revision + 1);
+    expect(edited.set.context).not.toHaveProperty('actionApprovals');
+    expect(edited.set.context?.deploymentTriggers).toEqual([{ triggerId, branch: 'main' }]);
+    const { triggerId: _missing, ...invalid } = request;
+    const refusal = await execute({ actionId: 'workflow.trigger.update', input: invalid, context: caller });
+    expect(refusal).toMatchObject({ ok: false, errorCode: 'invalid_input',
+      details: { issues: expect.arrayContaining([{ code: 'invalid_input', severity: 'error', path: '/triggerId', message: expect.any(String) }]) } });
+    expect(f.rows.get(saved.set.automationId)?.templateVersion).toBe(edited.set.revision);
   });
 
   it('saves only the selected exact operation, varies its SHA, and holds changed non-SHA operands', async () => {

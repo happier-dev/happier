@@ -61,6 +61,14 @@ describe('workflow Action refusal classification', () => {
         phase: 'workflow.run.get', errorClass: expect.any(String), errorCode: null, httpStatus: null,
       } });
   });
+  it('retains the original code and class of an unclassified trigger failure', () => {
+    const error = Object.assign(new TypeError('Failed to open trigger material'), { code: 'unclassified_trigger_failure' });
+    const result = normalizeWorkflowActionThrownError(error, undefined, false, 'workflow.trigger.update');
+    expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({
+      ok: false, errorCode: 'storage_unavailable',
+      failureCause: { phase: 'workflow.trigger.update', errorClass: 'TypeError', errorCode: error.code },
+    });
+  });
   it('consumes nullable RPC absence while preserving causal authority refusals and ceilings', () => {
     const context = { surface: 'agent' as const, callerPermissionMode: 'yolo' };
     expect(resolveWorkflowActionContext({ ...context, causalPermissionAuthority: null }))

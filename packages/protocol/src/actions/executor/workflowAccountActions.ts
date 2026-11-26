@@ -13,7 +13,7 @@ import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './
 import { resolveWorkflowActionContext } from './callerContext.js';
 import { readActionFailureCauseV1, projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { ActionInputIssueSchema, projectActionInputIssues } from './actionInputValidation.js';
+import { ActionInputIssueSchema, actionInputValidationFailure, projectActionInputIssues } from './actionInputValidation.js';
 import type { ActionAutomationWaitV1, ActionAutomationCancelV1 } from './actionAutomationAdmission.js';
 
 export type WorkflowActionFailureDiagnosticV1 = Readonly<{
@@ -123,7 +123,8 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
       ? { details: { code: 'target_unavailable', reason: 'selection_unavailable' } } : {}),
   });
   const result: WorkflowActionFailureV1 = failure.success ? failure.data
-    : { ok: false, errorCode: 'storage_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.storage_unavailable.text, ...causeFields };
+    : { ok: false, errorCode: 'storage_unavailable', error: WORKFLOW_OPERATION_PROBLEM_COPY_V1.storage_unavailable.text,
+      failureCause: sourceCause ?? projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: true }) };
   if (result.errorCode === 'github_webhook_home_unreachable' || result.error === result.errorCode || result.error === rawCode) {
     result.error = result.errorCode === 'cancelled' ? 'The Workflow request was cancelled.'
       : readWorkflowOperationProblemCopyV1(result.errorCode, 'details' in result ? result.details : undefined).text;
@@ -161,11 +162,12 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
 }
 
 /** Request validation is not a failure to read private persisted content. */
-function parseWorkflowActionInput<T>(schema: Readonly<{ parse: (input: unknown) => T }>, input: unknown): T {
+export function parseWorkflowActionInput<T>(schema: Readonly<{ parse: (input: unknown) => T }>, input: unknown): T {
   try {
     return schema.parse(input);
-  } catch {
-    throw Object.assign(new Error('invalid_input'), { code: 'invalid_input' });
+  } catch (error) {
+    if (error instanceof z.core.$ZodError) throw actionInputValidationFailure(error);
+    throw error;
   }
 }
 

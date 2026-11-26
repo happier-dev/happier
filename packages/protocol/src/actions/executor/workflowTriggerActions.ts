@@ -78,7 +78,7 @@ import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.j
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { parseActionExecuteFailure, projectActionExecuteFailure } from '../actionExecutionResult.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
-import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
+import { normalizeWorkflowActionThrownError, parseWorkflowActionInput } from './workflowAccountActions.js';
 import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -982,13 +982,13 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     }),
     prepareMutation: async (args: WorkflowActionExecuteArgs<WorkflowTriggerMutationActionId>) => {
       if (args.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID) {
-        const input = WorkflowTriggerAddRequestV1Schema.parse(args.input);
+        const input = parseWorkflowActionInput(WorkflowTriggerAddRequestV1Schema, args.input);
         return { workflowTriggerMutationAdmission: { actionId: args.actionId,
           changesProfile: 'subject' in input.trigger && input.trigger.subject?.kind === 'approvalProfile' } };
       }
       const update = args.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID
-        ? WorkflowTriggerUpdateRequestV1Schema.parse(args.input) : undefined;
-      const input = update ?? WorkflowTriggerRemoveRequestV1Schema.parse(args.input);
+        ? parseWorkflowActionInput(WorkflowTriggerUpdateRequestV1Schema, args.input) : undefined;
+      const input = update ?? parseWorkflowActionInput(WorkflowTriggerRemoveRequestV1Schema, args.input);
       // Move the mutation's authorized row read before routing; dispatch keeps its snapshot and normal CAS.
       const row = args.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && input.triggerId === undefined
         ? await readRemovalSet(input.automationId, args.context) : await readRetained(input.automationId, args.context);
