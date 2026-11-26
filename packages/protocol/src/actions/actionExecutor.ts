@@ -8,6 +8,7 @@ import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { createActionAutomationInvocationV1 } from './executor/actionSettlement.js';
 import { readActionOperandExecutionMachineV1 } from './executor/actionOperandExecutionMachine.js';
 import { actionAutomationAdmissionUnavailableV1 } from './executor/actionAutomationAdmission.js';
+import { isExecutionRunStartActionPurpose } from './executionRunStartRpcPurpose.js';
 import { isActionEffectHookableV1, isWorkflowStepActionSpecV1 } from './actionSpecs.js';
 import { prepareTeamGroupCreateActionInput, prepareTeamGroupUpdateActionInput, type TeamGroupCreateActionInputV1, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
 import { TEAM_GROUP_CREATE_ACTION_ID_V1, TEAM_GROUP_UPDATE_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
@@ -3851,10 +3852,12 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const { approvalScope, approvalSettings } = scopeAdmission;
     // One admitted operand snapshot serves both phases, including approval continuation.
     // Contributed invocations consume their declaration's input-sensitive effect fact at its owner.
-    // A Home-verified hop (or in-process dispatch) of the exact root Action continues
-    // an invocation whose signing root already settled its single Automation admission.
-    const isSameExternalActionContinuation = ctx.externalActionContinuation === true
-      && ctx.externalActionExecutionAuthorization?.binding.actionId === actionId;
+    // The verified host hop continues an effect already admitted before transport.
+    // Session RPC also binds a declared nested Start to its exact method; the SDK
+    // does not inherit this private marker when admitting a new nested Action.
+    const rootActionId = ctx.externalActionExecutionAuthorization?.binding.actionId;
+    const isSameExternalActionContinuation = ctx.externalActionContinuation === true && rootActionId !== undefined
+      && (rootActionId === actionId || isExecutionRunStartActionPurpose(rootActionId, actionId));
     const requiresExternalActionAutomationAdmission = !existingAdmission
       && !isSameExternalActionContinuation
       && !options?.reviewOnly

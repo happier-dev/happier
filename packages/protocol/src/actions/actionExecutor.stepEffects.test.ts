@@ -63,6 +63,7 @@ describe('workflow effect Actions', () => {
     { bindingActionId: 'machines.command.run', externalActionContinuation: true, withPort: false, expectedEffects: 1 },
     { bindingActionId: 'machines.command.run', externalActionContinuation: true, withPort: true, expectedEffects: 1 },
     { bindingActionId: 'execution.run.start', externalActionContinuation: true, withPort: false, expectedEffects: 0 },
+    { bindingActionId: 'action.invoke', externalActionContinuation: true, withPort: false, expectedEffects: 0 },
     { bindingActionId: 'machines.command.run', externalActionContinuation: undefined, withPort: false, expectedEffects: 0 },
   ] as const)('requires automation admission with binding $bindingActionId, continuation $externalActionContinuation and port $withPort', async ({
     bindingActionId, externalActionContinuation, withPort, expectedEffects,

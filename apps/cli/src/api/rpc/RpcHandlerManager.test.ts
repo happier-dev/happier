@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResult } from '@happier-dev/protocol/actions/externalActionApi';
 import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
@@ -51,7 +53,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
-import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 
 it.each(['registered', 'retained'] as const)('closes selected receiving admission while existing creation drains, then reopens on release (%s handler)', async binding => {
@@ -624,7 +626,7 @@ it.each(['scoped PAT', 'terminal', 'narrowed Account'] as const)(
 it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody through the existing RPC carrier and real credential factory', async mode => {
   const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
   const machineKey = new Uint8Array(32).fill(7);
-  const credentials: StoredCredentials = { token: 'bob-private', encryption: mode === 'plain' ? null
+  const credentials: StoredCredentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`, encryption: mode === 'plain' ? null
     : { type: 'legacy', secret: new Uint8Array(32).fill(29) } };
   const encodedCredentials = { ...encodeStoredCredentials(credentials), token: credentials.token };
   const method = 'machine:machines.managed.list';
@@ -647,7 +649,7 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
   let current = true;
   let retired: (() => Promise<boolean>) | undefined;
   const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
-    expect(config?.headers?.Authorization).toBe('Bearer bob-private');
+    expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
     if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
     if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: settings, version: 1 } };
     if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
@@ -656,6 +658,14 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
         tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(credentials.encryption.secret)).publicKey) : null, updatedAt: 1,
     } };
     throw new Error('Unexpected requester HTTP read');
+  });
+  const index = vi.spyOn(axios, 'request').mockImplementation(async request => {
+    if (request.url === `https://bob-home.test${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`) {
+      expect(request.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      return { status: 200, data: { v: 1, rows: [] } };
+    }
+    expect(request.url).toBe(`https://bob-home.test${managedMachineActionEndpointPathV1('machines.managed.list')}`);
+    return { status: 200, data: { machines: [] } };
   });
   const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
     expect(String(url)).toContain('/execution-authorization/verify');
@@ -718,7 +728,8 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
   };
   const channel = await createRequesterCurrentnessSocketHarness();
   try {
-    expect(await run()).toMatchObject({ ok: true, result: { machines: [] } });
+    const admittedControl = await run();
+    expect(admittedControl, JSON.stringify(admittedControl)).toMatchObject({ ok: true, result: { machines: [] } });
     expect(await retired?.()).toBe(false);
     expect(await run(seal(authorization, params, method))).toMatchObject({ ok: true, result: { machines: [] } });
     expect(await run(seal(authorization, params, 'other:machines.managed.list'))).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
@@ -797,6 +808,75 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
           .toMatchObject({ admitted: true, surface: 'voice', authority: 'present_user', caller: { kind: 'host' } });
       }
     }
+    // The source selects Before checks once; the Session receiver consumes that
+    // admitted exact effect after opening the purpose-bound requester carrier.
+    for (const rootActionId of ['execution.run.start', 'action.invoke'] as const) {
+      let automationReads = 0;
+      let nativeStarts = 0;
+      const nativeResponse = ExecutionRunStartResponseSchema.parse({ runId: 'finite-admitted-run',
+        callId: 'finite-call', sidechainId: 'finite-call' });
+      const runMethod = SESSION_RPC_METHODS.EXECUTION_RUN_START;
+      const fullMethod = `original-session:${runMethod}`;
+      const root = { ...authorization, binding: { ...authorization.binding,
+        actionId: rootActionId, custodianAccountId: 'bob',
+        target: { kind: 'machine' as const, machineId: 'machine' } } };
+      // Native execution is the process boundary. No model or vendor is invoked.
+      const receiver = createActionExecutor({ executionRunStart: async () => {
+        nativeStarts++;
+        return nativeResponse;
+      } });
+      sessionRpc.registerHandler(runMethod, (input, context) => receiver.execute('execution.run.start', input,
+        { ...buildActionExecutorContextForRpc({ ...context, actionId: 'execution.run.start' }), bypassApprovals: true }));
+      const source = createActionExecutor({
+        actionAutomations: createActionAutomationPortV1({ accountId: 'bob',
+          // The Home Automation index is the network boundary; selection stays real.
+          seed: async () => { automationReads++; return { v: 1, rows: [] }; },
+          start: async () => ({ runs: [], notices: [] }),
+        }),
+        executionRunStart: async (_sessionId, start) => {
+          const input = { ...start, sessionId: 'original-session' };
+          const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root,
+            credentials: encodedCredentials, invocation: voiceInvocation,
+            purpose: { kind: 'machine_rpc', method: runMethod, params: input },
+            installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+          const response = await sessionRpc.handleRequest({ method: fullMethod, requestId: `continued-${rootActionId}`,
+            authorization: { kind: 'session.write', sessionId: 'original-session' },
+            callerAuthority: 'present_user', callerInputAuthorization: sealed,
+            params: mode === 'plain' ? input : await sealRpcRequest(machineKey, fullMethod, input) });
+          const result = mode === 'plain' ? response : await openRpcResponse(machineKey, response);
+          expect(result, `${rootActionId}: ${JSON.stringify(result)}`).toMatchObject({ ok: true, result: { runId: 'finite-admitted-run' } });
+          return nativeResponse;
+        },
+      });
+      const result = await source.execute('execution.run.start', { ...voiceStart, sessionId: 'original-session' }, {
+        surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true,
+        runtimeAccountId: 'bob', serverId: 'profile', serverIdentityId: 'home',
+        externalActionExecutionAuthorization: root, externalActionTarget: root.binding.target,
+      });
+      expect(result, `${rootActionId}: ${JSON.stringify(result)}`).toMatchObject({ ok: true });
+      expect(nativeStarts, rootActionId).toBe(1);
+      expect(automationReads, rootActionId).toBe(1);
+      if (rootActionId === 'action.invoke') {
+        for (const variant of ['wrong_method', 'foreign_credential'] as const) {
+          const method = variant === 'wrong_method' ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE : runMethod;
+          const input = variant === 'wrong_method' ? { runId: nativeResponse.runId }
+            : { ...voiceStart, sessionId: 'original-session' };
+          const sealed = sealExternalActionRequesterAccountContextV1({ authorization: variant === 'foreign_credential'
+            ? { ...root, binding: { ...root.binding, accountId: 'foreign-person' } } : root,
+            credentials: encodedCredentials, invocation: voiceInvocation,
+            purpose: { kind: 'machine_rpc', method, params: input },
+            installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+          const fullMethod = `original-session:${method}`;
+          const response = await sessionRpc.handleRequest({ method: fullMethod, requestId: variant,
+            authorization: { kind: 'session.write', sessionId: 'original-session' },
+            callerAuthority: 'present_user', callerInputAuthorization: sealed,
+            params: mode === 'plain' ? input : await sealRpcRequest(machineKey, fullMethod, input) });
+          expect(mode === 'plain' ? response : await openRpcResponse(machineKey, response), variant)
+            .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+          expect(nativeStarts, variant).toBe(1);
+        }
+      }
+    }
     const runBinding = { ...authorization.binding, actionId: 'execution.run.start', custodianAccountId: 'bob',
       target: { kind: 'machine', machineId: 'machine' } as const };
     for (const binding of [
@@ -828,7 +908,7 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
     expect(get).not.toHaveBeenCalled();
     current = false;
     expect(await run()).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
-  } finally { await channel.close(); get.mockRestore(); post.mockRestore(); }
+  } finally { await channel.close(); get.mockRestore(); post.mockRestore(); index.mockRestore(); }
 });
 
 it('refuses unverified physical TARGET routing before exposing the existing preflight receiver', async () => {
