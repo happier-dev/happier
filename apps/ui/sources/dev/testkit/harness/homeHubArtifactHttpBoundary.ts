@@ -73,6 +73,7 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
     let artifact: Artifact | null = null;
     let callerAccess: ArtifactCallerAccessV1 | null = 'owner';
     let grants: readonly ArtifactAccessGrantRowV1[] = [];
+    let writtenByOthers = false;
     const writes: T[] = [];
     let accountSettings: { content: unknown; version: number } = { content: { t: 'plain', v: {} }, version: 1 };
     /** The Account's Project rows census the Home serves; widget input admission checks checkouts against it. */
@@ -132,7 +133,7 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
         }
         // The server's grants reader admits every current grantee; management is separate.
         if (path === `/v1/artifacts/${artifactId}/access/grants`) return artifact && callerAccess !== null
-            ? Response.json({ artifactId, ownerAccountId: artifact.ownerAccountId, access: callerAccess, grants })
+            ? Response.json({ artifactId, ownerAccountId: artifact.ownerAccountId, access: callerAccess, grants, writtenByOthers })
             : Response.json({ error: 'artifact_access_forbidden' }, { status: 403 });
         if (path !== '/v1/artifacts' && path !== `/v1/artifacts/${artifactId}`) return Response.json({ error: 'not_found' }, { status: 404 });
         if (callerAccess === null) return Response.json({ error: 'artifact_access_forbidden' }, { status: 403 });
@@ -160,5 +161,7 @@ export function createLayoutArtifactHttpBoundary<T>(accountId: string, definitio
         setWorkspaceRefs: (next: readonly WorkspaceRefV1[]) => { workspaceRefs = next; },
         setCallerAccess: (access: ArtifactCallerAccessV1 | null) => { callerAccess = access; },
         setGrants: (next: readonly ArtifactAccessGrantRowV1[]) => { grants = next; },
+        /** The server's sticky mark that an Account besides the owner wrote this content. */
+        setWrittenByOthers: (next: boolean) => { writtenByOthers = next; },
     };
 }

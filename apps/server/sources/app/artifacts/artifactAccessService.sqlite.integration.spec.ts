@@ -24,7 +24,7 @@ import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readWidgetSurfaceArtifactHeaderV1 } from '@happier-dev/protocol/widgets';
-import { ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -1317,7 +1317,8 @@ describe("Artifact document grants (real SQLite)", () => {
             expect(await db.artifactKeyEnvelope.findMany({ where: { artifactId: artifact.id }, select: { recipientAccountId: true } }))
                 .toEqual([{ recipientAccountId: remaining.id }]);
             expect(revoked.statusCode).toBe(200);
-            expect(revoked.json()).toEqual({ artifactId: artifact.id, ownerAccountId: owner.id, access: null, grants: [], changed: true });
+            expect(ArtifactAccessGrantMutationResponseV1Schema.parse(revoked.json()))
+                .toEqual({ artifactId: artifact.id, ownerAccountId: owner.id, access: null, grants: [], changed: true });
             for (const url of [grantsUrl, `/v1/artifacts/${artifact.id}`, `/v1/artifacts/${artifact.id}/access/recipients`]) {
                 expect((await app.inject({ method: "GET", url, headers: { "x-test-user-id": admin.id } })).statusCode).toBe(404);
             }
@@ -1325,6 +1326,48 @@ describe("Artifact document grants (real SQLite)", () => {
             expect(ownerList.json()).toMatchObject({ access: "owner", grants: [
                 { principal: { kind: "account", accountId: remaining.id }, accessLevel: "view" },
             ] });
+        });
+    });
+
+    it("remembers that someone besides the owner wrote the content, through downgrade, revoke and the owner's later writes", async () => {
+        const owner = await plainAccount();
+        const editor = await plainAccount();
+        const viewer = await plainAccount();
+        const written = await plainArtifact(owner.id);
+        const ownerOnly = await plainArtifact(owner.id);
+        for (const artifact of [written, ownerOnly]) {
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: editor.id,
+                accessLevel: "edit", createdByAccountId: owner.id } });
+        }
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: ownerOnly.id, accountId: viewer.id,
+            accessLevel: "view", createdByAccountId: owner.id } });
+        const body = (value: string, expectedVersion: number) => ({
+            bytes: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value })), expectedVersion });
+        await withAuthenticatedTestApp(app => artifactsRoutes(app), async app => {
+            const ownerFact = async (artifactId: string) => {
+                const listed = await app.inject({ method: "GET", url: `/v1/artifacts/${artifactId}/access/grants`,
+                    headers: { "x-test-user-id": owner.id } });
+                expect(listed.statusCode, listed.body).toBe(200);
+                return ArtifactAccessGrantsListResponseV1Schema.parse(listed.json()).writtenByOthers;
+            };
+            expect(await ownerFact(written.id)).toBe(false);
+            // The editor writes; a header-free classification write by the editor alone would not count.
+            expect(await inTx(tx => updateArtifactTx(tx, { actorUserId: editor.id, artifactId: written.id, body: body("planted", 1) })))
+                .toMatchObject({ ok: true });
+            expect(await ownerFact(written.id)).toBe(true);
+            // A grant change rewrites no content, so it does not forget who wrote it.
+            await db.artifactGrant.updateMany({ where: { artifactId: written.id, accountId: editor.id }, data: { accessLevel: "view" } });
+            expect(await ownerFact(written.id)).toBe(true);
+            await db.artifactGrant.deleteMany({ where: { artifactId: written.id, accountId: editor.id } });
+            expect(await ownerFact(written.id)).toBe(true);
+            // The owner's own later write (a restore takes the same writer) keeps the mark.
+            expect(await inTx(tx => updateArtifactTx(tx, { actorUserId: owner.id, artifactId: written.id, body: body("restored", 2) })))
+                .toMatchObject({ ok: true });
+            expect(await ownerFact(written.id)).toBe(true);
+            // Only the owner wrote this one: view, edit and public reach alone never mark it.
+            expect(await inTx(tx => updateArtifactTx(tx, { actorUserId: owner.id, artifactId: ownerOnly.id, body: body("mine", 1) })))
+                .toMatchObject({ ok: true });
+            expect(await ownerFact(ownerOnly.id)).toBe(false);
         });
     });
 

@@ -74,6 +74,11 @@ const ArtifactAccessGrantsSnapshotV1Schema = lazyZodSchema(() => z.strictObject(
 export const ArtifactAccessGrantsListResponseV1Schema = lazyZodSchema(() => z.extend(ArtifactAccessGrantsSnapshotV1Schema, {
   /** Present only for a requested audience review; effective Team/Group access is resolved by the owner. */
   missingAudience: z.optional(z.array(PrincipalRefV1Schema)),
+  /**
+   * Server-set when an Account besides the owner wrote this Artifact's content; grant changes never clear it.
+   * Readers count a missing value as true.
+   */
+  writtenByOthers: z.optional(z.boolean()),
 }));
 export const ArtifactAccessGrantMutationResponseV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ArtifactAccessGrantsSnapshotV1Schema, {
   access: z.nullable(ArtifactCallerAccessV1Schema),

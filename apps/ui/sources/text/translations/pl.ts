@@ -13029,7 +13029,7 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
             },
             foreign_session_html: {
                 title: 'HTML, który inni mogą zmieniać',
-                subtitle: 'Zezwól kodowi HTML, który inna osoba napisała lub może zmienić – w jej sesjach, na powierzchniach Ci udostępnionych lub na Twoich tablicach, pulpitach i widżetach, które inni mogą edytować – na użycie tej akcji. Domyślnie wyłączone.',
+                subtitle: 'Zezwól kodowi HTML, który inna osoba napisała lub może zmienić – w jej sesjach, na powierzchniach Ci udostępnionych lub na Twoich tablicach, pulpitach i widżetach, które inni mogą edytować lub edytowali – na użycie tej akcji. Domyślnie wyłączone.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Zezwól na odczyt zasobów i aktualizacje na żywo z HTML, który inna osoba napisała lub może zmienić. Domyślnie wyłączone; prośby o zatwierdzenie nie są dostępne.',

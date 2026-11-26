@@ -12434,7 +12434,7 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
             },
             foreign_session_html: {
                 title: 'HTML que altres poden canviar',
-                subtitle: 'Permet que l’HTML que una altra persona ha escrit o pot canviar —a les seves sessions, en superfícies compartides amb tu o en els teus taulers, panells i ginys que altres poden editar— utilitzi aquesta acció. Desactivat per defecte.',
+                subtitle: 'Permet que l’HTML que una altra persona ha escrit o pot canviar —a les seves sessions, en superfícies compartides amb tu o en els teus taulers, panells i ginys que altres poden editar o han editat— utilitzi aquesta acció. Desactivat per defecte.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Permet lectures de recursos i actualitzacions en directe des d’HTML que una altra persona ha escrit o pot canviar. Desactivat per defecte; no hi ha sol·licituds d’aprovació.',

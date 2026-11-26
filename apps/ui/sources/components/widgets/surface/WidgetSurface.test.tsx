@@ -970,6 +970,9 @@ it.each([
     // View-only and public-link shares: nobody else can change the HTML, so it keeps the owner's audience.
     ['the owner\'s own HTML on their own view-only or public-link shared surface', 'own-view-only-surface', false],
     ['the owner\'s HTML from a library definition shared view-only', 'own-view-shared-definition', false],
+    // A former editor's HTML stays foreign after a downgrade to view or a full revoke (S5 F1).
+    ['the owner\'s HTML from a library definition an editor wrote, now view-only', 'own-downgraded-definition', true],
+    ['the owner\'s HTML from a library definition an editor wrote, now revoked', 'own-revoked-definition', true],
     ['the owner\'s own HTML on their own view-only shared Work Board', 'own-view-only-work-board', false],
     ['the viewer\'s own HTML on their own surface', 'own-account', false],
     ['the viewer\'s own HTML from their own private library definition', 'own-private-definition', false],
@@ -990,13 +993,16 @@ it.each([
         body: { kind: 'html', source: artifactHtmlBundleFromBodyV1('<main>Sessions</main>'),
             requestedCapabilities: { network: 'open', hostMethods: ['context', 'executeAction'], actions: ['session.list'] } } });
     const library = shape === 'own-shared-definition' || shape === 'own-view-shared-definition' || shape === 'own-private-definition'
+        || shape === 'own-downgraded-definition' || shape === 'own-revoked-definition'
         ? createLayoutArtifactHttpBoundary('viewer', { artifactId: definition.id, kind: 'widget-definition.v1',
             defaultLayout: definition, parseLayout: value => WidgetDefinitionV1Schema.parse(value), buildHeader: buildWidgetDefinitionArtifactHeaderV1 })
         : null;
     library?.seed(definition);
     // The owner granted an editor access to the saved definition; its grant roster is the server's sharing fact.
-    if (shape === 'own-shared-definition' || shape === 'own-view-shared-definition') library?.setGrants([{ principal: { kind: 'team', teamId: 'studio' },
+    if (shape === 'own-shared-definition' || shape === 'own-view-shared-definition' || shape === 'own-downgraded-definition') library?.setGrants([{ principal: { kind: 'team', teamId: 'studio' },
         accessLevel: shape === 'own-shared-definition' ? 'edit' : 'view', createdByAccountId: 'viewer', createdAt: 1, display: { name: 'Studio' } }]);
+    // The server marked the definition when the editor wrote it; a grant change does not clear the mark.
+    if (shape === 'own-downgraded-definition' || shape === 'own-revoked-definition') library?.setWrittenByOthers(true);
     const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer',
         request: (input, init) => library && new URL(String(input)).pathname.startsWith('/v1/artifacts') ? library.request(input, init) : http.request(input, init) });
     const viewer = getActiveServerAccountScope();

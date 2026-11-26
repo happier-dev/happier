@@ -1494,6 +1494,7 @@ export async function updateArtifactTx(
         kind?: string | null;
         approvalState?: string | null;
         approvalSessionId?: string | null;
+        writtenByOthers?: true;
     } = {
         lastUpdateOperation: params.updateOperationKey ?? null,
         // Prisma's @updatedAt must be set explicitly for an index-only label.
@@ -1550,6 +1551,9 @@ export async function updateArtifactTx(
     // A kind-only write can change billing without changing any stored content bytes.
     // The approval state this write stores decides retention (a settled approval keeps no earlier version).
     // Only the owner's own write may shorten the owner's history; another person's write never does.
+    // Someone besides the owner changing the content marks it for good: a later grant change must not
+    // turn their HTML into the owner's own (hosted HTML audience, S5 F1).
+    if (params.actorUserId !== ownerAccountId && (updateData.header || updateData.body)) updateData.writtenByOthers = true;
     const nextApprovalState = params.actorUserId !== ownerAccountId ? null
         : nextKind ? nextKind.approvalState : current.approvalState;
     const quota = await checkArtifactStorageBudgetInTx(tx, { accountId: ownerAccountId, artifactId: current.id,

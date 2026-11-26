@@ -1028,7 +1028,7 @@ export async function listArtifactAccessGrantsInTx(tx: Tx, input: ArtifactAccess
 }>): Promise<AccessResult<ArtifactAccessGrantsListResponseV1>> {
     const membershipAccountId = input.requestedAudience === undefined ? input.actorAccountId : undefined;
     const row = await tx.artifact.findFirst({ where: artifactAddress(input.artifactId),
-        select: { ...artifactAccessFactsSelect(membershipAccountId), kind: true } });
+        select: { ...artifactAccessFactsSelect(membershipAccountId), kind: true, writtenByOthers: true } });
     if (!row) return { ok: false, error: "artifact_not_found" };
     const admittedRow = (await withArtifactSourceReadersInTx(tx, [row], membershipAccountId))[0]!;
     const access = resolveArtifactAccessFromFacts(admittedRow, input.actorAccountId);
@@ -1053,6 +1053,7 @@ export async function listArtifactAccessGrantsInTx(tx: Tx, input: ArtifactAccess
             facts: artifactGrantFacts(admittedRow), requestedAudience: input.requestedAudience,
         });
     return { ok: true, value: { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId, access: access.level,
+        writtenByOthers: row.writtenByOthers,
         ...(missingAudience === undefined ? {} : { missingAudience }),
         grants: selfAccountId === undefined && decodeArtifactKindV1(row.kind).kindHint === 'bot_template.v1'
             ? await projectAdmittedTemplateAcceptedVersionsInTx(tx, input.artifactId, grants) : grants } };
@@ -1123,7 +1124,12 @@ export async function setArtifactAccessGrantInTx(tx: Tx, input: ArtifactAccessGr
             admittedAccountIds: audience, previousAccountIds: previousAudience });
     }
     const listed = await listArtifactAccessGrantsInTx(tx, input);
-    return listed.ok ? { ok: true, value: { ...listed.value, changed } } : listed;
+    return listed.ok ? { ok: true, value: { ...grantMutationSnapshot(listed.value), changed } } : listed;
+}
+
+/** A grant mutation answers with the roster only; the authorship mark belongs to the list read. */
+function grantMutationSnapshot({ writtenByOthers: _writtenByOthers, ...snapshot }: ArtifactAccessGrantsListResponseV1) {
+    return snapshot;
 }
 
 /** The caller has admitted and locked these exact principals before any write. */
@@ -1226,7 +1232,7 @@ export async function removeArtifactAccessGrantInTx(tx: Tx, input: ArtifactAcces
     }
     const listed = await listArtifactAccessGrantsInTx(tx, input);
     return { ok: true, value: listed.ok
-        ? { ...listed.value, changed: deleted.count > 0 }
+        ? { ...grantMutationSnapshot(listed.value), changed: deleted.count > 0 }
         : { artifactId: input.artifactId, ownerAccountId: access.ownerAccountId,
             access: null, grants: [], changed: deleted.count > 0 } };
 }

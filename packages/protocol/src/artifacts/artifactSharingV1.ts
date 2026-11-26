@@ -62,8 +62,10 @@ export async function readArtifactSharedAudienceV1(params: Readonly<{
 }
 
 /**
- * The same admitted roster also says whether anyone besides the owner can change the Artifact: an edit or admin
- * grant, or a recipient's own read. View-only grants and a public link cannot write. Unprovable facts still throw.
+ * The same admitted roster also says whether anyone besides the owner can change the Artifact, or already has:
+ * an edit or admin grant, a recipient's own read, or the server's sticky mark that another Account wrote its
+ * content (a missing mark counts as written). View-only grants and a public link cannot write. Unprovable
+ * facts still throw.
  */
 export async function readArtifactAudienceFactsV1(params: Readonly<{
   current: ArtifactSharingResourceV1;
@@ -75,9 +77,10 @@ export async function readArtifactAudienceFactsV1(params: Readonly<{
     return { shared: true, othersCanWrite: true };
   }
   const audience = await readAdmittedArtifactRoster(params);
-  const othersCanWrite = audience.access !== 'owner' || audience.grants.some(grant => grant.accessLevel !== 'view');
-  if (othersCanWrite || audience.grants.length > 0 || params.current.publicAudience === 'retained') return { shared: true, othersCanWrite };
-  if (params.current.publicAudience === 'none') return { shared: false, othersCanWrite: false };
+  const othersCanWrite = audience.access !== 'owner' || audience.writtenByOthers !== false
+    || audience.grants.some(grant => grant.accessLevel !== 'view');
+  if (audience.access !== 'owner' || audience.grants.length > 0 || params.current.publicAudience === 'retained') return { shared: true, othersCanWrite };
+  if (params.current.publicAudience === 'none') return { shared: false, othersCanWrite };
   throw artifactContentUnavailable();
 }
 

@@ -246,6 +246,8 @@ export function createArtifactStoreBoundary(params: Readonly<{
 }>): ArtifactStoreBoundary {
     const rows = new Map<string, StoredArtifactFixture>();
     const grants = new Map<string, Map<string, ArtifactAccessGrantRowV1>>();
+    /** Mirrors the server's sticky mark: Artifacts whose content an Account besides the owner wrote. */
+    const writtenByOthers = new Set<string>();
     const principalKey = (principal: ArtifactAccessGrantRowV1['principal']) => JSON.stringify(principal.kind === 'account'
         ? ['account', principal.accountId] : ['team', principal.teamId]);
     const directAccountRecipients = (artifactId: string) => [...(grants.get(artifactId)?.values() ?? [])]
@@ -387,6 +389,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
             updatedAt: kindOnly ? current.updatedAt : Math.max(Date.now(), current.updatedAt + 1),
         };
         if (classification && !Object.hasOwn(classification, 'kindHint')) delete next.kindHint;
+        if ((headerChange || bodyChange) && callerAccountId !== current.ownerAccountId) writtenByOthers.add(artifactId);
         rows.set(artifactId, next);
         if (input?.updateOperationId) acceptedUpdates.set(artifactId, structuredClone(input));
         else acceptedUpdates.delete(artifactId);
@@ -511,6 +514,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
                     && !selected.some(grant => principalKey(grant.principal) === principalKey(principal)));
                 return Promise.resolve(row && access ? json(ArtifactAccessGrantsListResponseV1Schema.parse({
                     artifactId: row.id, ownerAccountId: row.ownerAccountId, access, grants: selected,
+                    writtenByOthers: writtenByOthers.has(row.id),
                     ...(missingAudience ? { missingAudience } : {}),
                 })) : json({ error: 'artifact_not_found' }, 404));
             }

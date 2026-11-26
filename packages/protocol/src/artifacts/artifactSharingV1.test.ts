@@ -171,8 +171,9 @@ describe('Document sharing kind owner', () => {
       publicAudience: 'none' as 'retained' | 'none' | 'unknown', header: { kind: 'work-board.v1' } };
     const grant = (accessLevel: 'view' | 'edit' | 'admin') => ({ principal: { kind: 'team' as const, teamId: 'studio' }, accessLevel,
       createdByAccountId: 'owner', createdAt: 1, display: { name: 'Studio' } });
-    const facts = (grants: readonly ReturnType<typeof grant>[], overrides: Partial<typeof current> = {}) => readArtifactAudienceFactsV1({
-      current: { ...current, ...overrides }, readGrants: async () => ({ artifactId: 'board', ownerAccountId: 'owner', access: 'owner', grants }) });
+    const facts = (grants: readonly ReturnType<typeof grant>[], overrides: Partial<typeof current> = {}, writtenByOthers: boolean | 'missing' = false) => readArtifactAudienceFactsV1({
+      current: { ...current, ...overrides }, readGrants: async () => ({ artifactId: 'board', ownerAccountId: 'owner', access: 'owner', grants,
+        ...(writtenByOthers === 'missing' ? {} : { writtenByOthers }) }) });
     // Private, view-only and public-link shares: only the owner can change it.
     expect(await facts([])).toEqual({ shared: false, othersCanWrite: false });
     expect(await facts([grant('view')])).toEqual({ shared: true, othersCanWrite: false });
@@ -180,6 +181,10 @@ describe('Document sharing kind owner', () => {
     // Any edit or admin grant lets someone else write it.
     expect(await facts([grant('view'), grant('edit')])).toEqual({ shared: true, othersCanWrite: true });
     expect(await facts([grant('admin')], { publicAudience: 'retained' })).toEqual({ shared: true, othersCanWrite: true });
+    // Content someone else already wrote stays theirs after a downgrade or a revoke; a roster that does not say fails closed.
+    expect(await facts([grant('view')], {}, true)).toEqual({ shared: true, othersCanWrite: true });
+    expect(await facts([], {}, true)).toEqual({ shared: false, othersCanWrite: true });
+    expect(await facts([], {}, 'missing')).toEqual({ shared: false, othersCanWrite: true });
     // A recipient's read is someone else's surface; an unprovable or unreadable roster fails closed.
     expect(await facts([], { access: 'view' } as Partial<typeof current>)).toEqual({ shared: true, othersCanWrite: true });
     await expect(facts([], { publicAudience: 'unknown' })).rejects.toMatchObject({ code: 'content_unavailable' });

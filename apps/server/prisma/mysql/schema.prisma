@@ -3752,6 +3752,8 @@ model Artifact {
     header            Bytes @db.LongBlob // Encrypted header (can contain JSON)
     headerVersion     Int      @default(0)
     lastUpdateOperation String?
+    /// Server-set when an Account besides the owner writes the header or body. Grant changes never clear it.
+    writtenByOthers   Boolean  @default(false)
     body              Bytes @db.LongBlob // Encrypted body
     bodyVersion       Int      @default(0)
     provenance        Bytes? @db.LongBlob

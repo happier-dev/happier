@@ -13200,7 +13200,7 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
             },
             foreign_session_html: {
                 title: 'HTML que otras personas pueden cambiar',
-                subtitle: 'Permite que el HTML que otra persona escribió o puede cambiar —en sus sesiones, en superficies compartidas contigo o en tus propios tableros, paneles y widgets que otras personas pueden editar— use esta acción. Desactivado por defecto.',
+                subtitle: 'Permite que el HTML que otra persona escribió o puede cambiar —en sus sesiones, en superficies compartidas contigo o en tus propios tableros, paneles y widgets que otras personas pueden editar o han editado— use esta acción. Desactivado por defecto.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Permite lecturas de recursos y actualizaciones en directo desde HTML que otra persona escribió o puede cambiar. Desactivado por defecto; no hay solicitudes de aprobación.',

@@ -730,13 +730,21 @@ Session the viewer does not own; HTML widgets on a surface whose Account is not
 the viewer, or on the Board or companion of a Session the viewer does not own,
 whatever the widget's target; and, for every viewer including the owner, HTML
 widgets on a widget surface (Project dashboard, Work Board, plugin-page or
-core-page area) or from a saved widget definition that other people can edit.
-"Other people can edit" is one server-decided fact from the existing Artifact
-sharing reader (`readArtifactAudienceFactsV1`), from the same grant roster that
-says the Artifact is shared: an edit or admin grant, or a recipient's own read.
-View-only grants and a public link cannot change the HTML, so on those shares
-the owner's own HTML keeps the owner's ordinary policy. A read that cannot say
-who can write counts as writable by others. The surface's own layout read
+core-page area) or from a saved widget definition that other people can edit
+or have edited. "Other people can edit or have edited" is one server-decided
+fact from the existing Artifact sharing reader (`readArtifactAudienceFactsV1`),
+from the same grant-list read that says the Artifact is shared: an edit or
+admin grant, a recipient's own read, or `writtenByOthers`. The server sets
+`Artifact.writtenByOthers` in `updateArtifactTx` whenever an Account besides the
+owner writes the header or body, never clears it (grant changes, revokes and the
+owner's later writes, including restores, keep it), and returns it with the
+owner's grant list. View-only grants and a public link cannot change the HTML,
+so on those shares the owner's own HTML keeps the owner's ordinary policy unless
+someone else wrote it. A read that cannot say counts as writable by others.
+Two residuals are deliberate: copying someone else's HTML into the owner's own
+new Artifact is the owner's own act and makes it theirs, and content another
+Account wrote before the `writtenByOthers` migration is not marked, because the
+server has no earlier record of who wrote it. The surface's own layout read
 carries the fact (`othersCanWrite` beside `isShared`); a saved definition reads
 it once per revision through the same reader and mounts once it is known.
 Static HTML still renders. The id keeps its existing spelling.

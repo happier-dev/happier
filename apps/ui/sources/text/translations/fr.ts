@@ -13038,7 +13038,7 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
             },
             foreign_session_html: {
                 title: 'HTML modifiable par d’autres',
-                subtitle: 'Autorisez le HTML qu’une autre personne a écrit ou peut modifier — dans ses sessions, sur des surfaces partagées avec vous ou sur vos propres tableaux, tableaux de bord et widgets que d’autres peuvent modifier — à utiliser cette action. Désactivé par défaut.',
+                subtitle: 'Autorisez le HTML qu’une autre personne a écrit ou peut modifier — dans ses sessions, sur des surfaces partagées avec vous ou sur vos propres tableaux, tableaux de bord et widgets que d’autres peuvent modifier ou ont modifiés — à utiliser cette action. Désactivé par défaut.',
             },
             foreign_session_html_resources: {
                 subtitle: 'Autorisez la lecture des ressources et leurs mises à jour en direct depuis du HTML qu’une autre personne a écrit ou peut modifier. Désactivé par défaut ; aucune demande d’approbation disponible.',
