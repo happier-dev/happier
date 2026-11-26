@@ -70,7 +70,7 @@ import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/accou
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
-import { createWorkflowCoordinator } from './coordinator';
+import { classifyWorkflowAbort, createWorkflowCoordinator } from './coordinator';
 import { buildWorkflowActionContext } from './daemonRuntime';
 import type { WorkflowActionExecutor } from './coordinator';
 import { createCoordinatorWorkspaceResolver, verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
@@ -3212,6 +3212,9 @@ describe('workflow Session step executor', () => {
     { denied: false, boundSessionId: 'new-session', policy: 'composed', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-mixed', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reclaim', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-claim-loss', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-worker-loss', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-stop', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-unknown', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reject', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-automation', surface: 'agent' },
@@ -3324,6 +3327,7 @@ describe('workflow Session step executor', () => {
     });
     let stored: ApprovalRequestV2 | undefined;
     let invitationCards = 0;
+    let approvalReads = 0;
     let retainedInvitationApproval: Extract<NonNullable<import('@happier-dev/protocol/workflows').WorkflowProgressEnvelopeV1['execution']>, { kind: 'action' }> | undefined;
     const host = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: 'workflow-host', mode: 'plain', ctx: null,
       serverId: 'server-1', serverIdentityId: 'srv_home', serverHttpBaseUrl: resolveServerHttpBaseUrl(),
@@ -3336,7 +3340,7 @@ describe('workflow Session step executor', () => {
     }, {
       ...createDiscussionActionDeps({ credentials, serverId: 'server-1', serverHttpBaseUrl: resolveServerHttpBaseUrl() }),
       approvalsCreate: async ({ request }) => { invitationCards++; stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'invitation-approval' }; },
-      approvalsGet: async () => stored ?? null,
+      approvalsGet: async () => { approvalReads++; return stored ?? null; },
       approvalsUpdate: async ({ request }) => {
         if (!stored) throw new Error('missing approval');
         const transition = decideApprovalRequestTransition(stored, request);
@@ -3354,7 +3358,7 @@ describe('workflow Session step executor', () => {
         externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
       }),
         ...(composed && policy !== 'composed-reclaim' && policy !== 'composed-unknown' ? { observeApproval: async ({ artifactId, actionRequestId, signal }: Parameters<NonNullable<WorkflowActionExecutor['observeApproval']>>[0]) => host.observeRecordedApprovalExecution({
-          artifactId, signal, expectedOrigin: { actionId: 'discussion.invite', requestId: actionRequestId,
+          artifactId, signal, shouldWithdrawOnAbort: () => classifyWorkflowAbort(signal) === 'cancelled', expectedOrigin: { actionId: 'discussion.invite', requestId: actionRequestId,
             accountId: 'account-1', serverIdentityId: 'srv_home', machineId: 'machine-1' },
           isCurrent: async () => !signal.aborted,
         }) } : {}),
@@ -3441,6 +3445,9 @@ describe('workflow Session step executor', () => {
       const lifetime = new AbortController();
       const run = { ...accepted.snapshot, runId: 'discussion-run', signal: lifetime.signal };
       const running = coordinator.run(run).then(result => ({ result }), error => ({ error }));
+      const rejoinLifetime = new AbortController();
+      const resumedRun = { ...run, signal: rejoinLifetime.signal };
+      let rejoined: ReturnType<typeof coordinator.run> | undefined;
       try {
         if (policy === 'composed-automation' || policy === 'composed-missing-starter' || policy === 'composed-substituted-starter') {
           expect(await running).toMatchObject({ result: { state: 'interrupted' } });
@@ -3470,6 +3477,27 @@ describe('workflow Session step executor', () => {
         } });
         expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]);
         expect(invitationCards).toBe(1);
+        if (policy === 'composed-stop') {
+          await vi.waitFor(() => expect(approvalReads).toBeGreaterThan(0));
+          lifetime.abort(WORKFLOW_CANCEL_REQUESTED_ABORT_REASON);
+          expect(await running).toMatchObject({ result: { state: 'cancelled' } });
+          expect(stored?.status).toBe('canceled');
+          expect(invitationCards).toBe(1);
+          expect(launches).toEqual([]);
+          return;
+        }
+        if (policy === 'composed-claim-loss' || policy === 'composed-worker-loss') {
+          await vi.waitFor(() => expect(approvalReads).toBeGreaterThan(0));
+          lifetime.abort(policy === 'composed-claim-loss' ? new Error('automation_claim_lease_expired') : undefined);
+          expect(await running).toMatchObject({ error: expect.any(WorkflowRuntimeInterruption) });
+          expect(stored?.status).toBe('open');
+          if (policy === 'composed-worker-loss') {
+            const readsBeforeRejoin = approvalReads;
+            rejoined = coordinator.run(resumedRun);
+            await vi.waitFor(() => expect(approvalReads).toBeGreaterThan(readsBeforeRejoin));
+            expect(invitationCards).toBe(1);
+          }
+        }
         const addressed = (sessionId: string) => expect.objectContaining({ sessionId, discussionAddressing: {
           discussionId, messageId: discussionOrigin.messageId, throughSeq: discussionOrigin.throughSeq, participantSessionId: sessionId,
         } });
@@ -3499,7 +3527,9 @@ describe('workflow Session step executor', () => {
           expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]); expect(inputs).toEqual([]);
           return;
         }
-        if (policy === 'composed-reclaim') expect(await coordinator.run(run)).toMatchObject({ state: 'succeeded' });
+        if (policy === 'composed-reclaim' || policy === 'composed-claim-loss' || policy === 'composed-worker-loss') {
+          expect(await (rejoined ?? coordinator.run(resumedRun))).toMatchObject({ state: 'succeeded' });
+        }
         else expect(await running).toMatchObject({ result: { state: 'succeeded' } });
         expect(store.list().find(row => row.blockId === 'review')).toMatchObject({ recordId: held?.recordId, lifecycle: 'completed' });
         expect(reservations).toHaveLength(1); expect(launches).toHaveLength(1); expect(births).toHaveLength(1);
@@ -3508,12 +3538,14 @@ describe('workflow Session step executor', () => {
         } });
         expect(inputs).toEqual(mixed ? [addressed(existing.sessionId), addressed('new-session')] : [addressed('new-session')]);
         expect(invitationCards).toBe(1);
-        expect(await coordinator.run(run)).toMatchObject({ state: 'succeeded' });
+        expect(await coordinator.run(resumedRun)).toMatchObject({ state: 'succeeded' });
         expect(reservations).toHaveLength(1); expect(launches).toHaveLength(1); expect(births).toHaveLength(1);
         expect(inputs).toHaveLength(mixed ? 2 : 1);
       } finally {
         lifetime.abort();
+        rejoinLifetime.abort();
         await running;
+        await rejoined?.catch(() => undefined);
       }
       return;
     }

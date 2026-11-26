@@ -9,6 +9,7 @@ import type {
   WorkflowAcceptedAuthorizationV1,
 } from '@happier-dev/protocol';
 import { buildWorkflowActionContext, createWorkflowActionContextResolver } from './workflowActionContext';
+import { classifyWorkflowAbort } from './coordinator';
 export { buildWorkflowActionContext } from './workflowActionContext';
 import type { WorkflowConversationUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -479,6 +480,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             observeApproval: async ({ artifactId, actionRequestId, actionId, signal }) => {
               if (!input.serverIdentityId) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
               return await actionExecutor.observeRecordedApprovalExecution({ artifactId, signal,
+                shouldWithdrawOnAbort: () => classifyWorkflowAbort(signal) === 'cancelled',
                 expectedOrigin: { actionId: actionId ?? 'discussion.invite', requestId: actionRequestId,
                   accountId: params.accountId, serverIdentityId: input.serverIdentityId, machineId: input.machineId },
               });
@@ -610,6 +612,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
           observeApproval: async ({ artifactId, actionRequestId, actionId, signal }) => {
             if (!input.serverIdentityId) throw new Error('approval_context_unavailable');
             return await actionExecutor.observeRecordedApprovalExecution({ artifactId,
+              shouldWithdrawOnAbort: () => classifyWorkflowAbort(signal) === 'cancelled',
               expectedOrigin: { actionId, requestId: actionRequestId, accountId: params.accountId,
                 serverIdentityId: input.serverIdentityId, machineId: input.machineId },
               signal: signal ?? new AbortController().signal });

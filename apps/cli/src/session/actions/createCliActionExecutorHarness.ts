@@ -74,6 +74,8 @@ export type RecordedApprovalExecutionObservationArgs = Readonly<{
   artifactId: string;
   expectedOrigin: Readonly<{ actionId: string; requestId: string; accountId: string; serverIdentityId: string; machineId: string }>;
   signal: AbortSignal;
+  /** The containing lifecycle decides whether abort withdraws work or only detaches this waiter. */
+  shouldWithdrawOnAbort?(): boolean;
   isCurrent?(): Promise<boolean>;
   authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
   accountEncryptionMode?: 'plain' | 'e2ee';
@@ -560,7 +562,8 @@ export function createCliActionExecutorHarness(
       };
       const result = await observe();
       const request = observed.request;
-      if (args.signal.aborted && request?.v === 2 && request.status === 'open' && request.approval?.flow === 'deferred') {
+      if (args.signal.aborted && (args.shouldWithdrawOnAbort?.() ?? true)
+        && request?.v === 2 && request.status === 'open' && request.approval?.flow === 'deferred') {
         const updateApproval = authorizedStore?.approvalsUpdate ?? deps.approvalsUpdate;
         if (!updateApproval) return failure('approval_context_unavailable');
         try {
