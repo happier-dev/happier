@@ -70,6 +70,10 @@ const origin: RpcHandlerContext = { signal: new AbortController().signal, sessio
     v: 1, caller: { kind: 'session', sessionId: 'worker', starterDepth: 0, turnDepth: 0 },
     sourceTurnId: 'turn', sourceInputId: 'bob-input', callerPermissionMode: 'default', requestId: 'action',
 } };
+const managerAnswerContext: RpcHandlerContext = { ...origin, callerAuthority: 'account_automation',
+    sessionActionOrigin: { ...origin.sessionActionOrigin!,
+        caller: { kind: 'session', sessionId: 'manager', starterDepth: 0, turnDepth: 0 } },
+};
 const form = { type: 'decision', questions: [{ id: 'revision', type: 'text', prompt: 'Which revision?' }] };
 
 describe('needs-you at the registered question owner', () => {
@@ -173,9 +177,16 @@ describe('needs-you at the registered question owner', () => {
         await handler.abortPendingRequestsAndFlush(preserveQuestions ? 'Runtime replaced' : 'Explicit person Stop', { preserveQuestions });
         expect(session.waitingTurnId).toBe(preserveQuestions ? 'turn' : null);
         expect(Boolean(session.state.requests?.action)).toBe(preserveQuestions);
-        if (!preserveQuestions) expect(session.state.completedRequests?.action).toMatchObject({
-            status: 'canceled', reason: 'Explicit person Stop',
-        });
+        if (!preserveQuestions) {
+            expect(session.state.completedRequests?.action).toMatchObject({
+                status: 'canceled', reason: 'Explicit person Stop',
+            });
+            const stopped = structuredClone(session.state);
+            const answer = session.rpcHandlerManager.handlers.get('session.user_action.answer');
+            expect(await answer?.({ id: 'action', approved: true, answers: { revision: ['main'] } }, managerAnswerContext))
+                .toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
+            expect(session.state).toEqual(stopped);
+        }
     });
 
     it('settles the durable waiting turn after runtime rejoin has lost its local yield intent', async () => {
@@ -222,7 +233,7 @@ describe('needs-you at the registered question owner', () => {
         session.publishArchiveSnapshot(null);
         for (const id of ['first-wait', 'second-wait']) {
             const answer = session.rpcHandlerManager.handlers.get('session.user_action.answer');
-            expect(await answer?.({ id, approved: true, answers: { revision: ['main'] } }, { signal: origin.signal }))
+            expect(await answer?.({ id, approved: true, answers: { revision: ['main'] } }, managerAnswerContext))
                 .toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
         }
         expect(session.state).toEqual(closed);

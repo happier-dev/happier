@@ -5,7 +5,6 @@ import { homedir } from 'node:os';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { resolveSessionRoleRpcOrigin } from '../actions/sessionRoleRpcOrigin';
-import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { SessionBridgeLifecycleHookEventIdV1, ActionExecutorContext } from '@happier-dev/protocol';
 import { RoleActionRefusalV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { configuration } from '@/configuration';
@@ -175,20 +174,6 @@ export function createCliSessionActionTransport(
     approvedNewDirectoryCreation?: boolean;
     resumeRequest?: SessionResumeRequestV1;
   }>) => {
-    if (input.effectActionId === 'session.user_action.answer') {
-      const metadata = readTransportSessionOwnerMetadata(input.transport);
-      const admission = resolveSessionAutoResumeAdmissionV1({ metadata,
-        archivedAt: input.transport.rawSession.archivedAt, authorityAvailable: metadata !== null,
-        // The existing exact-Machine resume/RPC owners admit reachability next;
-        // this lifecycle check must also precede the active-runner shortcut.
-        machineAvailable: true,
-      });
-      if (admission !== 'eligible') return { ok: false,
-        code: admission === 'archived' ? 'session_archived' as const
-          : admission === 'machine_unavailable' ? 'unsupported' as const : admission,
-        message: `Question host is unavailable: ${admission}`,
-      } as const;
-    }
     if (input.transport.rawSession.active === true && !input.resumeRequest) {
       return { ok: true } as const;
     }

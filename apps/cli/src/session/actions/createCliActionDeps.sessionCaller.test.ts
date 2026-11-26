@@ -495,9 +495,9 @@ describe('daemon Account Action Session caller context', () => {
   });
 
   it.each([
-    { cause: 'explicit_stop', active: false }, { cause: 'explicit_stop', active: true },
-    { cause: 'archived', active: false }, { cause: 'archived', active: true },
-  ] as const)('does not wake or answer a question after $cause while active=$active, even for the direct manager', async ({ cause, active }) => {
+    { cause: 'explicit_stop', active: false },
+    { cause: 'archived', active: false },
+  ] as const)('does not wake an inactive question host after $cause, even for the direct manager', async ({ cause, active }) => {
     const fixture = callerSessionFixture('/repo', 0, active, { machineId: 'caller-machine',
       manager: { sessionId: 'direct-manager' }, ...(cause === 'archived' ? { archivedAt: 10 } : {}),
       metadata: JSON.stringify({ path: '/repo', machineId: 'caller-machine', flavor: 'claude',
