@@ -567,16 +567,20 @@ describe('paired terminal Action admission', () => {
                 inputSchema: { type: 'object' } } });
             // Only Home/daemon HTTP is substituted. Account placement, credential
             // provenance, target selection and both Action factories stay real.
+            const homeRequests: unknown[] = [];
+            const selectedMachine = { id: 'selected-machine', active: true, activeAt: Date.now(), kind: 'persistent',
+                revokedAt: null, replacedByMachineId: null, access: { custodian: { accountId: 'owner', displayName: 'Owner' },
+                    role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
             vi.spyOn(axios, 'get').mockImplementation(async url => {
+                homeRequests.push({ method: 'get', url });
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-                if (url.endsWith('/v1/machines')) return { status: 200, data: [{ id: 'selected-machine', active: true,
-                    activeAt: Date.now(), kind: 'persistent', revokedAt: null, replacedByMachineId: null,
-                    access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage',
-                        resourceMode: 'plain', accessState: 'ready' } }] };
+                if (url.endsWith('/v1/machines')) return { status: 200, data: [selectedMachine] };
+                if (url.endsWith('/v1/machines/selected-machine')) return { status: 200, data: { machine: selectedMachine } };
                 throw new Error(`Unexpected Home read: ${url}`);
             });
             const routed: string[] = [];
             vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+                homeRequests.push({ method: 'post', url, body });
                 if (url.endsWith(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'])) return { status: 200,
                     data: { availabilityCursor: 1, pluginIds: [], intentReads: [], failedPluginIds: [] } };
                 if (url.endsWith(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'])) return { status: 200,
@@ -610,11 +614,11 @@ describe('paired terminal Action admission', () => {
             };
             const discovered = await run('action.spec.get', { id });
             if (placement === 'account') {
-                expect(discovered).toMatchObject({ ok: false, errorCode: 'plugin_action_execution_placement_unavailable' });
+                expect(discovered, JSON.stringify(homeRequests)).toMatchObject({ ok: false, errorCode: 'plugin_action_execution_placement_unavailable' });
                 expect(routed).toEqual(['action.spec.get']);
                 return;
             }
-            expect(discovered).toEqual({ ok: true, result: descriptor });
+            expect(discovered, JSON.stringify(homeRequests)).toEqual({ ok: true, result: descriptor });
             expect(await run('action.invoke', { action: { pluginId: 'acme.source', localId: 'discover' }, input: { limit: 100 } }))
                 .toEqual({ ok: true, result: { candidates: ['retained'] } });
             // One exact descriptor per invocation, then the effect: no inventory
@@ -624,13 +628,11 @@ describe('paired terminal Action admission', () => {
     });
 
     it.each([
-        { actionId: 'session.role.set', input: { sessionId: 'session-one', roleId: 'builder' }, method: 'execute', output: { updated: true } },
         { actionId: 'session.read_state.set', input: { sessionId: 'session-one', state: 'read' }, method: 'execute',
             output: { state: 'read', lastViewedSessionSeq: 7, didChange: true } },
         { actionId: 'action.spec.search', input: { query: 'sessioncreaterefusal_ingress_fixture' }, method: 'execute', output: { actionSpecs: [] } },
         { actionId: 'action.invoke', input: { action: { pluginId: 'acme.source', localId: 'discover' }, input: { v: 1 } },
             method: 'execute', output: { candidates: [] } },
-        { actionId: 'session.role.set', input: { sessionId: 'session-one', roleId: 'builder' }, method: 'prepare', output: { updated: true } },
     ] as const)('keeps an own-Machine terminal $actionId $method on its authenticated daemon ingress', async ({ actionId, input, method, output }) => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-action-admission-', }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
@@ -643,18 +645,10 @@ describe('paired terminal Action admission', () => {
             if (!outputSchema) throw new Error('Fixture requires a schema-backed Action');
             const expected = { ok: true, result: outputSchema.parse(output) };
             // HTTP is the boundary; credential, exact daemon discovery and Action composition stay real.
-            vi.spyOn(axios, 'get').mockImplementation(async url => {
-                if (actionId === 'session.role.set' && url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
-                    data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
-                throw new Error('Unexpected Home request');
-            });
+            vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home request'));
             // The Account's plugin availability census is the only Home read a plugin Action needs
             // before it proves Machine placement; this Account has no plugin intents.
             vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-                if (actionId === 'session.role.set' && url.endsWith('/v2/sessions/lookup-by-tags')) return {
-                    status: 200, data: { sessions: [createSessionRecordFixture({ id: 'session-one', encryptionMode: 'plain', share: null,
-                        metadata: JSON.stringify({ machineId: 'own-machine', path: '/workspace', flavor: 'claude' }) })] },
-                };
                 const availability = readBundledPluginAvailabilityHttpFixture(new URL(String(url)).pathname, body);
                 return availability ? { status: 200, data: availability } : { status: 401, data: { error: 'invalid_token' } };
             });

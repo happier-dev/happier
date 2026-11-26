@@ -204,6 +204,8 @@ it.each([
         // ingress, proof selection, sealed requester custody and parsing stay real.
         const machineReads = vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
             ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+            : String(url).endsWith('/v2/account/settings') ? { status: 200,
+                data: { version: 1, content: { t: 'plain', v: accountSettings } } }
             : String(url).endsWith('/v1/account/encryption/currentness') ? { status: 200, data: { mode: 'plain', version: 1,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }
             : String(url).includes('/v1/machines/') ? { status: 200, data: { machine:
@@ -300,7 +302,7 @@ it.each([
             if (template && !repositoryWorkspace) expect(machineReads.mock.calls.map(([url]) => String(url))).toContain('https://home.test/v1/machines/controller');
             for (const envelope of envelopes) expect(envelope).toMatchObject({ v: 1, input,
                 target: { kind: 'machine', machineId: selectedMachine.id } });
-            expect(requests).toEqual([`https://home.test/v1/actions/${actionId}/execution-authorization`,
+            expect(requests, JSON.stringify(result)).toEqual([`https://home.test/v1/actions/${actionId}/execution-authorization`,
                 `https://home.test/v1/actions/${actionId}`]);
             expect(result).toMatchObject(expected);
             if (setupSpawn || template || move || authoredPreview)

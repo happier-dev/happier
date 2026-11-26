@@ -256,6 +256,12 @@ describe('deployment read placement from a CLI on another Machine', () => {
                 const path = new URL(url).pathname;
                 if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
                 machineReads.push(path);
+                if (path === '/v1/machines/publisher-machine') return { status: 200, data: { machine: {
+                    id: 'publisher-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+                    installationId: 'publisher-installation', installationPublicKey: Buffer.from(identity.publicKeyBase64, 'base64url').toString('base64'),
+                    dataEncryptionKey: null, runnerContentKeyBinding: null,
+                    access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage',
+                        resourceMode: 'plain', accessState: 'ready' } } } };
                 return { status: 404, data: { error: 'machine_not_found' } };
             });
             const workspace = { machineId: 'workflow-machine', directory: process.cwd() };
@@ -283,7 +289,7 @@ describe('deployment read placement from a CLI on another Machine', () => {
             // The original-root owner admits the installed Run: it submits the Run's
             // signed Workflow origin to Home for the selected publisher Machine.
             expect(result, evidence).not.toMatchObject({ errorCode: 'deployment_executor_unavailable' });
-            const submitted = posts.find(post => post.path.endsWith('deployments.publish.prepare'));
+            const submitted = posts.find(post => post.path.endsWith('deployments.publish.prepare/execution-authorization'));
             expect(submitted, evidence).toBeDefined();
             const body = typeof submitted!.body === 'string' ? submitted!.body : JSON.stringify(submitted!.body);
             expect(body, evidence).toContain('"runId":"workflow-run"');

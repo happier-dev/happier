@@ -7,7 +7,7 @@ import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
@@ -15,7 +15,7 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 const network = vi.hoisted(() => ({ io: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: network.io }));
 
-it('keeps paired-terminal Role edits on the authenticated owner Session RPC', async () => {
+it.each(['execute', 'prepare'] as const)('keeps paired-terminal Role %s edits on the authenticated owner Session RPC', async method => {
   await withConfiguredDaemonTestHome({ prefix: 'happier-cli-role-ingress-' }, async () => {
     const serverApiUrl = 'https://role-home.test';
     const sub = 'role-owner';
@@ -54,7 +54,13 @@ it('keeps paired-terminal Role edits on the authenticated owner Session RPC', as
       });
       for (const edit of [{ answersWorkerQuestions: false }, { roleId: 'orchestrator' }]) {
         const input = { sessionId, ...edit };
-        expect(await executor.execute('session.role.set', input, { surface: 'cli', authority: 'present_user' }))
+        const context = { surface: 'cli' as const, authority: 'present_user' as const };
+        const result = method === 'execute' ? await executor.execute('session.role.set', input, context)
+          : await (async () => {
+            const prepared = await executor.prepare('session.role.set', input, context);
+            return prepared.kind === 'ready' ? prepared.invocation.run() : prepared.result;
+          })();
+        expect(result)
           .toMatchObject({ ok: true, result: { updated: true } });
         expect(rpc).toHaveBeenLastCalledWith('rpc-call', expect.objectContaining({
           method: `${sessionId}:session.role.set`, params: input,
@@ -62,6 +68,7 @@ it('keeps paired-terminal Role edits on the authenticated owner Session RPC', as
       }
       expect(actionRelay).not.toHaveBeenCalled();
     } finally {
+      resetActiveAccountSettingsSnapshotForTests();
       vi.restoreAllMocks();
       network.io.mockReset();
     }
