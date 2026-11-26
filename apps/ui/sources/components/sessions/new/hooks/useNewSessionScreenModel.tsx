@@ -1,4 +1,3 @@
-import { resolveNewSessionConnectedServicesBindingsForAgent } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import React from 'react';
 import { View, useWindowDimensions, InteractionManager } from 'react-native';
 import { useLaunchSelectionMachines, useSessionRecentPathEntries, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
@@ -809,18 +808,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         setAgentOptionStateForCurrentAgent,
     });
 
-    const resolveConnectedServicesForAgent = React.useCallback((id: AgentId) => (
-        resolveNewSessionConnectedServicesBindingsForAgent({
-            agentId: id,
-            agentCore: getAgentCore(id),
-            agentOptionState: readSessionAuthoringBackendOptionState({ kind: 'builtInAgent', agentId: id }, agentNewSessionOptionStateByAgentId),
-            accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
-            settings,
-            connectedServicesFeatureEnabled,
-            accountGroupsFeatureEnabled: connectedServicesAccountGroupsFeatureEnabled,
-        }).connectedServicesBindingsPayload
-    ), [accountProfile?.connectedServicesV2, agentNewSessionOptionStateByAgentId, connectedServicesAccountGroupsFeatureEnabled, connectedServicesFeatureEnabled, settings]);
-
     const {
         cliAvailability,
         selectedMachineCapabilities,
@@ -846,8 +833,6 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         resumeSessionId,
         enabledAgentIds,
         agentNewSessionOptionStateByAgentId,
-        connectedServices: connectedServicesBindingsPayload,
-        resolveConnectedServicesForAgent,
         resolvedBackendEntries,
         selectedBackendEntry,
         setBackendTarget,

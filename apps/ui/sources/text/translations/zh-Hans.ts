@@ -4929,9 +4929,6 @@ export const zhHans: TranslationStructure = {
       codexAcp: {
         title: "Codex ACP 适配器",
       },
-      agyAcpServer: {
-          title: "Agy ACP 服务器",
-      },
       githubCli: {
         title: "GitHub 命令行工具",
       },
@@ -5226,18 +5223,6 @@ export const zhHans: TranslationStructure = {
       reinstallTitle: "重新安装 Codex ACP？",
       description:
         "这将安装一个围绕 Codex 的实验性 ACP 适配器，用于加载/恢复线程。",
-    },
-    agyAcpBanner: {
-        title: "Agy ACP 服务器",
-        install: "安装",
-        update: "更新",
-        reinstall: "重新安装",
-    },
-    agyAcpInstallModal: {
-        installTitle: "安装 Agy ACP 服务器？",
-        updateTitle: "更新 Agy ACP 服务器？",
-        reinstallTitle: "重新安装 Agy ACP 服务器？",
-        description: "这将安装官方固定版 Agy ACP 服务器，供使用已连接账号的 Agy 会话使用。使用你自己的 agy 登录的会话会在单独安装的 agy 命令行上运行。",
     },
         githubCliBanner: {
             title: 'GitHub CLI',

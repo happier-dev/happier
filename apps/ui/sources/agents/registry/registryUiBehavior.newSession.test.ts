@@ -36,31 +36,6 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
             resumeSessionId: 'x1',
         })).toEqual([]);
     });
-
-    it('uses the effective Antigravity binding for the install prerequisite', () => {
-        const settings = makeSettings({
-            connectedServicesAdditionalDefaultAuthByAgentIdV1: {
-                v: 1,
-                bindingsByAgentId: {
-                    agy: { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'work' } } },
-                },
-            },
-        });
-        const context = {
-            agentId: 'agy',
-            settings,
-            experiments: getAgentResumeExperimentsFromSettings('agy', settings),
-            resumeSessionId: '',
-        } as const;
-        expect(getNewSessionRelevantInstallableDepKeys({
-            ...context,
-            connectedServices: { v: 1, bindingsByServiceId: { antigravity: { source: 'native' } } },
-        })).toEqual([]);
-        expect(getNewSessionRelevantInstallableDepKeys({
-            ...context,
-            connectedServices: { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'work' } } },
-        })).toEqual([INSTALLABLE_KEYS.AGY_ACP_SERVER]);
-    });
 });
 
 describe('getNewSessionPreflightIssues', () => {

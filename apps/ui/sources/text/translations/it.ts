@@ -5428,9 +5428,6 @@ export const it: TranslationStructure = {
       codexAcp: {
         title: "Adattatore Codex ACP",
       },
-      agyAcpServer: {
-          title: "Server ACP di Agy",
-      },
       githubCli: {
         title: "CLI GitHub",
       },
@@ -5755,18 +5752,6 @@ export const it: TranslationStructure = {
       reinstallTitle: "Reinstallare Codex ACP?",
       description:
         "Questo installa un adattatore ACP sperimentale per Codex che supporta il caricamento/la ripresa dei thread.",
-    },
-    agyAcpBanner: {
-        title: "Server ACP di Agy",
-        install: "Installa",
-        update: "Aggiorna",
-        reinstall: "Reinstalla",
-    },
-    agyAcpInstallModal: {
-        installTitle: "Installare il server ACP di Agy?",
-        updateTitle: "Aggiornare il server ACP di Agy?",
-        reinstallTitle: "Reinstallare il server ACP di Agy?",
-        description: "Questo installa il server ACP ufficiale e bloccato di Agy usato per le sessioni Agy con un account connesso. Le sessioni con il tuo accesso agy usano la CLI agy, installata separatamente.",
     },
         githubCliBanner: {
             title: 'GitHub CLI',

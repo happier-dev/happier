@@ -5360,9 +5360,6 @@ localTailscale: {
       codexAcp: {
         title: "Codex ACP アダプター",
       },
-      agyAcpServer: {
-          title: "Agy ACP サーバー",
-      },
       githubCli: {
         title: "GitHub コマンドライン",
       },
@@ -5683,18 +5680,6 @@ localTailscale: {
       reinstallTitle: "Codex ACP を再インストールしますか？",
       description:
         "これはスレッドの読み込み/再開に対応した、Codex 向けの実験的な ACP アダプターをインストールします。",
-    },
-    agyAcpBanner: {
-        title: "Agy ACP サーバー",
-        install: "インストール",
-        update: "更新",
-        reinstall: "再インストール",
-    },
-    agyAcpInstallModal: {
-        installTitle: "Agy ACP サーバーをインストールしますか？",
-        updateTitle: "Agy ACP サーバーを更新しますか？",
-        reinstallTitle: "Agy ACP サーバーを再インストールしますか？",
-        description: "接続済みアカウントを使う Agy セッション用に、公式の固定版 Agy ACP サーバーをインストールします。ご自身の agy ログインを使うセッションは、個別にインストールした agy CLI で実行されます。",
     },
         githubCliBanner: {
             title: 'GitHub CLI',

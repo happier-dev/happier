@@ -491,8 +491,7 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     binaryName: 'agy',
     knownCommandCandidates: [{ kind: 'homeBinDir', relativeDir: '.local/bin' }],
     sourcePreferenceDefault: 'system-first',
-    // `agy` stays system/vendor installed and serves native-login ACP sessions (`agy acp`).
-    // The pinned `agy_acp_server` for connected accounts is owned by the runtime-installables seam.
+    // `agy` stays system/vendor installed and serves every Happier session (`agy acp`).
     managedInstall: null,
     manualInstallKind: 'vendor_recipe',
     manualInstallRecipes: {

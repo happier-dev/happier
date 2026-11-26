@@ -1,6 +1,6 @@
-import { agyAcpDepCapability } from '@/capabilities/registry/depAgyAcp';
 import type { Capability } from '@/capabilities/service';
+import { retiredAgyAcpServerCapability } from './retiredAcpServerCapability';
 
 export const capabilities: ReadonlyArray<Capability> = [
-  agyAcpDepCapability,
+  retiredAgyAcpServerCapability,
 ];

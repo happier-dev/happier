@@ -1,5 +1,3 @@
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol';
-
 import type { AgentCatalogEntry } from '@/backends/types';
 import { createCatalogDefinedAcpEntry } from '@/agent/acp/catalog/createCatalogDefinedAcpEntry';
 import { createAgyAcpBackend, type AgyAcpBackendOptions } from './acp/backend';
@@ -43,5 +41,4 @@ export const agent = {
   getSessionUsageLimitRecoveryControlAdapter: async () => agyUsageLimitRecoveryControlAdapter,
   resolveConnectedServiceSwitchContinuity: resolveAgyConnectedServiceSwitchContinuity,
   verifyResumeReachable: verifyResumeReachableAgy,
-  runtimeInstallableKeys: [INSTALLABLE_KEYS.AGY_ACP_SERVER],
 } satisfies AgentCatalogEntry;

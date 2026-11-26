@@ -1,4 +1,3 @@
-import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 import type { CapabilitiesDetectRequest, CapabilityDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
@@ -113,7 +112,6 @@ export async function ensureAgentInstallablesBackground(
         serverId?: string | null;
         settings: Settings;
         resumeSessionId: string | null;
-        connectedServices?: ConnectedServiceBindingsV1 | null;
     }>,
     depsOverrides: Partial<Deps> = {},
 ): Promise<void> {
@@ -146,7 +144,6 @@ export async function ensureAgentInstallablesBackground(
         settings: opts.settings,
         experiments,
         resumeSessionId: opts.resumeSessionId ?? '',
-        connectedServices: opts.connectedServices,
     });
     if (relevantKeys.length === 0) return;
 

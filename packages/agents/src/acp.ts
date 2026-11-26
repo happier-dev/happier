@@ -76,8 +76,7 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
   },
   agy: {
     agentId: 'agy',
-    // Native-login sessions run the CLI's own ACP server. The CLI catalog launches the
-    // ensured pinned `agy_acp_server` instead for connected accounts and its own sessions.
+    // The CLI provider adds the profile (`--gemini-dir`) and, for connected accounts, file token storage.
     launcher: { command: providerLauncherCommand('agy'), args: ['acp'] },
     transportProfile: 'generic',
     supportsLoadSession: true,
