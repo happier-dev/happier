@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1, normalizeWidgetSizeForSurfaceV1, supportsWidgetGroupsV1, type WidgetLayoutFragmentSummaryV1, type WidgetProjectAreaV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSurfaceRefV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { MACHINE_BUILTIN_WIDGET_IDS_V1, PROJECT_BUILTIN_WIDGET_IDS_V1, SESSION_COMPANION_BUILTIN_ITEM_IDS, USAGE_BUILTIN_WIDGET_IDS_V1, WidgetAreaReadFailureDetailsV1Schema, normalizeWidgetSizeForSurfaceV1, supportsWidgetGroupsV1, type WidgetLayoutFragmentSummaryV1, type WidgetProjectAreaV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSurfaceRefV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useHomeWidgetCandidates } from '@/components/hub/layout/useHomeWidgetCandidates';
@@ -219,8 +219,9 @@ export function useAccountWidgetAddSections(input: Readonly<{
         if (!scope) return null;
         const review = await reviewAddWidgetLayoutFragmentCommandV1(fragment.group, scope,
             { name: fragment.name, ...(area ? { area } : {}), widgetAreaContext, signal });
-        if (review === 'unavailable') return null;
-        return review === 'ready' ? { ok: true } : widgetSetupRefusal(review, t('widgetAdd.addFailed'));
+        if (review.kind === 'ready') return { ok: true };
+        if (review.result.ok || WidgetAreaReadFailureDetailsV1Schema.safeParse(review.result.details).success) return null;
+        return widgetSetupRefusal(review.result, t('widgetAdd.addFailed'));
     }, [area, scope, widgetAreaContext]);
     const sections = React.useMemo(() => buildAccountWidgetAddSections({
         candidates,

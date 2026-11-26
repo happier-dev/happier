@@ -19,6 +19,8 @@ import { readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
 import { buildWidgetSurfaceArtifactIdV1, WidgetAreaMutationErrorV1 } from './widgetSurfaceArtifactV1.js';
 import { findWidgetLayoutItemV1, findWidgetLayoutParentV1, WidgetLayoutMutationErrorV1 } from './widgetLayoutItemV1.js';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1 } from './widgetPublicProfileAdmissionV1.js';
+import { createWidgetAreaReadFailureV1, projectWidgetAreaReadExceptionV1 } from './widgetAreaReadFailureV1.js';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
 
 const failure = (errorCode: string): Extract<ActionExecuteResult, { ok: false }> => ({ ok: false, errorCode, error: errorCode });
 export const readWidgetActionSurfacePortV1 = (deps: Pick<ActionExecutorDeps, 'widgetSurfaceActions' | 'homeHubArtifacts' | 'workBoardArtifacts' | 'sessionBoardAction'>, surface: WidgetSurfaceRefV1): WidgetActionSurfacePortV1 | undefined => deps.widgetSurfaceActions?.[surface.owner.kind]
@@ -26,6 +28,28 @@ export const readWidgetActionSurfacePortV1 = (deps: Pick<ActionExecutorDeps, 'wi
   ?? (surface.owner.kind === 'workBoard' && deps.workBoardArtifacts ? createWorkBoardWidgetActionPortV1(deps.workBoardArtifacts) : undefined)
   ?? (surface.owner.kind === 'sessionBoard' && deps.sessionBoardAction ? createSessionBoardWidgetActionPortV1(deps.sessionBoardAction) : undefined);
 const surfacePort = readWidgetActionSurfacePortV1;
+
+function isWidgetInputAcquisitionFailure(reasonCode: string): boolean {
+  switch (reasonCode) {
+    case 'connected_account_purpose_catalog_unavailable':
+    case 'widget_workspace_authority_unavailable':
+    case 'input_type_options_unavailable':
+    case 'server_unreachable':
+    case 'machine_unavailable':
+    case 'machine_offline':
+    case 'machine_socket_unavailable':
+    case RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE:
+    case MACHINE_RPC_TIMEOUT_ERROR_CODE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+async function readWidgetPlacementReviewFacts<T>(read: () => Promise<T>): Promise<Readonly<{ ok: true; value: T }> | Extract<ActionExecuteResult, { ok: false }>> {
+  try { return { ok: true, value: await read() }; }
+  catch (error) { return projectWidgetAreaReadExceptionV1(error); }
+}
 
 /** Shared Project writes may name an unnamed instance; every other captured field stays exact. */
 export function matchesWidgetWriteAcknowledgement(surface: WidgetSurfaceRefV1, expected: WidgetInstanceV1, actual: WidgetInstanceV1 | null | undefined): boolean {
@@ -56,6 +80,7 @@ type WidgetGroupConfigurationChangeV1 = Extract<WidgetSurfaceMutationV1, { kind:
 /** Both widget and Home Actions admit group inputs before invoking their owner writer. */
 export async function admitWidgetGroupConfigurationV1(
   deps: ActionExecutorDeps, state: WidgetSurfaceReadV1, change: WidgetGroupConfigurationChangeV1, context: ActionExecutorContext,
+  reviewGroupAdd?: true,
 ): Promise<Extract<ActionExecuteResult, { ok: false }> | null> {
   const surface = state.surface;
   const currentItems = state.items ?? [];
@@ -86,17 +111,29 @@ export async function admitWidgetGroupConfigurationV1(
       binding.kind === 'context' && !sameStrictJsonValue(previousBindings[binding.slot], bindings[binding.slot]));
     if (change.kind !== 'group_add' && !followsChangedSlot) continue;
     const widgetInputs = deps.widgetInputs;
-    if (!widgetInputs) return failure('widget_inputs_unavailable');
+    if (!widgetInputs) return reviewGroupAdd
+      ? createWidgetAreaReadFailureV1('widget_inputs_unavailable') : failure('widget_inputs_unavailable');
     const resolve = (groupBindings: WidgetInstanceV1['bindings']) => widgetInputs.resolve({
       ref: { surface, instanceId: instance.id }, instance, context, groupBindings, admission: 'configuration',
       admittedSurfaceRead: state, ...(context.signal ? { signal: context.signal } : {}),
     });
-    const proposed = await resolve(bindings);
+    const read = reviewGroupAdd ? await readWidgetPlacementReviewFacts(() => resolve(bindings))
+      : { ok: true as const, value: await resolve(bindings) };
+    if (!read.ok) return read;
+    const proposed = read.value;
     context.signal?.throwIfAborted();
     if (proposed.status === 'ready') continue;
     const refusal = { ...failure('widget_inputs_invalid'), details: { ...proposed, blockingChildId: instance.id } };
     // A new imported group admits all child inputs. An edit must preserve unrelated, pre-existing issues.
-    if (change.kind === 'group_add') return refusal;
+    if (change.kind === 'group_add') {
+      const deciding = reviewGroupAdd
+        ? proposed.fields.find(issue => !isWidgetInputAcquisitionFailure(issue.reasonCode))
+        : proposed.fields.find(issue => issue.status === proposed.status);
+      if (reviewGroupAdd && !deciding && proposed.fields[0]) {
+        return createWidgetAreaReadFailureV1(proposed.fields[0].reasonCode);
+      }
+      return deciding ? { ...refusal, details: { ...refusal.details, blockingFieldPath: deciding.path } } : refusal;
+    }
     const blocking = proposed.fields.filter(issue => issue.status === 'invalid' || issue.status === 'selection_required');
     if (blocking.length === 0) continue;
     const previous = await resolve(previousBindings);
@@ -253,7 +290,7 @@ export async function executeWidgetInstanceActionV1(
       : failure('widget_area_layout_owner_unavailable');
   }
   const admission = admittedSurfaceRead ? { ok: true as const, read: admittedSurfaceRead }
-    : await readWidgetActionSurfaceAdmissionV1(deps, surface, context);
+    : await readWidgetActionSurfaceAdmissionV1(deps, surface, context, reviewGroupAdd ? { readPlacement: true } : undefined);
   if (!admission.ok) return admission;
   if (actionId.startsWith('widgets.area.layout.')) {
     if (!deps.widgetAreaLayouts) return failure('widget_layouts_unavailable');
@@ -361,14 +398,16 @@ export async function executeWidgetInstanceActionV1(
       default: return failure('widget_group_operation_unsupported');
     }
     if (groupIntent.kind === 'group_inputs' || groupIntent.kind === 'group_create' || groupIntent.kind === 'group_add') {
-      const refusal = await admitWidgetGroupConfigurationV1(deps, state, groupIntent, context);
+      const refusal = await admitWidgetGroupConfigurationV1(deps, state, groupIntent, context, reviewGroupAdd);
       if (refusal) return refusal;
     }
     if (groupIntent.kind === 'group_add') {
       for (const child of groupIntent.group.children) {
         const childRef = { surface, instanceId: child.instance.id };
-        const size = await admitWidgetInstanceSizeV1(deps, childRef, child.instance, child.size, context, groupIntent.group.context, state);
-        if ('ok' in size) return size;
+        const admitSize = () => admitWidgetInstanceSizeV1(deps, childRef, child.instance, child.size, context, groupIntent.group.context, state);
+        const size = reviewGroupAdd ? await readWidgetPlacementReviewFacts(admitSize) : { ok: true as const, value: await admitSize() };
+        if (!size.ok) return size;
+        if ('ok' in size.value) return size.value;
       }
       if (reviewGroupAdd) return { ok: true, result: null };
     }

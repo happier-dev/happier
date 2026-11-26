@@ -6,7 +6,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { buildHomeHubArtifactIdV1 } from '@happier-dev/protocol/home/homeHubArtifactV1';
-import { instantiateWidgetLayoutFragmentGroupV1, WidgetLayoutFragmentDraftV1Schema, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { instantiateWidgetLayoutFragmentGroupV1, WidgetLayoutFragmentDraftV1Schema, WidgetLayoutFragmentV1Schema, WidgetSurfaceReadV1Schema, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import * as uuidBoundary from '@/platform/randomUUID';
 import { Pressable } from 'react-native';
 import { widgetProvidedContext, type WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -75,7 +75,7 @@ function answerArtifactInventory(serverId: string, respondAfter?: Promise<void>)
 
 async function renderGallery(options: Readonly<{
     waiveManagementApproval?: boolean;
-    usage?: Readonly<{ periodAvailable: boolean }>;
+    usage?: Readonly<{ periodAvailable: boolean; retiredViewerPurpose?: boolean }>;
     fieldlessHome?: boolean;
 }> = {}) {
     const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://fragments-home.example', accountId: ACCOUNT_ID });
@@ -110,7 +110,14 @@ async function renderGallery(options: Readonly<{
                 body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Period preview rendered' } } } },
         }, context)).toMatchObject({ ok: true });
     }
-    const fragment = options.usage ? PERIOD_GROUP : options.fieldlessHome
+    const fragment = options.usage?.retiredViewerPurpose ? {
+        ...PERIOD_GROUP,
+        group: { ...PERIOD_GROUP.group, children: PERIOD_GROUP.group.children.map(child => ({
+            ...child, instance: { ...child.instance, bindings: { ...child.instance.bindings,
+                location: { kind: 'viewer' as const, purpose: 'retired' },
+            } },
+        })) },
+    } : options.usage ? PERIOD_GROUP : options.fieldlessHome
         ? { ...DRAFT, group: { ...DRAFT.group, children: [{ kind: 'widget' as const,
             instance: { v: 1 as const, definition: { kind: 'builtin' as const, id: 'your_home' }, bindings: {} } }] } }
         : DRAFT;
@@ -216,6 +223,35 @@ describe('saved-group Gallery management', () => {
         }, { ...context, widgetAreaContext: { surface: scope, values: widgetProvidedContext(destinationContext) } })).toMatchObject({
             ok: true, result: { status: 'ready', input: { period: DESTINATION_PERIOD } },
         });
+    });
+
+    it('keeps Add disabled when a saved child references an undeclared viewer purpose', async () => {
+        const { screen, scope, executor, context, destinationContext } = await renderGallery({
+            usage: { periodAvailable: true, retiredViewerPurpose: true },
+        });
+        // Read the persisted fragment so the Action control and Gallery use the same saved child.
+        const fragment = await executor.execute('widgets.fragment.get', {
+            account: { serverId: scope.serverId, accountId: scope.accountId }, artifactId: 'saved',
+        }, context);
+        if (!fragment.ok) throw new Error(fragment.errorCode);
+        const saved = WidgetLayoutFragmentV1Schema.parse((fragment.result as { fragment: unknown }).fragment);
+        const group = instantiateWidgetLayoutFragmentGroupV1(saved.group, { groupId: 'viewer-group', childIds: ['viewer-child'] });
+        const review = await executor.prepare('widgets.group.add', { surface: scope, group }, {
+            ...context, widgetAreaContext: { surface: scope, values: widgetProvidedContext(destinationContext) },
+        }, { reviewOnly: true });
+        expect(review).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'widget_inputs_invalid', details: {
+            status: 'unavailable', blockingChildId: 'viewer-child', blockingFieldPath: 'location',
+            fields: [expect.objectContaining({ path: 'location', reasonCode: 'widget_viewer_purpose_undeclared' })],
+        } } });
+        await screen.pressByTestIdAsync('gallery.entry.group-saved');
+        await waitForHomeGovernance(() => {
+            const note = screen.findByTestId('gallery.detail.why');
+            expect(note).not.toBeNull();
+            expect(note?.props.children).not.toBe(t('common.loading'));
+        });
+        expect.soft(screen.findByTestId('gallery.detail.submit')?.props.disabled).toBe(true);
+        expect.soft(screen.getTextContent()).toContain(t('widgetAdd.refusals.inputsChoicesUnavailable'));
+        expect.soft(screen.getTextContent()).toContain(t('widgetAdd.previewWaiting', { field: 'Location' }));
     });
 
     it.each([true, false])('agrees with agent placement when the destination Period is available: %s', async periodAvailable => {

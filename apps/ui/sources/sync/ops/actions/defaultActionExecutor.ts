@@ -74,7 +74,8 @@ import { executeComposerIngressAction } from './composerIngressActionRuntime';
 import { composeSessionInputHandoff } from './sessionInputHandoffCompose';
 import { createWidgetCompanionActionDepsV1 } from './widgetCompanionActionDeps';
 import { readWidgetEntityMovementAdmission } from './widgetEntityMovement';
-import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, readWidgetActionSurfacePortV1, flattenWidgetLayoutWidgetsV1, type WidgetInstanceRefV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetAreaReadFailureV1, isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, readWidgetActionSurfacePortV1, flattenWidgetLayoutWidgetsV1, type WidgetInstanceRefV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { WIDGET_GROUP_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { readWidgetActionSessionTargetV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
@@ -6317,6 +6318,11 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         finishSessionArchiveInvocation(archiveInvocation);
         account.dispose();
         const failure = accountScopeFailure(error);
+        if (failure && options?.reviewOnly && actionId === WIDGET_GROUP_ADD_ACTION_ID_V1
+          && (error instanceof ActionAdmissionHomeUnreachableError
+            || error instanceof AccountStorageCurrentnessUnavailableError && error.reason === 'unreachable')) {
+          return { kind: 'settled', result: createWidgetAreaReadFailureV1(failure.errorCode) };
+        }
         if (failure) return { kind: 'settled', result: failure };
         logPluginSurfaceDiagnostic({ pluginId: null, contributionId: null, surfaceId: null }, {
           kind: 'action_prepare_failed', actionId,

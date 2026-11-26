@@ -153,7 +153,10 @@ export function WidgetSetupStep(props: Readonly<{
     }, [admission, draft, resolve]);
     const { bindings } = draft;
     const inherited = React.useMemo(() => readInherited?.(bindings), [readInherited, bindings]);
-    const blocker = describeWidgetSetupBlocker(setup.fields, resolution);
+    const admissionDetails = admission?.ok === false ? admission.details : undefined;
+    const decidingPath = admissionDetails && typeof admissionDetails === 'object' && 'blockingFieldPath' in admissionDetails
+        && typeof admissionDetails.blockingFieldPath === 'string' ? admissionDetails.blockingFieldPath : undefined;
+    const blocker = describeWidgetSetupBlocker(setup.fields, resolution, decidingPath);
     // Finishable once nothing blocks; a per-viewer input is each viewer's own and never blocks.
     const finishable = completion !== 'approvalPending'
         && (readAdmission ? admission === null || admission?.ok === true : widgetSetupBlockingIssues(setup.fields, resolution).length === 0)

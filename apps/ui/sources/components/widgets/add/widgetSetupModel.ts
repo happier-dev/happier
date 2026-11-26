@@ -266,9 +266,12 @@ export const AMBIGUOUS_INLINE_LIMIT = 3;
 export function describeWidgetSetupBlocker(
     fields: readonly WidgetSetupField[],
     resolution: WidgetBindingResolutionV1,
+    decidingPath?: string,
 ): Readonly<{ path: string; title: string; status: WidgetInputIssueV1['status'] }> | null {
     const blocking = widgetSetupBlockingIssues(fields, resolution);
     if (blocking.length === 0) return null;
+    const deciding = blocking.find(issue => issue.path === decidingPath);
+    if (deciding) return { path: deciding.path, title: fields.find(entry => entry.field.path === deciding.path)?.field.title ?? deciding.path, status: deciding.status };
     for (const entry of fields) {
         const issue = blocking.find((candidate) => candidate.path === entry.field.path);
         if (issue) return { path: issue.path, title: entry.field.title, status: issue.status };
