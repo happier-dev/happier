@@ -11,6 +11,13 @@ describe('retained native effect observation settlement', () => {
         expect(doesManagedNativeObservationSettleIntent(intent, { observedAt: 20, availability: 'unavailable' }, previous)).toBe(false);
         expect(doesManagedNativeObservationSettleIntent(intent, { observedAt: 20, availability: 'absent' }, previous)).toBe(true);
     });
+    it.each(['stop', 'suspend'] as const)('keeps an outstanding %s while the provider still reports running', intent => {
+        const running = { observedAt: 10, availability: 'present', power: 'running' } as const;
+        expect(doesManagedNativeObservationSettleIntent(intent, { ...running, observedAt: 20 }, running)).toBe(false);
+        expect(doesManagedNativeObservationSettleIntent(intent, {
+            ...running, observedAt: 30, power: intent === 'stop' ? 'stopped' : 'suspended',
+        }, running)).toBe(true);
+    });
     it('requires absence for Delete and a bound replacement for Rebuild', () => {
         const present = { observedAt: 20, availability: 'present', power: 'stopped' } as const;
         expect(doesManagedNativeObservationSettleIntent('delete', present)).toBe(false);

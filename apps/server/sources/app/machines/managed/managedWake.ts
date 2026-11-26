@@ -109,7 +109,7 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
         const placement = await readManagedWakeTargetBindingInTx(tx, wakeInput);
         const joiningStart = binding.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && placement?.wakeState === 'starting';
         return { online: false as const, joiningStart, wake: projectManagedWakeTarget(wakeInput, placement),
-            controllerCustodianAccountId: admission.custodianAccountId };
+            controllerCustodianAccountId: placement?.controllerAccountId };
     });
     if (!initial || input.signal.aborted) return { kind: 'unavailable' };
     if (initial.online) return { kind: 'not-needed', isCurrent };
@@ -120,12 +120,13 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     if (!target) return { kind: 'unavailable' };
     const finiteWake = resolveManagedFiniteWakeControllerV1(target);
     if (finiteWake.kind === 'unavailable') return finiteWake;
-    if (!await isCurrent()) return { kind: 'unavailable' };
+    if (!initial.controllerCustodianAccountId || !await isCurrent()) return { kind: 'unavailable' };
     const wakeTarget = target;
     const controllerBinding = finiteWake.controller;
     // Target admission owns requester power. This read selects that resource's
     // installed custodian transport; the signed original requester stays on the Action.
-    const controller = await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: initial.controllerCustodianAccountId,
+    const controllerCustodianAccountId = initial.controllerCustodianAccountId;
+    const controller = await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: controllerCustodianAccountId,
         machineId: controllerBinding.machineId, requiredRole: 'manage', requireOnline: true }));
     const controllerAvailability = resolveManagedWakeAvailabilityV1(controllerBinding, controller.kind === 'admitted'
         ? { id: controllerBinding.machineId, installationId: controller.installationId, online: true } : undefined);

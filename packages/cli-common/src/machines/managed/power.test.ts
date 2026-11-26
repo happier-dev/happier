@@ -210,6 +210,24 @@ describe('shared admitted native power', () => {
             { role: 'inspect', body: { resource: { id: 'same-native' } } }]);
         expect(value).toEqual({ result: { kind: 'confirmed' }, observation });
     });
+    it.each([
+        { desired: 'stop', settledPower: 'stopped' },
+        { desired: 'suspend', settledPower: 'suspended' },
+    ] as const)('observes asynchronous $desired to completion without sending power twice', async ({ desired, settledPower }) => {
+        const roles: string[] = [];
+        let observed = false;
+        const value = await executeManagedMachinePowerIntent({ machine: { ...machine, desired },
+            waitForObservation: async () => { observed = true; },
+            invoke: async role => {
+                roles.push(role);
+                return role === 'power' ? { kind: 'confirmed' } : {
+                    observedAt: observed ? 2 : 1, availability: 'present', power: observed ? settledPower : 'running',
+                };
+            } });
+        expect(value.observation?.power).toBe(settledPower);
+        expect(roles).toEqual(['power', 'inspect', 'inspect']);
+    });
+
     it('does not inspect a definite Stop refusal and does not retry ambiguous delivery', async () => {
         const roles: string[] = [];
         expect(await executeManagedMachinePowerIntent({ machine: { ...machine, desired: 'stop' }, invoke: async role => {

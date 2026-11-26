@@ -86,9 +86,11 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
             await input.waitForObservation();
             continue;
         }
+        const stillChangingPower = machine.desired === 'start' || machine.desired === 'resume'
+            ? observation.power !== 'running'
+            : (machine.desired === 'stop' || machine.desired === 'suspend') && observation.power === 'running';
         if (!input.waitForObservation || result.kind !== 'confirmed'
-            || machine.desired !== 'start' && machine.desired !== 'resume'
-            || observation.availability !== 'present' || observation.storage === 'lost' || observation.power === 'running') {
+            || observation.availability !== 'present' || observation.storage === 'lost' || !stillChangingPower) {
             return await complete(observation);
         }
         await input.waitForObservation();

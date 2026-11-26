@@ -13,6 +13,8 @@ export function doesManagedNativeObservationSettleIntent(intent: SupportedNative
     // Ordinary inspection retains uncertainty; native operation handles keep
     // their own cleanup custody at the reporting owner.
     if (intent === 'delete') return retryDelete && observation.availability === 'present';
+    // A still-running guest may be applying an acknowledged Stop or Suspend.
+    if ((intent === 'stop' || intent === 'suspend') && observation.power === 'running') return false;
     return observation.availability === 'present'
         && (observation.power === 'running' || observation.power === 'stopped' || observation.power === 'suspended');
 }

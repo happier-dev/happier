@@ -1401,12 +1401,15 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { tokenAdmission.mockRestore(); }
     });
 
-    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage', 'session-input-use', 'session-input-opted-out', 'owner-send-opted-out'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
+    it.each(['owner', 'wrong-requester', 'wrong-root', 'no-manage', 'session-input-use', 'session-input-opted-out', 'owner-send-opted-out', 'delegated-owned-guest'] as const)('admits the real requester and exact root at the finite wake boundary (%s)', async disposition => {
         const test = await setup();
         const ownerSendOptedOut = disposition === 'owner-send-opted-out';
         const requester = ownerSendOptedOut ? test.account : await db.account.create({ data: { encryptionMode: 'plain' } });
-        const sessionInput = disposition.startsWith('session-input-');
-        if (!ownerSendOptedOut) {
+        const delegated = disposition === 'delegated-owned-guest';
+        const sessionInput = delegated || disposition.startsWith('session-input-');
+        if (delegated) {
+            await db.machine.update({ where: { id: test.guest.id }, data: { accountId: requester.id } });
+        } else if (!ownerSendOptedOut) {
             for (const machine of sessionInput ? [test.guest] : [test.controller, test.guest]) await inTx(tx => setMachineAccessGrantInTx(tx, {
                 actorAccountId: test.account.id, machineId: machine.id,
                 principal: { kind: 'account', accountId: requester.id }, level: sessionInput ? 'view' : 'admin',
@@ -1428,9 +1431,11 @@ describe('finite managed wake original Action authority (real storage)', () => {
             actorAccountId: test.account.id, machineId: test.controller.id,
             principal: { kind: 'account', accountId: requester.id }, level: 'view',
         }));
-        const forwardRpc = vi.fn(async (request: { callParams: unknown }) => {
+        const forwardRpc = vi.fn(async (request: { callParams: unknown; targetUserId: string }) => {
             const wake = ManagedFiniteWakeRequestV1Schema.parse(request.callParams);
+            expect(request.targetUserId).toBe(test.account.id);
             expect(wake.actionOrigin.binding.accountId).toBe(requester.id);
+            if (delegated) expect(wake.actionOrigin.binding.custodianAccountId).toBe(requester.id);
             if (!ownerSendOptedOut) await test.check(wake.actionOrigin);
             expect(await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, wake))).not.toBeNull();
             return { ok: true as const, result: { ok: true, result: {
@@ -1440,7 +1445,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const result = await prepareManagedFiniteActionWake({ io: new Server(), signal: new AbortController().signal,
             actionOrigin: disposition === 'wrong-root' ? { ...root, binding: { ...root.binding, requestId: randomUUID() } } : root,
             forwardRpc });
-        const allowed = disposition === 'owner' || disposition === 'session-input-use';
+        const allowed = disposition === 'owner' || disposition === 'session-input-use' || delegated;
         if (ownerSendOptedOut) {
             const custody = await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: root }));
             expect.soft(custody?.target).toBeUndefined();
