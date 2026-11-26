@@ -2,6 +2,7 @@ import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { isMachineAgentInventoryReadActionIdV1, REVIEW_START_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
+import { readSessionOperationGetRpcMethodV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { projectSessionSpawnNewActionAuthoringInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
@@ -373,9 +374,11 @@ resolveServerFeaturesSnapshot?: () =>
             || !isSessionActionCallerCurrent || !await isSessionActionCallerCurrent()) {
             return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'target_binding_mismatch');
           }
-          // Cancellation's incumbent Action adapter owns the qualified Address
-          // to raw operation operand, after the same source admission above.
-          if (actionId !== 'action.operations.cancel') {
+          // Cancellation and verified Session operation reads use the incumbent
+          // Action adapter to project the qualified Address to the raw operation
+          // operand, after the same source admission above.
+          if (actionId !== 'action.operations.cancel'
+            && !readSessionOperationGetRpcMethodV1(actionId, binding.sessionActionOrigin)) {
             const spec = getActionSpec(actionId);
             const rpcMethod = spec.surfaces.rpc ? spec.bindings?.rpcMethod : undefined;
             const serverUrl = requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
