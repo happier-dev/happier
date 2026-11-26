@@ -15,7 +15,8 @@ import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration, ty
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readCommittedAppShellClientActionAdmission, readCurrentAppShellPluginUiExecutionOriginSelectionPending, readCurrentAppShellPluginUiProjection,
+import { readCommittedAppShellClientActionAdmission, readCurrentAppShellDeclarationsPending,
+    readCurrentAppShellPluginUiExecutionOriginSelectionPending, readCurrentAppShellPluginUiProjection,
     subscribeCommittedAppShellPluginUiProjection } from '../plugins/committedPluginUiProjection';
 
 export type CurrentContributedAction = Readonly<{ action: PluginUiActionProjection }> & (
@@ -52,6 +53,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     identity: PluginContributionIdentityV1;
     admission?: PluginUiClientActionAdmissionSource;
     expectedAction?: PluginUiActionProjection;
+    waitForExpectedDeclaration?: true;
     callerLifetime?: ServerAccountScopeLifetime;
     scope?: ServerAccountScope | null;
     signal?: AbortSignal;
@@ -71,14 +73,17 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     const isPending = () => {
         const admission = source.read();
         if (!isPluginUiClientExecutableAccountCurrent(admission?.accountLifetime, owner)) return false;
-        const action = readExpectedAction(readAction());
-        if (input.expectedAction && !action) return false;
+        const currentAction = readAction();
+        const action = readExpectedAction(currentAction);
+        const projectionScope = { scope: owner.scope, declarationsOnly: true } as const;
+        if (input.expectedAction && !action) {
+            return input.waitForExpectedDeclaration === true && !currentAction
+                && readCurrentAppShellDeclarationsPending(projectionScope);
+        }
         if (resolveDeclaredContributedAction(action)) return false;
         // Administration's selected source can still be answering the surface's
         // declaration demand. Unopened alternative Machines never hold this wait.
-        if (readCurrentAppShellPluginUiExecutionOriginSelectionPending(input.identity.pluginId, {
-            scope: owner.scope, declarationsOnly: true,
-        })) return true;
+        if (readCurrentAppShellPluginUiExecutionOriginSelectionPending(input.identity.pluginId, projectionScope)) return true;
         // A committed Machine publication can precede the AppShell value that
         // owns its executable activation. Borrow that publication's settlement.
         if (action && action !== createPluginUiProjectedActionResolver(admission?.projection?.actionsById)(input.identity)) return true;
@@ -190,8 +195,8 @@ export async function executeCapturedScopeContributedAction(
             ? followsAccountPublication || isResolvedContributedActionCurrent(readProjection, request.action, resolved)
             : !capturedClientDeclaration || resolvePluginUiExecutionDeclaration(
                 capturedClientDeclaration, { current: readCurrentAction(request.action) }) !== null);
-    // A cold exact Machine has no AppShell declaration yet. The common
-    // dispatcher joins that Machine's current Action projection before admission.
+    // The fallback can find an Account declaration before AppShell publishes it,
+    // or borrow the addressed Machine's declaration when the Account has none.
     const daemonMachineId = resolved
         ? resolved.kind === 'machine' && resolved.action.execution.target === 'daemon' ? resolved.origin.machineId : undefined
         : capturedClientDeclaration ? undefined : machineId;
@@ -205,7 +210,12 @@ export async function executeCapturedScopeContributedAction(
         ...(request.context.actionRequestId ? { actionRequestId: request.context.actionRequestId } : {}),
         invocationSurface: 'ui', hostAction, actionAccountLifetime: accountLifetime, pluginUiProjection: readProjection(),
         ...(followsAccountPublication ? { readPluginUiProjection: readProjection } : {}),
-        ...(resolved || capturedClientDeclaration ? { resolveContributedAction: readCurrentAction } : {}),
+        ...(resolved || capturedClientDeclaration ? { resolveContributedAction: readCurrentAction } : {
+            settleAcquiredAccountClientAction: async expectedAction => {
+                await acquireCurrentContributedAction({ readProjection, identity: request.action, expectedAction, waitForExpectedDeclaration: true,
+                    admission: readCommittedAppShellClientActionAdmission(), callerLifetime: accountLifetime, scope, signal: request.signal, isCurrent });
+            },
+        }),
         requiredDangerLevel: request.requiredDangerLevel,
         expectedContributorOccurrenceId: expectedOccurrenceId,
         clientAction: { ...(sessionId ? { sessionId } : {}),

@@ -427,6 +427,8 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
      * availability predicate.
      */
     resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
+    /** Wait for the exact Account client declaration acquired before this invocation. */
+    settleAcquiredAccountClientAction?: (action: PluginUiActionProjection) => Promise<void>;
     /** Exact source retained by an admitted targeted-operation handle, never author supplied. */
     expectedContributorOccurrenceId?: string;
     /**

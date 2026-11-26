@@ -3227,6 +3227,82 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
+    it('waits when the Account Action declaration reaches AppShell after a cold Environment catalog request', async () => {
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { readCommittedAppShellClientActionAdmission } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier('server-client-action'));
+        await publishManageMachine(lifetime.scope);
+        const machineId = CLIENT_ACTION_ORIGIN.materializationRef.machineId;
+        const action = { pluginId: 'acme.cold-environment-catalog', localId: 'read' };
+        const { execution, title, scopes, surfaces, placementBindings } = createClientTargetAction({ identity: action, accountPlacement: true, accountClient: true });
+        const manifest = ingestPluginManifestV2({ schemaVersion: 2, id: action.pluginId, version: '1.2.3',
+            displayName: 'Environment catalog fixture', runtime: { apiVersion: 1 }, contributes: { actions: [{
+                id: action.localId, execution, title, scopes, surfaces, placementBindings, dangerLevel: 'safe', inputSchema: {},
+            }] } });
+        if (!manifest.ok) throw new Error(JSON.stringify(manifest.diagnostics));
+        const graph = CLIENT_ACTION_ARTIFACT_GRAPH;
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: { availabilityCursor: 1,
+            snapshots: [], materializations: [], intentReads: [{ pluginId: action.pluginId, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                intent: { pluginId: action.pluginId, desiredVersion: manifest.manifest.version, enabled: true,
+                    offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                release: { ref: { pluginId: action.pluginId, version: manifest.manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                    normalizedManifest: manifest.manifest, collectionContracts: [], packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] },
+                    uiSlots: [{ contributionId: action.localId, tier: 'reactNative', platform: 'web', artifactId: graph.artifactId,
+                        artifactDigest: graph.digest, hostUiApiRange: graph.hostUiApiRange, artifactGraph: graph }],
+                },
+            } }] } });
+        const accountProjection = readPluginAccountAvailability(lifetime.scope).readAccountUiProjection();
+        const qualifiedId = buildQualifiedPluginContributionKey(action);
+        const declaration = accountProjection?.actionsById[qualifiedId];
+        if (!accountProjection || !declaration?.hostAccountOrigin) throw new Error('Missing the Account-owned client Action');
+        const handler = vi.fn(async () => ({ actions: [] }));
+        const fixture = createClientActionActivation({ pluginId: action.pluginId, localId: action.localId, accountLifetime: lifetime,
+            handler, accountPlacement: true, accountClient: true, occurrenceId: declaration.occurrenceId });
+        let declarationsReady = false;
+        let value: AppShellPluginUiProjectionValue = { pluginUiProjection: null, pluginBrowserProjection: null, phase: 'establishing',
+            interactionEnabled: true, machineId, serverId: lifetime.scope.serverId, platform: 'web', accountLifetime: lifetime,
+            accountCensusPending: false, clientExecutableActivation: { status: 'ready' },
+            reloadConnectedAccountProjection: () => {}, reloadClientExecutables: () => {},
+        };
+        function Owner(props: React.PropsWithChildren) {
+            return React.createElement(AppShellPluginUiProjectionValueProvider, { value, declarationReady: declarationsReady }, props.children);
+        }
+        await fixture.composition.unload();
+        const hook = await renderHook(() => null, { wrapper: Owner });
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => value.pluginUiProjection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            clientExecutableAdmission: readCommittedAppShellClientActionAdmission(),
+        }));
+        const controller = new AbortController();
+        const context = { surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+            expectedAccountId: lifetime.scope.accountId, externalActionTarget: { kind: 'machine', machineId } } as const;
+        let outcome: Awaited<ReturnType<typeof executeCurrentUiContextContributedAction>> | undefined;
+        const read = executeCurrentUiContextContributedAction({ action, input: {}, context, signal: controller.signal },
+            { execute: async () => { throw new Error('Unexpected child Action'); }, context }, lifetime)
+            .then(answer => { outcome = answer; return answer; });
+        try {
+            await act(async () => {});
+            expect(outcome, JSON.stringify(outcome)).toBeUndefined();
+            declarationsReady = true;
+            value = { ...value, pluginUiProjection: accountProjection, phase: 'current', clientExecutableActivation: { status: 'establishing' } };
+            await hook.rerender();
+            expect(outcome, JSON.stringify(outcome)).toBeUndefined();
+            expect(handler).not.toHaveBeenCalled();
+            expect((await fixture.composition.reconcile([fixture.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            await expect(read).resolves.toEqual({ ok: true, result: { actions: [] } });
+            expect(handler).toHaveBeenCalledOnce();
+        } finally {
+            controller.abort();
+            await read;
+            unregister();
+            await hook.unmount();
+            await fixture.composition.unload();
+            lifetime.retire();
+        }
+    });
+
     it('delivers a real Artifact refusal through the mounted dispatcher and native author API while peer activation is pending', async () => {
         const { createPluginAccountAvailabilityReaderStore } = await import('@/sync/domains/plugins/availability/reader');
         const { reconcileProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableActivation');

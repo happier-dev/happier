@@ -38,8 +38,12 @@ export async function acquirePluginSurfaceContributedAction(input: DispatchPlugi
                 resolveContributedAction: (candidate: PluginContributionIdentityV1) => candidate.pluginId === identity.pluginId
                     && candidate.localId === identity.localId ? resolveAccount(candidate) : input.resolveContributedAction?.(candidate) ?? null,
             };
-            return resolveProjectedContributedAction(acquired, identity) ? acquired
-                : failure('unavailable', 'plugin_surface_action_projection_unavailable', { retryable: false });
+            const action = resolveProjectedContributedAction(acquired, identity);
+            if (!action) return failure('unavailable', 'plugin_surface_action_projection_unavailable', { retryable: false });
+            if (input.settleAcquiredAccountClientAction && action.execution.target === 'client') {
+                await input.settleAcquiredAccountClientAction(action);
+            }
+            return acquired;
         }
     }
     if (!machine) return null;
