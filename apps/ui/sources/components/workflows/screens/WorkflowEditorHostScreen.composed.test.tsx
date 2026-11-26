@@ -945,6 +945,8 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     const artifactCreated = createDeferred<void>();
     let updateGate: ReturnType<typeof createDeferred<void>> | null = null;
     let updateIssued: ReturnType<typeof createDeferred<void>> | null = null;
+    let updateReceipt: ReturnType<typeof createDeferred<void>> | null = null;
+    let updateCommitted: ReturnType<typeof createDeferred<void>> | null = null;
     let readGate: ReturnType<typeof createDeferred<void>> | null = null;
     let readIssued: ReturnType<typeof createDeferred<void>> | null = null;
     let artifactReadUnavailable = false;
@@ -1065,6 +1067,11 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         artifact.body = update.body;
         artifact.headerVersion += 1;
         artifact.bodyVersion += 1;
+        const receipt = updateReceipt;
+        updateReceipt = null;
+        updateCommitted?.resolve();
+        updateCommitted = null;
+        await receipt?.promise;
         return Response.json({ success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion });
     } });
     const scope = { serverId: boundary.homes.home!.id, accountId: 'account-a' };
@@ -1103,6 +1110,10 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         updateGate = createDeferred<void>();
         updateIssued = createDeferred<void>();
         return { ...updateGate, issued: updateIssued.promise };
+    }, holdNextUpdateReceipt: () => {
+        updateReceipt = createDeferred<void>();
+        updateCommitted = createDeferred<void>();
+        return { ...updateReceipt, committed: updateCommitted.promise };
     } };
 }
 
@@ -2201,6 +2212,33 @@ describe('WorkflowEditorHostScreen composition', () => {
             expect(readBodyProps()!.draftStore.get()!.draftId).toBe(initialDraft.draftId);
             expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
         }
+        expect(boundary.updates).toHaveLength(1);
+    });
+
+    it('keeps Saving visible when Home pushes that Save before the receipt', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get()!, name: 'Saved here' }));
+        const receipt = boundary.holdNextUpdateReceipt();
+        const readCount = () => boundary.requests.filter(request =>
+            request.method === 'GET' && request.path === `/v1/artifacts/${SAVED_TRIGGER_WORKFLOW_ID}`
+            || request.method === 'POST' && request.path === '/v1/artifacts/read').length;
+        try {
+            await screen.pressByTestIdAsync('workflow-editor-save');
+            await receipt.committed;
+            expect(boundary.artifact.headerVersion).toBe(2);
+            const beforePush = readCount();
+            await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+            await vi.waitFor(() => expect(readCount()).toBeGreaterThan(beforePush));
+            await flushHookEffects();
+            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saving' });
+            expect(readBodyProps()!.saveConflict).toBeNull();
+        } finally {
+            await act(async () => { receipt.resolve(); });
+        }
+        await vi.waitFor(() => expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' }));
+        expect(readBodyProps()!.draftStore.get()!.name).toBe('Saved here');
         expect(boundary.updates).toHaveLength(1);
     });
 

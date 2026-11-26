@@ -575,7 +575,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const deletePendingRef = React.useRef(false);
     const deleteAbortRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => deleteAbortRef.current?.abort(), []);
-    const [saveConflict, setSaveConflict] = React.useState<WorkflowSaveConflict | null>(null);
+    const [observedSaveConflict, setSaveConflict] = React.useState<WorkflowSaveConflict | null>(null);
+    // Home can publish this revision before the pending Save acknowledges it.
+    const saveConflict = savePending ? null : observedSaveConflict;
     /**
      * The description is Artifact metadata beside the name, outside the portable
      * definition: hydrated from the opened revision (or a reviewed copy's seed)
