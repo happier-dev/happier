@@ -174,6 +174,21 @@ function buildPredecessorLanOnlyDaemonTransferState(): unknown {
 }
 
 describe('resolveSessionHandoffUiAvailability', () => {
+    it('visits zero ordered Machine entries on an exact scoped miss', () => {
+        let visited = 0;
+        const inventory = Array.from({ length: 128 }, (_, index) => {
+            const machine = createMachineFixture({ id: `unrelated-${index}` });
+            Object.defineProperty(machine, 'id', { get() { visited += 1; return `unrelated-${index}`; } });
+            return machine;
+        });
+        storage.setState({ machineListByServerId: { home: inventory }, machineRecordsByServerId: { home: {} } });
+        expect(resolveSessionHandoffUiAvailability({ sessionId: 'session-1', serverId: 'home',
+            session: HANDOFF_ELIGIBLE_SESSION, sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot(),
+        })).toEqual({ available: false, reason: 'runtime_direct_peer_unavailable' });
+        expect(visited).toBe(0);
+    });
+
     it('keeps the entry point available for an installed Agent and leaves handoff qualification to the daemon action', () => {
         expect(resolveSessionHandoffUiAvailability({
             sessionId: 'session-external-agent',
@@ -191,11 +206,11 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('reads source-machine daemon transfer state from an explicit server scope when callers pass one', () => {
-        storage.setState({ machineListByServerId: {
-            'server-explicit': [createMachineFixture({
+        storage.setState({ machineRecordsByServerId: {
+            'server-explicit': { machine_source: createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            })],
+            }) },
         } });
 
         expect(resolveSessionHandoffUiAvailability({
@@ -214,11 +229,11 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('does not infer a server-scoped source-machine daemon state from the preferred server when callers omit serverId', () => {
-        storage.setState({ machineListByServerId: {
-            'server-preferred': [createMachineFixture({
+        storage.setState({ machineRecordsByServerId: {
+            'server-preferred': { machine_source: createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            })],
+            }) },
         } });
 
         expect(resolveSessionHandoffUiAvailability({
@@ -238,11 +253,11 @@ describe('resolveSessionHandoffUiAvailability', () => {
     it('uses an explicitly reachable machine target even when the session cache reader is stale', () => {
         storage.setState({ machines: { 'stale-machine': createMachineFixture({ id: 'stale-machine' }) },
             sessions: { 'session-1': createSessionFixture({ id: 'session-1',
-            metadata: { ...createSessionFixture().metadata!, machineId: 'stale-machine', path: '/tmp/stale' } }) }, machineListByServerId: {
-            'server-explicit': [createMachineFixture({
+            metadata: { ...createSessionFixture().metadata!, machineId: 'stale-machine', path: '/tmp/stale' } }) }, machineRecordsByServerId: {
+            'server-explicit': { machine_source: createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            })],
+            }) },
         } });
 
         expect(resolveSessionHandoffUiAvailability({
@@ -278,11 +293,11 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('fails closed when the explicit server-scoped machine record exists but has no daemon state yet, even if the global machine cache is stale-active', () => {
-        storage.setState({ machineListByServerId: {
-            'server-explicit': [createMachineFixture({
+        storage.setState({ machineRecordsByServerId: {
+            'server-explicit': { machine_source: createMachineFixture({
                 id: 'machine_source',
                 daemonState: null,
-            })],
+            }) },
         }, machines: {
             machine_source: createMachineFixture({
                 id: 'machine_source',
@@ -385,11 +400,11 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('keeps handoff available for a layout-v1 session with no owner metadata view when a canonical reachable source target exists', () => {
-        storage.setState({ machineListByServerId: {
-            'server-explicit': [createMachineFixture({
+        storage.setState({ machineRecordsByServerId: {
+            'server-explicit': { machine_source: createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            })],
+            }) },
         } });
 
         expect(resolveSessionHandoffUiAvailability({
@@ -409,11 +424,11 @@ describe('resolveSessionHandoffUiAvailability', () => {
     });
 
     it('stays session-ineligible when neither a reachable source target nor a readable owner metadata machine exists', () => {
-        storage.setState({ machineListByServerId: {
-            'server-explicit': [createMachineFixture({
+        storage.setState({ machineRecordsByServerId: {
+            'server-explicit': { machine_source: createMachineFixture({
                 id: 'machine_source',
                 daemonState: buildActiveDaemonTransferState(),
-            })],
+            }) },
         } });
 
         expect(resolveSessionHandoffUiAvailability({

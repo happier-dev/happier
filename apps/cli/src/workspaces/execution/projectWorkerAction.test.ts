@@ -95,8 +95,10 @@ describe('exact target worker status Action', () => {
         const result = await executor.execute('projects.worker.status', { workspace: { serverId: 'home', refId: source.id },
           destination: { kind: 'machine', machineId: fresh.machineId }, purpose: 'finite' },
         { surface: 'cli', authority: 'account_automation', serverId: 'home' });
-        expect(result).toMatchObject({ ok: true, result: retained === 'watching'
-          ? { eligible: false, explanation: 'workspace_unavailable' } : { eligible: true, explanation: 'eligible' } });
+        expect(result).toMatchObject(retained === 'watching'
+          ? { ok: false, errorCode: 'workspace_sync_target_ambiguous', details: { targetCount: 2 },
+              failureCause: { errorCode: 'workspace_sync_target_ambiguous', phase: 'worker_status.topology' } }
+          : { ok: true, result: { eligible: true, explanation: 'eligible' } });
         // One current native observation per real controller, independent of candidate count.
         expect(controller.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST)).toHaveLength(1);
         expect(admission.dependencies()).toEqual([]);

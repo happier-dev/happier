@@ -193,7 +193,7 @@ describe('prepareWorkspaceSyncBetween', () => {
     const second = { ...refs[1]!, id: 'second', rootPath: '/second' };
     expect(resolveWorkspaceSyncWorkerTarget({ ...input, workspaceRefs: [...refs, second],
       relationships: [...relationships, workerCopy(relationship('a-second', 'a', 'second'))] }))
-      .toEqual({ ok: false, errorCode: 'workspace_sync_target_ambiguous' });
+      .toEqual({ ok: false, errorCode: 'workspace_sync_target_ambiguous', targetCount: 2 });
     expect(resolveWorkspaceSyncWorkerTarget({ ...input, relationships: [relationships[1]!] }))
       .toMatchObject({ ok: false, errorCode: 'worker_copy_missing' });
     expect(resolveWorkspaceSyncWorkerTarget({ ...input, relationships: [relationship('ca', 'a', 'c', 'keep_synced'), relationships[1]!] }))

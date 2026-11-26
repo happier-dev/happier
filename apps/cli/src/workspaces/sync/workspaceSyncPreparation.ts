@@ -141,7 +141,7 @@ export function resolveWorkspaceSyncWorkerTarget(input: Readonly<{
   relationships: readonly WorkspaceSyncRelationshipV1[];
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
   relationshipStatuses: readonly WorkspaceSyncStatusV1[];
-}>): (WorkspaceSyncWorkerTargetBasis & Readonly<{ ok: true }>) | Readonly<{ ok: false; errorCode: string }> {
+}>): (WorkspaceSyncWorkerTargetBasis & Readonly<{ ok: true }>) | Readonly<{ ok: false; errorCode: string; targetCount?: number }> {
   const source = resolveWorkspaceRefV1(input.workspaceRefs, { serverId: input.serverId, id: input.sourceWorkspaceRefId });
   if (source.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_not_ready' };
   if (source.ref.machineId === input.targetMachineId) {
@@ -174,7 +174,8 @@ export function resolveWorkspaceSyncWorkerTarget(input: Readonly<{
       });
     })());
   if (targets.length !== 1) return { ok: false,
-    errorCode: targets.length ? 'workspace_sync_target_ambiguous' : 'worker_copy_missing' };
+    errorCode: targets.length ? 'workspace_sync_target_ambiguous' : 'worker_copy_missing',
+    ...(targets.length ? { targetCount: targets.length } : {}) };
   const target = targets[0]!;
   const route = resolveWorkspaceSyncTransferRoute({ ...input, targetWorkspaceRefId: target.id });
   if (!route.ok) return { ok: false, errorCode: route.code };

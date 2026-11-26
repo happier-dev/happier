@@ -2,7 +2,7 @@ import * as z from 'zod/mini';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readHostAdmittedReviewedChildV1, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { isAdmittedProjectServiceMoveChildInputV1, readProjectServiceMoveFromAdmittedRootV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { ProjectWorkerActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
@@ -93,6 +93,11 @@ export function createProjectWorkerAction(options: Readonly<{
             workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines,
             relationshipStatuses: snapshot.relationshipStatuses }));
           if (!basis.ok) {
+            if (basis.errorCode === 'workspace_sync_target_ambiguous') return {
+              ok: false, errorCode: basis.errorCode, error: basis.errorCode,
+              failureCause: projectActionFailureCauseV1({ code: basis.errorCode }, 'worker_status.topology', { allowUnknownErrorCode: true }),
+              details: { targetCount: basis.targetCount },
+            };
             if (basis.errorCode === 'worker_copy_missing') {
               const source = resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspace.refId, request.workspace.serverId);
               if (source) return { ...refused('worker_copy_missing'), workerCopy: {

@@ -98,13 +98,10 @@ function readSourceMachineDaemonState(input: Readonly<{
         return null;
     }
 
-    const state = storage.getState() as Readonly<{
-        machines?: Record<string, { daemonState?: unknown | null } | undefined>;
-        machineListByServerId?: Record<string, readonly Readonly<{ id: string; daemonState?: unknown | null }>[] | null | undefined>;
-    }>;
-    const scopedMachine = serverId
-        ? (state.machineListByServerId?.[serverId]?.find((candidate) => candidate.id === sourceMachineId) ?? null)
-        : null;
+    const state = storage.getState();
+    const scopedMachines = serverId ? state.machineRecordsByServerId[serverId] : undefined;
+    const scopedMachine = scopedMachines && Object.hasOwn(scopedMachines, sourceMachineId)
+        ? scopedMachines[sourceMachineId] : null;
     if (scopedMachine) {
         return scopedMachine.daemonState ?? null;
     }
