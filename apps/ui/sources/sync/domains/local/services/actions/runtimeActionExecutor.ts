@@ -262,11 +262,13 @@ function resolveMachineId(input: Readonly<{
 }
 
 function routeFailureResult(
+    context: RuntimeActionExecuteArgs['context'],
     kind: LocalServicesRouteKind,
     reason: LocalServicesRouteFailureReason,
     failure?: LocalServiceRpcFailureMetadata,
 ) {
-    return failure?.failure ? projectMachineActionRpcFailure(failure.failure) : { ...disabledResult(`local_services_${kind}_${reason}`),
+    return failure?.failure ? (requiresAgentEgressRedaction(context)
+        ? projectMachineActionRpcFailure(failure.failure) : failure.failure) : { ...disabledResult(`local_services_${kind}_${reason}`),
         ...(failure?.reasonCode ? { details: { reasonCode: failure.reasonCode } } : {}) };
 }
 
@@ -388,7 +390,7 @@ export function createLocalServicesRuntimeActionExecutor(
             if (args.actionId === 'localServices.inventory.list' && isRecord(parsed.input) && parsed.input.projection === 'count') {
                 const result = await fetchLocalServiceInventorySummaryViaMachineRpc({ machineId, serverId,
                     ...(catalogBinding ? { accountId: catalogBinding.lifetime.scope.accountId } : {}), signal: args.context.signal });
-                if (!result.ok) return routeFailureResult('inventory', result.reason, result);
+                if (!result.ok) return routeFailureResult(args.context, 'inventory', result.reason, result);
                 const summary = result.summary;
                 if (mayPublishCatalog(serverId)) publishLocalServiceInventorySummary({ machineId, serverId, ...catalogScope }, summary);
                 return { summary };
@@ -402,7 +404,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 signal: args.context.signal,
                 request: input.request,
             });
-            if (!result.ok) return routeFailureResult('inventory', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'inventory', result.reason, result);
             onInventorySnapshot({ machineId, serverId, sessionId, snapshot: result.snapshot });
             if (args.actionId === 'localServices.inventory.refresh' && mayPublishCatalog(serverId)) {
                 recoverLocalServiceLauncherStores({ machineId, serverId, ...catalogScope });
@@ -425,7 +427,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 signal: args.context.signal,
                 request: input.request,
             });
-            if (!result.ok) return routeFailureResult('launcher', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'launcher', result.reason, result);
             onLauncherSnapshot({ ...request.data, serverId, snapshot: result.snapshot });
             return result.snapshot;
         }
@@ -434,7 +436,7 @@ export function createLocalServicesRuntimeActionExecutor(
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const targetId = readTargetIdFromInput(parsed.input);
             if (!targetId) return invalidParametersResult;
-            if (!startLauncherTarget) return routeFailureResult('launcher', 'unavailable');
+            if (!startLauncherTarget) return routeFailureResult(args.context, 'launcher', 'unavailable');
             const request = DaemonLocalServiceLauncherStartRequestV1Schema.parse(parsed.input);
             const result = await startLauncherTarget({
                 machineId,
@@ -450,11 +452,12 @@ export function createLocalServicesRuntimeActionExecutor(
             });
             if (!result.ok) {
                 if (result.reason !== 'outcome_unknown' && result.reason !== 'invalid_response') {
-                    return routeFailureResult('launcher', result.reason, result);
+                    return routeFailureResult(args.context, 'launcher', result.reason, result);
                 }
                 // The launcher owns whether its reply proves settlement. Keep the transport evidence alongside that outcome.
                 const requestId = result.failure?.requestId ?? args.context.actionRequestId;
-                return { ...(result.failure ? projectMachineActionRpcFailure(result.failure) : {}), ...projectUnexpectedActionFailureV1(null),
+                return { ...(result.failure ? (requiresAgentEgressRedaction(args.context)
+                    ? projectMachineActionRpcFailure(result.failure) : result.failure) : {}), ...projectUnexpectedActionFailureV1(null),
                     ...(requestId ? { requestId } : {}) };
             }
             onLauncherSnapshot({ machineId, serverId, sessionId,
@@ -473,7 +476,7 @@ export function createLocalServicesRuntimeActionExecutor(
             const targetId = readTargetIdFromInput(parsed.input);
             if (!targetId) return invalidParametersResult;
             const result = await openLauncherPreview({ machineId, targetId, serverId, sessionId, signal: args.context.signal });
-            return result.ok ? result.response : routeFailureResult('launcher', result.reason, result);
+            return result.ok ? result.response : routeFailureResult(args.context, 'launcher', result.reason, result);
         }
 
         if (args.actionId === 'localServices.launcher.registerPreview') {
@@ -481,7 +484,7 @@ export function createLocalServicesRuntimeActionExecutor(
             const targetId = readTargetIdFromInput(parsed.input);
             if (!targetId) return invalidParametersResult;
             const result = await registerLauncherPreview({ machineId, targetId, serverId, sessionId, signal: args.context.signal });
-            return result.ok ? result.response : routeFailureResult('launcher', result.reason, result);
+            return result.ok ? result.response : routeFailureResult(args.context, 'launcher', result.reason, result);
         }
 
         if (args.actionId === 'localServices.launcher.history.clear') {
@@ -499,7 +502,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 ...(accountId ? { accountId } : {}),
                 ...(context.signal ? { signal: context.signal } : {}),
             });
-            if (!result.ok) return routeFailureResult('launcher', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'launcher', result.reason, result);
             onLauncherSnapshot({ ...request, serverId, snapshot: result.response.snapshot });
             return result.response;
         }
@@ -511,7 +514,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('preview', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'preview', result.reason, result);
             // Converge the action read into the shared store so the status truth and the open pane
             // do not diverge (DUP-6).
             onPreviewSnapshot({ machineId, serverId, snapshot: result.snapshot });
@@ -524,7 +527,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 ...(isRecord(parsed.input) ? parsed.input : {}), machineId,
             });
             if (!request?.success) return invalidParametersResult;
-            if (!input.executeOnMachine) return routeFailureResult('preview', 'unavailable');
+            if (!input.executeOnMachine) return routeFailureResult(args.context, 'preview', 'unavailable');
             // UI review already admitted this intent. Use the incumbent Account Action
             // transport so the receiving Machine gets the requester's private carrier.
             const result = await input.executeOnMachine({ ...args, input: request.data, context: {
@@ -541,13 +544,13 @@ export function createLocalServicesRuntimeActionExecutor(
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const request = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
-            if (!fetchPublicPreviewStatus) return routeFailureResult('public_preview', 'unavailable');
+            if (!fetchPublicPreviewStatus) return routeFailureResult(args.context, 'public_preview', 'unavailable');
             const result = await fetchPublicPreviewStatus({
                 request: request.data,
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'public_preview', result.reason, result);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -565,13 +568,13 @@ export function createLocalServicesRuntimeActionExecutor(
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const request = DaemonLocalServicePublicPreviewCreateRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
-            if (!createPublicPreviewExposure) return routeFailureResult('public_preview', 'unavailable');
+            if (!createPublicPreviewExposure) return routeFailureResult(args.context, 'public_preview', 'unavailable');
             const result = await createPublicPreviewExposure({
                 request: request.data,
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'public_preview', result.reason, result);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -588,13 +591,13 @@ export function createLocalServicesRuntimeActionExecutor(
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const request = DaemonLocalServicePublicPreviewRevokeRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
-            if (!revokePublicPreviewExposure) return routeFailureResult('public_preview', 'unavailable');
+            if (!revokePublicPreviewExposure) return routeFailureResult(args.context, 'public_preview', 'unavailable');
             const result = await revokePublicPreviewExposure({
                 request: request.data,
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason, result);
+            if (!result.ok) return routeFailureResult(args.context, 'public_preview', result.reason, result);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -612,13 +615,13 @@ export function createLocalServicesRuntimeActionExecutor(
             if (!machineId) return disabledResult('local_services_machine_unavailable');
             const request = DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema.safeParse(parsed.input);
             if (!request.success) return invalidParametersResult;
-            if (!copyPublicPreviewUrl) return routeFailureResult('public_preview', 'unavailable');
+            if (!copyPublicPreviewUrl) return routeFailureResult(args.context, 'public_preview', 'unavailable');
             const result = await copyPublicPreviewUrl({
                 request: request.data,
                 serverId,
                 signal: args.context.signal,
             });
-            return result.ok ? result.response : routeFailureResult('public_preview', result.reason, result);
+            return result.ok ? result.response : routeFailureResult(args.context, 'public_preview', result.reason, result);
         }
 
         if (args.actionId.startsWith('localServices.actions.')) {
@@ -633,7 +636,7 @@ export function createLocalServicesRuntimeActionExecutor(
             if (target && (target.kind !== 'machine' || target.machineId !== request.data.target.machineId)) {
                 return invalidParametersResult;
             }
-            if (!input.executeOnMachine) return routeFailureResult('action', 'unavailable');
+            if (!input.executeOnMachine) return routeFailureResult(args.context, 'action', 'unavailable');
             const result = await input.executeOnMachine({ ...args, input: request.data, context: {
                 ...args.context, externalActionTarget: target ?? { kind: 'machine', machineId: request.data.target.machineId },
             } });

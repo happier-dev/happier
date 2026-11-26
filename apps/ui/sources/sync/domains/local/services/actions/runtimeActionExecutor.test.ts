@@ -1202,7 +1202,10 @@ describe('UI local-services runtime action executor', () => {
 
 
 describe('Machine refusal disclosure at the Local Services Action boundary (SEC-RU2-1126C)', () => {
-    it.each(['returned', 'thrown'] as const)('projects a %s launcher snapshot refusal without losing typed evidence', async (carrier) => {
+    it.each([
+        { carrier: 'returned', surface: undefined }, { carrier: 'thrown', surface: undefined },
+        { carrier: 'returned', surface: 'ui' }, { carrier: 'thrown', surface: 'ui' },
+    ] as const)('projects a $carrier launcher snapshot refusal for $surface without losing typed evidence', async ({ carrier, surface }) => {
         // Synthetic review values; only the Machine RPC transport boundary is mocked.
         const privateProse = 'SYNTHETIC private prose about /home/owner/acme-merger-plan';
         const refusal = {
@@ -1221,10 +1224,14 @@ describe('Machine refusal disclosure at the Local Services Action boundary (SEC-
             resolveMachineId: () => 'machine_1',
             fetchLauncherSnapshot: fetchLocalServiceLauncherSnapshotViaMachineRpc,
         });
-        const result = await execute({ actionId: 'localServices.launcher.snapshot', input: { sessionId: 'session_1' }, context: { serverId: 'server_1' } });
-        expect(result).not.toHaveProperty('details');
-        expect(JSON.stringify(result)).not.toContain('acme-merger-plan');
-        expect(JSON.stringify(result)).not.toContain('SYNTHETICTOKEN');
+        const result = await execute({ actionId: 'localServices.launcher.snapshot', input: { sessionId: 'session_1' }, context: { serverId: 'server_1', surface } });
+        if (surface === 'ui') {
+            expect(result).toMatchObject({ details: refusal.details });
+        } else {
+            expect(result).not.toHaveProperty('details');
+            expect(JSON.stringify(result)).not.toContain('acme-merger-plan');
+            expect(JSON.stringify(result)).not.toContain('SYNTHETICTOKEN');
+        }
         expect(result).toMatchObject({
             ok: false, errorCode: 'launcher_refused', error: 'launcher_refused',
             requestId: 'req_synthetic_1', effectAttempted: false, failureCause: refusal.failureCause,
