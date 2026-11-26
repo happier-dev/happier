@@ -7,6 +7,7 @@ export { resolveHappierThemeSurfaceStyle } from './themeSurface.js';
 // Host-only active semantic inspection; no portable registry or plugin ABI changes.
 export { beginThemeSurfaceInspection, createThemeSurfaceInspectionBinding } from './themeSurfaceInspection.js';
 export * from './index.public.js';
+export { HappierSeriesTrailingReadingContext } from './data/StackedSeriesChart.js';
 // Host-only: core's type scale draws the compact title and its inline control in the same text flow.
 export { HappierPageHeaderInlineTitleContext } from './layout/PageHeader.js';
 // Host-only: which text edge a section's plain action stands on (`start` once it drops beneath the section's text), so a

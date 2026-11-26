@@ -6,6 +6,7 @@ import {
   projectUsageConstellationModel,
   projectUsageDaylight,
   projectUsageDayModel,
+  projectUsageFlowModel,
   projectUsagePortraitModel,
   projectUsageScoreModel,
   projectUsageRiverModel,
@@ -25,6 +26,35 @@ const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
 const START = Date.UTC(2026, 8, 7); // Monday 7 Sep 2026, UTC calendar
+describe('Usage flow running bucket', () => {
+  it.each([
+    { period: 'Week', granularity: 'day', count: 7, step: DAY, timeUnitMs: 1 },
+    { period: 'Month', granularity: 'day', count: 30, step: DAY, timeUnitMs: 1 },
+    { period: 'Today', granularity: 'hour', count: 5, step: HOUR, timeUnitMs: 1_000 },
+  ] as const)('keeps the $period running bucket in exact values and outside the drawing', ({ granularity, count, step, timeUnitMs }) => {
+    const endMs = START + (count - 1) * step + MINUTE;
+    const range = { startMs: START, endMs, granularity, timeZoneOffsetMinutes: 0 };
+    const points = Array.from({ length: count }, (_, index) => ({
+      id: String(index), x: (START + index * step) / timeUnitMs, y: index + 1,
+    }));
+    const series = [{ id: 'agent', label: 'Agent', points }];
+    const model = projectUsageFlowModel(series, range, endMs + MINUTE, timeUnitMs);
+    expect(model.drawn[0]?.points).toEqual(points.slice(0, -1));
+    expect(model.trailingReading?.[0]?.points).toEqual([{ ...points.at(-1), partial: true }]);
+    const exactPoints = [...model.drawn[0]!.points, ...model.trailingReading![0]!.points];
+    expect(exactPoints.reduce((total, point) => total + (point.y ?? 0), 0)).toBe(count * (count + 1) / 2);
+  });
+
+  it('leaves a closed range intact including a measured zero at its end', () => {
+    const endMs = START + 2 * DAY;
+    const range = { startMs: START, endMs, granularity: 'day', timeZoneOffsetMinutes: 0 } as const;
+    const series = [{ id: 'agent', label: 'Agent', points: [
+      { id: 'first', x: START, y: 50 }, { id: 'last', x: START + DAY, y: 0 },
+    ] }];
+    expect(projectUsageFlowModel(series, range, endMs, 1)).toEqual({ drawn: series, trailingReading: null });
+  });
+});
+
 type Metrics = UsageAgentCalendar['days'][number]['totals'];
 const metrics = (values: Partial<Metrics>): Metrics => ({
   tokens: null,

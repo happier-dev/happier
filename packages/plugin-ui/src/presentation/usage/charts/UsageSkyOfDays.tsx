@@ -1,4 +1,5 @@
 import { useId, useMemo } from 'react';
+import { useOptionalHappierUiLocalization } from '../../../environment/context.js';
 import {
   Circle,
   Defs,
@@ -143,6 +144,7 @@ type Star = Readonly<{
  * more join into faint constellations; best and current runs are named above the field.
  */
 export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
+  const localization = useOptionalHappierUiLocalization();
   const [width, onLayout] = useUsageChartWidth(props.width);
   const ink = resolveUsageChartInk(props.theme, props.paint);
   const svgText = useUsageChartSvgText(props.theme);
@@ -318,10 +320,13 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
     labels.levels.busy,
     labels.levels.busiest,
   ];
+  const readingDay = (day: UsageSkyDay) => day.partial
+    ? `${labels.day(day.date)} · ${localization?.translate('happier.plugin-ui.usage.soFar', 'so far') ?? 'so far'}`
+    : labels.day(day.date);
   const rows = model.days.map(
     (day) =>
       [
-        labels.day(day.date),
+        readingDay(day),
         day.state === 'unknown'
           ? labels.values.notRecorded
           : day.state === 'inactive'
@@ -607,7 +612,7 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
           const day = model.days[point.index]!;
           const value = day.state === 'unknown' ? labels.values.notRecorded : day.state === 'inactive' ? labels.values.noActivity
             : ordinal ? levelNames[day.level ?? 0] ?? labels.values.notRecorded : day.value == null ? labels.values.notRecorded : formatHappierDataValue(day.value);
-          return <ChartMark key={`datum-${point.index}`} datum={{ keyboard: false, label: `${props.label} · ${labels.day(day.date)}`, value,
+          return <ChartMark key={`datum-${point.index}`} datum={{ keyboard: false, label: `${props.label} · ${readingDay(day)}`, value,
             subtitle: [!ordinal && day.state === 'active' && day.value != null ? `${labels.values.valueColumn} · ${labels.formatValue(day.value)}` : null, byAgent ? leaderName(day.leader) : null].filter(Boolean).join(' · ') || undefined,
             color: day.leader?.kind === 'agent' ? colourOf(day.leader.agentId) : props.paint.accent }}
             bounds={{ x: point.x - point.radius, y: point.y - Math.max(3, point.radius), width: point.radius * 2, height: Math.max(6, point.radius * 2) }} coordinateSpace={scaled ? { width, height } : undefined} />;
