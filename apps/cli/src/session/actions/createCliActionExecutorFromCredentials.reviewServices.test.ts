@@ -27,7 +27,7 @@ it.each([
     const { accountId, authentication, allowed } = scenario;
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain',
-        ctx: null, serverId: 'home', serverIdentityId: 'srv_home', pluginActionExecutionOwner: 'current_process',
+        ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', serverIdentityId: 'srv_home', pluginActionExecutionOwner: 'current_process',
         actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
     const target = { kind: 'machine' as const, machineId: 'machine' };
     const sessionActionOrigin = 'sessionOrigin' in scenario ? resolveSessionRoleRpcOrigin({
@@ -53,7 +53,8 @@ it.each([
         ...('sessionTransport' in scenario ? { rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'owner-session' } } : {}) };
     const actions = createPluginInvocationActionsService({ seed: {
         plugin: { id: TRIAGE_MANIFEST.id, version: TRIAGE_MANIFEST.version }, occurrenceId: 'triage-task-press',
-        contribution: { id: 'tasks/create-v1' }, sourceCustody: createManagedPluginSourceCustody('triage-task-generation'),
+        contribution: { id: 'tasks/create-v1', qualifiedId: `${TRIAGE_MANIFEST.id}/actions/tasks/create-v1` },
+        sourceCustody: createManagedPluginSourceCustody('triage-task-generation'),
         surface: 'ui', signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
         resolveCurrentPluginMaterializationRef: caller.resolveCurrentPluginMaterializationRef,
         approvalContext: context,
@@ -89,7 +90,7 @@ it.each([
 ])('admits $name before handing installed Account Review services to a Workflow', async ({ accountId, actorAccountId, allowed }) => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const executor = createCliActionExecutor({ token, credentials: { token, encryption: null },
-        sessionId: '', mode: 'plain', ctx: null, serverId: 'home',
+        sessionId: '', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.example.test',
         pluginActionExecutionOwner: 'current_process',
         actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
     let current = true;
