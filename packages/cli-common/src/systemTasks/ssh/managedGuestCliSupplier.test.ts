@@ -135,8 +135,8 @@ describe('managed guest CLI source supplier', () => {
         },
       });
       if (matching) {
-        const result = await install;
-        expect(await readFile(join(home, '.happier/cli/current.version'), 'utf8')).toBe(`${result.versionId}\n`);
+        await install;
+        expect(await readFile(join(home, '.happier/cli/current.version'), 'utf8')).toBe(`local-${sha256}\n`);
         await exec(join(home, '.happier/cli/current/happier'), []);
         expect(await readFile(extraction, 'utf8')).toBe('extracted');
       } else {
