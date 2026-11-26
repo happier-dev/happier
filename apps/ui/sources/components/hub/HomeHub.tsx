@@ -573,11 +573,9 @@ const HomeHubContent = React.memo(function HomeHubContent({ launchPathname }: Re
     }), [guidance.kind, heroActive, phone, planetDigits, planetFadeFrom, planetFadeTo, planetGeometry, planetIntensity, planetPane, planetSource]);
     const [homePlanetDrawn, setHomePlanetDrawn] = React.useState(false);
     const onHomePlanetDrawn = React.useCallback(() => setHomePlanetDrawn(true), []);
-    // A cold start's Loading planet stays over Home until Home is up, then fades into it; Home's own Loading
-    // moment would only repeat it underneath.
+    // The still boot mark covers startup. Home draws its live planet once the curtain has finished fading.
     const launchCurtain = useLaunchCurtainState() !== 'gone';
-    // It leaves once Home has arrived (ready and presented, its planet arriving under the fade) or says it cannot be
-    // reached; a Home that is not the one on screen (another tab, the Personal Home setup over it) does not hold it.
+    // The presented Home holds the curtain until it arrives or reports it cannot be reached.
     const homeArrived = React.useSyncExternalStore(subscribeHomeArrival, isHomeArrivalSettled, isHomeArrivalSettled);
     // Only the acknowledged Account layout can place the composer in the hero.
     const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;
@@ -763,7 +761,8 @@ const HomeHubContent = React.memo(function HomeHubContent({ launchPathname }: Re
                     onContentSizeChange={tracker.onContentSizeChange}
                     scrollEventThrottle={16}
                 >
-                    <HomePlanet key="atmosphere" pane={heroFrame.pane.width > 0 ? heroFrame.pane : hubPane}
+                    {!launchCurtain && (
+                        <HomePlanet key="atmosphere" pane={heroFrame.pane.width > 0 ? heroFrame.pane : hubPane}
                             intensity={atmosphere.planet.intensity} digits={atmosphere.planet.digits}
                             theme={homeTheme} phone={phone} hero={heroFrame.hero}
                             planet={heroActive && planetDrawn} fieldAllowed={atmosphere.source !== 'picture'}
@@ -775,6 +774,7 @@ const HomeHubContent = React.memo(function HomeHubContent({ launchPathname }: Re
                             onHidden={dissolving ? atmosphereStageStore.finishSendDissolve : undefined}
                             leave={dissolving ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion}
                             answerFinishes={planetSource && isAtmosphereMomentOn(atmosphere.moments, 'sessionFinished')} focused={focused} />
+                    )}
                     {heroActive ? <React.Fragment key="header">
                     {planetSource && planetGeometry ? (
                         // Home's Bots as moons round the planet (plan U3): above the planet, under the hero.

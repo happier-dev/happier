@@ -8,6 +8,8 @@ import { useRouter } from 'expo-router';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
+import { HomePlanet } from '@/components/atmosphere/HomePlanet';
 import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -372,6 +374,27 @@ function shownSections(text: string): string[] {
 }
 
 describe('HomeHub', () => {
+    it('mounts the live Home planet only after the launch curtain has left', async () => {
+        settings.measureAtmosphere = true;
+        settings.viewport = { width: 1100, height: 900 };
+        settings.layout = { order: [HOME_HUB_COMPOSER_SECTION_ID], hidden: [] };
+        const launch = startTestLaunchCurtain();
+        let screen: Awaited<ReturnType<typeof renderHome>> | undefined;
+        try {
+            const home = await renderHome();
+            screen = home;
+            await vi.waitFor(() => expect(home.findByTestId('home-hero')).not.toBeNull());
+            const planet = () => home.findAllByType(HomePlanet);
+            expect(planet()).toHaveLength(0);
+
+            await act(async () => launch.finish());
+            await vi.waitFor(() => expect(planet()).toHaveLength(1));
+        } finally {
+            await screen?.unmount();
+            launch.dispose();
+        }
+    });
+
     it('keeps excluded Home opaque beside an included Project without remounting its scroll content across inclusion', async () => {
         settings.measureAtmosphere = true;
         function Shell(props: React.PropsWithChildren) {
