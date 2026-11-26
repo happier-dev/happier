@@ -494,6 +494,7 @@ export type BootstrapMachineSyncRuntimeResult = Readonly<{
   stopProviderAccountSettings?: () => Promise<void>;
   stopPeerMediationLoopbackServer: () => Promise<void>;
   stopMachineIrohAcceptor: () => Promise<void>;
+  refreshPeerMediationEndpointPublication?: () => Promise<unknown>;
   resumeMachineConnectionPublications: () => Promise<void>;
   daemonSessionMutationCustody: DaemonSessionMutationCustody | null;
   cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop(input: Readonly<{
@@ -2503,6 +2504,7 @@ export async function bootstrapMachineSyncRuntime(
     stopProviderAccountSettings,
     stopPeerMediationLoopbackServer,
     stopMachineIrohAcceptor,
+    refreshPeerMediationEndpointPublication,
     resumeMachineConnectionPublications,
     daemonSessionMutationCustody: usageLimitRecoveryMutationCustody,
     cancelInactiveSessionUsageLimitRecoveryAfterExplicitStop: async ({ sessionId }) =>

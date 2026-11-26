@@ -988,4 +988,95 @@ describe('createDaemonMachineIrohRuntime', () => {
     expect(stopCalls).toEqual(['tunnel-1']);
     expect(native.shutdownEndpoint).toHaveBeenCalledTimes(1);
   });
+
+  it('extends the single keyed endpoint in place via applyRelayConfig, stays idempotent on canonical URLs, and refuses invalid transitions', async () => {
+    let activeRelayUrls: string[] = [];
+    const native = nativeHarness({
+      createEndpoint: vi.fn(async (request: { relayUrls?: readonly string[] }) => {
+        if (request.relayUrls?.length) {
+          activeRelayUrls = [...new Set([...activeRelayUrls, ...request.relayUrls.map((u) => new URL(u).toString())])].sort();
+        }
+        return { endpointHandle: 'endpoint-1', endpointId: 'a'.repeat(64) };
+      }),
+      getEndpointStatus: vi.fn(async () => ({
+        endpointHandle: 'endpoint-1', endpointId: 'a'.repeat(64),
+        relayMode: activeRelayUrls.length > 0 ? 'custom' : 'disabled',
+        relayUrls: activeRelayUrls,
+        capProfile: 'machineBulk', directAddresses: ['127.0.0.1:7777'], active: true,
+      })),
+    });
+    const runtime = await createDaemonMachineIrohRuntime({
+      happyHomeDir: '/daemon-home',
+      relayConfig: { relayPolicy: 'automatic', relayUrls: [] },
+      native: native as never,
+    });
+    if (!runtime.available) throw new Error('Expected native endpoint');
+    try {
+      expect(runtime.endpoint.relayUrls).toBeUndefined();
+      expect(await runtime.applyRelayConfig!({ relayPolicy: 'automatic', relayUrls: ['https://relay.example'] })).toBe(true);
+      expect(runtime.endpoint.relayUrls).toEqual(['https://relay.example/']);
+      expect(native.createEndpoint).toHaveBeenCalledTimes(2);
+      expect(native.createEndpoint.mock.calls[1]?.[0]).toMatchObject({
+        keyPath: native.createEndpoint.mock.calls[0]?.[0]?.keyPath,
+        relayPolicy: 'automatic',
+        relayUrls: ['https://relay.example'],
+        capProfile: 'machineBulk',
+      });
+
+      // Canonical URL equivalence is an idempotent no-op without calling native again.
+      expect(await runtime.applyRelayConfig!({ relayPolicy: 'automatic', relayUrls: ['https://relay.example/'] })).toBe(false);
+      expect(native.createEndpoint).toHaveBeenCalledTimes(2);
+
+      // Disabled or empty requests are no-ops.
+      expect(await runtime.applyRelayConfig!({ relayPolicy: 'disabled', relayUrls: [] })).toBe(false);
+      expect(await runtime.applyRelayConfig!({ relayPolicy: 'automatic', relayUrls: [] })).toBe(false);
+      expect(native.createEndpoint).toHaveBeenCalledTimes(2);
+
+      // Fail closed if native ever returns a different handle or endpoint identity.
+      native.createEndpoint.mockResolvedValueOnce({ endpointHandle: 'endpoint-other', endpointId: 'a'.repeat(64) });
+      await expect(runtime.applyRelayConfig!({
+        relayPolicy: 'automatic',
+        relayUrls: ['https://relay-2.example'],
+      })).rejects.toThrow(/endpoint/i);
+      expect(runtime.endpoint.relayUrls).toEqual(['https://relay.example/']);
+    } finally {
+      await runtime.shutdown();
+    }
+
+    // Refuses updates after shutdown.
+    expect(await runtime.applyRelayConfig!({ relayPolicy: 'automatic', relayUrls: ['https://relay-3.example'] })).toBe(false);
+
+    // Ephemeral and disabled runtimes never adopt relays in place.
+    const ephemeral = await createDaemonMachineIrohRuntime({
+      happyHomeDir: '/daemon-home',
+      identity: 'ephemeral',
+      relayConfig: { relayPolicy: 'automatic', relayUrls: [] },
+      native: nativeHarness() as never,
+    });
+    if (!ephemeral.available) throw new Error('Expected ephemeral runtime');
+    try {
+      expect(await ephemeral.applyRelayConfig!({ relayPolicy: 'automatic', relayUrls: ['https://relay.example'] })).toBe(false);
+    } finally {
+      await ephemeral.shutdown();
+    }
+
+    const disabledNative = nativeHarness({
+      getEndpointStatus: vi.fn(async () => ({
+        endpointHandle: 'endpoint-1', endpointId: 'a'.repeat(64),
+        relayMode: 'disabled', relayUrls: [], capProfile: 'machineBulk', directAddresses: ['127.0.0.1:7777'], active: true,
+      })),
+    });
+    const disabled = await createDaemonMachineIrohRuntime({
+      happyHomeDir: '/daemon-home',
+      relayConfig: { relayPolicy: 'disabled', relayUrls: [] },
+      native: disabledNative as never,
+    });
+    if (!disabled.available) throw new Error('Expected disabled runtime');
+    try {
+      expect(await disabled.applyRelayConfig!({ relayPolicy: 'automatic', relayUrls: ['https://relay.example'] })).toBe(false);
+      expect(disabledNative.createEndpoint).toHaveBeenCalledTimes(1);
+    } finally {
+      await disabled.shutdown();
+    }
+  });
 });

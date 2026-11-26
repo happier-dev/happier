@@ -72,6 +72,19 @@ function withInvocationEndpoints(profile: ServerProfile): ServerProfile {
   };
 }
 
+/**
+ * Returns the Home's advertised `machineRelayUrls` only when the saved profile
+ * holds an exact (authenticated/verified) descriptor. Advisory descriptors are
+ * never trusted for Machine relay configuration.
+ */
+export function readExactProfileHomeMachineRelayUrls(
+  profile: Pick<ServerProfile, 'homeConnectionDescriptor' | 'homeConnectionDescriptorAuthority'> | null | undefined,
+): readonly string[] | undefined {
+  if (!profile || profile.homeConnectionDescriptorAuthority !== 'exact') return undefined;
+  const urls = profile.homeConnectionDescriptor?.machineRelayUrls;
+  return urls && urls.length > 0 ? urls : undefined;
+}
+
 /** Retain the invocation's URL-only metadata before transport starts reading it.
  * Only authenticated publication may subsequently establish Home authority. */
 export async function resolveCurrentDaemonHomeProfile(): Promise<ServerProfile> {
@@ -525,6 +538,7 @@ export async function applyDaemonHomeDescriptorRefresh(input: Readonly<{
   reconcileDescriptor?: (descriptor: HomeConnectionDescriptorV1) => Promise<Readonly<{
     outcome: 'updated' | 'unchanged' | 'stale';
   }>>;
+  onExactDescriptorAdopted?: (descriptor: HomeConnectionDescriptorV1) => Promise<void> | void;
   requestReconnect: () => Promise<void> | void;
 }>): Promise<'ignored' | 'updated' | 'unchanged' | 'stale'> {
   const descriptor = input.features.homeConnectionDescriptor;
@@ -555,6 +569,9 @@ export async function applyDaemonHomeDescriptorRefresh(input: Readonly<{
       observation: 'exact',
     }))
   )(descriptor);
+  if (reconciliation.outcome === 'updated' || reconciliation.outcome === 'unchanged') {
+    await input.onExactDescriptorAdopted?.(descriptor);
+  }
   if (reconciliation.outcome === 'updated') await input.requestReconnect();
   return reconciliation.outcome;
 }

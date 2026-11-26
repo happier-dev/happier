@@ -526,9 +526,11 @@ export {
 } from './auth/terminalConnectLinkV4.js';
 
 export {
+  IROH_DESCRIPTOR_MAX_RELAY_URLS,
   IROH_ENDPOINT_DESCRIPTOR_VERSION_V1,
   IrohEndpointDescriptorV1Schema,
   IrohEndpointIdV1Schema,
+  IrohRelayUrlsV1Schema,
   parseIrohEndpointDescriptorV1,
   type IrohEndpointDescriptorV1,
 } from './connectivity/iroh/endpointDescriptorV1.js';

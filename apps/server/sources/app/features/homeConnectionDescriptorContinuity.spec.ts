@@ -341,4 +341,34 @@ describe('Home connection descriptor continuity', () => {
             endpoints: rawEndpoints,
         }));
     });
+
+    it('keeps identical contentKey when machineRelayUrls is absent or empty, and changes canonically when configured', () => {
+        const base = {
+            homeServerIdentityId: 'srv_home',
+            canonicalServerUrl: 'https://home.example.test',
+            endpoints: [{ kind: 'https' as const, url: 'https://home.example.test' }],
+        };
+        const absentKey = createHomeConnectionDescriptorContentKey(base);
+        const undefinedKey = createHomeConnectionDescriptorContentKey({ ...base, machineRelayUrls: undefined });
+        const emptyKey = createHomeConnectionDescriptorContentKey({ ...base, machineRelayUrls: [] });
+        expect(undefinedKey).toBe(absentKey);
+        expect(emptyKey).toBe(absentKey);
+
+        const withRelays = createHomeConnectionDescriptorContentKey({
+            ...base,
+            machineRelayUrls: ['https://relay-b.example.test', 'https://relay-a.example.test'],
+        });
+        const withRelaysSorted = createHomeConnectionDescriptorContentKey({
+            ...base,
+            machineRelayUrls: ['https://relay-a.example.test', 'https://relay-b.example.test'],
+        });
+        expect(withRelays).not.toBe(absentKey);
+        expect(withRelays).toBe(withRelaysSorted);
+
+        const changedRelays = createHomeConnectionDescriptorContentKey({
+            ...base,
+            machineRelayUrls: ['https://relay-c.example.test'],
+        });
+        expect(changedRelays).not.toBe(withRelays);
+    });
 });

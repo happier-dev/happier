@@ -11,6 +11,7 @@ import { publishServerHttpRuntimeOrigin, resolveServerHttpBaseUrl } from '@/api/
 import {
   applyDaemonHomeDescriptorRefresh,
   prepareDaemonHomeIrohTransport,
+  readExactProfileHomeMachineRelayUrls,
   resolveCurrentDaemonHomeProfile,
 } from './daemonHomeIrohTransport';
 
@@ -1128,5 +1129,62 @@ describe('prepareDaemonHomeIrohTransport', () => {
     await release;
     expect(publish).toHaveBeenCalledTimes(1);
     expect(releaseLate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads Home machineRelayUrls only from exact descriptors and invokes onExactDescriptorAdopted only on non-stale verified refreshes', async () => {
+    const relayDescriptor = {
+      ...descriptor,
+      machineRelayUrls: ['https://relay.example.test'],
+    };
+    expect(readExactProfileHomeMachineRelayUrls({
+      homeConnectionDescriptor: relayDescriptor,
+      homeConnectionDescriptorAuthority: 'exact',
+    })).toEqual(['https://relay.example.test']);
+    expect(readExactProfileHomeMachineRelayUrls({
+      homeConnectionDescriptor: relayDescriptor,
+      homeConnectionDescriptorAuthority: 'advisory',
+    })).toBeUndefined();
+    expect(readExactProfileHomeMachineRelayUrls({
+      homeConnectionDescriptor: relayDescriptor,
+    })).toBeUndefined();
+    expect(readExactProfileHomeMachineRelayUrls(null)).toBeUndefined();
+
+    const featuresPayload = FeaturesResponseSchema.parse({
+      features: {},
+      capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+      homeConnectionDescriptor: relayDescriptor,
+    });
+    const onExactDescriptorAdopted = vi.fn();
+    const requestReconnect = vi.fn();
+
+    await expect(applyDaemonHomeDescriptorRefresh({
+      features: featuresPayload,
+      reconcileDescriptor: async () => ({ outcome: 'updated' }),
+      onExactDescriptorAdopted,
+      requestReconnect,
+    })).resolves.toBe('updated');
+    expect(onExactDescriptorAdopted).toHaveBeenCalledTimes(1);
+    expect(onExactDescriptorAdopted).toHaveBeenCalledWith(relayDescriptor);
+    expect(requestReconnect).toHaveBeenCalledTimes(1);
+
+    onExactDescriptorAdopted.mockClear();
+    requestReconnect.mockClear();
+    await expect(applyDaemonHomeDescriptorRefresh({
+      features: featuresPayload,
+      reconcileDescriptor: async () => ({ outcome: 'unchanged' }),
+      onExactDescriptorAdopted,
+      requestReconnect,
+    })).resolves.toBe('unchanged');
+    expect(onExactDescriptorAdopted).toHaveBeenCalledTimes(1);
+    expect(requestReconnect).not.toHaveBeenCalled();
+
+    onExactDescriptorAdopted.mockClear();
+    await expect(applyDaemonHomeDescriptorRefresh({
+      features: featuresPayload,
+      reconcileDescriptor: async () => ({ outcome: 'stale' }),
+      onExactDescriptorAdopted,
+      requestReconnect,
+    })).resolves.toBe('stale');
+    expect(onExactDescriptorAdopted).not.toHaveBeenCalled();
   });
 });

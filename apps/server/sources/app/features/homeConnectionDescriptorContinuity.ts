@@ -109,15 +109,30 @@ export function createHomeConnectionDescriptorContentKey(params: Readonly<{
     homeServerIdentityId: string;
     canonicalServerUrl: string;
     endpoints: readonly HomeConnectionEndpointV1[];
+    machineRelayUrls?: readonly string[];
 }>): string {
     // Preserve the canonical key order across raw composed endpoints and
     // Zod-parsed descriptors (z.extend places `kind` last on parsed Iroh entries).
+    // When `machineRelayUrls` is absent/empty, keep the exact 3-element payload
+    // so unconfigured Homes preserve existing continuity keys without revision churn.
     const canonicalEndpoints = params.endpoints.map(canonicalizeEndpointForContentKey);
-    const canonicalContent = JSON.stringify([
-        params.homeServerIdentityId,
-        params.canonicalServerUrl,
-        canonicalEndpoints,
-    ]);
+    const canonicalMachineRelayUrls = params.machineRelayUrls && params.machineRelayUrls.length > 0
+        ? [...params.machineRelayUrls].sort()
+        : undefined;
+    const canonicalContent = JSON.stringify(
+        canonicalMachineRelayUrls
+            ? [
+                params.homeServerIdentityId,
+                params.canonicalServerUrl,
+                canonicalEndpoints,
+                { machineRelayUrls: canonicalMachineRelayUrls },
+            ]
+            : [
+                params.homeServerIdentityId,
+                params.canonicalServerUrl,
+                canonicalEndpoints,
+            ],
+    );
     const irohMarker = canonicalEndpoints.some((endpoint) => endpoint.kind === 'iroh') ? 'i' : 'n';
     return `v1:${irohMarker}:${createHash('sha256').update(canonicalContent).digest('hex')}`;
 }

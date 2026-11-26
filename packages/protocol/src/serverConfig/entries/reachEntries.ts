@@ -188,7 +188,7 @@ export const REACH_SERVER_CONFIG = defineServerConfigRegistry({
         editable: 'home',
         section: 'reach',
         group: 'iroh',
-        description: 'Comma-separated Iroh relay server addresses to use instead of the built-in relays.',
+        description: 'Comma-separated Iroh relay server addresses for this Home and advertised as the default relay list for connected Machines (no built-in relays exist when unset).',
         docs: 'self-hosting/env#iroh-connectivity-optional',
     },
 });

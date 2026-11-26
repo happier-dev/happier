@@ -279,4 +279,129 @@ describe('Pending recovery after Machine endpoint publication', () => {
       }
     });
   });
+
+  it('exposes refreshPeerMediationEndpointPublication to republish live Iroh endpoint relayUrls after in-place adoption', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'endpoint-relay-republish-' }, async ({ homeDir }) => {
+      const publishedIrohEndpoints: unknown[] = [];
+      let currentEndpoint: { endpointId: string; relayUrls?: string[]; directAddresses?: string[] } = {
+        endpointId: 'a'.repeat(64),
+        directAddresses: ['127.0.0.1:7777'],
+      };
+      const fakeMachineIrohRuntime = {
+        available: true as const,
+        get endpoint() {
+          return currentEndpoint;
+        },
+        applyRelayConfig: async (relayConfig: { relayUrls: readonly string[] }) => {
+          currentEndpoint = { ...currentEndpoint, relayUrls: [...relayConfig.relayUrls] };
+          return true;
+        },
+        startAttemptAcceptor: async () => undefined,
+        stopActiveTunnels: async () => undefined,
+        stopAttemptAcceptor: async () => undefined,
+        openTunnel: async () => { throw new Error('unused'); },
+        openHttpTunnel: async () => { throw new Error('unused'); },
+        openTransport: async () => { throw new Error('unused'); },
+        shutdown: async () => undefined,
+      };
+      let onConnect: (() => void | Promise<void>) | undefined;
+      type MachineClient = NonNullable<Awaited<ReturnType<BootstrapMachineSyncRuntimeParams['createConnectedApiMachine']>>>;
+      const transport = {
+        ...createApiMachineTransportFixture(),
+        connect: (options: { onConnect?: typeof onConnect }) => { onConnect = options.onConnect; },
+        setRPCHandlers: () => ({}),
+        registerLiveStreamRelayRoutes: () => {},
+        updateDaemonState: async (reduce: Parameters<MachineClient['updateDaemonState']>[0]) => {
+          const state = reduce({ status: 'running' });
+          if (state?.peerMediation?.iroh?.endpoint) {
+            publishedIrohEndpoints.push(state.peerMediation.iroh.endpoint);
+          }
+          return 'published' as const;
+        },
+        updateMachineMetadata: async () => 'published' as const,
+        emitExternalSessionTranscriptUpdate: () => {},
+        sendMachineTransferEnvelope: () => {},
+        sendTransferRelayV2Envelope: () => {},
+        sendMachineLiveStreamRelayEnvelope: () => {},
+        getPeerMediationMachineRpcHandlerManager: () => ({ invokeLocal: async () => ({ ok: true }) }),
+      };
+      const transfer = createDaemonTransferRuntimeStatePublisher({
+        initialTransferState: createDaemonTransferRuntimeState({
+          directPeer: { featureEnabled: false, serverEnabled: false, bindHost: '127.0.0.1', bindPort: 0, advertisedHosts: [] },
+        }),
+      });
+      let runtime: Awaited<ReturnType<typeof bootstrapMachineSyncRuntime>> | undefined;
+      try {
+        runtime = await bootstrapMachineSyncRuntime({
+          cliVersion: 'test',
+          machineId: 'relay-republish-machine',
+          machine: { id: 'relay-republish-machine', encryptionMode: 'plain', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
+          preferredHost: 'host',
+          happyHomeDir: homeDir,
+          happyLibDir: homeDir,
+          filesystemAccessPolicy: { kind: 'osUser' },
+          takeoverRequested: false,
+          isShuttingDown: () => false,
+          isPublicationQuiescing: () => false,
+          createConnectedApiMachine: () => transport as unknown as MachineClient,
+          attachTransferRuntimeStatePublisher: target => transfer.attachApiMachine(target),
+          startAutomationWorkerForMachine: () => null,
+          startMemoryWorkerForMachine: async () => null,
+          startVoiceInferenceWorkerForMachine: async () => null,
+          orphanedDeadDaemonSessions: [],
+          spawnSessionForInternalResume: async () => ({ type: 'success', sessionId: 'unused' }),
+          spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+          stopSession: async () => ({ status: 'stopped' }),
+          isSessionAlreadyRunning: async () => false,
+          loadLocalSessionMetadataForHandoff: async () => null,
+          beforeShutdown: async () => {},
+          requestShutdown: () => {},
+          directPeerServerLifecycle: null,
+          directTransferRegistryHost: createCliRegistryHostV1(),
+          connectedServiceRefreshLoopHandle: null,
+          connectedServiceQuotasLoopHandle: null,
+          daemonServerWorkScheduler: createDaemonServerWorkScheduler({ budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }) }),
+          peerMediationMachineRpc: {
+            accountId: 'acc-1',
+            serverFeatures: {
+              features: {
+                machines: {
+                  enabled: true,
+                  rpc: {
+                    enabled: true,
+                    directPeer: { enabled: true },
+                  },
+                },
+              },
+              capabilities: {
+                machines: {
+                  peerMediation: {
+                    grantSigningKeys: [{ keyId: 'key-1', publicKey: 'A'.repeat(43), expiresAt: null }],
+                  },
+                },
+              },
+            } as never,
+          },
+          machineIrohRuntime: fakeMachineIrohRuntime as never,
+        });
+        expect(onConnect).toBeTypeOf('function');
+        await onConnect!();
+        expect(publishedIrohEndpoints.at(-1)).toEqual({
+          endpointId: 'a'.repeat(64),
+          directAddresses: ['127.0.0.1:7777'],
+        });
+
+        await fakeMachineIrohRuntime.applyRelayConfig({ relayUrls: ['https://relay.example.test/'] });
+        expect(runtime.refreshPeerMediationEndpointPublication).toBeTypeOf('function');
+        await runtime.refreshPeerMediationEndpointPublication!();
+        expect(publishedIrohEndpoints.at(-1)).toEqual({
+          endpointId: 'a'.repeat(64),
+          directAddresses: ['127.0.0.1:7777'],
+          relayUrls: ['https://relay.example.test/'],
+        });
+      } finally {
+        if (runtime) await retireMachineSyncRuntimeAttempt(runtime);
+      }
+    });
+  });
 });

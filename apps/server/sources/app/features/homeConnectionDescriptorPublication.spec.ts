@@ -1178,4 +1178,151 @@ describe("home connection descriptor production read path", () => {
             warn.mockRestore();
         }
     });
+
+    it("publishes sorted machineRelayUrls on an HTTPS-only Home, advances revision on change/removal, and projects through public reads", async () => {
+        let stored: { revision: number; contentKey: string; irohEndpointId?: string } | null = null;
+        const write = vi.fn(async (continuity: { revision: number; contentKey: string; irohEndpointId?: string }) => {
+            stored = continuity;
+            return { status: "committed" as const, continuity };
+        });
+        const continuityStore = {
+            read: async () => stored,
+            write,
+        } satisfies HomeConnectionDescriptorContinuityStore;
+        const baseEnv = {
+            HAPPIER_SERVER_IDENTITY_ID: "srv_home",
+            HAPPIER_CANONICAL_SERVER_URL: "https://home.example.test",
+            HAPPIER_PUBLIC_SERVER_URL: "https://ingress.example.test",
+        };
+
+        const initial = await readHomeConnectionDescriptor({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_URLS: "https://relay-b.example.test, https://relay-a.example.test",
+            },
+            continuityStore,
+            visibility: "authenticated",
+            resolveIrohEndpointState: inactiveIroh,
+        });
+        expect(initial).toEqual({
+            v: 1,
+            homeServerIdentityId: "srv_home",
+            canonicalServerUrl: "https://home.example.test",
+            revision: 1,
+            endpoints: [{ kind: "https", url: "https://ingress.example.test" }],
+            machineRelayUrls: ["https://relay-a.example.test", "https://relay-b.example.test"],
+        });
+
+        // Public projection preserves machineRelayUrls both from cache and after a cold restart.
+        write.mockClear();
+        const cachedPublic = await readCommittedHomeConnectionDescriptor({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_URLS: "https://relay-b.example.test, https://relay-a.example.test",
+            },
+            continuityStore,
+            resolveIrohEndpointState: inactiveIroh,
+        });
+        expect(cachedPublic?.machineRelayUrls).toEqual(["https://relay-a.example.test", "https://relay-b.example.test"]);
+        expect(write).not.toHaveBeenCalled();
+
+        // Prepared credential destination keeps machineRelayUrls consistent.
+        expect(readPreparedHomeCredentialDestination({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_URLS: "https://relay-a.example.test,https://relay-b.example.test",
+            },
+            prepared: initial!,
+        })).toEqual(initial);
+
+        // Cold restart reconstruction matches committed continuity when env matches, and fails closed on mismatch.
+        resetHomeConnectionDescriptorRevisionOwnerForTests();
+        const coldPublic = await readCommittedHomeConnectionDescriptor({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_URLS: "https://relay-a.example.test,https://relay-b.example.test",
+            },
+            continuityStore,
+            resolveIrohEndpointState: inactiveIroh,
+        });
+        expect(coldPublic?.machineRelayUrls).toEqual(["https://relay-a.example.test", "https://relay-b.example.test"]);
+
+        const mismatchedCold = await readCommittedHomeConnectionDescriptor({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_URLS: "https://relay-other.example.test",
+            },
+            continuityStore,
+            resolveIrohEndpointState: inactiveIroh,
+        });
+        expect(mismatchedCold).toBeUndefined();
+        expect(write).not.toHaveBeenCalled();
+
+        // Changing and removing machineRelayUrls advance revision monotonically.
+        const updated = await readHomeConnectionDescriptor({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_URLS: "https://relay-c.example.test",
+            },
+            continuityStore,
+            visibility: "authenticated",
+            resolveIrohEndpointState: inactiveIroh,
+        });
+        expect(updated?.revision).toBe(2);
+        expect(updated?.machineRelayUrls).toEqual(["https://relay-c.example.test"]);
+
+        const removed = await readHomeConnectionDescriptor({
+            env: {
+                ...baseEnv,
+                HAPPIER_IROH_RELAY_POLICY: "disabled",
+            },
+            continuityStore,
+            visibility: "authenticated",
+            resolveIrohEndpointState: inactiveIroh,
+        });
+        expect(removed?.revision).toBe(3);
+        expect(removed?.machineRelayUrls).toBeUndefined();
+    });
+
+    it("fails closed on invalid relay env without breaking ordinary HTTPS Home descriptor publication", async () => {
+        const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+        let stored: { revision: number; contentKey: string; irohEndpointId?: string } | null = null;
+        const continuityStore = {
+            read: async () => stored,
+            write: async (continuity: { revision: number; contentKey: string; irohEndpointId?: string }) => {
+                stored = continuity;
+                return { status: "committed" as const, continuity };
+            },
+        } satisfies HomeConnectionDescriptorContinuityStore;
+        try {
+            const descriptor = await readHomeConnectionDescriptor({
+                env: {
+                    HAPPIER_SERVER_IDENTITY_ID: "srv_home",
+                    HAPPIER_CANONICAL_SERVER_URL: "https://home.example.test",
+                    HAPPIER_PUBLIC_SERVER_URL: "https://ingress.example.test",
+                    HAPPIER_IROH_RELAY_POLICY: "disabled",
+                    HAPPIER_IROH_RELAY_URLS: "https://relay.example.test",
+                },
+                continuityStore,
+                visibility: "authenticated",
+                resolveIrohEndpointState: inactiveIroh,
+            });
+            expect(descriptor).toEqual({
+                v: 1,
+                homeServerIdentityId: "srv_home",
+                canonicalServerUrl: "https://home.example.test",
+                revision: 1,
+                endpoints: [{ kind: "https", url: "https://ingress.example.test" }],
+            });
+            expect(warn).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    module: "iroh",
+                    diagnostic: "home_machine_relay_urls_invalid",
+                }),
+                expect.any(String),
+            );
+        } finally {
+            warn.mockRestore();
+        }
+    });
 });

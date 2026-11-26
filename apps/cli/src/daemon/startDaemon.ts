@@ -116,7 +116,7 @@ import type { SessionAttachCleanupByKey, SpawnResourceCleanupByKey } from './ses
 import { createAcceptedSessionWorkspaceRegistration } from './sessions/registerAcceptedSessionWorkspace';
 import { createMachineSessionProjectReclassification, subscribeMachineSessionProjectReclassification } from './sessions/reclassifyMachineSessionProjects';
 import { subscribeActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { getServerProfile, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { reconcileAgentRuntimeRestartDisposition } from './sessions/reconcileAgentRuntimeRestartDisposition';
 import { createDaemonSessionHandoffMetadataBridge } from './sessions/createDaemonSessionHandoffMetadataBridge';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
@@ -261,6 +261,7 @@ import { createProviderBrokerMachineCarrierTunnelOpen } from './peer/iroh/provid
 import {
   applyDaemonHomeDescriptorRefresh,
   prepareDaemonHomeIrohTransport,
+  readExactProfileHomeMachineRelayUrls,
   resolveCurrentDaemonHomeProfile,
   type DaemonHomeTransport,
 } from './peer/iroh/daemonHomeIrohTransport';
@@ -508,6 +509,7 @@ export async function startDaemon(
     failedStartupCleanup: (() => Promise<void>) | null;
   } = { machine: null, home: null, failedStartupCleanup: null };
   let stopMachineIrohAcceptor: () => Promise<void> = async () => {};
+  let refreshMachinePeerMediationEndpointPublication: (() => Promise<unknown>) | null = null;
   const stopWorkspaceSyncRuntime = workspaceSyncRuntimeCustody.stop;
   const runtimeId = resolveDaemonRuntimeId(process.env);
   const startupSource = resolveDaemonStartupSourceFromEnv(process.env);
@@ -601,6 +603,7 @@ export async function startDaemon(
       startupSource,
       prepareServerTransport: async ({ persistedCredentials }) => {
         const applicationCarrierEligibility = readHomeApplicationCarrierEligibilityFromEnv(process.env);
+        const initialHomeProfile = await resolveCurrentDaemonHomeProfile();
         // Local native-endpoint initialization is optional carrier
         // preparation. Its failure is handed to the Home transport owner as
         // native-runtime unavailability; that owner is the single owner of the
@@ -612,7 +615,10 @@ export async function startDaemon(
           applicationCarrierEligibility,
           readRuntimeOptions: () => ({
             happyHomeDir: configuration.happyHomeDir,
-            relayConfig: resolveDaemonServiceIrohRelayConfig({ processEnv: process.env }),
+            relayConfig: resolveDaemonServiceIrohRelayConfig({
+              processEnv: process.env,
+              homeMachineRelayUrls: readExactProfileHomeMachineRelayUrls(initialHomeProfile),
+            }),
           }),
         });
         if (createdIrohRuntime?.available) {
@@ -628,7 +634,7 @@ export async function startDaemon(
         preparedIrohState.home = await prepareDaemonHomeIrohTransport({
           signal: homeTransportCancellation.signal,
           runtime: preparedIrohState.machine,
-          profile: await resolveCurrentDaemonHomeProfile(),
+          profile: initialHomeProfile,
           applicationCarrierEligibility,
           ...(persistedCredentials ? { token: persistedCredentials.token } : {}),
         });
@@ -654,6 +660,32 @@ export async function startDaemon(
     // Authentication can establish a descriptor for a credential-seeded or
     // predecessor profile. Downstream owners consume that same persisted binding.
     const homeTarget = await resolveCurrentCliHomeTarget();
+    const applyAdoptedHomeMachineRelayUrls = async (
+      machineRelayUrls: readonly string[] | undefined,
+    ): Promise<boolean> => {
+      if (!machineIrohRuntime?.applyRelayConfig || !machineRelayUrls?.length) return false;
+      const nextRelayConfig = resolveDaemonServiceIrohRelayConfig({
+        processEnv: process.env,
+        homeMachineRelayUrls: machineRelayUrls,
+      });
+      if (nextRelayConfig.explicitlyConfigured
+        || nextRelayConfig.relayPolicy !== 'automatic'
+        || nextRelayConfig.relayUrls.length === 0) {
+        return false;
+      }
+      try {
+        return await machineIrohRuntime.applyRelayConfig(nextRelayConfig);
+      } catch (error) {
+        logger.warn('[DAEMON RUN] Failed to adopt Home machineRelayUrls onto live Iroh endpoint', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    };
+    if (machineIrohRuntime && homeTarget.profileId) {
+      const adoptedHomeProfile = await getServerProfile(homeTarget.profileId).catch(() => null);
+      await applyAdoptedHomeMachineRelayUrls(readExactProfileHomeMachineRelayUrls(adoptedHomeProfile));
+    }
     // Missing/refused Project rows leave Project effects unavailable, while
     // unrelated daemon services remain usable with supported older Homes.
     await readProjectAccountRows({
@@ -929,6 +961,11 @@ export async function startDaemon(
         await applyDaemonHomeDescriptorRefresh({
           features,
           homeTarget,
+          onExactDescriptorAdopted: async (descriptor) => {
+            if (await applyAdoptedHomeMachineRelayUrls(descriptor.machineRelayUrls)) {
+              await refreshMachinePeerMediationEndpointPublication?.();
+            }
+          },
           requestReconnect: () => {
             if (!apiMachine?.requestServerTransportReconnect()) {
               homeTransportReplacementPending = true;
@@ -4746,6 +4783,8 @@ export async function startDaemon(
 
         const attemptedApiMachine = machineSyncRuntime.apiMachine;
         const attemptedApiMachineForSessions = machineSyncRuntime.apiMachineForSessions;
+        const attemptedRefreshMachinePeerMediationEndpointPublication =
+          machineSyncRuntime.refreshPeerMediationEndpointPublication ?? null;
         const attemptedProviderOperationsProducer =
           machineSyncRuntime.providerOperationsProducer;
         const attemptedExternalSessionPluginAdmissionOwner =
@@ -4829,6 +4868,8 @@ export async function startDaemon(
           stopProviderAccountSettings = machineSyncRuntime.stopProviderAccountSettings ?? null;
           stopPeerMediationLoopbackServer = machineSyncRuntime.stopPeerMediationLoopbackServer;
           stopMachineIrohAcceptor = machineSyncRuntime.stopMachineIrohAcceptor;
+          refreshMachinePeerMediationEndpointPublication =
+            attemptedRefreshMachinePeerMediationEndpointPublication;
           resumeQuiescedMachineConnectionPublications =
             machineSyncRuntime.resumeMachineConnectionPublications;
           // Restored targets subscribe through the bound Machine transport and use its provider authority.
@@ -4867,6 +4908,12 @@ export async function startDaemon(
           await attemptedManagedMachinePolicyRuntime?.stop();
           if (managedMachinePolicyRuntime === attemptedManagedMachinePolicyRuntime) managedMachinePolicyRuntime = null;
           if (apiMachine === attemptedApiMachine) apiMachine = null;
+          if (
+            refreshMachinePeerMediationEndpointPublication
+            === attemptedRefreshMachinePeerMediationEndpointPublication
+          ) {
+            refreshMachinePeerMediationEndpointPublication = null;
+          }
           if (apiMachineForSessions === attemptedApiMachineForSessions) {
             apiMachineForSessions = null;
             machineActivity.notifyChanged();

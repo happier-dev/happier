@@ -19,6 +19,7 @@ import { z } from '../../zodRuntimePolicy.js';
 export const IROH_ENDPOINT_DESCRIPTOR_VERSION_V1 = 1 as const;
 
 export const IROH_DESCRIPTOR_MAX_URL_UTF8_BYTES = 512;
+export const IROH_DESCRIPTOR_MAX_RELAY_URLS = 64;
 
 const UTF8_ENCODER = new TextEncoder();
 
@@ -112,23 +113,39 @@ function isValidIpSocketAddress(value: string): boolean {
   return !host.includes(':') && isValidIpv4Address(host);
 }
 
-/** Absolute HTTP(S) URL without credentials, query material, or a fragment. */
-const IrohDescriptorUrlSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(IROH_DESCRIPTOR_MAX_URL_UTF8_BYTES), z.superRefine((value, context) => {
+const ASCII_CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/u;
+
+/** Absolute HTTP(S) URL without control characters, internal whitespace, credentials, query material, or a fragment. */
+const IrohDescriptorUrlSchema = lazyZodSchema(() => z.string().check(
+  z.superRefine((value, context) => {
+    if (ASCII_CONTROL_CHAR_PATTERN.test(value)) {
+      context.addIssue({ code: "custom", message: 'URL must not contain control characters' });
+    }
+  }),
+  z.trim(),
+  z.minLength(1),
+  z.maxLength(IROH_DESCRIPTOR_MAX_URL_UTF8_BYTES),
+  z.superRefine((value, context) => {
     if (!boundedUtf8(value, IROH_DESCRIPTOR_MAX_URL_UTF8_BYTES)) {
       context.addIssue({ code: "custom", message: 'URL exceeds its UTF-8 byte limit' });
+    }
+    if (/\s/u.test(value)) {
+      context.addIssue({ code: "custom", message: 'URL must not contain whitespace' });
+      return;
     }
     try {
       const parsed = new URL(value);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         context.addIssue({ code: "custom", message: 'URL must use HTTP or HTTPS' });
       }
-      if (parsed.username || parsed.password || value.includes('?') || parsed.hash) {
+      if (parsed.username || parsed.password || value.includes('?') || value.includes('#') || parsed.hash) {
         context.addIssue({ code: "custom", message: 'URL must not contain credentials, query material, or a fragment' });
       }
     } catch {
       context.addIssue({ code: "custom", message: 'URL must be absolute' });
     }
-  })));
+  }),
+));
 
 /** Exact transport identifier; its 52/64-character grammar is already its complete bound. */
 export const IrohEndpointIdV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.superRefine((value, context) => {
@@ -171,23 +188,31 @@ function canonicalRelayUrl(value: string): string {
 function IrohHintListSchema(
   item: z.ZodMiniType<string>,
   canonical: (value: string) => string = (value) => value,
+  maxLength?: number,
 ) {
-  return z.array(item).check(z.minLength(1), z.superRefine((values, context) => {
+  const uniqueCheck = z.superRefine((values: readonly string[], context) => {
     if (new Set(values.map(canonical)).size !== values.length) {
       context.addIssue({
         code: "custom",
         message: 'Hint lists must not contain duplicate entries',
       });
     }
-  }));
+  });
+  return maxLength !== undefined
+    ? z.array(item).check(z.minLength(1), z.maxLength(maxLength), uniqueCheck)
+    : z.array(item).check(z.minLength(1), uniqueCheck);
 }
+
+/** Canonical strict, bounded, normalized-unique list of Iroh relay URLs (V1). */
+export const IrohRelayUrlsV1Schema = lazyZodSchema(() => IrohHintListSchema(
+  IrohDescriptorUrlSchema,
+  canonicalRelayUrl,
+  IROH_DESCRIPTOR_MAX_RELAY_URLS,
+));
 
 export const IrohEndpointDescriptorV1Schema = lazyZodSchema(() => z.strictObject({
   endpointId: IrohEndpointIdV1Schema,
-  relayUrls: z.optional(IrohHintListSchema(
-    IrohDescriptorUrlSchema,
-    canonicalRelayUrl,
-  )),
+  relayUrls: z.optional(IrohRelayUrlsV1Schema),
   directAddresses: z.optional(IrohHintListSchema(
     z.string().check(z.trim(), z.minLength(1), z.maxLength(256), z.superRefine((value, context) => {
       if (!isValidIpSocketAddress(value)) {

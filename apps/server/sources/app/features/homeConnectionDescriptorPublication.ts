@@ -1,11 +1,12 @@
 import { HomeConnectionDescriptorV1Schema, HomeConnectionEndpointV1Schema, type HomeConnectionDescriptorV1, type HomeConnectionEndpointV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
-import { type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import { IrohRelayUrlsV1Schema, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import {
     getHomeIrohEndpointState,
     readHomeIrohEndpointLifecycleState,
     type HomeIrohEndpointState,
 } from "@/app/iroh/homeIrohEndpoint";
+import { readHomeIrohEndpointConfigFromEnv } from "@/app/iroh/homeIrohEndpointConfig";
 import {
     getOrCreateServerIdentityId,
     readCachedServerIdentityIdForHotPath,
@@ -55,7 +56,50 @@ export type HomeDescriptorPublicationFacts = Readonly<{
     minimumOuterRevisionExclusive: number | null;
     persistedOuterRevisionOwner: HomeConnectionDescriptorContinuity | null;
     iroh: HomeIrohEndpointState;
+    /** Home-configured Iroh relay URLs distributed as lowest-precedence defaults for Machines. */
+    machineRelayUrls?: readonly string[];
 }>;
+
+/**
+ * Resolves the Home's configured Iroh relay URLs for Machine distribution,
+ * independent of whether the Home's own Iroh acceptor is active. Invalid relay
+ * env configuration fails closed on `machineRelayUrls` only so ordinary HTTPS
+ * Home descriptor publication continues unaffected.
+ */
+function resolveConfiguredMachineRelayUrls(env: NodeJS.ProcessEnv): readonly string[] | undefined {
+    let relayConfig: ReturnType<typeof readHomeIrohEndpointConfigFromEnv>;
+    try {
+        relayConfig = readHomeIrohEndpointConfigFromEnv(env);
+    } catch (error) {
+        log(
+            {
+                module: "iroh",
+                level: "warn",
+                diagnostic: "home_machine_relay_urls_invalid",
+                detail: error instanceof Error ? error.message : undefined,
+            },
+            "Ignoring invalid Home Iroh relay configuration for machineRelayUrls publication",
+        );
+        return undefined;
+    }
+    if (relayConfig.relayPolicy !== "automatic" || relayConfig.relayUrls.length === 0) {
+        return undefined;
+    }
+    const sorted = [...relayConfig.relayUrls].sort();
+    const parsed = IrohRelayUrlsV1Schema.safeParse(sorted);
+    if (!parsed.success) {
+        log(
+            {
+                module: "iroh",
+                level: "warn",
+                diagnostic: "home_machine_relay_urls_invalid",
+            },
+            "Ignoring Home Iroh relay URLs that failed protocol descriptor validation",
+        );
+        return undefined;
+    }
+    return parsed.data;
+}
 
 type RevisionOwnerState = Readonly<{
     revision: number;
@@ -204,10 +248,14 @@ export function composeHomeConnectionDescriptor(
     }
     if (endpoints.length === 0) return undefined;
 
+    const machineRelayUrls = facts.machineRelayUrls && facts.machineRelayUrls.length > 0
+        ? [...facts.machineRelayUrls].sort()
+        : undefined;
     const contentKey = createHomeConnectionDescriptorContentKey({
         homeServerIdentityId,
         canonicalServerUrl,
         endpoints,
+        ...(machineRelayUrls ? { machineRelayUrls } : {}),
     });
     const revision = nextMonotonicOuterRevision({
         contentKey,
@@ -220,6 +268,7 @@ export function composeHomeConnectionDescriptor(
         canonicalServerUrl,
         revision,
         endpoints,
+        ...(machineRelayUrls ? { machineRelayUrls } : {}),
     });
     if (!parsed.success) return undefined;
     // An explicit retirement retires the identity with the endpoint: it is never published again,
@@ -359,6 +408,7 @@ function projectMatchingCommittedDescriptor(
             homeServerIdentityId: committedDescriptor.homeServerIdentityId,
             canonicalServerUrl: committedDescriptor.canonicalServerUrl,
             endpoints: committedDescriptor.endpoints,
+            ...(committedDescriptor.machineRelayUrls ? { machineRelayUrls: committedDescriptor.machineRelayUrls } : {}),
         }) !== continuity.contentKey) {
         return undefined;
     }
@@ -413,10 +463,12 @@ export async function readCommittedHomeConnectionDescriptor(params: Readonly<{
     if (https) endpoints.push(https);
     if (activeIroh) endpoints.push({ kind: "iroh", ...activeIroh.endpoint });
     if (endpoints.length === 0) return undefined;
+    const machineRelayUrls = resolveConfiguredMachineRelayUrls(env);
     const contentKey = createHomeConnectionDescriptorContentKey({
         homeServerIdentityId: identity,
         canonicalServerUrl,
         endpoints,
+        ...(machineRelayUrls ? { machineRelayUrls } : {}),
     });
     if (contentKey !== continuity.contentKey) {
         // Never write continuity from a public probe. If a server-owned publication
@@ -475,6 +527,7 @@ export async function readCommittedHomeConnectionDescriptor(params: Readonly<{
         canonicalServerUrl,
         revision: continuity.revision,
         endpoints,
+        ...(machineRelayUrls ? { machineRelayUrls } : {}),
     });
     return parsed.success
         ? projectComposedHomeConnectionDescriptor(parsed.data, {
@@ -535,9 +588,11 @@ export function readPreparedHomeCredentialDestination(params: Readonly<{
     const https = httpsEndpointFromIngress(resolveConfiguredPublicServerUrl(params.env) ?? null);
     if (https) endpoints.push(https);
     if (iroh.status === "active" && iroh.snapshot) endpoints.push({ kind: "iroh", ...iroh.snapshot.endpoint });
+    const machineRelayUrls = resolveConfiguredMachineRelayUrls(params.env);
     const descriptor = HomeConnectionDescriptorV1Schema.safeParse({
         v: 1, homeServerIdentityId: identity, canonicalServerUrl,
         revision: params.prepared.revision, endpoints,
+        ...(machineRelayUrls ? { machineRelayUrls } : {}),
     });
     return descriptor.success ? descriptor.data : undefined;
 }
@@ -617,6 +672,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
         return undefined;
     }
 
+    const machineRelayUrls = resolveConfiguredMachineRelayUrls(env);
     const facts: HomeDescriptorPublicationFacts = {
         homeServerIdentityId: params.publicationIdentity?.homeServerIdentityId
             ?? readCachedServerIdentityIdForHotPath(env),
@@ -626,6 +682,7 @@ async function readHomeConnectionDescriptorTransaction(params: Readonly<{
         minimumOuterRevisionExclusive: params.minimumOuterRevisionExclusive ?? null,
         persistedOuterRevisionOwner: prime.persisted,
         iroh,
+        ...(machineRelayUrls ? { machineRelayUrls } : {}),
     };
     // The first transaction after restart has the same committed predecessor
     // in durable continuity even though the process-local frontier is empty.

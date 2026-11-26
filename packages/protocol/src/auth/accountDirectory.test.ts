@@ -25,6 +25,7 @@ import {
   AccountDirectoryPreferredHomePatchResponseV1Schema,
   AccountDirectoryRouteErrorResponseV1Schema,
   HomeConnectionDescriptorV1Schema,
+  StoredHomeConnectionDescriptorV1Schema,
   HomeCredentialDestinationV1Schema,
   HomeApplicationOriginV1Schema,
   HomeDeviceApprovalRequestV1Schema,
@@ -674,5 +675,44 @@ describe('Account Directory protocol DTOs', () => {
       error: 'approval_invalid',
     });
     expect(AccountDirectoryRouteErrorResponseV1Schema.safeParse({ error: 'invalid_token', token: 'secret' }).success).toBe(false);
+  });
+
+  it('accepts optional machineRelayUrls strictly on HomeConnectionDescriptorV1 without altering credential destination digests', () => {
+    const withRelays = {
+      ...HTTPS_DESCRIPTOR,
+      machineRelayUrls: ['https://relay-a.example.test', 'https://relay-b.example.test'],
+    };
+    expect(HomeConnectionDescriptorV1Schema.parse(withRelays)).toEqual(withRelays);
+    expect(StoredHomeConnectionDescriptorV1Schema.parse(withRelays)).toEqual(withRelays);
+    expect(HomeConnectionDescriptorV1Schema.parse(HTTPS_DESCRIPTOR).machineRelayUrls).toBeUndefined();
+
+    // Credential destination authority excludes routing hints including machineRelayUrls.
+    expect(createHomeCredentialDestinationV1(withRelays)).toEqual(
+      createHomeCredentialDestinationV1(HTTPS_DESCRIPTOR),
+    );
+    expect(createHomeCredentialDestinationDigestV1(withRelays)).toBe(
+      createHomeCredentialDestinationDigestV1(HTTPS_DESCRIPTOR),
+    );
+
+    // Strict rejection for malformed, empty, duplicate, control-char, or oversized machineRelayUrls.
+    for (const badMachineRelayUrls of [
+      [],
+      ['https://relay.example.test', 'https://relay.example.test/'],
+      ['ftp://relay.example.test'],
+      ['https://user:pass@relay.example.test'],
+      ['https://relay.example.test?secret=1'],
+      ['https://relay.example.test#frag'],
+      ['https://relay.example.test\r\n'],
+      Array.from({ length: 65 }, (_, i) => `https://relay-${i}.example.test`),
+    ]) {
+      expect(HomeConnectionDescriptorV1Schema.safeParse({
+        ...HTTPS_DESCRIPTOR,
+        machineRelayUrls: badMachineRelayUrls,
+      }).success).toBe(false);
+    }
+    expect(HomeConnectionDescriptorV1Schema.safeParse({
+      ...withRelays,
+      unexpectedField: true,
+    }).success).toBe(false);
   });
 });

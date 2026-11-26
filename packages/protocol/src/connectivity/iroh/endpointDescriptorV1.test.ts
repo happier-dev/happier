@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  IROH_DESCRIPTOR_MAX_RELAY_URLS,
   IROH_ENDPOINT_DESCRIPTOR_VERSION_V1,
   IrohEndpointDescriptorV1Schema,
+  IrohRelayUrlsV1Schema,
   parseIrohEndpointDescriptorV1,
   type IrohEndpointDescriptorV1,
 } from './endpointDescriptorV1.js';
@@ -237,5 +239,26 @@ describe('IrohEndpointDescriptorV1 (canonical Iroh endpoint sub-descriptor)', ()
     expect(() => parseIrohEndpointDescriptorV1({ endpointId: 'a'.repeat(64), alpns: ['x'] })).toThrow(TypeError);
     expect(() => parseIrohEndpointDescriptorV1({ endpointId: 'endpoint-home-iroh' })).toThrow(TypeError);
     expect(() => parseIrohEndpointDescriptorV1({ endpointId: 'a'.repeat(64), directAddresses: ['relay.example.test:443'] })).toThrow(TypeError);
+  });
+
+  it('enforces the bounded relay URL list ceiling and rejects control characters, internal whitespace, and bare fragments', () => {
+    expect(IROH_DESCRIPTOR_MAX_RELAY_URLS).toBe(64);
+    const maxList = Array.from({ length: IROH_DESCRIPTOR_MAX_RELAY_URLS }, (_, i) => `https://relay-${i}.example.test`);
+    expect(IrohRelayUrlsV1Schema.safeParse(maxList).success).toBe(true);
+    const oversized = [...maxList, 'https://relay-overflow.example.test'];
+    expect(IrohRelayUrlsV1Schema.safeParse(oversized).success).toBe(false);
+    expect(IrohEndpointDescriptorV1Schema.safeParse({ ...VALID_DESCRIPTOR, relayUrls: oversized }).success).toBe(false);
+
+    for (const badUrl of [
+      'https://relay.example.test\r\n',
+      '\nhttps://relay.example.test',
+      'https://relay\t.example.test',
+      'https://relay.example.test/path\x00',
+      'https://relay.example.test/a b',
+      'https://relay.example.test#',
+    ]) {
+      expect(IrohRelayUrlsV1Schema.safeParse([badUrl]).success).toBe(false);
+      expect(IrohEndpointDescriptorV1Schema.safeParse({ ...VALID_DESCRIPTOR, relayUrls: [badUrl] }).success).toBe(false);
+    }
   });
 });

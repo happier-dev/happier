@@ -1,5 +1,5 @@
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
-import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import { IrohEndpointDescriptorV1Schema, IrohRelayUrlsV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import type { HomeConnectionDescriptorV1, IrohEndpointDescriptorV1 } from '@happier-dev/protocol';
 import {
   loadIrohNodeNative,
@@ -92,6 +92,7 @@ export type DaemonMachineIrohRelayConfig = Readonly<{
 export type DaemonMachineIrohRuntime = Readonly<{
   available: true;
   endpoint: IrohEndpointDescriptorV1;
+  applyRelayConfig?: (relayConfig: DaemonMachineIrohRelayConfig) => Promise<boolean>;
   ensureHomeTunnel?: (input: Readonly<{
     descriptor: HomeConnectionDescriptorV1;
     /** Retain exact descriptor authority while dialing through its stable relay hint. */
@@ -158,10 +159,11 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
     };
   }
 
+  const keyPath = input.identity === 'ephemeral' ? undefined : resolveCliIrohEndpointKeyPath(input.happyHomeDir);
   let created: Awaited<ReturnType<NodeIrohNativeModule['createEndpoint']>>;
   try {
     created = await native.createEndpoint({
-      ...(input.identity === 'ephemeral' ? {} : { keyPath: resolveCliIrohEndpointKeyPath(input.happyHomeDir) }),
+      ...(keyPath ? { keyPath } : {}),
       relayPolicy: input.relayConfig.relayPolicy,
       ...(input.relayConfig.relayUrls.length > 0 ? { relayUrls: input.relayConfig.relayUrls } : {}),
       capProfile: 'machineBulk',
@@ -176,13 +178,13 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
   const disposeEndpoint = onceReleased(async () => {
     await native.shutdownEndpoint({ endpointHandle: created.endpointHandle });
   });
-  let endpoint: IrohEndpointDescriptorV1;
+  let currentEndpoint: IrohEndpointDescriptorV1;
   try {
     const status = await native.getEndpointStatus(created.endpointHandle);
     if (!status?.active || status.endpointId !== created.endpointId) {
       throw new Error('Iroh machine endpoint did not become ready');
     }
-    endpoint = IrohEndpointDescriptorV1Schema.parse({
+    currentEndpoint = IrohEndpointDescriptorV1Schema.parse({
       endpointId: status.endpointId,
       ...(status.relayUrls.length > 0 ? { relayUrls: status.relayUrls } : {}),
       ...(status.directAddresses.length > 0 ? { directAddresses: status.directAddresses } : {}),
@@ -214,6 +216,67 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
   let shutdownRequested = false;
   let shutdownComplete = false;
   let shutdownInFlight: Promise<void> | null = null;
+  let relayUpdateChain: Promise<void> = Promise.resolve();
+
+  const canonicalRelayUrl = (url: string): string => {
+    try {
+      return new URL(url).toString();
+    } catch {
+      return url;
+    }
+  };
+
+  const sameEndpointDescriptor = (
+    a: IrohEndpointDescriptorV1,
+    b: IrohEndpointDescriptorV1,
+  ): boolean => (
+    a.endpointId === b.endpointId
+    && JSON.stringify(a.relayUrls ?? []) === JSON.stringify(b.relayUrls ?? [])
+    && JSON.stringify(a.directAddresses ?? []) === JSON.stringify(b.directAddresses ?? [])
+  );
+
+  const applyRelayConfig = async (relayConfig: DaemonMachineIrohRelayConfig): Promise<boolean> => {
+    const run = async (): Promise<boolean> => {
+      if (shutdownRequested) return false;
+      if (!keyPath) return false;
+      if (input.relayConfig.relayPolicy !== 'automatic' || relayConfig.relayPolicy !== 'automatic') {
+        return false;
+      }
+      if (relayConfig.relayUrls.length === 0) return false;
+      const parsedRelays = IrohRelayUrlsV1Schema.safeParse(relayConfig.relayUrls);
+      if (!parsedRelays.success) return false;
+
+      const existingCanonical = new Set((currentEndpoint.relayUrls ?? []).map(canonicalRelayUrl));
+      const allPresent = parsedRelays.data.every((url) => existingCanonical.has(canonicalRelayUrl(url)));
+      if (allPresent) return false;
+
+      const updated = await native.createEndpoint({
+        keyPath,
+        relayPolicy: 'automatic',
+        relayUrls: [...parsedRelays.data],
+        capProfile: 'machineBulk',
+      });
+      if (updated.endpointHandle !== created.endpointHandle || updated.endpointId !== created.endpointId) {
+        throw new Error('Iroh machine endpoint relay update returned an unexpected endpoint handle or identity');
+      }
+      const status = await native.getEndpointStatus(created.endpointHandle);
+      if (!status?.active || status.endpointId !== created.endpointId) {
+        throw new Error('Iroh machine endpoint did not remain active after relay update');
+      }
+      const nextEndpoint = IrohEndpointDescriptorV1Schema.parse({
+        endpointId: status.endpointId,
+        ...(status.relayUrls.length > 0 ? { relayUrls: status.relayUrls } : {}),
+        ...(status.directAddresses.length > 0 ? { directAddresses: status.directAddresses } : {}),
+      });
+      if (shutdownRequested) return false;
+      const changed = !sameEndpointDescriptor(currentEndpoint, nextEndpoint);
+      currentEndpoint = nextEndpoint;
+      return changed;
+    };
+    const turn = relayUpdateChain.then(run);
+    relayUpdateChain = turn.then(() => undefined, () => undefined);
+    return await turn;
+  };
 
   const stopAttemptAcceptor = (): Promise<void> => {
     if (!acceptorRunning) return Promise.resolve();
@@ -383,7 +446,10 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
 
   return {
     available: true,
-    endpoint,
+    get endpoint() {
+      return currentEndpoint;
+    },
+    applyRelayConfig,
     async ensureHomeTunnel({ descriptor, relayOnly }) {
       if (shutdownRequested) throw new Error('Iroh daemon runtime is shut down');
       const parsed = HomeConnectionDescriptorV1Schema.parse(descriptor);

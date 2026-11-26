@@ -16,11 +16,13 @@ import { ACCOUNT_DIRECTORY_MAX_URL_UTF8_BYTES, HomeApplicationOriginV1Schema } f
 import {
   IrohEndpointDescriptorV1Schema,
   IrohEndpointIdV1Schema,
+  IrohRelayUrlsV1Schema,
 } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelSchemaV1.js';
 
 export {
   IrohEndpointDescriptorV1Schema,
+  IrohRelayUrlsV1Schema,
   parseIrohEndpointDescriptorV1,
   type IrohEndpointDescriptorV1,
 } from '../connectivity/iroh/endpointDescriptorV1.js';
@@ -175,6 +177,7 @@ export const HomeConnectionDescriptorV1Schema = lazyZodSchema(() => z.strictObje
   canonicalServerUrl: HomeApplicationOriginV1Schema,
   revision: PositiveRevisionSchema,
   endpoints: z.array(HomeConnectionEndpointV1Schema).check(z.minLength(1), z.maxLength(ACCOUNT_DIRECTORY_MAX_ENDPOINTS)),
+  machineRelayUrls: z.optional(IrohRelayUrlsV1Schema),
 }));
 export type HomeConnectionDescriptorV1 = z.infer<typeof HomeConnectionDescriptorV1Schema>;
 
