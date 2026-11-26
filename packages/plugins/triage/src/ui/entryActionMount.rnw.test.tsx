@@ -951,7 +951,7 @@ describe('the entry action controls on the mounted detail header', () => {
         });
         await settle();
         expect(harness.startRequests).toHaveLength(1);
-        await expect(shell.getByText('Starting a session for this entry…')).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: 'Start', state: { busy: true } })).resolves.toBeDefined();
 
         // The host settles a neighboring selection while A still owns an
         // unresolved start. B must not inherit A's synchronous in-flight gate,
@@ -964,7 +964,7 @@ describe('the entry action controls on the mounted detail header', () => {
         });
         await settle();
         await expect(shell.getByText(SECOND_ENTRY_TITLE)).resolves.toBeDefined();
-        await expect(shell.queryByText('Starting a session for this entry…')).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Start', state: { busy: true } })).resolves.toBeUndefined();
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', { name: 'Start' }));

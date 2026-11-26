@@ -566,7 +566,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     : noticeSessionState.title?.trim() || text('session.untitled', 'Untitled session');
   // A start in flight is said by the control that was pressed (busy at its own width), never a line under the row (N31).
   const starting = controller.phase.kind === 'resolving' || controller.phase.kind === 'starting';
-  const notice = starting ? null : describeTriageEntrySessionPhaseV1(controller.phase, { sessionName });
+  const notice = describeTriageEntrySessionPhaseV1(controller.phase, { sessionName });
   const sessionFailure = notice?.failure ?? (controller.phase.kind === 'unavailable'
     ? controller.phase.failure : controller.configuredResult?.failure);
   const retainedNotice = controller.phase.kind === 'unavailable' && controller.phase.reason === 'handoffOutcomeUnknown'

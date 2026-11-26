@@ -212,8 +212,6 @@ describe('entry existing Session handoff', () => {
         const phase = f.controller.getSnapshot().phase;
         expect(phase).toEqual({ kind: 'choosing' });
         expect(describeTriageEntrySessionPhaseV1(phase, { sessionName: 'Checkout fix' })).toBeNull();
-        // A new Session's start keeps its own words.
-        expect(describeTriageEntrySessionPhaseV1({ kind: 'starting' })?.label).toBe('Starting a session for this entry…');
     });
 
     it('echoes canonical recovery after an uncertain send instead of minting a second delivery', async () => {

@@ -268,15 +268,9 @@ export function describeTriageEntrySessionPhaseV1(
   switch (phase.kind) {
     case 'idle':
     case 'choosing':
-      return null;
     case 'resolving':
-      return notice(
-        'muted',
-        'plugins.triage.surface.session.resolving',
-        'Resolving this action\u2019s profile, prompt and working directory\u2026',
-      );
     case 'starting':
-      return notice('muted', 'plugins.triage.surface.session.starting', 'Starting a session for this entry…');
+      return null;
     case 'handoffSettled': {
       const result = phase.result.handoff;
       switch (result.kind) {

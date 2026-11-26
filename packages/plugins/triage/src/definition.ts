@@ -523,7 +523,7 @@ function createTriagePlugin(): TriagePlugin {
         routeAliases: TRIAGE_LEGACY_TASK_ROUTE_ALIASES,
         title: { key: 'plugins.triage.tasks.title', fallback: 'Tasks' },
         description: { key: 'plugins.triage.tasks.description', fallback: 'Your work, and the agents working with you.' },
-        icon: 'list',
+        icon: 'task',
       }, { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
         id: 'latest',
         container: 'widget',
