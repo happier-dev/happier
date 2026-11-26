@@ -6,25 +6,27 @@ import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-co
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
-import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
-import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
-import { ReviewCommentListResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema, WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import { readMuseLoginRecording, readMuseMspProcessAudit, waitForMuseMspProcessAudit } from '../../../plugins/muse/src/agent/testkit/mspProcess';
 import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '@happier-dev/protocol/workflows/builtins/repositoryReview';
-import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { readReviewWorkflowStartActionResultV1, ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
+import { ReviewEngineInventorySchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewGetResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 import { ReviewNativeNewRoundResultV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
-import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
-import panelNativeReview from '../../../plugins/review-panels/src/agent/reviews/fixtures/selected-review.json';
+import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { normalizeExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { ReviewCommentListResponseV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import panelNativeReview from '../../../plugins/review-panels/src/agent/reviews/fixtures/selected-review.json';
+import { readMuseLoginRecording, readMuseMspProcessAudit, waitForMuseMspProcessAudit } from '../../../plugins/muse/src/agent/testkit/mspProcess';
 import { readMuseRecord } from '../../../plugins/muse/src/agent/nativeInput';
 import { buildMuseNativeAuth } from '../../../plugins/muse/src/connectedAccounts/nativeAuth';
-import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { startFinJourneyFixture, type FinJourneyFixture } from '../../src/testkit/finJourney';
 import { writeFinMuseExecutable } from '../../src/testkit/finMuse';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
+import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { postEncryptedSessionMessage } from '../../src/testkit/memoryRpc';
 import { createSessionWithCiphertexts } from '../../src/testkit/sessions';
@@ -722,6 +724,55 @@ else {
     await stopNativeRound(firstRunId, panelAuditPath, args => args[0] === 'job' && args[1] === 'wait');
     const stoppedCommands: { args: string[] }[] = (await readFile(panelAuditPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
     expect(stoppedCommands.at(-1)).toMatchObject({ args: ['daemon', 'stop'] });
+  });
+  it('F1 reads once and delivers ordinary transcript input to Agent, Session/bot and model reviewers through native output', async () => {
+    await writeFinMuseExecutable({ binDir: join(dirname(auditPath), 'bin'), recordingPath, auditPath, perProcessAudit: true });
+    await nativeReply({ summary: 'The review observed the source Session claim.', reviewOutcome: 'complete', findings: [{
+      id: 'source-claim', title: 'Verify the source Session claim', severity: 'medium', category: 'correctness',
+      filePath: 'README.md', startLine: 1, summary: sourceClaim,
+    }] });
+    const launch = { executionTarget: machine.target, directory: { kind: 'path' as const, path: machine.workspaceDir },
+      agentTarget: muse, permissionMode: 'read-only' as const,
+      modelSelection: { v: 1 as const, ref: { agentTargetKey: 'agent:happier.agent.muse/muse', providerConnectionId: null, modelId }, updatedAt: 0 },
+    };
+    const session = SessionSpawnNewActionResultV1Schema.parse(await act('session.spawn_new', launch));
+    if (session.type !== 'success') throw new Error('The Session reviewer did not open');
+    const bot = normalizeExecutableParticipantSelectionV1({ kind: 'bot',
+      session: { serverId: ui!.serverId, sessionId: session.sessionId } });
+    if (!bot) throw new Error('The Bot display choice did not normalize to its Session');
+    const started = await act('review.start', { target: { kind: 'detached' }, cwd: machine.workspaceDir,
+      sourceSession: { sessionId: sourceSessionId, serverId: ui!.serverId },
+      instructions: 'Review the change and verify the source Session claim.', reviewCommentAuthorIntent: 'open',
+      reviewers: [{ kind: 'engine', engineId: 'muse', modelId, includeSessionTranscript: true },
+        { ...bot, includeSessionTranscript: true }, { kind: 'model', launch, includeSessionTranscript: true }],
+    });
+    const admitted = readReviewWorkflowStartActionResultV1(started);
+    if (!admitted?.reviewRound) throw new Error('Review admission did not bind its Workflow and round');
+    expect(await act('workflow.run.wait', { runId: admitted.workflow.runId, conditions: ['terminal'] }))
+      .toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
+    expect(fixture!.requestProxy!.count(request => request.method === 'GET'
+      && request.path.split('?')[0] === `/v1/sessions/${sourceSessionId}/messages`)).toBe(1);
+    const paths = (await readdir(dirname(auditPath))).filter(name => name.startsWith(`${basename(auditPath)}.`));
+    const audits = await Promise.all(paths.map(name => readMuseMspProcessAudit(join(dirname(auditPath), name))));
+    const received = audits.flatMap(audit => audit.turnInputs).filter(input => JSON.stringify(input).includes(sourceClaim));
+    expect(received).toHaveLength(3);
+    for (const input of received) expect(JSON.stringify(input)).toContain('Session transcript (complete coverage)');
+    const history = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', {
+      runId: admitted.workflow.runId, includeContent: true,
+    }));
+    const reviewers = history.invocationDetails?.filter(row => row.progress.invocationPath.blockId.startsWith('step-1-reviewer-'));
+    expect(reviewers).toHaveLength(3);
+    expect(reviewers?.map(row => row.index.lifecycle)).toEqual(['completed', 'completed', 'completed']);
+    const receipts = (reviewers ?? []).flatMap(row => ReviewStartTerminalValueV1Schema.parse(row.progress.result).perEngineOutcome ?? []);
+    expect(receipts).toHaveLength(3);
+    expect(receipts).toEqual(expect.arrayContaining([0, 1, 2].map(index => expect.objectContaining({
+      key: reviewReviewerIdForSelectionV1(index), outcome: 'completed', reviewOutcome: 'complete',
+      materialization: expect.objectContaining({ kind: 'complete' }),
+    }))));
+    const detail = ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId: admitted.reviewRound.reviewId }));
+    expect(detail.review).toMatchObject({ state: 'completed', counts: { total: 1 } });
+    const findings = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId: admitted.reviewRound.reviewId }));
+    expect(JSON.stringify(findings.items)).toContain(sourceClaim);
   });
   it('F1 refuses an inaccessible source Session before launching a reviewer', async () => {
     const other = await fixture!.createAccount('source-owner');
