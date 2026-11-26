@@ -44,8 +44,9 @@ import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deplo
 import { isManagedDeploymentDataRoleBindingV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
-import { materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
+import { readSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
+import { logger } from '@/ui/logger';
+import { LaunchSecretReferenceOverlayError, materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
 import { createSharedSavedSecretForOperation } from '@/settings/secrets/createSharedSavedSecretForOperation';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -277,8 +278,13 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     });
                     return materializeSavedSecretReferenceBinding({ requirementName: 'database read login',
                         binding: { ref, revision: resourceRevision }, materializer, exactReference: true }) ?? refuse('secret_missing');
-                } catch {
+                } catch (error) {
                     signal.throwIfAborted();
+                    if (error instanceof SavedSecretOperationAdmissionError || error instanceof LaunchSecretReferenceOverlayError) {
+                        logger.warnLocalFile('[Deployment] Saved Secret attachment refused', {
+                            phase: 'deployment.database.read_access.saved_secret', reason: error.reason,
+                        });
+                    }
                     return refuse('secret_missing');
                 }
             },

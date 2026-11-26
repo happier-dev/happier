@@ -1,4 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { logger } from '@/ui/logger';
+import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -271,11 +276,12 @@ describe('managed database attachment at the deployment owner', () => {
                 return { descriptor: descriptor(input.target), connection };
             },
         };
-        const createService = (approvalContext: ActionExecutorContext = { ...stored.request.context, authority: 'present_user' }) =>
+        const createService = (approvalContext: ActionExecutorContext = { ...stored.request.context, authority: 'present_user' },
+            requesterAccount?: ReturnType<typeof createInvocationSavedSecretOperationContextV1>) =>
             createDeploymentDatabasesServiceForHost({ seed: {
             plugin: { id: 'happier.database.workbench', version: '0.0.0' }, contribution: { id: 'targets-list', qualifiedId: 'happier.database.workbench/actions/targets-list' },
             occurrenceId: 'workbench', correlationId: 'host-selection', surface: 'cli', signal: new AbortController().signal,
-            databaseEngines, approvalContext, isOccurrenceCurrent: () => true,
+            databaseEngines, approvalContext, requesterAccount, isOccurrenceCurrent: () => true,
         }, contributes: { deploymentTargets: [{ pluginId, identity: { pluginId, localId: definition.id }, definition,
             provenance: 'first_party', source: { kind: 'bundled' }, manifestPath: '/fixture/neon/plugin.json', pluginVersion: pluginManifest.version }],
             activationTargets: [{ pluginId, manifest: pluginManifest, provenance: 'first_party', source: { kind: 'bundled' },
@@ -378,6 +384,40 @@ describe('managed database attachment at the deployment owner', () => {
                 failureCause: refusedChild.failureCause,
             } });
             expect(JSON.stringify(failure)).not.toContain('generated-fixture-password');
+
+            const savedSecretRef = formatSharedSavedSecretRefV1('unlisted-fixture-reference');
+            const requesterAccount = createInvocationSavedSecretOperationContextV1({
+                credentials: host.credentials, serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
+                snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+                    settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
+                    scopeKey: resolveAccountSettingsScopeKeyForToken(host.credentials.token) },
+            });
+            const observeCatalog = vi.mocked(axios.get);
+            const originalRead = observeCatalog.getMockImplementation()!;
+            let catalogReads = 0;
+            observeCatalog.mockImplementation(async (url, config) => {
+                if (url !== 'https://home.test/v1/account/saved-secrets/resources/materials') return originalRead(url, config);
+                catalogReads++;
+                return { status: 200, data: { resources: [] } };
+            });
+            const attach = { target, savedSecretRef, resourceRevision: 1 };
+            const opening = createConnection.mock.calls.length;
+            const diagnostic = vi.spyOn(logger, 'warnLocalFile');
+            try {
+                const attachAction = { pluginId: action.pluginId, localId: databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1) };
+                const attachService = createService({ ...context, executeHostReviewedChildAction: executeChild,
+                    hostReviewedChild: createHostReviewedChildPortV1({ actionId: 'action.invoke',
+                        input: { action: attachAction, input: attach }, context, reviewAdmitted: true }),
+                }, requesterAccount);
+                await expect(attachService.attachReadAccess!(attach)).rejects.toMatchObject({ code: 'secret_missing' });
+                expect(catalogReads).toBe(1);
+                expect(createConnection).toHaveBeenCalledTimes(opening);
+                expect(executeChild).toHaveBeenCalledTimes(1);
+                expect(diagnostic).toHaveBeenCalledWith('[Deployment] Saved Secret attachment refused', {
+                    phase: 'deployment.database.read_access.saved_secret', reason: 'reference_forbidden',
+                });
+                expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(savedSecretRef);
+            } finally { diagnostic.mockRestore(); observeCatalog.mockImplementation(originalRead); }
 
             const verified = await service.resolve(write, 'write');
             try {
