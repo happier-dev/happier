@@ -1,3 +1,4 @@
+import type { ConnectedServiceProfileHealth } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import { connectedServiceUsageRequiresOrganizationId } from '@happier-dev/protocol';
 import {
   ConnectedServiceCredentialRevisionV1Schema,
@@ -244,6 +245,7 @@ export class ConnectedServiceRefreshCoordinator {
     leaseContentionWaitMaxMs?: number;
     sleepMs?: (ms: number) => Promise<void>;
     now: () => number;
+    resolveProjectedCredentialHealth?: (serviceId: ConnectedServiceId, profileId: string) => ConnectedServiceProfileHealth;
     accountSettingsProvider?: () => AccountSettings | Readonly<Record<string, unknown>> | null | undefined;
     processEnv?: NodeJS.ProcessEnv;
     onAuthUpdated?: (event: Readonly<{
@@ -1101,6 +1103,17 @@ export class ConnectedServiceRefreshCoordinator {
       }));
   }
 
+  private async credentialHealthRequiresReconnect(
+    binding: BoundProfile,
+    options: Readonly<{ force: boolean; reason: ConnectedServiceRefreshReason }>,
+  ): Promise<boolean> {
+    if (options.reason === 'scheduled' || (options.reason === 'quota_bridge' && !options.force)) {
+      const health = this.params.resolveProjectedCredentialHealth?.(binding.serviceId, binding.profileId);
+      return health?.kind === 'present_but_unusable' && isReconnectRequiredProfileStatus(health.status);
+    }
+    return isReconnectRequiredProfileStatus(await readCredentialHealthStatusForRefresh({ api: this.params.api, binding }));
+  }
+
   private async refreshOauthBindingUnserialized(
     binding: BoundProfile,
     now: number,
@@ -1143,13 +1156,8 @@ export class ConnectedServiceRefreshCoordinator {
 
     const expiresAt = source.mode === 'plain' ? record.expiresAt : source.metadata.expiresAt ?? record.expiresAt;
     let isCredentialHealthReprobe = false;
-    if (
-      shouldBlockRefreshForCredentialHealth(options.reason)
-      && isReconnectRequiredProfileStatus(await readCredentialHealthStatusForRefresh({
-        api: this.params.api,
-        binding,
-      }))
-    ) {
+    if (shouldBlockRefreshForCredentialHealth(options.reason)
+      && await this.credentialHealthRequiresReconnect(binding, options)) {
       if (this.shouldDeferCredentialHealthReprobe(binding, now, options)) {
         return {
           status: 'blocked_by_credential_health',

@@ -1,9 +1,8 @@
-import { readConnectedServiceProfileHealths } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import type { ConnectedServiceProfileHealth } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   ConnectedServiceIdSchema,
   type ConnectedServiceAuthGroupV1,
   type ConnectedServiceAuthGroupMemberStateV1,
-  type ConnectedServiceCredentialHealthStatusV1,
   type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -65,13 +64,6 @@ type AuthGroupApi = Readonly<{
     expectedGeneration: number;
     expectedRuntimeStateRevision?: number;
   }>): Promise<ConnectedServiceAuthGroupV1>;
-  listConnectedServiceProfiles?(input: Readonly<{ serviceId: ConnectedServiceId; forceRefresh?: boolean }>): Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: ReadonlyArray<Readonly<{
-      profileId: string;
-      status: ConnectedServiceCredentialHealthStatusV1;
-    }>>;
-  }>>;
 }>;
 
 function readNonNegativeNumber(value: unknown): number | null {
@@ -229,6 +221,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     reason: string;
     deadlineAtMs?: number;
   }>) => Promise<ConnectedServiceGroupQuotaProbeResult | void>;
+  resolveProjectedCredentialHealth?: (serviceId: ConnectedServiceId, profileId: string) => ConnectedServiceProfileHealth;
   resolveCredentialRevision?: (
     serviceId: ConnectedServiceId,
     profileId: string | null,
@@ -301,22 +294,20 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
           unresolvedState.activeProfileId,
         ) ?? null,
       };
-      const healthByProfileId = await readConnectedServiceProfileHealths({
-        api: params.api, serviceId, profileIds: state.members.map(member => member.profileId),
-      });
+      const { resolveProjectedCredentialHealth } = params;
+      if (!resolveProjectedCredentialHealth) return state;
       const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
-      for (const [profileId, health] of healthByProfileId) {
-        if (!('status' in health)) continue;
-        memberStatesByProfileId.set(profileId, {
-          ...memberStatesByProfileId.get(profileId),
-          credentialHealthStatus: health.status,
-        });
-      }
-      return {
-        ...state,
-        members: state.members.filter(member => healthByProfileId.get(member.profileId)?.kind !== 'confirmed_missing'),
-        memberStatesByProfileId,
-      };
+      const members = state.members.filter(({ profileId }) => {
+        const health = resolveProjectedCredentialHealth(serviceId, profileId);
+        if (health.kind === 'present_but_unusable') {
+          memberStatesByProfileId.set(profileId, {
+            ...memberStatesByProfileId.get(profileId),
+            credentialHealthStatus: health.status,
+          });
+        }
+        return health.kind !== 'confirmed_missing';
+      });
+      return { ...state, members, memberStatesByProfileId };
     },
     commitSwitch: async (input) => {
       const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);

@@ -1,4 +1,8 @@
 import {
+  classifyPresentConnectedServiceProfileHealth,
+  type ConnectedServiceProfileHealth,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import {
   AccountProfileSchema,
   type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceId,
@@ -37,6 +41,7 @@ export type ConnectedServiceProjectionSnapshot = Readonly<{
     serviceId: ConnectedServiceId,
     profileId: string,
   ) => ConnectedServiceProjectedCredentialBoundary;
+  resolveCredentialHealth: (serviceId: ConnectedServiceId, profileId: string) => ConnectedServiceProfileHealth;
   resolveCredentialRevision: (serviceId: ConnectedServiceId, profileId: string) => string | null;
 }>;
 
@@ -138,9 +143,12 @@ export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
     generation: group.generation,
   })));
   const credentialsByScope = new Map<string, ConnectedServiceProjectedCredential>();
+  const healthByScope = new Map<string, ConnectedServiceProfileHealth>();
   for (const service of profile.connectedServicesV2) {
     for (const credential of service.profiles) {
-      credentialsByScope.set(credentialScopeKey(service.serviceId, credential.profileId), {
+      const key = credentialScopeKey(service.serviceId, credential.profileId);
+      healthByScope.set(key, classifyPresentConnectedServiceProfileHealth(credential.status));
+      credentialsByScope.set(key, {
         serviceId: service.serviceId,
         profileId: credential.profileId,
         boundary: {
@@ -177,6 +185,10 @@ export function parseConnectedServiceProjectionSnapshot(input: Readonly<{
     groups,
     credentials,
     resolveCredentialBoundary,
+    resolveCredentialHealth: (serviceId, profileId) => {
+      const key = credentialScopeKey(serviceId, profileId);
+      return healthByScope.get(key) ?? (credentialsByScope.has(key) ? { kind: 'unknown' } : { kind: 'confirmed_missing' });
+    },
     resolveCredentialRevision: (serviceId, profileId) => {
       const boundary = resolveCredentialBoundary(serviceId, profileId);
       return boundary.status === 'present' && boundary.revisionSemantics === 'revisioned'

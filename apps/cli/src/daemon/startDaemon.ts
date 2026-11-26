@@ -2472,6 +2472,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         let connectedServiceAuthGroupGenerationConsumer: ConnectedServiceAuthGroupGenerationConsumer | null = null;
         let connectedServiceGenerationReconciliationTail = Promise.resolve();
         let latestConnectedServiceProjectionSnapshot: ConnectedServiceProjectionSnapshot | null = null;
+        const resolveProjectedCredentialHealth = (serviceId: ConnectedServiceId, profileId: string) =>
+          latestConnectedServiceProjectionSnapshot?.resolveCredentialHealth(serviceId, profileId) ?? { kind: 'unknown' as const };
         let connectedServiceProjectionReconciliationBaseline: ConnectedServiceProjectionSnapshot | null = null;
         let connectedServiceProjectionEpoch = 0;
         const lastReconciledProjectionEpochByRuntimeTarget = new WeakMap<ConnectedServiceRuntimeTarget, number>();
@@ -3634,6 +3636,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     const connectedServiceSpawnQuotaProbeDeadlineAtMs = Date.now()
                       + DEFAULT_CONNECTED_SERVICE_QUOTA_FETCH_TIMEOUT_MS;
                     const preTurnSwitchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+                      resolveProjectedCredentialHealth,
                       resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
                         ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
                       }),
@@ -6132,6 +6135,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }),
           });
           const switchCoordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+            resolveProjectedCredentialHealth,
             resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
               ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
             }),
@@ -6725,6 +6729,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       resolveResumePromptMode: resolveRuntimeAuthReportResumePromptMode,
       isShuttingDown: () => shutdownInitiated || connectedServiceQuotaProducersQuiesced,
       switchCoordinator: createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+        resolveProjectedCredentialHealth,
         resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
           ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
         }),
@@ -7615,6 +7620,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         return { appliedRuntimeIdentityKeys };
       };
       const refreshStartup = startConnectedServiceRefreshStartup({
+        resolveProjectedCredentialHealth,
         env: process.env,
         api,
         credentials,
@@ -7690,6 +7696,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         switchReason: ConnectedServiceSessionAuthSwitchReason;
         executionAuthority: ConnectedServiceExecutionAuthorityV1;
       }>) => createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
+        resolveProjectedCredentialHealth,
         resolveRequiredModelIdsForGroup: (input) => resolveConnectedServiceAuthGroupRequiredModelIds({
           ...input, targets: connectedServiceRuntimeRegistry.listTargets(), sessions: getCurrentChildren(),
         }),

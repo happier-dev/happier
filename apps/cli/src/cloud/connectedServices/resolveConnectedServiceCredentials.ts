@@ -37,17 +37,24 @@ type ProfileHealthApi = Readonly<{
 }>;
 type CredentialApi = ConnectedServiceCredentialApi & ProfileHealthApi;
 type CredentialBinding = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
-type ProfileHealth =
+export type ConnectedServiceProfileHealth =
   | Readonly<{ kind: 'usable'; status: ConnectedServiceCredentialHealthStatusV1 }>
   | Readonly<{ kind: 'present_but_unusable'; status: ConnectedServiceCredentialHealthStatusV1 }>
   | Readonly<{ kind: 'confirmed_missing' }>
   | Readonly<{ kind: 'unknown' }>;
 
+export function classifyPresentConnectedServiceProfileHealth(
+  projectedStatus: ConnectedServiceCredentialHealthStatusV1,
+): ConnectedServiceProfileHealth {
+  const status = normalizeConnectedServiceCredentialHealthStatus(projectedStatus);
+  return { kind: isConnectedServiceCredentialHealthStatusUsable(status) ? 'usable' : 'present_but_unusable', status };
+}
+
 export async function readConnectedServiceProfileHealths(input: Readonly<{
   api: ProfileHealthApi;
   serviceId: ConnectedServiceId;
   profileIds: readonly string[];
-}>): Promise<ReadonlyMap<string, ProfileHealth>> {
+}>): Promise<ReadonlyMap<string, ConnectedServiceProfileHealth>> {
   if (input.profileIds.length === 0) return new Map();
   const profiles = await input.api.listConnectedServiceProfiles?.({
     serviceId: input.serviceId, forceRefresh: true,
@@ -61,11 +68,10 @@ export async function readConnectedServiceProfileHealths(input: Readonly<{
   const current = profiles?.serviceId === input.serviceId
     ? new Map(profiles.profiles.map(profile => [profile.profileId, profile.status]))
     : null;
-  return new Map(input.profileIds.map((profileId): [string, ProfileHealth] => {
+  return new Map(input.profileIds.map((profileId): [string, ConnectedServiceProfileHealth] => {
     if (!current) return [profileId, { kind: 'unknown' }];
-    if (!current.has(profileId)) return [profileId, { kind: 'confirmed_missing' }];
-    const status = normalizeConnectedServiceCredentialHealthStatus(current.get(profileId));
-    return [profileId, { kind: isConnectedServiceCredentialHealthStatusUsable(status) ? 'usable' : 'present_but_unusable', status }];
+    const status = current.get(profileId);
+    return [profileId, status === undefined ? { kind: 'confirmed_missing' } : classifyPresentConnectedServiceProfileHealth(status)];
   }));
 }
 

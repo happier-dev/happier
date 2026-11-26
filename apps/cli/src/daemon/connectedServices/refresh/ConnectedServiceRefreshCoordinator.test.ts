@@ -5499,6 +5499,7 @@ afterEach(() => {
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
+      resolveProjectedCredentialHealth: () => ({ kind: 'present_but_unusable', status: 'needs_reauth' }),
     });
 
     coordinator.registerSpawnTarget({
@@ -5512,8 +5513,8 @@ afterEach(() => {
     });
 
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex', forceRefresh: true });
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
@@ -5605,6 +5606,7 @@ afterEach(() => {
       refreshWindowMs: 60_000,
       refreshLeaseMs: 30_000,
       now: () => now,
+      resolveProjectedCredentialHealth: () => ({ kind: 'present_but_unusable', status: 'needs_reauth' }),
       logRefreshDiagnostic,
     });
 
@@ -5619,6 +5621,7 @@ afterEach(() => {
     });
 
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
+    expect(api.listConnectedServiceProfiles).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
     expect(logRefreshDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({
