@@ -1320,9 +1320,18 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui, p
     const started = performance.now();
     try {
       // Replacement health smoke is service lifecycle; finite builders own admission.
-      const repoDir = env.HAPPIER_STACK_REPO_DIR;
+      const treeDir = components.server?.sourceTree?.dir;
+      const repoDir = treeDir ?? env.HAPPIER_STACK_REPO_DIR;
+      // A revision is validated by its own smoke and source preloads.
+      const scriptPath = treeDir ? join(treeDir, 'apps/stack/scripts/runtime/launch/smokeSourceRuntimeReload.mjs')
+        : fileURLToPath(new URL('../runtime/launch/smokeSourceRuntimeReload.mjs', import.meta.url));
+      if (treeDir && !existsSync(scriptPath)) {
+        throw Object.assign(new Error('[source-bundle] selected source tree has no replacement smoke script'),
+          { code: 'source_bundle_unavailable', component: 'server', entryGraph: 'server', phase: 'replacement-smoke',
+            reason: 'source_tree_smoke_missing', retryable: false });
+      }
       await run(process.execPath, sourceBuildNodeArgs({ repoDir,
-        scriptPath: fileURLToPath(new URL('../runtime/launch/smokeSourceRuntimeReload.mjs', import.meta.url)),
+        scriptPath,
         args: [JSON.stringify({ components, ui })] }),
       { cwd: repoDir, env, signal: pending.signal, ownedProcessGroup: true, captureFailureDiagnostic: true });
     } catch (error) {
