@@ -75,7 +75,7 @@ export function buildSessionAgentPickerDetailContent(params: Readonly<{
             cwd={params.cwd}
             profileId={params.profileId ?? null}
             capabilityProbeContext={capabilityProbeContext}
-            connectedServices={params.connectedServices ?? null}
+            connectedServices={params.selection.connectedServices ?? params.connectedServices ?? null}
             refreshProbe={params.refreshProbe}
             modelSummary={params.modelSummary}
             selectedModelId={params.selection.modelId}

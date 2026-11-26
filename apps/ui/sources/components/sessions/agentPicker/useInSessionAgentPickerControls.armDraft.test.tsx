@@ -32,10 +32,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScope(params),
 }));
 
-vi.mock('./buildSessionAgentPickerDetailContent', () => ({
-    buildSessionAgentPickerDetailContent: () => null,
-}));
-
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
@@ -604,7 +600,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         const CHOSEN = {
             v: 1 as const,
             bindingsByServiceId: {
-                anthropic: { source: 'connected' as const, selection: 'profile' as const, profileId: 'claude1' },
+                openai: { source: 'connected' as const, selection: 'profile' as const, profileId: 'personal' },
             },
         };
 
@@ -623,6 +619,12 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 selection: { v: 1, agentId: 'codex', connectedServices: CHOSEN },
             });
             expect(readPersistedArm()?.intent.selection.connectedServices).toEqual(CHOSEN);
+
+            const targetDetail = hook.getCurrent()
+                .composeAgentPickerOptions([CURRENT_AGENT_ROW])
+                .find((option) => option.id === 'agent:codex')
+                ?.renderDetailContent?.();
+            expect(targetDetail).toMatchObject({ props: { connectedServices: CHOSEN } });
         });
 
         it('does not ask the machine to re-inspect the target because the account changed', async () => {

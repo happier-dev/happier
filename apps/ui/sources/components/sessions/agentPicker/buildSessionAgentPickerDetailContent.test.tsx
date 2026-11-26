@@ -4,9 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/components/sessions/new/components/NewSessionEngineOptionDetail', () => ({
     NewSessionEngineOptionDetail: 'NewSessionEngineOptionDetail',
 }));
-vi.mock('@/components/sessions/new/modules/newSessionCapabilityProbeContext', () => ({
-    resolveNewSessionCapabilityProbeContext: () => null,
-}));
 
 import { buildSessionAgentPickerDetailContent, type SessionAgentPickerSelection } from './buildSessionAgentPickerDetailContent';
 
