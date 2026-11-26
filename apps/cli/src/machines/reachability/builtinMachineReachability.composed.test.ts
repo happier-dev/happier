@@ -169,6 +169,10 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
         metadata: { ...snapshot.metadata, adminAccess: { version: 1, mode: 'ask', administratorUsername: 'ops.admin' } } }))
         .toMatchObject({ status: 'applied' });
       pending = api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId });
+      await Promise.race([
+        api.processBoundary.administratorPrompt,
+        pending.then(result => { throw new Error(`Network CHECK settled before the sudo prompt: ${result.ok ? 'ok' : result.errorCode}`); }),
+      ]);
       let operationId: string | undefined;
       await vi.waitFor(async () => {
         const operations = await api.listOperations();
@@ -189,8 +193,8 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
       expect(f.hostNative.firewallStages).toEqual([]);
     } finally {
       if (taskId) await getLiveSystemTasksRunnerAdapter().cancel({ taskId });
-      await pending;
       await api.dispose();
+      await pending;
     }
   });
 

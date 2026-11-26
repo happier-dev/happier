@@ -1017,6 +1017,7 @@ export function installGenericDefaultHostProcessBoundary(params: Readonly<{
   const probeDispatchFailures: ('native_process_refused' | 'range' | 'other')[] = [];
   const probeTerminals: { tool: 'systemctl' | 'docker'; exitCode: number | null; stderrBytes: number }[] = [];
   const probePreparation: { toolExists: boolean; pathPresent: boolean; pathMatches: boolean }[] = [];
+  const administratorPrompt = Promise.withResolvers<void>();
   const timing = { launched: 0, completed: 0, totalMs: 0, maxMs: 0 };
   const tools = new Set(['getent', 'id', 'dpkg', 'dpkg-query', 'lslocks', 'apt-cache', 'apt-get', 'curl', 'gpg', 'systemctl', '/usr/bin/systemctl', 'sudo', 'docker']);
   const execFile = vi.spyOn(childProcess, 'execFile').mockImplementation((...invocation: Parameters<typeof childProcess.execFile>) => {
@@ -1069,6 +1070,31 @@ export function installGenericDefaultHostProcessBoundary(params: Readonly<{
       return child;
     }
     if (command !== 'sudo') return Reflect.apply(originalSpawn, childProcess, invocation);
+    if (Array.isArray(candidateArgs) && candidateArgs.includes('effect-internal')
+      && candidateArgs.slice(0, 5).join('\0') === '-k\0-S\0-p\0[happier-sudo-password:%p]\n\0-u'
+      && candidateArgs[5] && candidateArgs.slice(6, 15).join('\0') === '--\0sudo\0-k\0-S\0-p\0[happier-sudo-root-password:%p]\n\0-u\0root\0--') {
+      // The attended sudo process asks first. It cannot launch the root helper before an answer.
+      const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+      const child = new childProcess.ChildProcess();
+      let finished = false;
+      const finish = (signal: NodeJS.Signals | null) => {
+        if (finished) return false;
+        finished = true;
+        stdin.end(); stdout.end(); stderr.end();
+        child.emit('close', signal ? null : 1, signal);
+        return true;
+      };
+      Object.assign(child, { stdin, stdout, stderr, kill: () => finish('SIGTERM') });
+      stdin.once('data', () => {
+        failures.push(new Error('Unanswered fixture sudo received input'));
+        finish(null);
+      });
+      queueMicrotask(() => {
+        stderr.write(`[happier-sudo-password:${candidateArgs[5]}]\n`);
+        administratorPrompt.resolve();
+      });
+      return child;
+    }
     if (!Array.isArray(candidateArgs) || !candidateArgs.includes('effect-internal')
       || candidateArgs.slice(0, 4).join('\0') !== '-n\0-u\0root\0--') {
       throw Object.assign(new Error('Unapproved fixture sudo invocation'), { code: 'generic_fixture_os_refused' });
@@ -1084,7 +1110,8 @@ export function installGenericDefaultHostProcessBoundary(params: Readonly<{
     });
     return child;
   });
-  return { failures, timing, probeLaunches, probeDispatchFailures, probeTerminals, probePreparation, dispose() { spawn.mockRestore(); execFile.mockRestore(); } };
+  return { failures, timing, probeLaunches, probeDispatchFailures, probeTerminals, probePreparation,
+    administratorPrompt: administratorPrompt.promise, dispose() { spawn.mockRestore(); execFile.mockRestore(); } };
 }
 
 export function createGenericHostNativeBoundary(params: Readonly<{
