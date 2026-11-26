@@ -502,23 +502,52 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
         freshness: 'unknown', pending: 'idle', subscription: 'ended', error: { code, message: code },
     });
     const surfaceRetired = unavailableSnapshot('plugin_surface_retired');
-    const declarationWithdrawn = unavailableSnapshot('plugin_resource_not_found');
-    const unavailableEntry = (snapshot: PluginUiResourceProjectionSnapshot<never>): PluginUiResourceEntry => Object.freeze<PluginUiResourceEntry>({
+    const createDeclarationRefusal = (phase: 'lookup' | 'withdrawal') => {
+        const code = 'plugin_resource_not_found';
+        const requestId = randomUUID();
+        const snapshot: PluginUiResourceProjectionSnapshot<never> = Object.freeze({
+            freshness: 'unknown', pending: 'idle', subscription: 'ended',
+            error: { code, message: code, details: { requestId } },
+        });
+        let reported = false;
+        return {
+            snapshot,
+            report() {
+                if (reported) return;
+                reported = true;
+                logPluginSurfaceDiagnostic(
+                    { pluginId: input.pluginId, contributionId: null, surfaceId: CONTEXTUAL_RESOURCE_SURFACE_ID },
+                    { code, phase, requestId },
+                );
+            },
+        };
+    };
+    let lookupRefusal: PluginUiResourceEntry | undefined;
+    const unavailableEntry = (
+        snapshot: PluginUiResourceProjectionSnapshot<never>,
+        report?: () => void,
+    ): PluginUiResourceEntry => Object.freeze<PluginUiResourceEntry>({
         getSnapshot: () => snapshot,
-        subscribe: () => () => {},
-        refresh: async () => snapshot,
+        subscribe() { report?.(); return () => {}; },
+        async refresh() { report?.(); return snapshot; },
         select(_projection, selector) {
             return Object.freeze({
                 getSnapshot: () => selector(snapshot),
-                subscribe: () => () => {},
-                refresh: async () => {},
+                subscribe() { report?.(); return () => {}; },
+                async refresh() { report?.(); },
             });
         },
     });
     // Resource hooks render failures as snapshots, not render-time exceptions.
     const failures = {
         plugin_surface_retired: unavailableEntry(surfaceRetired),
-        plugin_resource_not_found: unavailableEntry(declarationWithdrawn),
+        get plugin_resource_not_found() {
+            if (!lookupRefusal) {
+                const refusal = createDeclarationRefusal('lookup');
+                lookupRefusal = unavailableEntry(refusal.snapshot, refusal.report);
+            }
+            return lookupRefusal;
+        },
         plugin_resource_context_unavailable: unavailableEntry(unavailableSnapshot('plugin_resource_context_unavailable')),
         plugin_resource_transport_unavailable: unavailableEntry(unavailableSnapshot('plugin_resource_transport_unavailable')),
     };
@@ -613,6 +642,9 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
             let retired: PluginUiResourceProjectionSnapshot<never> | null = null;
             const contract = declaration ? contractKey(declaration) : null;
             const subscriptions = new Set<Readonly<{ listener(): void; release(): void }>>();
+            // Snapshot reads may precede committed reconciliation. Both see the same refusal.
+            let withdrawal: ReturnType<typeof createDeclarationRefusal> | undefined;
+            const getWithdrawal = () => withdrawal ??= createDeclarationRefusal('withdrawal');
             const refusal = (): PluginUiResourceProjectionSnapshot<never> | null => {
                 if (retired) return retired;
                 if (disposed || !input.accountLifetime.isCurrent()) return surfaceRetired;
@@ -622,7 +654,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
                 // data now; committed reconciliation releases and notifies.
                 const admitted = contract === null ? !hasDeclaredNamespace && !namespaceIsComplete()
                     : current && contractKey(current) === contract;
-                return admitted ? null : declarationWithdrawn;
+                return admitted ? null : getWithdrawal().snapshot;
             };
             const snapshot = (): PluginUiResourceSnapshot => refusal() ?? shared.getSnapshot();
             const entry: PluginUiResourceEntry = Object.freeze<PluginUiResourceEntry>({
@@ -666,7 +698,13 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
             entries.set(key, { localId: reference.localId, contract, accountPlaced, entry,
                 retire(code) {
                     if (retired) return;
-                    retired = code === 'plugin_surface_retired' ? surfaceRetired : declarationWithdrawn;
+                    if (code === 'plugin_surface_retired') {
+                        retired = surfaceRetired;
+                    } else {
+                        const refusal = getWithdrawal();
+                        retired = refusal.snapshot;
+                        refusal.report();
+                    }
                     const previous = [...subscriptions];
                     subscriptions.clear();
                     for (const subscription of previous) subscription.release();

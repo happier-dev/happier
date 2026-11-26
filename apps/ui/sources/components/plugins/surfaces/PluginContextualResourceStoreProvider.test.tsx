@@ -1104,6 +1104,33 @@ async function createPortableAccountResourceHarness(runtime?: PluginDynamicResou
     } catch (error) { unpublish(); await composition.invalidatePlugin(pluginId); throw error; }
 }
 
+it('correlates a mounted Session Resource refusal when its committed Account declaration disappears', async () => {
+    const harness = await createPortableAccountResourceHarness();
+    const store = createPluginDeclaredResourceStore(harness.input)!;
+    let unpublish: (() => void) | undefined;
+    try {
+        const mounted = store.getEntry('status');
+        expect((await mounted.refresh()).value).toBeDefined();
+
+        const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+        unpublish = publishCommittedAppShellPluginUiProjection(() => EMPTY_PLUGIN_UI_PROJECTION);
+        const lookup = store.getEntry('status');
+        const missing = await lookup.refresh();
+        expect(missing).toMatchObject({ error: { code: 'plugin_resource_not_found',
+            details: { requestId: expect.any(String) } } });
+        expect(missing.value).toBeUndefined();
+        expect(lookup.getSnapshot()).toBe(missing);
+
+        const withdrawn = mounted.getSnapshot();
+        expect(withdrawn).toMatchObject({ error: { code: 'plugin_resource_not_found',
+            details: { requestId: expect.any(String) } } });
+        expect(withdrawn.value).toBeUndefined();
+        expect(await mounted.refresh()).toBe(withdrawn);
+        expect(withdrawn.error?.details).not.toEqual(missing.error?.details);
+    } finally { unpublish?.(); store.dispose(); await harness.dispose(); }
+});
+
+
 it('reads a global Account Resource on an app surface when its complete namespace also contains static assets', async () => {
     const harness = await createPortableAccountResourceHarness({
         read: options => JSON.stringify({ context: options.context.kind }),

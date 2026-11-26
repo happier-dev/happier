@@ -6359,6 +6359,11 @@ Resource snapshots retain those SDK details as well. Contextual and mounted
 Resource read/watch request failures preserve the transport owner's code and
 retry decision; a Resource RPC timeout is an invocation failure, not an Action
 receipt-loss marker. A nonretryable Resource read settles without re-polling.
+In unreleased 0.3 source, when the mounted declaration store returns
+`plugin_resource_not_found`, its snapshot carries a host-generated
+`details.requestId`. A committed lookup refusal or declaration withdrawal logs
+that same ID in Plugin UI diagnostics. The ID correlates the host decision
+before a Resource handler or RPC runs.
 Absent retry evidence is conservative; a lost receipt after issue never proves
 that repeating an effect is safe. Ordinary Action JSON with a `code` member is
 still domain data, distinguished by the producing owner rather than its shape.
