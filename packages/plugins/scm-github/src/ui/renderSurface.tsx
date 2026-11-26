@@ -1912,10 +1912,6 @@ function WritesSection({
                 </>
               )
               : null}
-            {/* Subscribing is this panel's quickest change; it leads the longer property and relationship cards. */}
-            <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
-            <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
-            <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} capabilities={capabilities} />
               </>
             )}
             {input.observation.snapshot.state.presentation === 'active'
@@ -1933,6 +1929,14 @@ function WritesSection({
                 </>
               )
               : null}
+            {publishing ? null : (
+              <>
+            {/* Subscribing is this panel's quickest change; it leads the longer property and relationship cards. */}
+            <GithubNotifications input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
+            <GithubEntryProperties input={input} kindId="pull-request" overview={overview} onObserved={onObserved} capabilities={capabilities} refreshOverview={refreshOverview} />
+            <GithubEntryRelationships input={input} kindId="pull-request" onObserved={onObserved} capabilities={capabilities} />
+              </>
+            )}
             {publishing ? null : (
               <>
             {offered.includes('close')
