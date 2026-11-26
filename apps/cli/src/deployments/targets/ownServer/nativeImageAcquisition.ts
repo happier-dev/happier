@@ -1,6 +1,7 @@
 import { environmentSecretBindingIdentityV1, type DeploymentEnvironmentContentV1, type OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployments/contracts/v1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
+import { disposeReceivedNativeComposeImageArchive } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import type { NativeComposeEnvironmentProjectInput } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
@@ -54,9 +55,14 @@ export function createOwnServerNativeImageAcquisition(input: Readonly<{
             if (!input.runtime.copyDeploymentImageArchive) throw new PluginError({ code: 'filesystem_transfer_custody_required',
                 message: 'Receiving daemon image-transfer custody is unavailable' });
             const received = await input.runtime.copyDeploymentImageArchive({ archive, signal: input.signal, assertCurrent: input.assertCurrent });
-            await input.assertCurrent();
-            input.signal.throwIfAborted();
-            return received;
+            try {
+                await input.assertCurrent();
+                input.signal.throwIfAborted();
+                return received;
+            } catch (error) {
+                await disposeReceivedNativeComposeImageArchive(received.dispose);
+                throw error;
+            }
         },
     })) };
 }

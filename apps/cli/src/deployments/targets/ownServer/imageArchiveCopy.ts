@@ -1,7 +1,8 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteFailure, ActionExecutorContext } from '@happier-dev/protocol';
 import type { OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployments/contracts/v1';
-import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { disposeReceivedNativeComposeImageArchive, readNativeComposeArchiveTransportIdentity,
+    type ReceivedNativeComposeImageArchive } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { resolveActionCliCredentialTarget } from '@/cli/actions/actionServerTarget';
 import { getServerProfile } from '@/server/serverProfiles';
@@ -10,7 +11,7 @@ import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { assertDeploymentArchiveChildCurrentForHost, assertReviewedDeploymentArchiveSourceForHost } from '@/api/deploymentChildExecutionAuthorization';
 import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { prepareOwnServerImageArchiveDestinationForHost, readOwnServerImageArchiveOriginHint, verifyOwnServerImageArchiveForHost } from './releaseProvenance';
+import { captureOwnServerImageArchiveDisposal, prepareOwnServerImageArchiveDestinationForHost, readOwnServerImageArchiveOriginHint, verifyOwnServerImageArchiveForHost } from './releaseProvenance';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths';
 
 export type DeploymentImageArchiveCopyRequest = Readonly<{
@@ -28,7 +29,7 @@ const refuse = (code: string, cause?: ActionExecuteFailure): never => { throw Ob
 export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
     credentials: StoredCredentials; credentialProfileId: string; serverId: string;
     serverHttpBaseUrl: string; machineId: string; installationId: string; deploymentRoot: string;
-}>): (request: DeploymentImageArchiveCopyRequest) => Promise<Readonly<{ path: string; sizeBytes: number; sha256: string }>> {
+}>): (request: DeploymentImageArchiveCopyRequest) => Promise<ReceivedNativeComposeImageArchive> {
     return async request => {
         request.signal.throwIfAborted();
         await request.assertCurrent();
@@ -64,9 +65,10 @@ export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
         if (!target.fixedServer || target.fixedServer.serverId !== host.credentialProfileId
             || target.serverIdentityId !== host.serverId || request.archive.holder.serverId !== host.serverId
             || normalizeServerHttpBaseUrl(target.fixedServer.serverApiUrl) !== normalizeServerHttpBaseUrl(host.serverHttpBaseUrl)) return refuse('filesystem_transfer_custody_required');
-        await prepareOwnServerImageArchiveDestinationForHost({ admission: { deploymentRoot: host.deploymentRoot,
+        const placement = { deploymentRoot: host.deploymentRoot,
             environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost(host.serverId, admitted.job.input.environmentId),
-            deploymentId: admitted.job.deploymentId },
+            deploymentId: admitted.job.deploymentId };
+        await prepareOwnServerImageArchiveDestinationForHost({ admission: placement,
             sha256: request.archive.sha256, destination: request.destination, signal: request.signal, assertCurrent });
         const executor = createCliActionExecutorFromCredentials({ credentials: host.credentials, readCredentials: async () => host.credentials,
             serverId: target.fixedServer.serverId, serverIdentityId: host.serverId, serverApiUrl: target.fixedServer.serverApiUrl,
@@ -83,9 +85,15 @@ export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
         if (!output || typeof output !== 'object' || !('success' in output) || output.success !== true
             || !('status' in output) || output.status !== 'completed' || !('path' in output)
             || output.path !== request.destination.path) return refuse('outcome_unknown');
-        await assertCurrent();
-        const actual = await readNativeComposeArchiveTransportIdentity(request.destination.path);
-        if (actual.sha256 !== request.archive.sha256 || actual.sizeBytes !== request.archive.sizeBytes) return refuse('source_identity_mismatch');
-        return { path: request.destination.path, ...actual };
+        const dispose = await captureOwnServerImageArchiveDisposal(placement, request.archive.sha256);
+        try {
+            await assertCurrent();
+            const actual = await readNativeComposeArchiveTransportIdentity(request.destination.path);
+            if (actual.sha256 !== request.archive.sha256 || actual.sizeBytes !== request.archive.sizeBytes) return refuse('source_identity_mismatch');
+            return { path: request.destination.path, ...actual, dispose };
+        } catch (error) {
+            await disposeReceivedNativeComposeImageArchive(dispose);
+            throw error;
+        }
     };
 }

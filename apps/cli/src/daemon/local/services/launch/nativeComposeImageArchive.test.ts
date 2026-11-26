@@ -22,6 +22,7 @@ async function fixture(run: (input: {
     setManifestLookupOnly(): void;
     setPlatformChild(): void;
     readReceived(): Promise<Buffer>;
+    readHolder(): Promise<Buffer>;
 }) => Promise<void>) {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-archive-'));
     try {
@@ -76,6 +77,7 @@ async function fixture(run: (input: {
             setManifestLookupOnly() { manifestLookupOnly = true; },
             setPlatformChild() { platformChild = true; },
             readReceived() { return readFile(join(receiver, 'received.tar')); },
+            readHolder() { return readFile(archive); },
             acquire() { return native.acquire({ ...selectedImage, ...(registry ? { registryReference: `registry.example/app@${manifestDigest}` } : {}) }, {
                 references: ['owned:retained'], authority: { context },
                 ...(buildSource ? { purpose: 'buildSource' as const } : {}),
@@ -89,7 +91,7 @@ async function fixture(run: (input: {
                             if (copyError) throw copyError;
                             await copyFile(archive, path);
                             if (corrupt) await writeFile(path, Buffer.from('corrupt archive'));
-                            return { path, sizeBytes: bytes.length, sha256 };
+                            return { path, sizeBytes: bytes.length, sha256, async dispose() { await rm(path); } };
                         } }],
                 }, async pull() { operations.push(['pull']); throw Object.assign(new Error('Registry denied'), { code: 'registry_denied' }); },
             }); },
@@ -138,6 +140,8 @@ describe('receiver archive acquisition at the canonical native image owner', () 
             expect(acquired.config).toMatchObject({ os: 'linux', architecture: 'amd64' });
             expect(input.operations.filter(args => args[0] === 'copy')).toHaveLength(1);
             expect(input.operations.find(args => args[1] === 'load')).toEqual(['image', 'load', '--platform', 'linux/amd64', '--input', expect.any(String)]);
+            await expect(input.readReceived()).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(await input.readHolder()).not.toHaveLength(0);
         });
     });
     it('acquires a verified archive when the receiver exposes its manifest identity instead of CONFIG', async () => {

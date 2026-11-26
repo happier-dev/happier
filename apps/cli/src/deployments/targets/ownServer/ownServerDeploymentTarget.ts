@@ -199,7 +199,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
         /** Local admitted-runtime cancellation, installation and invocation lifetime. */
         assertCurrent(): Promise<void>;
         copyDeploymentImageArchive?(input: Readonly<{ archive: OwnServerDeploymentImageArchiveV1; signal: AbortSignal;
-            assertCurrent(): Promise<void> }>): Promise<Readonly<{ path: string; sizeBytes: number; sha256: string }>>;
+            assertCurrent(): Promise<void> }>): Promise<import('@/daemon/local/services/launch/nativeComposeImageIdentity').ReceivedNativeComposeImageArchive>;
         /** Physical finite native processes only; never receipt ACK or serving containers. */
         settleNative(): Promise<void>;
         release(): Promise<void>;

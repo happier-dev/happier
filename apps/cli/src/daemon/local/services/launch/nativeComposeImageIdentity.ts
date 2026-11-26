@@ -40,6 +40,19 @@ export type NativeComposeRegistryAcquisition = Readonly<{
     /** Build-only exact pushPull authority; runtime acquisition keeps pull-only custody. */
     publicationEnvPort?: DeploymentExecEnvPortV1;
 }>;
+export type ReceivedNativeComposeImageArchive = Readonly<{
+    path: string;
+    sizeBytes: number;
+    sha256: string;
+    /** Only a completed receiving copy can release its file after native load. */
+    dispose?(): Promise<void>;
+}>;
+
+export async function disposeReceivedNativeComposeImageArchive(dispose: ReceivedNativeComposeImageArchive['dispose']): Promise<void> {
+    try { await dispose?.(); }
+    catch { logger.infoFile('[Deployment] Receiver archive was kept', { code: 'image_archive_removal_failed' }); }
+}
+
 export type NativeComposeImageAcquisition = Readonly<{
     operation: 'deploy' | 'rollback';
     registries?: readonly NativeComposeRegistryAcquisition[];
@@ -50,7 +63,7 @@ export type NativeComposeImageAcquisition = Readonly<{
         sizeBytes: number;
         sha256: string;
         /** The receiver retains transfer/load custody outside native scratch. */
-        acquire(): Promise<Readonly<{ path: string; sizeBytes: number; sha256: string }>>;
+        acquire(): Promise<ReceivedNativeComposeImageArchive>;
     }>[];
 }>;
 
@@ -644,15 +657,22 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             if (!archive) throw new PluginError({ code: request.acquisition?.operation === 'rollback' ? 'rollback_image_unavailable' : 'deployment_image_unavailable',
                 message: 'The exact platform image is unavailable' });
             const received = await archive.acquire();
-            if (received.sizeBytes !== archive.sizeBytes || received.sha256 !== archive.sha256) return refuse('deployment_image_archive_identity_mismatch');
-            const actual = await readNativeComposeArchiveTransportIdentity(received.path);
-            if (actual.sizeBytes !== archive.sizeBytes || actual.sha256 !== archive.sha256) return refuse('deployment_image_archive_identity_mismatch');
-            await verifyNativeComposeImageArchive(received.path, image);
-            // The host/transfer owner retains this file on unknown import/load.
-            // Project disposal must not remove operation-held archive custody.
-            if (!request.authority) throw new MachineNativeEffectAdmissionError('admission_unavailable');
-            await input.run(['image', 'load', '--platform', image.platform, '--input', received.path], undefined, undefined, request.authority);
-            return await locate(references, image) ?? refuse('deployment_image_identity_unavailable');
+            let mayRelease = true;
+            try {
+                if (received.sizeBytes !== archive.sizeBytes || received.sha256 !== archive.sha256) return refuse('deployment_image_archive_identity_mismatch');
+                const actual = await readNativeComposeArchiveTransportIdentity(received.path);
+                if (actual.sizeBytes !== archive.sizeBytes || actual.sha256 !== archive.sha256) return refuse('deployment_image_archive_identity_mismatch');
+                await verifyNativeComposeImageArchive(received.path, image);
+                if (!request.authority) throw new MachineNativeEffectAdmissionError('admission_unavailable');
+                // A thrown load may have an unknown native outcome. Keep its bytes
+                // until settlement instead of deleting a live process's input.
+                mayRelease = false;
+                await input.run(['image', 'load', '--platform', image.platform, '--input', received.path], undefined, undefined, request.authority);
+                mayRelease = true;
+                return await locate(references, image) ?? refuse('deployment_image_identity_unavailable');
+            } finally {
+                if (mayRelease) await disposeReceivedNativeComposeImageArchive(received.dispose);
+            }
         },
     };
     return identity;

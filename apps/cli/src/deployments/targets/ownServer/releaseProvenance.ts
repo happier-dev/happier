@@ -8,6 +8,7 @@ import { readNativeComposeArchiveTransportIdentity, verifyNativeComposeImageArch
     type NativeComposeImageArchive } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { resolveDeploymentSourcePathForHost, type DeploymentSourceAdmissionForHost } from './exactCommitRelease';
 import { filesystemPathComparisonKey, isFilesystemPathAbsolute, normalizeFilesystemPathForPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { readStoragePathIdentity, removeStoragePath } from '@/storage/trash/removeStoragePath';
 import { withConfinedWorkspaceSyncParent } from '@/workspaces/sync/workspaceSyncConfinedFileSystem';
 import type { PreparedFilesystemReadFile } from '@/machines/transfer/preparedFilesystemTransferScope';
 import { readOwnServerDeploymentEnvironmentIdForHost, resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths';
@@ -110,6 +111,22 @@ export async function prepareOwnServerImageArchiveDestinationForHost(input: Read
     await verifyArchiveRoot(input.admission, input.sha256);
     await assertCurrent();
     return target;
+}
+
+/** Dispose only the filesystem object delivered into the operation's verified receiving root. */
+export async function captureOwnServerImageArchiveDisposal(admission: ArchivePlacement, sha256: string): Promise<() => Promise<void>> {
+    const physical = await verifyArchiveRoot(admission, sha256);
+    const identity = await readStoragePathIdentity(physical.path);
+    if (identity.kind !== 'file') return custodyRequired();
+    return async () => {
+        await removeStoragePath(physical.path, { allowedRoot: physical.rootPath, expectedIdentity: identity,
+            async beforeEffect() {
+                const current = await verifyArchiveRoot(admission, sha256);
+                if (filesystemPathComparisonKey(current.path)
+                    !== filesystemPathComparisonKey(physical.path)) return custodyRequired();
+            },
+        });
+    };
 }
 
 /** Holder-side filesystem admission consumes the verified parent receipt identity.
