@@ -441,13 +441,20 @@ async function readCorrelationLookback(params: Readonly<{
   maxBytes: number;
 }>): Promise<readonly AntigravityTranscriptRecordWithOffsets[]> {
   if (params.endOffsetBytes <= 0) return [];
-  const page = await readJsonlFileBackwardPage({
-    filePath: params.path,
-    endOffsetBytes: params.endOffsetBytes,
-    maxBytes: params.maxBytes,
-    maxItems: ANTIGRAVITY_TRANSCRIPT_CORRELATION_LOOKBACK_MAX_ITEMS,
-  });
-  return toOffsetRecords(page.items);
+  try {
+    const page = await readJsonlFileBackwardPage({
+      filePath: params.path,
+      endOffsetBytes: params.endOffsetBytes,
+      maxBytes: params.maxBytes,
+      maxItems: ANTIGRAVITY_TRANSCRIPT_CORRELATION_LOOKBACK_MAX_ITEMS,
+    });
+    return toOffsetRecords(page.items);
+  } catch (error) {
+    // Optional correlation context must not hide a readable page. Reading the
+    // oversized record through the page cursor still returns the scanner error.
+    if (isPluginError(error) && error.code === 'JSONL_RECORD_TOO_LARGE') return [];
+    throw error;
+  }
 }
 
 export async function pageAntigravityTranscriptLines(params: Readonly<{

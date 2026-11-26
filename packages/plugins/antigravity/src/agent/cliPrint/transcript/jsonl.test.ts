@@ -41,7 +41,7 @@ describe('Antigravity cliPrint transcript JSONL', () => {
       await expect(pageAntigravityTranscriptLines({
         ...request,
         cursor: first.nextCursor,
-      })).resolves.toMatchObject({ kind: 'read_failed' });
+      })).resolves.toMatchObject({ kind: 'read_failed', code: 'JSONL_RECORD_TOO_LARGE' });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
