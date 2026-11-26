@@ -617,13 +617,22 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     // can settle. Absence is therefore the read's pending state, not evidence of
     // failure. Candidate additions remain blocked until their own exact inspect;
     // only a settled failed inspection publishes the unavailable reason.
+    const candidateContext = admittedCandidateContext?.context;
+    const externalSharingReason = candidateContext?.externalSharingReason;
     const contextPolicyReason: SessionAccessUiReason | undefined = !current.snapshot?.primaryTeamId ? undefined
-        : admittedCandidateContext?.error ?? (admittedCandidateContext?.context?.archived ? {
+        : admittedCandidateContext?.error ?? (candidateContext?.archived ? {
             code: 'session_access_external_sharing_disabled',
-            message: t('session.access.contextTeamArchived', { team: admittedCandidateContext.context.name }),
-        } : admittedCandidateContext?.context?.externalSharingReason
-            ? presentSessionAccessReason(admittedCandidateContext.context.externalSharingReason)
-            : undefined);
+            message: t('session.access.contextTeamArchived', { team: candidateContext.name }),
+        } : candidateContext && externalSharingReason === 'session_access_authentication_required'
+            ? presentTeamSignInRequired({
+                code: externalSharingReason,
+                teamId: candidateContext.teamId,
+                serverId: input.scope.serverId,
+                accepted: [],
+                origin: () => shareSignInOrigin(false),
+                navigate: (href) => routerRef.current.push(href as Href),
+            })
+            : externalSharingReason ? presentSessionAccessReason(externalSharingReason) : undefined);
     const resolveCandidateAvailability = React.useCallback(async (
         rows: readonly SessionAccessCandidateRowModel[], signal?: AbortSignal,
     ): Promise<readonly SessionAccessCandidateRowModel[]> => {

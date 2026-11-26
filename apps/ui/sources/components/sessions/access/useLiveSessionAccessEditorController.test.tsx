@@ -194,6 +194,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         contextMode: 'normal' as 'normal' | 'denied' | 'malformed_after_commit' | 'malformed_without_commit',
         contextArchived: false,
         candidatePolicyUnavailable: false,
+        contextAuthenticationRefusal: null as null | 'session_access_authentication_required' | 'session_access_authentication_unavailable',
         candidatePolicyFailure: null as null | Readonly<{ status: number; code: string }>,
         candidatePolicyGate: null as Promise<void> | null,
         envelopePages: sessionEncrypted ? [{ summary: { prepared: 0, pending: 0, invalid: 0, recipientKeyUnavailable: 0 }, items: [] }] as EnvelopePage[] : [],
@@ -278,7 +279,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
             const body = JSON.parse(String(init?.body)) as { subjects: Array<{ kind: string; teamId?: string }> };
             const team = TEAM_DIRECTORY.items.find((item) => item.id === state.primaryTeamId);
             const reason = state.contextArchived || team?.policy.externalSharingPolicy === 'disabled'
-                ? 'session_access_external_sharing_disabled' : null;
+                ? 'session_access_external_sharing_disabled' : state.contextAuthenticationRefusal;
             return Response.json({ v: 1, context: state.primaryTeamId ? {
                 teamId: state.primaryTeamId, name: team?.name ?? 'Acme', archived: state.contextArchived,
                 externalSharingReason: reason,
@@ -954,6 +955,23 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         } else {
             expect(action?.label).not.toBe(t('common.retry'));
         }
+    });
+
+    it.each([
+        { code: 'session_access_authentication_required', message: 'session.access.authenticationRequired', signIn: true },
+        { code: 'session_access_authentication_unavailable', message: 'session.access.authenticationUnavailable', signIn: false },
+    ] as const)('uses the exact Team context admission for $code', async ({ code, message, signIn }) => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        home.state.primaryTeamId = 'team-acme';
+        home.state.contextAuthenticationRefusal = code;
+        TEAM_DIRECTORY.items = [{ id: 'team-acme', name: 'Acme', policy: {
+            sessionCreationPolicy: 'team_default', externalSharingPolicy: 'team_admins_only',
+        } }];
+        const controller = await mountController(home.profile.id);
+        await vi.waitFor(() => expect(controller().model.context?.unavailableReason).toMatchObject({
+            code, message: t(message),
+        }));
+        expect(controller().model.context?.unavailableReason?.action?.label).toBe(signIn ? t('teams.errors.signInRequiredAction') : undefined);
     });
 
     it('does not offer additions when an older Home cannot inspect the context policy', async () => {
