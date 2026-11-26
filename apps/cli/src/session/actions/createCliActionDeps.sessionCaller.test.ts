@@ -120,6 +120,18 @@ function callerSessionFixture(callerDirectory = '/caller/repo', currentStarterDe
 }
 
 describe('daemon Account Action Session caller context', () => {
+  it('captures creation-selected profile provenance from calling Session metadata', async () => {
+    const fixture = callerSessionFixture('/caller/repo', 2, true, { metadata: JSON.stringify({
+      path: '/caller/repo', machineId: 'caller-machine', approvalProfileId: 'builtin:apply-safe',
+      approvalProfileTeamOrGroupDerived: true,
+    }) });
+    try {
+      const deps = createCliActionDeps(fixture.params);
+      expect(await deps.readActionApprovalProfileId?.({ surface: 'agent', defaultSessionId: fixture.sessionId,
+        actionCaller: { kind: 'session', sessionId: fixture.sessionId, starterDepth: 2, turnDepth: 3 },
+      })).toEqual({ approvalProfileId: 'builtin:apply-safe', approvalProfileTeamOrGroupDerived: true });
+    } finally { fixture.cleanup(); }
+  });
   it.each(['plain', 'e2ee'] as const)('attaches and detaches the private Session profile through the revisioned Action (%s)', async mode => {
     const fixture = callerSessionFixture();
     const secret = new Uint8Array(32).fill(19);
@@ -163,7 +175,9 @@ describe('daemon Account Action Session caller context', () => {
         result: { ok: true, sessionId: fixture.sessionId, approvalProfileId: 'builtin:apply-safe', version: 5 } });
       const caller = { ...context, defaultSessionId: fixture.sessionId,
         actionCaller: { kind: 'session' as const, sessionId: fixture.sessionId, starterDepth: 2, turnDepth: 3 } };
-      expect(await deps.readActionApprovalProfileId?.(caller)).toBe('builtin:apply-safe');
+      expect(await deps.readActionApprovalProfileId?.(caller)).toEqual({
+        approvalProfileId: 'builtin:apply-safe', approvalProfileTeamOrGroupDerived: false,
+      });
       expect(tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode: mode, rawSession: row }))
         .toMatchObject({ approvalProfileId: 'builtin:apply-safe' });
       expect(await executor.execute('session.approval_profile.set', { ...input, approvalProfileId: null }, context))
@@ -171,10 +185,14 @@ describe('daemon Account Action Session caller context', () => {
       expect(patches).toHaveLength(1);
       expect(await executor.execute('session.approval_profile.set', { ...input, expectedMetadataRevision: 5, approvalProfileId: null }, context))
         .toMatchObject({ ok: true, result: { approvalProfileId: null, version: 6 } });
-      expect(await deps.readActionApprovalProfileId?.(caller)).toBeNull();
-      // Without its own choice the Session follows the person's default for its Machine.
+      expect(await deps.readActionApprovalProfileId?.(caller)).toEqual({
+        approvalProfileId: null, approvalProfileTeamOrGroupDerived: false,
+      });
+      // Machine defaults select a root's creation profile; an existing Session keeps its captured choice.
       const machineDefaults = normalizeActionsSettingsV1({ v: 1, machineApprovalProfiles: { [fixture.metadata.machineId]: 'careful' } });
-      expect(await deps.readActionApprovalProfileId?.({ ...caller, actionsSettings: machineDefaults })).toBe('careful');
+      expect(await deps.readActionApprovalProfileId?.({ ...caller, actionsSettings: machineDefaults })).toEqual({
+        approvalProfileId: null, approvalProfileTeamOrGroupDerived: false,
+      });
       expect(await deps.readActionApprovalProfileId?.(context)).toBeUndefined();
       fixture.get.mockRejectedValueOnce(new Error('Session read unavailable'));
       expect(await deps.readActionApprovalProfileId?.(caller))
@@ -206,6 +224,10 @@ describe('daemon Account Action Session caller context', () => {
           credentialId: '8f250f0e-4f31-4f7d-8f68-61638b73b526' } } } };
     let authorityReads = 0;
     const tokens = vi.spyOn(axios, 'request').mockImplementation(async request => {
+      if (new URL(String(request.url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        expect(request.method).toBe('GET');
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
       if (new URL(String(request.url)).pathname !== ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1) throw new Error('Unexpected authority request');
       authorityReads++;
       return { status: 200, data: { tokens: [] } }; // Original principal revoked after Run admission.
