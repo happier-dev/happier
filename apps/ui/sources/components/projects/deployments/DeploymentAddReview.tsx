@@ -24,7 +24,8 @@ import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protoc
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentActionRefusalRemedy, readDeploymentRefusalRecovery } from './deploymentPresentation';
-import { deploymentPartialRecoveryTab, readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
+import { deploymentPartialRecoveryTab, readDeploymentActionError, readDeploymentRefusal, useDeploymentChangePress,
+  type DeploymentActionOutcome } from './deploymentActionOutcome';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { createDeploymentActions } from './deploymentActions';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -36,12 +37,13 @@ type Detail = DeploymentEnvironmentReadDetailV1;
 
 type AddOperands = Omit<Parameters<ReturnType<typeof createDeploymentActions>['instantiateTemplate']>[0],
   'mode' | 'templateRef' | 'bindings' | 'generatedSecretAudience'>;
+type AddRefusal = Extract<DeploymentActionOutcome, { kind: 'refused' }>;
 type Preflight = (
   | Readonly<{ status: 'checking' }>
   | Readonly<{ status: 'ready'; shortOn: readonly ('memoryBytes' | 'freeDiskBytes')[]; firstRun: boolean; document?: string;
       publicFiles?: readonly Readonly<{ path: string; content: string }>[]; generatedSecrets: number;
       repositoryChange?: DeploymentTemplateInstantiationReviewV1['repositoryChange'] }>
-  | Readonly<{ status: 'failed'; code: string }>) & Readonly<{ connectToServices?: readonly string[] }>;
+  | Readonly<{ status: 'failed'; refusal: AddRefusal }>) & Readonly<{ connectToServices?: readonly string[] }>;
 
 export function DeploymentAddReview(props: Readonly<{
   item: RegistryCatalogItemSummary;
@@ -93,22 +95,27 @@ export function DeploymentAddReview(props: Readonly<{
     setPreflight(previous => ({ status: 'checking', connectToServices: previous.connectToServices }));
     actions.instantiateTemplate({ ...operands, mode: 'preview', templateRef }).then((result) => {
       if (!live) return;
-      if (result.kind !== 'preview') { setPreflight(previous => ({ status: 'failed', code: 'invalid_response', connectToServices: previous.connectToServices })); return; }
+      if (result.kind !== 'preview') {
+        setPreflight(previous => ({ status: 'failed', refusal: readDeploymentRefusal('invalid_response'),
+          connectToServices: previous.connectToServices }));
+        return;
+      }
       setPreflight({ status: 'ready', firstRun: result.review.firstRunSetup === true, document: result.review.document,
         connectToServices: result.review.connectToServices ?? [], publicFiles: result.review.publicFiles, generatedSecrets: result.review.generatedSecrets.length, repositoryChange: result.review.repositoryChange,
         shortOn: (result.review.capacity ?? []).filter((entry) => entry.state === 'shortfall').map((entry) => entry.resource) });
     }, (error) => {
       if (!live) return;
       const outcome = readDeploymentActionError(error);
-      setPreflight(previous => ({ status: 'failed', code: outcome.kind === 'refused' ? outcome.code : 'unknown_error', connectToServices: previous.connectToServices }));
+      setPreflight(previous => ({ status: 'failed', refusal: outcome.kind === 'refused' ? outcome : readDeploymentRefusal('unknown_error'),
+        connectToServices: previous.connectToServices }));
     });
     return () => { live = false; };
     // The serialized ref and operands are the preview's identity.
   }, [actions, refKey, operandsKey, reviewedChoices]);
   const press = useDeploymentChangePress({ request: (artifactId) => { props.onClose(); props.review.request(artifactId); } },
     () => setAdded(true));
-  const refusalCode = press.outcome?.kind === 'refused' ? press.outcome.code
-    : preflight.status === 'failed' ? preflight.code : null;
+  const refusal = press.outcome?.kind === 'refused' ? press.outcome
+    : preflight.status === 'failed' ? preflight.refusal : null;
   const partial = press.outcome?.kind === 'refused' ? press.outcome.progress : undefined;
   const add = () => {
     if (!templateRef || !operands) return;
@@ -219,7 +226,7 @@ export function DeploymentAddReview(props: Readonly<{
               <DeploymentPartialProgress testID="project-deployments.add.progress" progress={partial} failure={press.outcome.failure} />
             ) : null}
             {/* Partial results keep the failed step and saved work together in their existing presenter. */}
-            {!partial && refusalCode ? <DeploymentAddRefusal testID="project-deployments.add.refused" code={refusalCode}
+            {!partial && refusal ? <DeploymentAddRefusal testID="project-deployments.add.refused" refusal={refusal}
               {...(props.onOpenRecovery ? { onOpenRecovery: (destination: DeploymentFailureRecoveryDestinationV1) => {
                 props.onClose(); props.onOpenRecovery?.(destination);
               } } : {})} /> : null}
@@ -237,14 +244,15 @@ export function DeploymentAddReview(props: Readonly<{
  */
 export function DeploymentAddRefusal(props: Readonly<{
   testID: string;
-  code: string;
+  refusal: AddRefusal;
   onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>) {
-  const recovery = readDeploymentRefusalRecovery(props.code);
-  const { onOpenRecovery } = props;
+  const { onOpenRecovery, refusal } = props;
+  const recovery = readDeploymentRefusalRecovery(refusal.code, refusal.failure?.details,
+    refusal.request, refusal.failure?.failureCause?.errorCode);
   if (!recovery) {
     return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={t('projects.deployments.addRefused')}
-      reason={deploymentActionRefusalRemedy(props.code)} diagnosticCode={props.code} />;
+      reason={deploymentActionRefusalRemedy(refusal.code)} diagnosticCode={refusal.code} />;
   }
   return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={recovery.remedy}
     {...(onOpenRecovery ? { action: { label: recovery.nextAction.label, testID: `${props.testID}.next`,

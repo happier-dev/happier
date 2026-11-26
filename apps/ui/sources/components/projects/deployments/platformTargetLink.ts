@@ -19,7 +19,7 @@ import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugin
 
 import { t } from '@/text';
 import type { InputFieldOptionsState } from '@/components/sessions/actions/inputFieldOptionsStore';
-import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
+import { readDeploymentRefusal, type DeploymentActionOutcome } from './deploymentActionOutcome';
 import { formatContentDigestPrefix } from '@/utils/formatContentDigestPrefix';
 
 /**
@@ -358,7 +358,7 @@ export function buildPlatformTargetLinkInput(
 
 export type PlatformInspectOutcome =
   | Exclude<DeploymentTargetCheckResultV1, { kind: 'alreadyLinked' }>
-  | Readonly<{ kind: 'refused'; reason: DeploymentRefusalReason; code: string }>;
+  | Extract<DeploymentActionOutcome, { kind: 'refused' }>;
 
 export function readPlatformInspectOutcome(
   result: Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false; code: string }>,

@@ -1416,6 +1416,7 @@ describe('Environment → Data → Add (P10)', () => {
   });
 
   it.each([{ outcome: 'applied', update: false, choices: false }, { outcome: 'template_service_conflict', update: false, choices: false },
+    { outcome: 'deployment_conflict', update: false, choices: false },
     { outcome: 'partial', update: false, choices: false }, { outcome: 'applied', update: true, choices: false },
     { outcome: 'applied', update: false, choices: true }, { outcome: 'applied', update: false, choices: false, repository: true },
     { outcome: 'partial', update: false, choices: false, repository: true },
@@ -1483,6 +1484,7 @@ describe('Environment → Data → Add (P10)', () => {
     const applied: unknown[] = [];
     const previews: unknown[] = [];
     const receivedApplyResults: Array<Readonly<{ ok: boolean; errorCode?: string }>> = [];
+    const refusalDetails = outcome === 'deployment_conflict' ? { requiredFact: 'transaction_commit' } : undefined;
     const templateHost = (raw: unknown) => {
         const input = DeploymentTemplateInstantiateInputV1Schema.parse(raw);
         if (input.mode === 'preview') {
@@ -1504,7 +1506,7 @@ describe('Environment → Data → Add (P10)', () => {
           savedSecrets: [{ name: 'DB_PASSWORD', phase: 'runtime', source: {
             kind: 'secret', ref: 'happier:shared-secret:v1:database-password', resourceRevision: 7,
           } }], phase: repository ? 'repository' : 'deploy', errorCode: repository ? 'FEATURE_UNSUPPORTED' : 'deployment_access_denied' });
-        if (outcome !== 'applied') return ActionExecuteFailureSchema.parse({ ok: false, errorCode: outcome, error: outcome });
+        if (outcome !== 'applied') return ActionExecuteFailureSchema.parse({ ok: false, errorCode: outcome, error: outcome, details: refusalDetails });
         if (repository) return DeploymentTemplateInstantiateResultV1Schema.parse({ kind: 'pullRequest', environmentId: detail.environment.id,
           revision: 2, savedSecrets: [], headCommit: 'b'.repeat(40), branchName: 'add-database', pullRequest: {
             provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, title: 'Add PostgreSQL',
@@ -1625,7 +1627,7 @@ describe('Environment → Data → Add (P10)', () => {
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.added')
         ?? screen.findByTestId('project-deployments.add.refused')
         ?? screen.findByTestId('project-deployments.add.progress')).not.toBeNull());
-      expect(receivedApplyResults).toEqual([outcome === 'template_service_conflict'
+      expect(receivedApplyResults).toEqual([outcome === 'template_service_conflict' || outcome === 'deployment_conflict'
         ? { ok: false, errorCode: outcome } : { ok: true }]);
       expect(applied).toEqual([expect.objectContaining({ mode: 'apply', ...(update ? {} : { intent: 'add' }), environment: { kind: 'existing',
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision },
@@ -1662,19 +1664,22 @@ describe('Environment → Data → Add (P10)', () => {
         expect(applied).toHaveLength(1);
       } else {
         const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
-        expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1(outcome)!.remedy);
+        const recovery = readDeploymentRefusalRecoveryV1(outcome, refusalDetails)!;
+        expect(screen.getTextContent()).toContain(recovery.remedy);
         expect(screen.findByTestId('project-deployments.add.added')).toBeNull();
         await screen.pressByTestIdAsync('project-deployments.add.refused.next');
-        expect(opened).toEqual(['source']);
+        expect(opened).toEqual([recovery.nextAction.destination]);
       }
     } finally { await screen.unmount(); account.dispose(); }
   });
 
   it('says a refused Add once, from the shared recovery owner, beside its one next step', async () => {
     const { DeploymentAddRefusal } = await import('./DeploymentDatabasePage');
+    const { readDeploymentRefusal } = await import('./deploymentActionOutcome');
     const opened: string[] = [];
     const screen = await renderScreen(
-      <DeploymentAddRefusal testID="add.refusal" code="template_domain_required" onOpenRecovery={(destination) => opened.push(destination)} />,
+      <DeploymentAddRefusal testID="add.refusal" refusal={readDeploymentRefusal('template_domain_required')}
+        onOpenRecovery={(destination) => opened.push(destination)} />,
     );
     try {
       const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');

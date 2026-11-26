@@ -730,9 +730,12 @@ export const DeploymentEnvironmentDraft = React.memo(
       <SurfaceStateCard testID="project-deployments.draft.machineAwayNotice" kind="unavailable" size="line"
         title={machineName(awayMachine.id)} reason={t('errors.machineNotAnswering')} />
     ) : null;
+    const draftRefusal = refusal?.kind === 'refused' ? refusal : null;
+    const refusalRecovery = draftRefusal ? readDeploymentRefusalRecovery(draftRefusal.code,
+      draftRefusal.failure?.details, draftRefusal.request, draftRefusal.failure?.failureCause?.errorCode) : null;
     // The recovery owner names where a refusal is fixed: a Machine cause, or the unavailable target, is that Machine.
-    const machineCausedRefusal = awayMachine !== null && refusal?.kind === 'refused' && (refusal.code === 'target_unavailable'
-      || readDeploymentRefusalRecovery(refusal.code)?.nextAction.destination === 'machines');
+    const machineCausedRefusal = awayMachine !== null && draftRefusal !== null && (draftRefusal.code === 'target_unavailable'
+      || refusalRecovery?.nextAction.destination === 'machines');
     const refusalBanner = createOutcomeUnknown ? (
       <AttentionBanner testID="project-deployments.draft.outcome-unknown" tone="neutral"
         title={t(recoveryEnvironmentId ? 'projects.deployments.createResultUnknownTitle' : 'projects.deployments.createOutcomeUnknownTitle')}
@@ -764,7 +767,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t('projects.deployments.createFailedTitle')}
               description={refusedVariableKey
                 ? t('session.actionsDraft.validation.requiredField', { field: refusedVariableKey })
-                : readDeploymentRefusalRecovery(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code, definition)}
+                : refusalRecovery?.remedy ?? deploymentActionRefusalRemedy(refusal.code, definition)}
               details={[refusal.code]}
             />
           ) : null;

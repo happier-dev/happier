@@ -35,7 +35,8 @@ export function DeploymentPlatformInspectState({ outcome, refusal, onOpenRecover
       } } : {})} />
   );
   // A refusal the shared recovery owner knows says its remedy and offers its next step.
-  const recovery = outcome?.kind === 'refused' ? readDeploymentRefusalRecovery(outcome.code) : null;
+  const recovery = outcome?.kind === 'refused' ? readDeploymentRefusalRecovery(outcome.code,
+    outcome.failure?.details, outcome.request, outcome.failure?.failureCause?.errorCode) : null;
   if (outcome?.kind === 'refused' && recovery) return (
     <SurfaceStateCard testID="project-deployments.platform.refused" size="line"
       kind={outcome.reason === 'repository' ? 'warning' : 'error'}

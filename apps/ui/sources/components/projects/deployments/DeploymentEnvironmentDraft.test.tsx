@@ -493,8 +493,9 @@ describe('Environment draft Machine Home', () => {
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
           authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
-          return { ok: false, error: 'deployment_conflict' };
-        } });
+          return null;
+        }, failure: () => ({ error: 'deployment_conflict', errorCode: 'deployment_conflict',
+          details: { requiredFact: 'transaction_commit' } }) });
       // Another answering Machine comes first; a copy still starts on the source's own Machine.
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'elsewhere', installationId: 'elsewhere-installation', activeAt: Date.now() }),
@@ -551,7 +552,8 @@ describe('Environment draft Machine Home', () => {
       expect(screen.getTextContent()).toContain('deployment_conflict');
       // The typed recovery owner's remedy for this refusal, not a draft-local copy.
       const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
-      expect(screen.getTextContent()).toContain(readDeploymentRefusalRecoveryV1('deployment_conflict')!.remedy);
+      expect(screen.getTextContent()).toContain(
+        readDeploymentRefusalRecoveryV1('deployment_conflict', { requiredFact: 'transaction_commit' })!.remedy);
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
