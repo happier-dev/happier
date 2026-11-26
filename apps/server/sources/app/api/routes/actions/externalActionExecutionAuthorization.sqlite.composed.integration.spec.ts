@@ -2794,8 +2794,8 @@ describe("external Action execution authorization", () => {
             qualifyCurrentAccountStoredContentSocket(receiver);
             const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
                 || room === `rpc:${custodian.id}:${method}` ? [receiver] : []);
-            const sender = Object.assign(createFakeSocket({ id: 'setup-plan-source', data: { clientType: 'user-scoped',
-                authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token } } });
+            const sender = createAuthenticatedFakeSocket({ id: 'setup-plan-source', data: { clientType: 'user-scoped',
+                userId: fixture.account.id, authTokenKind: 'account', tokenEpoch: fixture.account.tokenEpoch } });
             qualifyCurrentAccountStoredContentSocket(sender);
             registerSocketRpcHandlers({ userId: fixture.account.id, socket: sender as unknown as Socket, io });
             const call = async (request: ReturnType<typeof packet>) => {
@@ -13044,6 +13044,8 @@ describe("external Action execution authorization", () => {
                 homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
             active: true,
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
         } });
         await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: fixture.machine.id, accountId: fixture.account.id,
@@ -13053,10 +13055,14 @@ describe("external Action execution authorization", () => {
         try {
             const envelope: ExternalActionRequestEnvelopeV1 = { v: 1, requestId: crypto.randomUUID(),
                 target: { kind: "machine", machineId: fixture.machine.id }, input: {} };
+            const launchEnvelope = { ...envelope, input: {
+                directory: { kind: 'path', path: '/workspace/shared-launch' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            } };
             const mintLaunch = () => app.inject({ method: 'POST',
                 url: bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new'),
                 headers: { authorization: `Bearer ${fixture.pat.token}` },
-                payload: { v: 1, machineId: fixture.machine.id, envelope } });
+                payload: { v: 1, machineId: fixture.machine.id, envelope: launchEnvelope } });
             const admitted = await mintLaunch();
             expect(admitted.statusCode, admitted.body).toBe(200);
             expect(ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json()).binding).toMatchObject({
