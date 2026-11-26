@@ -735,14 +735,7 @@ for current inputs, outputs, placements and confirmation policies. There is no
 second walkthrough generator, publisher, result registry or Git writer.
 
 Saved-result admission is enforced by `executeScmActionOperation` before
-inventory metadata, prose, provenance or effects are returned. In unreleased
-0.3 source, captured comparisons and saved results are scoped to the admitted
-requester Account, including publication and resumed Run turns. Machine Manage
-permission can select another member's filesystem identity for repository work;
-it does not grant that member's saved analysis, and the folder member does not
-receive the requester's saved result. An absent requester fails closed. Earlier
-unattributed development shelves remain on disk and are excluded from Account
-inventories; they are not silently assigned to the next caller. Workspace-native
+inventory metadata, prose, provenance or effects are returned. Workspace-native
 results require the authenticated Home/Machine and filesystem root. A retained
 Session namespace or Session-derived source additionally requires separately
 verified Session authority through the existing `session.write` RPC proof, except
@@ -1395,11 +1388,6 @@ Run; failed or unknown admission is not silently retried by prefetch. Explicit
 Regenerate bypasses that reuse. Summary model and Start share the offered model catalog and
 structured-output capability admission. Unknown/unsupported capability cannot be
 made supported by a default model name; continuation is a separate capability.
-An empty Summary model is Auto: the background task runner owner
-(`resolveLlmTaskRunnerV1`, see [runtime-core](runtime-core.md#background-task-runner-selection-03-development))
-picks a low-tier model with supported structured output among the machine's ready
-Agents, the Session's own Agent on a tie, at its lowest effort; nothing suitable is a
-typed failure.
 An explicit comparison model may carry `modelSelector.sessionConfigOptionOverrides`
 for this Run, including its selected reasoning effort. Protocol's existing
 `AcpConfigOptionOverridesV1Schema` owns that payload; comparison dispatch forwards
