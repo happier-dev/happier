@@ -68,8 +68,76 @@ describe('production collector assignment lifecycle', () => {
             await notify?.();
             expect(collector.endpoint()).toBeNull();
             expect(await runtime.store.listPartitions()).toEqual(['local-worktree']);
-            expect(reads).toBe(4);
+            expect(reads).toBe(6);
         } finally { await collector.stop(); expect(subscribed).toBe(0); await runtime.ingest.settled(); database.close(); }
+    });
+
+    it('shares one assignment read across concurrent misses and reads once per sequential miss', async () => {
+        const database = await fixture();
+        const requests = 4;
+        let arrivals = 0;
+        let allArrived!: () => void;
+        const arrivalsReady = new Promise<void>(resolve => { allArrived = resolve; });
+        let blockRead = false;
+        let reads = 0;
+        const runtime: typeof database.runtime = { ...database.runtime,
+            acquireReceiver: options => database.runtime.acquireReceiver({ ...options, admit(request, signal) {
+                const result = options.admit!(request, signal);
+                if (blockRead && ++arrivals === requests) allArrived();
+                return result;
+            } }),
+        };
+        const collector = await startTelemetryCollector({ port: 0, runtime, subscribeAssignmentsChanged: () => () => {},
+            readAssignments: async () => {
+                reads++;
+                if (blockRead) await arrivalsReady;
+                return [{ environmentId: 'A', tokenHash: hash('token-A') }];
+            },
+        });
+        const send = (token: string) => fetch(`${collector.endpoint()}/v1/traces`, {
+            method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{}',
+        });
+        try {
+            expect((await send('token-A')).status).toBe(200);
+            expect(reads).toBe(1);
+            blockRead = true;
+            const concurrent = await Promise.all(Array.from({ length: requests }, (_, index) => send(`unknown-${index}`)));
+            blockRead = false;
+            expect(concurrent.map(response => response.status)).toEqual(Array(requests).fill(401));
+            expect(reads - 1).toBe(1);
+            for (let index = 0; index < requests; index++) {
+                expect((await send(`unknown-${index}`)).status).toBe(401);
+            }
+            expect(reads - 2).toBe(requests);
+        } finally { await collector.stop(); database.close(); }
+    });
+
+    it('refuses a miss when the assignment read fails and recovers on a later request', async () => {
+        const database = await fixture();
+        let unavailable = false;
+        let reads = 0;
+        const collector = await startTelemetryCollector({ port: 0, runtime: database.runtime,
+            subscribeAssignmentsChanged: () => () => {},
+            readAssignments: async () => {
+                reads++;
+                if (unavailable) throw new Error('fixture Home unavailable');
+                return [{ environmentId: 'A', tokenHash: hash('token-A') },
+                    ...(reads > 1 ? [{ environmentId: 'A', tokenHash: hash('candidate-A') }] : [])];
+            },
+        });
+        const send = (token: string) => fetch(`${collector.endpoint()}/v1/traces`, {
+            method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: '{}',
+        });
+        try {
+            unavailable = true;
+            expect((await send('candidate-A')).status).toBe(401);
+            expect(reads).toBe(2);
+            expect((await send('token-A')).status).toBe(200);
+            expect(reads).toBe(2);
+            unavailable = false;
+            expect((await send('candidate-A')).status).toBe(200);
+            expect(reads).toBe(3);
+        } finally { await collector.stop(); database.close(); }
     });
 
     it('keeps no receiver with zero assignments and opens on the next pushed assignment', async () => {

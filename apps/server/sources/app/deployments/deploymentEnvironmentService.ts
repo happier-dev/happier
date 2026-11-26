@@ -33,7 +33,7 @@ import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, 
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
-import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
+import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, readWorkersTelemetryCandidate, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
@@ -674,10 +674,12 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     }) : null;
     // A reviewed read setup writes one managed login, so it is a managed-data-role write like any other.
     const platformRuntime = link?.sourceKind === 'plugin' && !placement;
-    const firstTelemetryStamp = syncAcknowledgement && (telemetryChanged || loaded.row.telemetryTokenHash === null)
+    const workersLink = link?.targetKind === 'cloudflare-workers';
+    const firstTelemetryStamp = !workersLink && syncAcknowledgement && (telemetryChanged || loaded.row.telemetryTokenHash === null)
         ? { machineId: syncAcknowledgement.telemetryMachineId, tokenHash: syncAcknowledgement.telemetryTokenHash } : null;
+    const previousWorkersCandidate = readWorkersTelemetryCandidate({ ...loaded.row, runtimeTargetLink: link });
     const telemetryPublicationMachineIds = telemetryChanged || telemetryCapabilitiesChanged || firstTelemetryStamp
-        || (syncAcknowledgement && link?.targetKind === 'cloudflare-workers')
+        || (workersLink && (syncAcknowledgement || (input.targetLinkContent && previousWorkersCandidate)))
         ? [loaded.row.telemetryMachineId, telemetryMachineId] : [];
     const resourceIds = [...new Set([
         ...input.referencedSavedSecretRevisions,
@@ -696,14 +698,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     if (linkCandidate && (!platformRuntime
         || linkCandidate.targetLinkId !== link.id || linkCandidate.expectedTargetLinkRevision !== link.revision
         || link.detachedAt !== null)) return deploymentFailure('deployment_conflict');
+    let workersCandidate: { machineId: string; tokenHash: string } | undefined;
     if (syncAcknowledgement) {
         if (!telemetryAdmission || !linkCandidate || !link || syncAcknowledgement.telemetryMachineId !== telemetryMachineId)
             return deploymentFailure('deployment_access_denied');
         const stamp = { machineId: syncAcknowledgement.telemetryMachineId, tokenHash: syncAcknowledgement.telemetryTokenHash };
-        if (link.targetKind === 'cloudflare-workers') {
-            // The initial CAS already persisted the disabled allocation. Activation may stamp
-            // only while its own admitted Environment and Link candidates are still current.
-            if (input.expectedRevision !== telemetryAdmission.expectedRevision + 1
+        if (workersLink && input.expectedRevision === telemetryAdmission.expectedRevision + 1) {
+            // A provider ACK promotes only the digest staged with these exact candidates.
+            if (stamp.tokenHash !== previousWorkersCandidate
                 || input.telemetryMachineId !== undefined || input.telemetryCapabilities !== undefined
                 || input.grants.length !== 0 || input.retainGrantsForOwnServerDataRoleRemoval
                 || !isDeepStrictEqual(readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? [],
@@ -712,11 +714,15 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                 || !isDeepStrictEqual(deploymentContentReference(link), deploymentContentReference(linkCandidate)))
                 return deploymentFailure('deployment_conflict');
             await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, stamp);
+            await tx.deploymentEnvironment.update({
+                where: { id: loaded.row.id }, data: clearedDeploymentTelemetryPendingAssignment,
+            });
             await publishDeploymentTelemetryMachinesInTx(tx, [stamp.machineId]);
             return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision };
         }
-        if (link.targetKind !== 'vercel' || input.expectedRevision !== telemetryAdmission.expectedRevision)
+        if ((!workersLink && link.targetKind !== 'vercel') || input.expectedRevision !== telemetryAdmission.expectedRevision)
             return deploymentFailure('deployment_access_denied');
+        if (workersLink) workersCandidate = stamp;
     }
     if (managedPlatformBindings && (telemetryChanged || telemetryCapabilitiesChanged || link.detachedAt !== null))
         return deploymentFailure('deployment_conflict');
@@ -1010,11 +1016,12 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
     // Acknowledged Vercel variables are consumed by a build of this exact Link revision.
-    const pendingTelemetry = linkCandidate && syncAcknowledgement && !firstTelemetryStamp
+    const pendingTelemetry = !workersLink && linkCandidate && syncAcknowledgement && !firstTelemetryStamp
         && syncAcknowledgement.telemetryTokenHash !== loaded.row.telemetryTokenHash
         ? { telemetryPendingTokenHash: syncAcknowledgement.telemetryTokenHash, telemetryPendingTargetLinkId: linkCandidate.targetLinkId,
             telemetryPendingTargetLinkRevision: linkCandidate.expectedTargetLinkRevision + 1 }
-        : telemetryChanged || syncAcknowledgement ? clearedDeploymentTelemetryPendingAssignment : {};
+        : !workersCandidate && (telemetryChanged || syncAcknowledgement || (linkCandidate && previousWorkersCandidate))
+            ? clearedDeploymentTelemetryPendingAssignment : {};
     const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId, telemetryTokenHash: null } : {}),
         ...pendingTelemetry,
         ...(telemetryCapabilitiesChanged ? { telemetryMetricsEnabled: telemetryCapabilities.metrics,
@@ -1039,6 +1046,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             ...referencedSavedSecretRevisions.map(capture => capture.resourceId),
         ]);
     }
+    if (workersCandidate && linkCandidate) await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, workersCandidate,
+        { id: linkCandidate.targetLinkId, revision: linkCandidate.expectedTargetLinkRevision + 1 });
     if (firstTelemetryStamp) await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, firstTelemetryStamp);
     if (telemetryPublicationMachineIds.length > 0)
         await publishDeploymentTelemetryMachinesInTx(tx, telemetryPublicationMachineIds);

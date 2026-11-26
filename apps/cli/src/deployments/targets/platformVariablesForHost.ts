@@ -86,11 +86,13 @@ export function createPlatformVariablesForHost(host: Host) {
                         set.some(binding => binding.purpose === 'variable' && binding.name === key && binding.managedBy === 'telemetry')
                         && result.owned.some(owned => owned.key === key && owned.desiredRevision === input.desiredRevision)
                         && !result.failures.some(failure => failure.key === key));
-                const telemetrySyncAcknowledgement = vercelExporterAcknowledged ? await acknowledge() : undefined;
                 const allocation = input.telemetryDestination;
                 const afterCommit = allocation?.decision === 'allocate' && bearer && destination?.owned.length
                     ? { collectorUrl: allocation.collectorUrl, bearer, owned: destination.owned }
                     : undefined;
+                // Home stages the Workers digest with the disabled allocation. The
+                // same digest becomes the provider ACK only after both PATCHes succeed.
+                const telemetrySyncAcknowledgement = vercelExporterAcknowledged || afterCommit ? await acknowledge() : undefined;
                 return { linkContent: { ...request.linkContent, ownedVariables: result.owned,
                     ...(destination ? { ownedTelemetryDestinations: destination.owned } : {}) }, providerVariables,
                     ...(telemetrySyncAcknowledgement ? { telemetrySyncAcknowledgement } : {}),
@@ -101,7 +103,7 @@ export function createPlatformVariablesForHost(host: Host) {
                         const failures = [...destination.failures, ...activated.telemetryDestination.failures];
                         const configured = activated.telemetryDestination.configured;
                         const activatedAcknowledgement = failures.length === 0 && (['traces', 'logs'] as const).every(type =>
-                            configured.some(row => row.type === type)) ? await acknowledge() : undefined;
+                            configured.some(row => row.type === type)) ? telemetrySyncAcknowledgement : undefined;
                         return { providerVariables: { ...providerVariables, telemetryDestination: {
                             owned: destination.owned, configured, failures,
                         } }, ...(activatedAcknowledgement ? { telemetrySyncAcknowledgement: activatedAcknowledgement } : {}) };

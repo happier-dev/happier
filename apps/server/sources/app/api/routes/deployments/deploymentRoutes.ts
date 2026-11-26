@@ -34,7 +34,7 @@ import { listDeploymentTargetLinksInTx } from '@/app/deployments/deploymentTarge
 import { DEPLOYMENT_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DEPLOYMENT_STOP_ACCEPTED_HEADER_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentInTx, transitionDeploymentInTx } from '@/app/deployments/deploymentService';
-import { DeploymentTelemetryAssignmentConflictError } from '@/app/deployments/deploymentPublication';
+import { DeploymentTelemetryAssignmentConflictError, deploymentTelemetryCandidateSelect, readWorkersTelemetryCandidate } from '@/app/deployments/deploymentPublication';
 import { cancelDeploymentPendingInTx, cancelDeploymentPendingOperationInTx } from '@/app/deployments/deploymentPendingService';
 import { promoteDeploymentInTx } from '@/app/deployments/deploymentPromotionService';
 import { readDeploymentExecutionBindingFromRequest, readDeploymentExecutionEffectFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
@@ -100,7 +100,7 @@ export function registerDeploymentRoutes(app: Fastify): void {
         }
         const rows = await inReadSnapshot(tx => tx.deploymentEnvironment.findMany({
             where: { telemetryMachineId: request.params.machineId, deletedAt: null },
-            select: { id: true, telemetryTokenHash: true, telemetryMetricsEnabled: true,
+            select: { id: true, telemetryTokenHash: true, ...deploymentTelemetryCandidateSelect, telemetryMetricsEnabled: true,
                 telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true,
                 projectSource: { select: { owner: true } } }, orderBy: { id: 'asc' },
         }));
@@ -109,9 +109,14 @@ export function registerDeploymentRoutes(app: Fastify): void {
             const parsed = ProjectSourceOwnerV1Schema.safeParse(owner);
             return parsed.success && parsed.data.kind === 'team' ? { teamId: parsed.data.teamId } : {};
         };
-        return reply.send({ ok: true as const, assignments: rows.map(row => ({ environmentId: row.id, tokenHash: row.telemetryTokenHash,
-            capabilities: { metrics: row.telemetryMetricsEnabled, appLlmCost: row.telemetryAppLlmCostEnabled,
-                exceptions: row.telemetryExceptionsEnabled }, ...teamOf(row.projectSource.owner) })) });
+        return reply.send({ ok: true as const, assignments: rows.flatMap(row => {
+            const assignment = { environmentId: row.id, tokenHash: row.telemetryTokenHash,
+                capabilities: { metrics: row.telemetryMetricsEnabled, appLlmCost: row.telemetryAppLlmCostEnabled,
+                    exceptions: row.telemetryExceptionsEnabled }, ...teamOf(row.projectSource.owner) };
+            const candidate = readWorkersTelemetryCandidate(row);
+            return candidate !== null && candidate !== assignment.tokenHash
+                ? [assignment, { ...assignment, tokenHash: candidate }] : [assignment];
+        }) });
     });
     app.get('/v1/deployments/domains', {
         preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,

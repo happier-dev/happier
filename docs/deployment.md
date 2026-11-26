@@ -3292,7 +3292,7 @@ workspace-local capture belongs to the existing workspaces role. The host Action
 `deployments.environments.telemetry.set` selects the collector and writes its
 Machine ID together with the Environment bindings. Its ingest bearer is an
 ordinary Account-mode Saved Secret delivered to application installations;
-the collector receives only its SHA-256 hash after a successful runtime launch.
+the collector receives only its SHA-256 hash through the signed assignment read.
 Changing collectors requires confirmation before deleting the old Environment
 partition, including reconciliation when that Machine next comes online.
 
@@ -3452,18 +3452,21 @@ so members of that Cloudflare account with Observability Read can read the
 collector bearer.
 [Cloudflare Workers OpenTelemetry export](https://developers.cloudflare.com/workers/observability/opentelemetry-export/).
 
-The reviewed bindings write registers the exporter with the selected collector
-after Vercel acknowledges both managed exporter variables or Cloudflare
-acknowledges activation of both destinations. Changing the collector clears
-that registration until the next acknowledged sync. On Vercel, Rotate keeps
+The reviewed bindings write registers the Vercel exporter with the selected
+collector after Vercel acknowledges both managed exporter variables. Changing
+the Vercel collector clears that registration until the next acknowledged sync.
+On Vercel, Rotate keeps
 the running deployment's bearer valid until a successful serving deploy built
 against the acknowledged runtime Link revision takes over. The pending digest
 stays in Home and is absent from the Environment and Link reads.
-For a running Worker,
-Cloudflare applies the rotated header through the account destination update.
-Happier switches the collector assignment after that update is acknowledged.
-A request already in flight can receive HTTP 401 during the switch.
-Workers still need the Wrangler configuration above to start exporting.
+For Workers, the bindings write makes the candidate digest available to the
+selected collector before Cloudflare updates the destinations. A bearer miss
+triggers one signed assignment read, shared by concurrent misses. The collector
+uses the candidate for provider preflight and continues to accept the serving
+bearer until Cloudflare acknowledges both destination updates. Home then promotes
+the candidate and notifies the collector to retire the old digest. Clearing
+telemetry withdraws both digests. Workers still need the Wrangler configuration
+above to start exporting.
 Pages currently does not consume the managed collector input.
 
 The Own-server launch settles per-service telemetry facts in the serving

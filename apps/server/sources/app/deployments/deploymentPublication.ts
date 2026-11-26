@@ -29,9 +29,31 @@ export class DeploymentTelemetryAssignmentConflictError extends Error {
     }
 }
 
+export const deploymentTelemetryCandidateSelect = {
+    telemetryPendingTokenHash: true,
+    telemetryPendingTargetLinkId: true,
+    telemetryPendingTargetLinkRevision: true,
+    runtimeTargetLink: { select: { id: true, targetKind: true, revision: true, detachedAt: true, deletedAt: true } },
+} as const;
+
+export function readWorkersTelemetryCandidate(row: Readonly<{
+    telemetryPendingTokenHash: string | null;
+    telemetryPendingTargetLinkId: string | null;
+    telemetryPendingTargetLinkRevision: number | null;
+    runtimeTargetLink: Readonly<{ id: string; targetKind: string; revision: number;
+        detachedAt: Date | null; deletedAt: Date | null }> | null;
+}>): string | null {
+    const link = row.runtimeTargetLink;
+    return link?.targetKind === 'cloudflare-workers' && link.deletedAt === null && link.detachedAt === null
+        && row.telemetryPendingTargetLinkId === link.id && row.telemetryPendingTargetLinkRevision === link.revision
+        ? row.telemetryPendingTokenHash : null;
+}
+
 /** The caller holds the Environment lock and has admitted this collector selection. */
 export async function stampDeploymentTelemetryAssignmentInTx(tx: Tx, environmentId: string,
-    stamp: Readonly<{ machineId: string; tokenHash: string }>): Promise<void> {
+    stamp: Readonly<{ machineId: string; tokenHash: string }>,
+    workersCandidateLink?: Readonly<{ id: string; revision: number }>,
+): Promise<void> {
     // Environment locks do not serialize stamps from other Environments. Use the
     // collector's Machine row so the duplicate lookup and stamp commit together.
     const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));
@@ -40,15 +62,20 @@ export async function stampDeploymentTelemetryAssignmentInTx(tx: Tx, environment
     } else {
         await lockMachinePublicationInTx(tx, stamp.machineId);
     }
-    const duplicate = await tx.deploymentEnvironment.findFirst({
-        where: { id: { not: environmentId }, telemetryMachineId: stamp.machineId, telemetryTokenHash: stamp.tokenHash,
-            deletedAt: null },
-        select: { id: true },
+    const matches = await tx.deploymentEnvironment.findMany({
+        where: { id: { not: environmentId }, telemetryMachineId: stamp.machineId, deletedAt: null,
+            OR: [{ telemetryTokenHash: stamp.tokenHash }, { telemetryPendingTokenHash: stamp.tokenHash }] },
+        select: { telemetryTokenHash: true, ...deploymentTelemetryCandidateSelect },
     });
     // Throw inside the transaction to roll back the Link or Receipt write.
-    if (duplicate) throw new DeploymentTelemetryAssignmentConflictError();
+    if (matches.some(row => row.telemetryTokenHash === stamp.tokenHash || readWorkersTelemetryCandidate(row) === stamp.tokenHash))
+        throw new DeploymentTelemetryAssignmentConflictError();
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: environmentId, telemetryMachineId: stamp.machineId },
-        data: { telemetryTokenHash: stamp.tokenHash } });
+        data: workersCandidateLink ? {
+            telemetryPendingTokenHash: stamp.tokenHash,
+            telemetryPendingTargetLinkId: workersCandidateLink.id,
+            telemetryPendingTargetLinkRevision: workersCandidateLink.revision,
+        } : { telemetryTokenHash: stamp.tokenHash } });
     if (changed.count !== 1) throw new Error('Locked deployment telemetry collector changed during assignment write');
 }
 

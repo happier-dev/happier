@@ -13,6 +13,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import { IncomingMessage } from 'node:http';
 import { Socket } from 'node:net';
 import { createTelemetryAssignments } from '../../../../../packages/plugins/telemetry/src/telemetry/assignments';
+import { startTelemetryCollector } from '../../../../../packages/plugins/telemetry/src/telemetry/collector';
+import { createCaptureRuntime } from '../../../../../packages/plugins/telemetry/src/runtime';
+import { captureMigrations } from '../../../../../packages/plugins/telemetry/src/store/capture';
+import { createCaptureSqliteFixture } from '../../../../../packages/plugins/telemetry/src/testing/sqlite';
+import { createSignedPluginInstallationPublisherHeader } from '@/testkit/pluginInstallationPublisherTestkit';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
+import { DeploymentTelemetryAssignmentsV1Schema } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { resolvePrivateServiceExportAdmissionForHost } from '../../../../cli/src/deployments/targets/ownServer/privateServiceReference';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '../../../../cli/src/api/machine/machineRpcAuthorization';
@@ -230,7 +237,7 @@ describe('deployment children retain their controller Action authority', () => {
     );
     it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-workers'],
         ['e2ee', 'cloudflare-pages']] as const)(
-        'admits a hosted collector bearer only after acknowledged sync in a %s Account on %s', checkHostedCollectorAssignment);
+        'serves hosted collector bearer lifecycle in a %s Account on %s', checkHostedCollectorAssignment);
     if (postgresMembershipContract) {
         // The disposable provider contract selects the backend-independent cases.
         registerPlainDeployCandidateCases();
@@ -7576,34 +7583,72 @@ describe('deployment children retain their controller Action authority', () => {
                 return;
             }
             if (targetKind === 'cloudflare-workers') {
-                expect((await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement })).statusCode).not.toBe(200);
-                const allocated = await submit(first);
-                expect(allocated.statusCode, allocated.body).toBe(200);
-                expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
-                const { telemetryMachineId: _placement, ...current } = first.body;
-                const afterActivation = { ...current, expectedRevision: f.environmentRevision + 1,
-                    targetLinkContent: { ...current.targetLinkContent, expectedTargetLinkRevision: f.link.revision + 1 },
-                    telemetrySyncAcknowledgement: acknowledgement };
-                const unrelated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1);
-                expect((await submit(first, { ...afterActivation, targetLinkContent: unrelated.body.targetLinkContent })).statusCode).not.toBe(200);
-                const stamped = await submit(first, afterActivation);
-                expect(stamped.statusCode, stamped.body).toBe(200);
-                expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+                const database = createCaptureSqliteFixture();
+                let receiver: Awaited<ReturnType<typeof startTelemetryCollector>> | undefined;
+                try {
+                    for (const migration of captureMigrations) await migration.up(database.db);
+                    const runtime = createCaptureRuntime({ database: database.db, publish: () => {},
+                        normalizeStatement: () => { throw new Error('No SQL in fixture'); } });
+                    const assignedPath = `/v1/deployments/machines/${selected}/telemetry-assignments`;
+                    let notify: (() => Promise<void>) | undefined;
+                    receiver = await startTelemetryCollector({ port: 0, runtime,
+                        subscribeAssignmentsChanged: refresh => { notify = refresh; return () => {}; },
+                        async readAssignments() {
+                            const response = await app.inject({ method: 'POST', url: assignedPath, payload: {}, headers: {
+                                ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${session}`,
+                                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                                    keyPair: f.controller.keys, machineId: selected, installationId: f.controller.installationId,
+                                    path: assignedPath, body: {}, nonce: crypto.randomUUID(),
+                                }),
+                            } });
+                            expect(response.statusCode).toBe(200);
+                            return DeploymentTelemetryAssignmentsV1Schema.parse(response.json()).assignments;
+                        },
+                    });
+                    const endpoint = receiver.endpoint();
+                    const preflight = async (bearer: string) => (await fetch(`${endpoint}/v1/traces`, {
+                        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${bearer}` }, body: '{}',
+                    })).status;
+                    const activate = (write: typeof first, digest: typeof acknowledgement) => {
+                        const { telemetryMachineId: _placement, ...current } = write.body;
+                        return submit(write, { ...current, expectedRevision: write.body.expectedRevision + 1,
+                            targetLinkContent: { ...current.targetLinkContent,
+                                expectedTargetLinkRevision: current.targetLinkContent.expectedTargetLinkRevision + 1 },
+                            telemetrySyncAcknowledgement: digest });
+                    };
+                    expect(await preflight(exporterBearer)).toBe(401);
+                    const allocated = await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement });
+                    expect(allocated.statusCode).toBe(200);
+                    expect(await preflight(exporterBearer)).toBe(200);
+                    expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } }))
+                        .toMatchObject({ telemetryTokenHash: null });
+                    expect((await activate(first, acknowledgement)).statusCode).toBe(200);
 
-                const rotated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1, { rotate: true });
-                const newBearer = 'synthetic-rotated-workers-bearer';
-                expect((await submit(rotated)).statusCode).toBe(200);
-                expect(await admit(selected)).toMatchObject({ accepted: true });
-                expect(await admit(selected, newBearer)).toMatchObject({ accepted: false, status: 401 });
+                    const rotated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1, { rotate: true });
+                    const newBearer = 'synthetic-rotated-workers-bearer';
+                    const rotatedDigest = { ...acknowledgement, telemetryTokenHash: createHash('sha256').update(newBearer).digest('hex') };
+                    expect((await submit(rotated, { ...rotated.body, telemetrySyncAcknowledgement: rotatedDigest })).statusCode).toBe(200);
+                    expect(await preflight(newBearer)).toBe(200);
+                    expect(await preflight(exporterBearer)).toBe(200);
+                    expect((await activate(rotated, acknowledgement)).statusCode).toBe(409);
+                    expect(await preflight(exporterBearer)).toBe(200);
+                    expect((await activate(rotated, rotatedDigest)).statusCode).toBe(200);
+                    await notify?.();
+                    expect(await preflight(newBearer)).toBe(200);
+                    expect(await preflight(exporterBearer)).toBe(401);
 
-                const { telemetryMachineId: _rotatedPlacement, ...rotatedCurrent } = rotated.body;
-                const switched = await submit(rotated, { ...rotatedCurrent, expectedRevision: f.environmentRevision + 2,
-                    targetLinkContent: { ...rotatedCurrent.targetLinkContent, expectedTargetLinkRevision: f.link.revision + 2 },
-                    telemetrySyncAcknowledgement: { telemetryMachineId: selected,
-                        telemetryTokenHash: createHash('sha256').update(newBearer).digest('hex') } });
-                expect(switched.statusCode, switched.body).toBe(200);
-                expect(await admit(selected, newBearer)).toMatchObject({ accepted: true });
-                expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
+                    // Keep the shared collector listening for a second Environment after Clear.
+                    const neighbor = await fixture('account', 'account', { contentMode });
+                    await db.deploymentEnvironment.update({ where: { id: neighbor.environment.id }, data: { telemetryMachineId: selected } });
+                    const clear = await preparedWrite(f.environmentRevision + 2, f.link.revision + 2, { collector: null });
+                    expect((await submit(clear)).statusCode).toBe(200);
+                    await notify?.();
+                    expect(await preflight(exporterBearer)).toBe(401);
+                    expect(await preflight(newBearer)).toBe(401);
+                } finally {
+                    try { await receiver?.stop(); }
+                    finally { database.close(); }
+                }
                 return;
             }
             let environmentRevision = f.environmentRevision;

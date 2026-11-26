@@ -2693,7 +2693,7 @@ describe('installed deployment storage and target composition', () => {
                     vi.mocked(axios.request).mockImplementation(async request => {
                         if (!new URL(request.url!).pathname.endsWith('/bindings')) return previousHttp(request);
                         const write = request.data;
-                        if (write.telemetrySyncAcknowledgement) {
+                        if (write.expectedRevision === environment.environment.revision + 1) {
                             expect(write).toMatchObject({ expectedRevision: environment.environment.revision + 1,
                                 targetLinkContent: { targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision + 1 },
                                 telemetrySyncAcknowledgement: { telemetryMachineId: collector.machineId,
@@ -2704,7 +2704,10 @@ describe('installed deployment storage and target composition', () => {
                                 revision: environment.environment.revision + 1 } };
                         }
                         expect(write).toMatchObject({ telemetryMachineId: collector.machineId, targetLinkContent: {
-                            targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision } });
+                            targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision },
+                            telemetrySyncAcknowledgement: { telemetryMachineId: collector.machineId,
+                                telemetryTokenHash: createHash('sha256').update(collectorBearer).digest('hex') } });
+                        expect(JSON.stringify(write)).not.toContain(collectorBearer);
                         expect(write).not.toHaveProperty('completeProviderVariables');
                         const candidate = documents.get(write.targetLinkContent.contentArtifactId);
                         const content = decodePlainArtifactStoredContent(String(candidate?.body));
@@ -2732,9 +2735,9 @@ describe('installed deployment storage and target composition', () => {
                         ] } });
                     expect(JSON.stringify(result)).not.toContain(collectorBearer);
                     expect(telemetryRuntimeLinkReads).toBe(1);
-                    expect(providerOrdering).toEqual(['POST-traces', 'POST-logs', 'home-link-cas',
+                    expect(providerOrdering).toEqual(['POST-traces', 'POST-logs', 'read-bearer-digest', 'home-link-cas',
                         ...(refuseLinkCas ? [] : ['read-bearer', 'PATCH-traces', 'PATCH-logs',
-                            ...(refuseDestinationActivation ? [] : ['read-bearer-digest', 'home-assignment-cas'])])]);
+                            ...(refuseDestinationActivation ? [] : ['home-assignment-cas'])])]);
                     return;
                 }
                 if (vercelTelemetryOn) {

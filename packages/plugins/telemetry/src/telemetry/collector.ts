@@ -32,11 +32,31 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
         if (partition.startsWith(TELEMETRY_PARTITION_PREFIX)) knownPartitions.add(partition);
     }
     let pending = Promise.resolve();
+    let assignmentReads = Promise.resolve();
+    let missRefresh: Promise<void> | undefined;
+
+    function readAndApplyAssignments(): Promise<readonly TelemetryAssignment[]> {
+        const read = assignmentReads.then(async () => {
+            if (stopped) return [];
+            const assignments = await options.readAssignments();
+            if (!stopped) admission.replace(assignments);
+            return assignments;
+        });
+        assignmentReads = read.then(() => {}, () => {});
+        return read;
+    }
+
+    function refreshOnMiss(): Promise<void> {
+        // Await only the read and admission update. Receiver release waits for
+        // in-flight HTTP requests, including the request asking for this read.
+        missRefresh ??= readAndApplyAssignments().then(() => {}).finally(() => { missRefresh = undefined; });
+        return missRefresh;
+    }
 
     async function reconcile(): Promise<void> {
         if (stopped) return;
-        const assignments = await options.readAssignments();
-        admission.replace(assignments);
+        const assignments = await readAndApplyAssignments();
+        if (stopped) return;
         const assigned = new Set(assignments.map(assignment => telemetryPartition(assignment.environmentId)));
         if (assigned.size > 0 && !receiver) {
             receiver = await options.runtime.acquireReceiver({
@@ -45,7 +65,7 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
                 // Required only by the generic receiver; admission always supplies
                 // the authenticated Environment context before any body is read.
                 context: { partition: '' },
-                admit: request => admission.admit(request),
+                admit: request => admission.admit(request, refreshOnMiss),
                 onExceptionsCommitted: (context, fingerprints) => options.onExceptionsCommitted?.({ partition: context.partition,
                     environmentId: context.partition.slice(TELEMETRY_PARTITION_PREFIX.length) }, fingerprints),
                 onTraceBatchCommitted: (context, spans) => options.onTraceBatchCommitted?.(context.partition, spans),

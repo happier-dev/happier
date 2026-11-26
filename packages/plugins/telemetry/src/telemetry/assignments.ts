@@ -9,8 +9,30 @@ export type TelemetryContext = Readonly<{ partition: string; environmentId: stri
 export const TELEMETRY_PARTITION_PREFIX = 'environment:';
 export const telemetryPartition = (environmentId: string): string => `${TELEMETRY_PARTITION_PREFIX}${environmentId}`;
 
+type RefreshAssignments = () => Promise<void>;
+const refusedTelemetryToken = { accepted: false, status: 401, message: 'Invalid telemetry token' } as const;
+
 export function createTelemetryAssignments() {
     let byHash = new Map<string, { digest: Buffer; context: TelemetryContext }>();
+    function lookup(digest: Buffer): OtlpAdmission<TelemetryContext> {
+        const assignment = byHash.get(digest.toString('hex'));
+        return assignment && timingSafeEqual(digest, assignment.digest)
+            ? { accepted: true, context: assignment.context }
+            : refusedTelemetryToken;
+    }
+
+    function admit(request: IncomingMessage): OtlpAdmission<TelemetryContext>;
+    function admit(request: IncomingMessage, refresh: RefreshAssignments): OtlpAdmission<TelemetryContext> | Promise<OtlpAdmission<TelemetryContext>>;
+    function admit(request: IncomingMessage, refresh?: RefreshAssignments) {
+        const authorization = request.headers.authorization;
+        const match = authorization && /^Bearer ([^\s]+)$/i.exec(authorization);
+        if (!match) return refusedTelemetryToken;
+
+        const digest = createHash('sha256').update(match[1]!).digest();
+        const result = lookup(digest);
+        return result.accepted || !refresh ? result : refresh().then(() => lookup(digest), () => refusedTelemetryToken);
+    }
+
     return {
         replace(assignments: readonly TelemetryAssignment[]): void {
             byHash = new Map();
@@ -23,17 +45,6 @@ export function createTelemetryAssignments() {
                 });
             }
         },
-        admit(request: IncomingMessage): OtlpAdmission<TelemetryContext> {
-            const authorization = request.headers.authorization;
-            const match = authorization && /^Bearer ([^\s]+)$/i.exec(authorization);
-            if (match) {
-                const digest = createHash('sha256').update(match[1]!).digest();
-                const assignment = byHash.get(digest.toString('hex'));
-                if (assignment && timingSafeEqual(digest, assignment.digest)) {
-                    return { accepted: true, context: assignment.context };
-                }
-            }
-            return { accepted: false, status: 401, message: 'Invalid telemetry token' };
-        },
+        admit,
     };
 }
