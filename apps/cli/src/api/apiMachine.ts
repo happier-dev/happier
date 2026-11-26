@@ -2415,10 +2415,11 @@ export class ApiMachineClient {
         this.executionRunAccountSnapshots = resolveExecutionRunAccountSettingsSnapshot;
         void previousAccountSnapshots?.dispose();
         const workSummaryInstallation = readInstallationIdentityIfExistsSync();
-        const readWorkSummaryAccess = () => createAccountServerActionDeps({ token: this.token,
+        const readMachineAccess = (signal: AbortSignal) => createAccountServerActionDeps({ token: this.token,
             serverId: executionRunServerId, serverHttpBaseUrl: readMachineRuntimeServerHttpBaseUrl(),
             isCredentialCurrent: async () => (await readStoredCredentialsForServerId(executionRunServerId).catch(() => null))?.token === this.token,
-        });
+        }).machineAccessAction!({ actionId: 'machines.access.grants.list',
+            input: { serverId: executionRunServerId, machineId: this.machine.id }, context: { surface: 'cli', serverId: executionRunServerId }, signal });
         const executionRunApprovalDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => {
             const credentials = await readStoredCredentialsForServerId(executionRunServerId).catch(() => null);
             return credentials?.token === this.token ? credentials : null;
@@ -2525,6 +2526,7 @@ export class ApiMachineClient {
                     return placement.payloadPlacement;
                 },
                 readSignInConnectedDefaultSelection: (agentId, ingress) => this.readSignInConnectedDefaultSelection(agentId, ingress),
+                readSignInMachineAccess: readMachineAccess,
                 nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
                     readMemberFolderOwner: path => this.readMemberFolderOwner(path),
                     prepareConnectedAccountProcessEnvironment: input => this.prepareConnectedAccountProcessEnvironment(input) },
@@ -2544,8 +2546,7 @@ export class ApiMachineClient {
                         summaryActivity: this.getLiveWorkProducer(),
                         ...(this.lifecycleDependencies.readProjectFiniteLoad
                             ? { readFiniteLoad: this.lifecycleDependencies.readProjectFiniteLoad } : {}),
-                        readAccess: async (signal) => await readWorkSummaryAccess().machineAccessAction!({ actionId: 'machines.access.grants.list',
-                            input: { serverId: executionRunServerId, machineId: this.machine.id }, context: { surface: 'cli', serverId: executionRunServerId }, signal }),
+                        readAccess: readMachineAccess,
                     },
                 } : {}),
                 ...(this.lifecycleDependencies.managedActivity ? {

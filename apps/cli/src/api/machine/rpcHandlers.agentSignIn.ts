@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import {
   AGENT_SIGN_IN_PREPARE_RPC_METHOD,
   AGENT_SIGN_IN_STATUS_RPC_METHOD,
@@ -16,16 +17,17 @@ import type { MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 
 type AgentSignInRpcDeps = Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' | 'nativeOperationRuntime' | 'resolveHostHomeServerIdentityId'> & Readonly<{
   readSignInConnectedDefaultSelection?: (agentId: string, context: RpcHandlerContext) => Promise<import('@/session/services/agentConnectedDefaultRoutes').CliConnectedDefaultSelection>;
+  readSignInMachineAccess?: (signal: AbortSignal) => Promise<unknown>;
 }>;
 
 /**
  * Which OS user this caller's native sign-in lands in, as its admission places it: the one producer for both
- * Status and Prepare. Manage reports only the Machine owner's own user; Use reports its isolation placement; an
- * unadmitted (local owner) call, or an unread isolation policy, reports none.
+ * Status and Prepare. Only Prepare checks whether the custodian's own OS user is shared with other people.
  */
 async function resolveNativeSignInScope(
   context: RpcHandlerContext | undefined,
   deps: AgentSignInRpcDeps | undefined,
+  phase: 'status' | 'prepare',
   snapshot = deps?.agentIsolation?.read(),
 ): Promise<AgentSignInScope | undefined> {
   const role = context?.machineAdmission?.role;
@@ -35,9 +37,27 @@ async function resolveNativeSignInScope(
       : context.callerInputAuthorization?.binding.serverIdentityId ?? null;
     const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
     try {
-      return resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() }) === 'person'
-        ? 'machineOwner' : undefined;
+      if (resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => deps?.agentIsolation?.read() }) !== 'person')
+        return undefined;
     } catch { return undefined; /* An unread isolation policy reports no scope. */ }
+    const admission = context.machineAdmission;
+    if (phase !== 'prepare' || !admission || admission.actorAccountId !== admission.custodianAccountId)
+      return 'machineOwner';
+
+    const raw = await deps?.readSignInMachineAccess?.(context.signal).catch(() => undefined);
+    const access = MachineAccessGrantsListResponseV1Schema.safeParse(raw);
+    if (!access.success || access.data.machineId !== admission.machineId
+      || access.data.custodian.accountId !== admission.custodianAccountId
+      || !access.data.canManage || access.data.access.accessState !== 'ready' || !access.data.currentRequesterDisplayIdentities)
+      return 'machineOwner';
+
+    const others = access.data.currentRequesterDisplayIdentities.filter(person => person.accountId !== admission.custodianAccountId);
+    if (others.length === 0) return 'member';
+    if (!snapshot?.enabled) return 'machineOwner';
+    // Losing all access when a View grant is removed proves the person is Use-only.
+    // Surviving access can include inherited Manage, whose role the roster does not expose.
+    const useOnly = new Set(access.data.grants.flatMap(grant => grant.level === 'view' ? grant.removal.losesAccessAccountIds : []));
+    return others.every(person => useOnly.has(person.accountId)) ? 'member' : 'machineOwner';
   }
   if (role !== 'use' || deps?.agentIsolation && !snapshot) return undefined;
   const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
@@ -57,7 +77,7 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
     };
     if (context?.machineAdmission?.role !== 'use') {
       const status = await readCredentialSource(await probeAgentSignInStatus(request.agentId));
-      const signInScope = await resolveNativeSignInScope(context, params.deps);
+      const signInScope = await resolveNativeSignInScope(context, params.deps, 'status');
       return signInScope ? { ...status, signInScope } : status;
     }
     const snapshot = params.deps?.agentIsolation?.read();
@@ -93,7 +113,7 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
       }
     };
     const status = await readCredentialSource(await readNativeStatus().catch(() => probeAgentSignInStatus(request.agentId, null)));
-    const signInScope = await resolveNativeSignInScope(context, params.deps, snapshot);
+    const signInScope = await resolveNativeSignInScope(context, params.deps, 'status', snapshot);
     // The verified ingress owns access. Project before transport encryption;
     // the Home cannot inspect an E2EE reply to remove Account identity.
     return { ...projectIdentityFreeSignIn(status), ...(signInScope ? { signInScope } : {}) };
@@ -102,7 +122,7 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
     const prepared = prepareAgentSignIn(AgentSignInPrepareRequestSchema.parse(raw));
     if (!('method' in prepared) || prepared.method !== 'native') return prepared;
     // The start sequence decides from this whether its person confirms before the launch.
-    const signInScope = await resolveNativeSignInScope(context, params.deps);
+    const signInScope = await resolveNativeSignInScope(context, params.deps, 'prepare');
     return signInScope ? { ...prepared, signInScope } : prepared;
   });
 }

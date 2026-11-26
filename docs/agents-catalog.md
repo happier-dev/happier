@@ -2624,7 +2624,12 @@ requester native-operation launcher with empty selected material and no borrowed
 owner environment. A missing member binding or unavailable native probe reports
 unknown without falling back to the owner or provisioning from a status read.
 The native `daemon.agents.signIn.prepare` reply carries the same optional
-`signInScope`, from the same daemon producer as status. The one start sequence
+`signInScope`, from the same daemon producer as status. For the Machine owner,
+Prepare reads the Home access audience once and reports a personal scope when
+the owner is alone or isolation keeps all other work in separate OS users.
+An unavailable or inconclusive audience keeps the shared scope. Status continues
+to report placement without an audience read, so its row can still show a shared
+label when Prepare starts without a confirmation. The one start sequence
 (`startMachineAgentSignIn`) hands that prepared scope to the app's present person
 before any terminal launches: a `machineOwner` or `sharedAgent` login is confirmed
 first, and a decline stops with `approval_canceled`. Every other surface reaches
