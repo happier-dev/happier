@@ -7,29 +7,43 @@ import {
   SessionFollowSourceKeyPrepareRequestV1Schema,
   SessionFollowSourceKeyPreparationResultV1Schema,
   computeRunnerMachineContentKeyFingerprintV1,
+  computeAccountEncryptionMigrateKeyFingerprintV1,
   normalizeActionsSettingsV1,
   sealEncryptedDataKeyEnvelopeV1,
   sealRunnerMachineContentKeyVerifierFactV1,
   signRunnerMachineContentKeyBindingV1,
 } from '@happier-dev/protocol';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { CapabilitiesDetectResponse } from '@happier-dev/protocol/capabilities';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
+  sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { SessionFollowSourceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { readMachineTargetedActionRpcInputV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import { configuration } from '@/configuration';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot,
+  createSessionCreationTargetPreparationRpcResult } from '@/testkit/backends/apiSessionSocketHarness';
 import {
   createAccountEncryptionCurrentnessFixture,
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
-import { registerAccountHomeHttp, registerPlainArtifactRoutes } from './widgetApproval.testkit';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { registerAccountHomeHttp, registerActionHttpBodyBoundary, registerMachineActionHomeHttp, registerPlainArtifactRoutes } from './widgetApproval.testkit';
 
 // Only the network boundary is substituted; credential enrichment, Follow
 // mutation/preparation, envelope opening and exact Machine RPC remain real.
@@ -43,7 +57,8 @@ const serverIdentityId = 'srv_follow_home';
 const accountId = 'account-1';
 const machineKey = new Uint8Array(32).fill(7);
 const credentials = {
-  token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature',
+  token: `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
+    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
   credentialProvenance: 'stored_session' as const,
   encryption: {
     type: 'dataKey' as const,
@@ -131,8 +146,13 @@ describe('credentialed CLI relation source-key preparation composition', () => {
       approvalWaivedSurfaces: { 'follow.set': ['cli'], 'session.manager.set': ['cli'], 'session.spawn_new': ['cli'] },
     });
     const app = fastify();
+    registerActionHttpBodyBoundary(app);
     const restore = installAxiosFastifyAdapter({ app, origin: new URL(serverUrl).origin });
     const events: string[] = [];
+    app.get(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, async () => ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
+    const homeFeatures = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId } } });
+    app.get('/v1/features', async () => homeFeatures);
+    app.get('/v1/features/authenticated', async () => homeFeatures);
     let creationCorrespondence: unknown;
     // Account validation and exact daemon creation are network boundaries;
     // target normalization, create settlement and key preparation remain real.
@@ -140,6 +160,31 @@ describe('credentialed CLI relation source-key preparation composition', () => {
     app.post('/v2/sessions/lookup-by-tags', async () => ({ sessions: [] }));
     app.get('/v2/sessions', async () => ({ sessions: [], nextCursor: null, hasNext: false }));
     app.get('/v2/sessions/archived', async () => ({ sessions: [], nextCursor: null, hasNext: false }));
+    const homeDefaultsRequest = bindHomeDomainActionHttpRequestV1('home.governance.get', { projection: 'session_defaults' });
+    app.post(new URL(homeDefaultsRequest.path, serverUrl).pathname,
+      async () => HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }));
+    app.get('/v1/account/profile', async () => ({ id: accountId }));
+    app.get('/v1/account/encryption', async () => ({ mode: 'e2ee', updatedAt: 1 }));
+    app.get('/v2/account/settings', async () => ({ version: 1, content: sealAccountSettingsV2RawContent({
+      credentials, raw: { actionsSettingsV1: actionsSettings }, envelopeKind: 'encrypted', randomBytes,
+    }) }));
+    app.get(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`, async () =>
+      ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+        content: sealConnectedAccountCatalogContentV1({ mode: 'e2ee', material: credentials.encryption,
+          record: { key: 'purposes', value: { v: 1, bindings: [] } }, randomBytes }),
+      }));
+    const senderSigning = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const installation = { version: 1 as const, installationId: '11111111-1111-4111-8111-111111111113', createdAt: 1,
+      publicKey: encodeBase64(senderSigning.publicKey, 'base64url'), privateKey: encodeBase64(senderSigning.secretKey, 'base64url') };
+    app.get('/v1/machines/sender-machine', async () => ({ machine: { ...MachinePublishedRowV1Schema.parse({
+      ...createAvailableSessionSpawnMachineSnapshot('sender-machine', { dataEncryptionKey: sealKey(runnerKey) }),
+      active: true, storageMode: 'e2ee', managedMachineRef: null,
+      installationId: installation.installationId, installationPublicKey: encodeBase64(senderSigning.publicKey),
+      metadata: encodeBase64(encrypt(runnerKey, 'dataKey', MachinePublishedMetadataV1Schema.parse({
+        host: 'sender', platform: 'linux', happyCliVersion: '0.3', homeDir: '/home/sender', happyHomeDir: '/home/sender/.happier',
+        installationPublicKey: installation.publicKey,
+      }))), metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+    }), access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } } }));
     const source = SessionFollowSourceV1Schema.parse({
       sourceSessionId, destinationSessionId, policy: { preset: 'important' },
       deliveryState: 'eligible', hasPendingUpdates: false,
@@ -153,7 +198,8 @@ describe('credentialed CLI relation source-key preparation composition', () => {
       events.push('edge_committed');
       return manager;
     });
-    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }));
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'e2ee',
+      contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(credentials.encryption.publicKey) }));
     app.get('/v2/sessions/:sessionId', async (request, reply) => {
       const id = (request.params as { sessionId: string }).sessionId;
       if (events.includes('edge_committed') && (fault === 'source_read_failed' && id === sourceSessionId
@@ -224,8 +270,27 @@ describe('credentialed CLI relation source-key preparation composition', () => {
       expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
       // This is the untyped socket network boundary, narrowed before use.
       const call = rawCall as { method: string; params: string; authorization: unknown };
-      expect(call.method).toBe(`${machineId}:${RPC_METHODS.DAEMON_SESSION_FOLLOW_SOURCE_KEY_PREPARE}`);
       const decoded = await socketRpcCodec.decodeRequestParams(runnerContent, call.params, call.method);
+      if (call.method === `sender-machine:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`) {
+        const request = SessionCreationTargetPreparationRequestV1Schema.parse(readMachineTargetedActionRpcInputV1(decoded.params));
+        return { ok: true, result: await socketRpcCodec.encodeResponse(runnerContent,
+          createSessionCreationTargetPreparationRpcResult(request), decoded.callId) };
+      }
+      if (call.method === `sender-machine:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+        const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+          projection: { v: 2, generation: 1, familiesById: {}, agentsById: { codex: { id: 'codex', title: 'Codex',
+            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } } } });
+        return { ok: true, result: await socketRpcCodec.encodeResponse(runnerContent, response, decoded.callId) };
+      }
+      if (call.method === `sender-machine:${RPC_METHODS.CAPABILITIES_DETECT}`) {
+        const response = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+          installed: true, version: '1.0', latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+          install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+        } } } } satisfies CapabilitiesDetectResponse;
+        return { ok: true, result: await socketRpcCodec.encodeResponse(runnerContent, response, decoded.callId) };
+      }
+      expect(call.method).toBe(`${machineId}:${RPC_METHODS.DAEMON_SESSION_FOLLOW_SOURCE_KEY_PREPARE}`);
       const request = SessionFollowSourceKeyPrepareRequestV1Schema.parse(decoded.params);
       preparedRequests.push(request);
       expect(call.authorization).toEqual({ kind: 'session.follow.sourceKey.prepare', sourceSessionId, destinationSessionId });
@@ -238,6 +303,8 @@ describe('credentialed CLI relation source-key preparation composition', () => {
     const executorBase = {
       credentials,
       machineId: 'sender-machine',
+      externalActionMachineRequestPrivateKey: senderSigning.secretKey,
+      externalActionMachineInstallationId: installation.installationId,
       resolveServerFeaturesSnapshot: async () => ({
         status: 'ready' as const, provenance,
         features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId } } }),
@@ -249,6 +316,7 @@ describe('credentialed CLI relation source-key preparation composition', () => {
       pluginActionExecutionOwner: 'current_process',
       sessionSpawnDirectTargetTransport: {
         machineId: 'sender-machine',
+        readMachineMetadataSnapshot: () => ({ status: 'ready' as const, metadataVersion: 1, metadata: {} }),
         prepare: async () => ({ ok: true as const, directory: '/repo', directoryKind: 'path' as const,
           directoryCreationRequired: false, checkout: null }),
         spawnedSession: {
@@ -266,6 +334,12 @@ describe('credentialed CLI relation source-key preparation composition', () => {
     const executor = createCliActionExecutorFromCredentials(fixed
       ? { ...executorBase, serverId: 'fixed-home', serverApiUrl: serverUrl, serverIdentityId }
       : executorBase);
+    if (relation === 'spawn') await registerMachineActionHomeHttp(app, { accountId, machineId: 'sender-machine',
+      serverId: fixed ? 'fixed-home' : configuration.activeServerId, serverIdentityId, serverHttpBaseUrl: serverUrl,
+      credentials, installation, executor, actionId: 'session.spawn_new', accountEncryptionMode: 'e2ee' });
+    if (relation === 'spawn') await registerMachineActionHomeHttp(app, { accountId, machineId: 'sender-machine',
+      serverId: fixed ? 'fixed-home' : configuration.activeServerId, serverIdentityId, serverHttpBaseUrl: serverUrl,
+      credentials, installation, executor, actionId: 'machines.agents.list', accountEncryptionMode: 'e2ee' });
     try {
       const result = relation === 'follow'
         ? await executor.execute('follow.set', { receiver: { kind: 'session', sessionId: destinationSessionId },
@@ -277,6 +351,15 @@ describe('credentialed CLI relation source-key preparation composition', () => {
             directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             connectedServices: { v: 2, bindingsByServiceId: {} }, manager: { sessionId: destinationSessionId },
           }, { surface: 'cli' });
+      if (relation === 'spawn' && !fixed && provenance !== 'authenticated') {
+        // E2EE origination requires the independently verified Home before
+        // Session creation; Follow/manager above retain postcommit key checks.
+        expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable',
+          failureCause: { phase: 'dispatch.home_identity' } });
+        expect(events).toEqual([]);
+        expect(preparedRequests).toEqual([]);
+        return;
+      }
       if (fault) {
         const preparation = { kind: 'waiting', reason: fault === 'source_missing' ? 'source_key_unavailable' : 'runner_unreachable',
           cause: ({ source_missing: 'source_transport_unavailable', destination_missing: 'destination_transport_unavailable',
