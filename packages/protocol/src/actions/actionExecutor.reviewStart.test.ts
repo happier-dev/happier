@@ -15,6 +15,7 @@ import { dispatchReviewDispatch2 } from './executor/review/dispatch.js';
 import { startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { createScmCapabilities } from '../scm/index.js';
+import { SessionAccessGrantSetActionInputV1Schema } from '../sessions/access/sessionAccessActionsV1.js';
 
 const comparisonId = 'c'.repeat(64);
 
@@ -73,6 +74,75 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each(['admitted', 'refused', 'wrong-session'] as const)('consumes each selected Team consent before composing detached reviewers: %s', async outcome => {
+    const grants: ReturnType<typeof SessionAccessGrantSetActionInputV1Schema.parse>[] = [];
+    let workflow: ReturnType<typeof WorkflowRunStartRequestV1Schema.parse> | undefined;
+    const refusal = { ok: false as const, errorCode: 'session_access_subject_not_found', error: 'session_access_subject_not_found' };
+    const executor = createActionExecutor({
+      // Session-access and Workflow calls cross the Home HTTP boundary. The real
+      // Action admission, Review preparation and graph builder remain in this process.
+      sessionAccessAction: async ({ input }) => {
+        const grant = SessionAccessGrantSetActionInputV1Schema.parse(input);
+        if (outcome === 'refused') return refusal;
+        grants.push(grant);
+        return { changed: true, grant: { subject: grant.subject, accessLevel: grant.accessLevel,
+          canApprovePermissions: grant.canApprovePermissions, requiredByTeamPolicy: true } };
+      },
+      workflowAction: async invocation => {
+        workflow = WorkflowRunStartRequestV1Schema.parse(invocation.input);
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    });
+    const reviewers = ['one', 'two'].map(id => ({ kind: 'engine', engineId: 'codex',
+      teamCredentialModel: { kind: 'team_credential_provider_model', teamId: `team-${id}`, resourceId: `resource-${id}`,
+        expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: 'backend:codex', modelId: `model-${id}` },
+      teamCredentialSessionBindingConsent: { v: 1, sessionId: outcome === 'wrong-session' && id === 'two' ? 'another-session' : 's1',
+        teamId: `team-${id}`, resourceId: `resource-${id}`, expectedResourceRevision: 4 } }));
+    const result = await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review.', reviewers },
+      { surface: 'ui' });
+    if (outcome !== 'admitted') {
+      expect(result).toMatchObject(outcome === 'refused' ? refusal : { ok: false, errorCode: 'invalid_parameters' });
+      expect(grants).toEqual([]);
+      expect(workflow).toBeUndefined();
+      return;
+    }
+    expect(result).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+    expect(grants).toEqual(['one', 'two'].map(id => ({ sessionId: 's1', subject: { kind: 'team', teamId: `team-${id}` },
+      accessLevel: 'edit', canApprovePermissions: false, requiredTeamCredential: {
+        resourceId: `resource-${id}`, expectedResourceRevision: 4, deliveryMode: 'brokered',
+      } })));
+    if (!workflow || workflow.source.kind !== 'inline') throw new Error('Expected the composed Review graph');
+    const leaves = workflow.source.definition.blocks.flatMap(block => block.kind === 'parallel'
+      ? block.branches.flatMap(branch => branch.blocks.filter(leaf => leaf.kind === 'action')) : []);
+    expect(leaves).toHaveLength(2);
+    for (const [index, leaf] of leaves.entries()) {
+      const binding = leaf.input?.reviewers;
+      if (binding?.kind !== 'literal') throw new Error('Expected a selected reviewer operand');
+      const selected = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, instructions: 'Review.', reviewers: binding.value });
+      expect(selected.reviewers[0]).not.toHaveProperty('teamCredentialSessionBindingConsent');
+      expect(selected.reviewers[0]).toHaveProperty('teamCredentialModel', reviewers[index]?.teamCredentialModel);
+    }
+  });
+  it('keeps inherited Team consent bound to the selected resource before composition', async () => {
+    const grants: unknown[] = [];
+    const model = { kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'consented-resource',
+      expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: 'backend:codex', modelId: 'model' };
+    const reviewers = [{ kind: 'engine', engineId: 'codex', teamCredentialModel: { ...model, resourceId: 'another-resource' } }];
+    const executor = createActionExecutor({ sessionAccessAction: async ({ input }) => {
+      const grant = SessionAccessGrantSetActionInputV1Schema.parse(input);
+      grants.push(grant);
+      return { changed: true, grant: { subject: grant.subject, accessLevel: grant.accessLevel,
+        canApprovePermissions: grant.canApprovePermissions, requiredByTeamPolicy: true } };
+    } });
+    const result = await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review.',
+      teamCredentialModel: model, teamCredentialSessionBindingConsent: { v: 1, sessionId: 's1', teamId: 'team',
+        resourceId: 'consented-resource', expectedResourceRevision: 4 },
+      reviewers, steps: [{ kind: 'review', reviewers, instructions: 'Review.' }],
+    }, { surface: 'ui' });
+    expect(result).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(grants).toEqual([]);
+  });
+
   it('retains the Project Source for a detached Review addressed through a profile Home alias', async () => {
     const records = createInMemoryReviewRecordPortV1();
     let reviewId = '';

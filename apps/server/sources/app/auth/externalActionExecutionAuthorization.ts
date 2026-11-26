@@ -257,6 +257,7 @@ import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptTransportInputV1Schema,
     DocEditDeclineTransportInputV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1, DiscussionSecondOpinionPreviewInputV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
 import { ArtifactAccessGrantSetInputV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { SessionAccessGrantSetActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '@/app/artifacts/artifactMutationHttpContract';
 import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -1738,6 +1739,19 @@ function isSpawnTeamCredentialCatalogRead(
         && request.data.resourceId === undefined;
 }
 
+/** The installed Review owner consumes selected visibility consent before detaching reviewers. */
+function isReviewedReviewTeamVisibilityPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string, proof: ExternalActionExecutionRequestProof): boolean {
+    if (binding.actionId !== REVIEW_START_ACTION_ID_V1 || effectActionId !== 'session.access.grant.set'
+        || proof.reviewedChild?.actionId !== effectActionId || proof.reviewedChild.role !== effectActionId
+        || proof.method.toUpperCase() !== 'POST' || proof.path !== '/v2/sessions/access-grants/set') return false;
+    const grant = SessionAccessGrantSetActionInputV1Schema.safeParse(proof.body);
+    return grant.success && grant.data.subject.kind === 'team' && grant.data.accessLevel === 'edit'
+        && !grant.data.canApprovePermissions && grant.data.requiredTeamCredential !== undefined
+        && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, grant.data))
+        && proof.reviewedChild.inputDigest === computeActionInputApprovalDigestV1(effectActionId, grant.data);
+}
+
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof, signerAccountId: string,
@@ -1809,6 +1823,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         spawnTeamCredentialCatalog: isSpawnTeamCredentialCatalogRead(binding, effectActionId, proof),
         projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
         reviewScmPreparation: isReviewScmPreparationEffectV1(binding.actionId, effectActionId),
+        reviewTeamVisibility: isReviewedReviewTeamVisibilityPurpose(binding, effectActionId, proof),
         reviewWorkflowAction: binding.actionId === REVIEW_START_ACTION_ID_V1 && effectActionId === WORKFLOW_RUN_START_ACTION_ID_V1
             || binding.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1
                 && (effectActionId === WORKFLOW_RUN_GET_ACTION_ID_V1 || effectActionId === WORKFLOW_RUN_START_ACTION_ID_V1),
@@ -1839,7 +1854,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const crossesEffectFamily = managedExecWake !== undefined || deploymentReferenceServices || configureBindings || telemetryBindings || databaseReadAccessBindings
         || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowAction || sibling.reviewScmPreparation || machineGrantSetRead;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowAction || sibling.reviewScmPreparation || sibling.reviewTeamVisibility || machineGrantSetRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -4817,6 +4832,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         || verified.signedChildPurpose.sibling.sectionArchive
         || verified.signedChildPurpose.sibling.stopChild) {
         if (!await isSessionSectionHttpPurpose(verified, proof)) return refuse('session_section_purpose');
+    } else if (verified.signedChildPurpose.sibling.reviewTeamVisibility) {
+        // The child digest pins the exact consented grant. The Session access
+        // route still owns manager authority and the required Team resource.
     } else if (verified.signedChildPurpose.reviewedManagedAcquirePurpose) {
         // The common signed-child owner binds new admission, then consumes the
         // retained creation's root/input/controller correspondence. The route

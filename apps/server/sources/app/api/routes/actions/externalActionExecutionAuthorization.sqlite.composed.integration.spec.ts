@@ -2242,6 +2242,75 @@ describe("external Action execution authorization", () => {
         };
     }
 
+    it.each(['owner', 'foreign'] as const)('spends a Review Team visibility consent only on its exact signed Session grant (%s)', async relationship => {
+        const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
+        const { SessionAccessGrantSetActionInputV1Schema } = await import('@happier-dev/protocol/sessions/access/sessionAccessActionsV1');
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const sessionOwner = relationship === 'owner' ? fixture.account : await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: sessionOwner.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const resourceId = crypto.randomUUID();
+        const input = ReviewStartInputSchema.parse({ sessionId: session.id, scope: 'repository', instructions: 'Review.',
+            reviewers: [{ kind: 'engine', engineId: 'codex', teamCredentialModel: {
+                kind: 'team_credential_provider_model', teamId: fixture.team.id, resourceId,
+                expectedResourceRevision: 4, deliveryMode: 'brokered', agentTargetKey: 'backend:codex', modelId: 'selected-model',
+            }, teamCredentialSessionBindingConsent: { v: 1, sessionId: session.id, teamId: fixture.team.id,
+                resourceId, expectedResourceRevision: 4 } }] });
+        const childInput = SessionAccessGrantSetActionInputV1Schema.parse({ sessionId: session.id,
+            subject: { kind: 'team', teamId: fixture.team.id }, accessLevel: 'edit', canApprovePermissions: false,
+            requiredTeamCredential: { resourceId, expectedResourceRevision: 4, deliveryMode: 'brokered' } });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, registerSessionAccessGrantRoutes);
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        try {
+            const authorization = await mint(app, fixture, 'review.start', { ...fixture.envelope, input }, token);
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
+                serverId: await getOrCreateServerIdentityId(), serverIdentityId: await getOrCreateServerIdentityId(),
+                serverHttpBaseUrl: origin, target: authorization.binding.target,
+                installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey, isCurrent: async () => true });
+            if (!projected) throw new Error('Expected the installed Review HTTP projection');
+            const execute = async (role: string) => invokeHostReviewedChildV1({ parent: { actionId: 'review.start', input },
+                context: { surface: 'cli', runtimeAccountId: fixture.account.id,
+                    externalActionTarget: authorization.binding.target, externalActionExecutionAuthorization: projected },
+                child: { action: 'session.access.grant.set', role, input: childInput },
+                admittedReview: { action: 'session.access.grant.set', role, surface: 'cli' },
+                execute: async (_input, context) => {
+                    const port = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+                    if (!port) throw new Error('Expected the reviewed Session grant projection');
+                    const path = '/v2/sessions/access-grants/set';
+                    const post = async (body: unknown) => {
+                        const headers = await port.createRequestHeaders({ effectActionId: 'session.access.grant.set',
+                            method: 'POST', path, body });
+                        if (!headers) throw new Error('Expected signed Session grant headers');
+                        return app.inject({ method: 'POST', url: path, payload: body, headers });
+                    };
+                    if (role !== 'session.access.grant.set') {
+                        expect((await post(childInput)).statusCode).toBe(401);
+                        return { ok: true as const, result: null };
+                    }
+                    for (const changed of [
+                        { ...childInput, sessionId: crypto.randomUUID() },
+                        { ...childInput, subject: { kind: 'team', teamId: crypto.randomUUID() } },
+                        { ...childInput, accessLevel: 'admin' }, { ...childInput, canApprovePermissions: true },
+                        ...['resourceId', 'expectedResourceRevision', 'deliveryMode'].map(key => ({ ...childInput,
+                            requiredTeamCredential: { ...childInput.requiredTeamCredential,
+                                [key]: key === 'expectedResourceRevision' ? 5 : key === 'deliveryMode' ? 'direct' : crypto.randomUUID() } })),
+                    ]) expect((await post(changed)).statusCode).toBe(401);
+                    const response = await post(childInput);
+                    // Transport admission never replaces Session manager authority or
+                    // the required resource decision. Neither control creates a grant.
+                    expect(response.statusCode, response.body).toBe(relationship === 'owner' ? 409 : 403);
+                    expect(response.json()).toMatchObject(relationship === 'owner'
+                        ? { error: 'session_team_credential_binding_rejected', reason: 'resource_missing' }
+                        : { error: 'session_access_forbidden' });
+                    return { ok: true as const, result: null };
+                } });
+            await execute('wrong-role');
+            await execute('session.access.grant.set');
+            expect(await db.sessionGrant.count({ where: { sessionId: session.id } })).toBe(0);
+        } finally { await app.close(); }
+    });
+
     it.each(['account', 'team'] as const)('admits app-update Environment revisions once and keeps reads within their current Artifacts via %s access', async access => {
         const { setArtifactAccessGrantInTx } = await import('@/app/artifacts/artifactAccessService');
         const fixture = await createFixture({ qualifiedPat: false });

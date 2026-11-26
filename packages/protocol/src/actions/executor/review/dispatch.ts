@@ -12,7 +12,7 @@ import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, Rev
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import { requiresReviewWorkflowCompositionV1, reviewReviewerDisplayNamesForStartV1, reviewReviewerIdentitiesForStartV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, reviewReviewerDisplayNamesForStartV1, reviewReviewerIdentitiesForStartV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, ReviewEngineReviewerSelectionV1Schema, type ReviewStartInput } from '../../../reviews/reviewStart.js';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } from '../../specs/session/transcript.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
@@ -367,6 +367,47 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const projectSourceId = reviewInput.reviewRound ? undefined
           : await resolveReviewProjectSourceV1(deps, ctx, sourceSessionId, serverId ?? undefined, comparisonCwd, executeHostChild);
         if (workflowComposition) {
+          const selectedConsents: { consent: NonNullable<ReviewStartInput['teamCredentialSessionBindingConsent']>;
+            model: NonNullable<ReviewStartInput['teamCredentialModel']> }[] = [];
+          for (const reviewer of reviewers) {
+            if (reviewer.kind !== 'engine') continue;
+            const selection = { ...reviewInput, ...reviewer };
+            const consent = selection.teamCredentialSessionBindingConsent;
+            if (!consent) continue;
+            // Root defaults can be overridden per reviewer. Validate their merged
+            // selection with the same public owner before consuming its consent.
+            const selected = ReviewEngineReviewerSelectionV1Schema.safeParse({ ...reviewer,
+              teamCredentialModel: selection.teamCredentialModel, teamCredentialSessionBindingConsent: consent });
+            if (!selected.success || !selected.data.teamCredentialModel || consent.sessionId !== sourceSessionId) {
+              return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+            }
+            selectedConsents.push({ consent, model: selected.data.teamCredentialModel });
+          }
+          // Match attached Run admission: the source Session's access owner consumes
+          // explicit visibility consent before the reviewers become detached Runs.
+          for (const { consent, model } of selectedConsents) {
+            const granted = await invokeHostReviewedChildV1({
+              parent: { actionId, input: parsed.data as JsonObject }, context: ctx,
+              child: { action: 'session.access.grant.set', role: 'session.access.grant.set', input: {
+                sessionId: consent.sessionId, subject: { kind: 'team', teamId: consent.teamId },
+                accessLevel: 'edit', canApprovePermissions: false, requiredTeamCredential: {
+                  resourceId: model.resourceId, expectedResourceRevision: model.expectedResourceRevision,
+                  deliveryMode: model.deliveryMode,
+                },
+              } },
+              execute: (input, context, childId) => executeHostChild(childId, input, context),
+            });
+            if (!granted.ok) return granted;
+          }
+          const consumeConsent = (reviewer: ReviewStartInput['reviewers'][number]) => {
+            if (reviewer.kind !== 'engine') return reviewer;
+            const { teamCredentialSessionBindingConsent: _consent, ...selection } = reviewer;
+            return selection;
+          };
+          const { teamCredentialSessionBindingConsent: _consent, ...admittedReviewInput } = reviewInput;
+          reviewInput = { ...admittedReviewInput, reviewers: reviewInput.reviewers.map(consumeConsent),
+            ...(reviewInput.steps ? { steps: reviewInput.steps.map(step => ({ ...step, reviewers: step.reviewers.map(consumeConsent) })) } : {}),
+          };
           // Retain admitted ordinary reviewer prompts so Workflow leaves do not reread the source.
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
