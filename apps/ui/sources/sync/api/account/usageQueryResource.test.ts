@@ -7501,6 +7501,187 @@ describe('usage query captured Resource adapter', () => {
     }
   });
 
+  it.each(['held', 'failed', 'complete', 'unobserved'] as const)(
+    'reports the same mounted Resets quota state in its single-query Action when history is %s', async stage => {
+      const now = Date.UTC(2026, 9, 12, 12);
+      vi.spyOn(Date, 'now').mockReturnValue(now);
+      const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'resets' };
+      const source = { bindingKind: 'account' as const, ref };
+      const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      const observedAt = stage === 'unobserved' ? 0 : now;
+      const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey),
+        recordKey, providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId },
+        observedAtMs: observedAt, fetchedAtMs: observedAt, staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed',
+        state: stage === 'unobserved' ? 'error_last_known_good' : 'loaded_empty', meters: [] });
+      const history = createDeferred<void>();
+      const captured = await context(async request => {
+        if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+        if (request.path === '/v2/usage/query') return Response.json(value);
+        if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({
+          source, recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: observedAt, staleAfterMs: 60_000 });
+        if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
+          content: { t: 'plain', v: record }, metadata: { fetchedAt: observedAt, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
+        if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
+          const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+            request.url.searchParams.get('query'));
+          if (stage === 'failed' && ('history' in query || 'projection' in query)) {
+            return Response.json({ error: 'provider_account_usage_read_failed' }, { status: 500 });
+          }
+          if ('projection' in query) return Response.json({ projection: null, complete: false });
+          if ('history' in query && stage === 'held') await history.promise;
+          return Response.json({ entries: [], nextCursor: null });
+        }
+        if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+        return undefined;
+      }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+      await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
+      const query = normalizeUsageQuery({ period: { startMs: now - 86_400_000, endMs: now }, session: 'saved-resets',
+        includeAccounting: false, includeQuota: true, includeQuotaHistory: true, includeQuotaExactHistory: true, includeSessionEvidence: false, includeWorkEvidence: false,
+        includeTranscriptEvidence: false, includeActivity: false, includeComparison: false });
+      const sibling = normalizeUsageQuery({ ...query, includeAccounting: true, includeQuota: false, includeQuotaHistory: false, includeQuotaExactHistory: false });
+      const store = getUsageQueryResourceStore(captured);
+      const entry = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query, sibling] }) });
+      const readPage = () => {
+        const content = entry.getSnapshot().value;
+        return content && decodeUsageQueryResource(content).results.find(slice => slice.key === getUsageQueryKey(query));
+      };
+      const readQuota = (slice: ReturnType<typeof readPage>) => slice?.sources.find(source => source.source === 'quota')?.status;
+      const account = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+      const release = entry.subscribe(() => {}, false);
+      try {
+        await expect.poll(() => readPage()?.quota?.[0]?.current).toEqual(record);
+        if (stage !== 'held') await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+        expect(readQuota(readPage())).toBe(stage === 'failed' ? 'stale' : stage === 'complete' ? 'available' : 'partial');
+        const response = await executor.execute('usage.query', { queries: [query] },
+          { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+        if (!response.ok) throw new Error(response.errorCode);
+        const action = UsageQueryBatchResultSchema.parse(response.result).results[0];
+        expect(action?.key).toBe(readPage()?.key);
+        expect(action?.quota?.[0]?.current).toEqual(record);
+        const coverage = (slice: ReturnType<typeof readPage>) => ({
+          aggregate: readQuota(slice),
+          qualified: slice?.sources.filter(source => source.source.startsWith('quota:')).map(({ status }) => status),
+          pending: slice?.pending,
+        });
+        expect(coverage(action), 'page and Action project the same admitted quota coverage').toEqual(coverage(readPage()));
+      } finally { history.resolve(); release(); account.dispose(); }
+    });
+
+  it('keeps warm exact Resets partial when one history fails before its sibling settles', async () => {
+    const now = Date.UTC(2026, 9, 12, 12);
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const day = 86_400_000;
+    const refs = ['resets-a', 'resets-b'].map(accountId => ({
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId,
+    }));
+    const sources = refs.map(ref => ({ bindingKind: 'account' as const, ref }));
+    const sample = (index: number, observedAtMs: number) => {
+      const ref = refs[index]!;
+      const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      return ProviderAccountUsageSnapshotV1Schema.parse({
+        v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'codex',
+        accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs, fetchedAtMs: observedAtMs,
+        staleAfterMs: day, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [],
+      });
+    };
+    const initial = [sample(0, now - 6000), sample(1, now - 4000)];
+    const heads = [...initial];
+    const hold = createDeferred<void>();
+    const failure = 'provider_account_usage_read_failed';
+    const replacementHistory = new Set<string>();
+    let replacing = false;
+    const observations = (index: number) => {
+      const observed = initial[index]!.observedAtMs;
+      return (replacing ? [observed - 100, heads[index]!.observedAtMs] : [observed]).map(observedAtMs =>
+        ({ id: `observation-${observedAtMs}`, observedAtMs }));
+    };
+    const captured = await context(async request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+      if (request.path.endsWith('/sources/resolve')) {
+        const { ref } = JSON.parse(request.url.searchParams.get('source')!);
+        const index = refs.findIndex(candidate => candidate.accountId === ref.accountId);
+        return Response.json({ source: sources[index], recordId: heads[index]!.recordId,
+          providerAccountId: ref.accountId, fetchedAt: heads[index]!.fetchedAtMs, staleAfterMs: day });
+      }
+      if (request.path.endsWith('/record')) {
+        const index = heads.findIndex(head => head.recordId === request.url.searchParams.get('recordId'));
+        const record = heads[index]!;
+        return Response.json({ content: { t: 'plain', v: record },
+          metadata: { fetchedAt: record.fetchedAtMs, staleAfterMs: day, status: 'ok' }, sources: [sources[index]] });
+      }
+      if (request.path.endsWith('/day-summaries')) {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema,
+          request.url.searchParams.get('query'));
+        const index = heads.findIndex(head => head.recordId === query.recordId);
+        const history = observations(index);
+        return Response.json({ summaries: [], missingDays: [{ dayStartAtMs: now - day / 2,
+          coverage: { observationCount: history.length, frontier: history.at(-1) } }] });
+      }
+      if (request.path.endsWith('/history')) {
+        if (request.method === 'PUT') return Response.json({ ok: true });
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        if (replacing) {
+          replacementHistory.add(query.recordId);
+          if (query.recordId === heads[0]!.recordId) return Response.json({ error: failure }, { status: 503 });
+          await hold.promise;
+        }
+        if ('projection' in query) return Response.json({ projection: null, complete: false });
+        const index = heads.findIndex(head => head.recordId === query.recordId);
+        return Response.json({ entries: observations(index).map(observation => ({
+          ...observation, record: { content: { t: 'plain', v: sample(index, observation.observedAtMs) },
+            metadata: { fetchedAt: observation.observedAtMs, staleAfterMs: day, status: 'ok' }, sources: [sources[index]] },
+        })), nextCursor: null });
+      }
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: refs.map(ref => ({ ref, status: 'connected', authenticationModeId: 'manual',
+      revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+      configurationReady: false, configurationRevision: null, scopes: [] })) });
+    await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
+    const query = normalizeUsageQuery({ period: { startMs: now - day, endMs: now }, session: 'saved-resets',
+      includeAccounting: false, includeQuota: true, includeQuotaHistory: true, includeQuotaExactHistory: true,
+      includeSessionEvidence: false, includeWorkEvidence: false, includeTranscriptEvidence: false,
+      includeActivity: false, includeComparison: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const readPage = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+    const qualified = (index: number) => `quota:${createCanonicalJsonSigningInput(sources[index]!)}`;
+    const state = (source: string) => readPage().sources.find(candidate => candidate.source === source);
+    const stop = entry.subscribe(() => {}, true);
+    try {
+      await expect.poll(() => entry.getSnapshot().value && state('quota')?.status).toBe('available');
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(readPage().quota?.map(row => row.current)).toEqual(initial);
+      replacing = true;
+      heads[1] = sample(1, now - 1000);
+      const beforeWake = home!.requests.length;
+      publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, { t: 'account-change', changeKinds: ['account'],
+        entityIds: [buildConnectedServicesAccountChangeV1(refs[0]!.service).entityId], sessionSystemRecords: [] }, 'socket');
+      try {
+        await expect.poll(() => ({
+          histories: replacementHistory.size,
+          requests: home!.requests.slice(beforeWake).map(request => request.path.split('/').at(-1)),
+        })).toMatchObject({ histories: 2 });
+        await expect.poll(() => state(qualified(0))?.errorCode).toBe(failure);
+        expect(state('quota')).toMatchObject({ status: 'partial', asOfMs: initial[0]!.fetchedAtMs });
+        expect(state(qualified(0))).toMatchObject({ status: 'stale', errorCode: failure, asOfMs: initial[0]!.fetchedAtMs });
+        expect(state(qualified(1))).toMatchObject({ status: 'available', asOfMs: initial[1]!.fetchedAtMs });
+        expect(state(qualified(1))?.errorCode).toBeUndefined();
+        expect(readPage().quota?.map(row => row.current)).toEqual(initial);
+      } finally { hold.resolve(); }
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(state('quota')).toMatchObject({ status: 'stale', asOfMs: initial[0]!.fetchedAtMs });
+      expect(state(qualified(0))).toMatchObject({ status: 'stale', errorCode: failure, asOfMs: initial[0]!.fetchedAtMs });
+      expect(state(qualified(1))).toMatchObject({ status: 'available', asOfMs: heads[1]!.fetchedAtMs });
+      expect(state(qualified(1))?.errorCode).toBeUndefined();
+      expect(readPage().quota?.map(row => row.current)).toEqual(heads);
+    } finally { stop(); }
+  });
+
+
   it('opens first-use B without cache hydration and admits its lossless projection only after the backfill completes', async () => {
     const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'first-use' };
     const source = { bindingKind: 'account' as const, ref };
