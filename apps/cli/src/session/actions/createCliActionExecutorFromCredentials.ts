@@ -862,6 +862,22 @@ function createApprovalRoutingContext(
   return { resolveServerFeaturesSnapshotForCredentials, enrichApprovalRoutingContext, resolveInvocationRoutingContext };
 }
 
+function createCredentialSelectionReader(params: Readonly<{
+  credentials: StoredCredentials;
+  readCredentials?: () => Promise<StoredCredentials | null>;
+}>) {
+  // This executor acts for the Account it was built with. A fresh read naming
+  // another Account (a sign-in stored while this process lives) is not a refresh.
+  const executorAccountId = readAccountIdFromToken(params.credentials.token);
+  return async (): Promise<Readonly<{ credentials: StoredCredentials | null; accountChanged: boolean }>> => {
+    const current = params.readCredentials
+      ? await params.readCredentials().catch(error => { rethrowRequesterHomeReadFailure(error); return null; })
+      : params.credentials;
+    const accountChanged = Boolean(current && executorAccountId && readAccountIdFromToken(current.token) !== executorAccountId);
+    return { credentials: accountChanged ? null : current, accountChanged };
+  };
+}
+
 function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   credentials: StoredCredentials;
   happyHomeDir?: Parameters<typeof createCliActionExecutor>[0]['happyHomeDir'];
@@ -1079,16 +1095,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     })
   );
-  // This executor acts for the Account it was built with. A fresh read naming
-  // another Account (a sign-in stored while this process lives) is not a refresh.
-  const executorAccountId = readAccountIdFromToken(params.credentials.token);
-  const readCredentialSelection = async (): Promise<Readonly<{ credentials: StoredCredentials | null; accountChanged: boolean }>> => {
-    const current = params.readCredentials
-      ? await params.readCredentials().catch(error => { rethrowRequesterHomeReadFailure(error); return null; })
-      : params.credentials;
-    const accountChanged = Boolean(current && executorAccountId && readAccountIdFromToken(current.token) !== executorAccountId);
-    return { credentials: accountChanged ? null : current, accountChanged };
-  };
+  const readCredentialSelection = createCredentialSelectionReader(params);
   const readCurrentCredentials = async (): Promise<StoredCredentials | null> => (await readCredentialSelection()).credentials;
   const readApprovalReplayCredentials = async (expectedAccountId?: string) => selectApprovalReplayCredentials(
     params.credentials, await readCurrentCredentials(), expectedAccountId);
@@ -2775,6 +2782,7 @@ type DeploymentChildFilesystemExecutor = Readonly<{
 
 export function createCliActionExecutorFromCredentials(params: Parameters<typeof createCliActionExecutionCoreFromCredentials>[0]): ReturnType<typeof createCliActionExecutionCoreFromCredentials> & DeploymentChildFilesystemExecutor {
   const core = createCliActionExecutionCoreFromCredentials(params);
+  const readCredentialSelection = createCredentialSelectionReader(params);
   const { enrichApprovalRoutingContext } = createApprovalRoutingContext(
     params,
     params.serverId?.trim() ?? null,
@@ -2794,7 +2802,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
       const signal = combineInvocationSignals(invocationSignal, context?.signal);
       try {
         signal?.throwIfAborted();
-        const outerCredentials = await readCurrentCredentials();
+        const outerCredentials = (await readCredentialSelection()).credentials;
         if (!outerCredentials) return { failure: actionFailure('not_authenticated') };
         const pat = !deploymentAdmission && shouldUsePatPublicActionTransport(outerCredentials, context);
         if (pat && parsed.kind === 'target_copy') {

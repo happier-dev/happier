@@ -376,10 +376,11 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       const executor = createCliActionExecutorFromCredentials({ credentials,
         ...(missing === null ? { serverId: destination, serverApiUrl: 'https://other-home.example.test' } : {}),
       });
-      await expect(executor.execute('daemon.filesystem.copy', { kind: 'target_copy',
+      const result = await executor.execute('daemon.filesystem.copy', { kind: 'target_copy',
         source: { serverId: source, machineId: 'source', rootPath: '/source', path: 'file.dat' },
         destination: { serverId: destination, machineId: 'destination', rootPath: '/destination', path: 'copy.dat' },
-        overwrite: false, recursive: false }, { surface: 'mcp' })).resolves.toEqual(missing
+        overwrite: false, recursive: false }, { surface: 'mcp' });
+      expect(result, result.ok ? undefined : result.error).toEqual(missing
         ? { ok: false, errorCode: 'target_unavailable', error: `Server profile not found: ${missing}` }
         : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
       if (homeRequests !== null) {
@@ -387,6 +388,39 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       }
     });
   });
+  it.each(['same-Account refresh', 'different Account', 'logout'] as const)(
+    'selects qualified-copy credentials after %s', async selection => {
+      await withPublishedAccountDaemon(async ({ credentials, serverApiUrl }) => {
+        const homeId = 'copy-home';
+        readSettings.mockResolvedValue({ servers: {
+          [homeId]: { id: homeId, name: homeId, serverUrl: serverApiUrl, webappUrl: serverApiUrl },
+        } });
+        const [header, payload, signature] = credentials.token.split('.');
+        const refreshedPayload = { ...JSON.parse(Buffer.from(payload, 'base64url').toString()),
+          ...(selection === 'different Account' ? { sub: 'other-account' } : {}), iat: 2 };
+        const refreshed = { ...credentials,
+          token: `${header}.${Buffer.from(JSON.stringify(refreshedPayload)).toString('base64url')}.${signature}` };
+        const readCredentials = vi.fn(async () => selection === 'logout' ? null : refreshed);
+        const homeRequests: string[] = [];
+        installPatActionTransportMock((url, init) => {
+          homeRequests.push(url.pathname);
+          expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${refreshed.token}`);
+          return { statusCode: 200, body: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) };
+        });
+        const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials,
+          serverId: homeId, serverApiUrl: 'https://other-home.example.test' });
+        // The fixed URL mismatch stops admitted refreshes before a byte effect;
+        // logout or an Account replacement must stop before any Home request.
+        await expect(executor.execute('daemon.filesystem.copy', { kind: 'target_copy',
+          source: { serverId: homeId, machineId: 'source', rootPath: '/source', path: 'file.dat' },
+          destination: { serverId: homeId, machineId: 'destination', rootPath: '/destination', path: 'copy.dat' },
+          overwrite: false, recursive: false }, { surface: 'mcp' }))
+          .resolves.toEqual({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
+        expect(homeRequests).toEqual(selection === 'same-Account refresh' ? ['/v1/features/authenticated'] : []);
+        expect(readCredentials).toHaveBeenCalledOnce();
+      });
+    },
+  );
   it('refuses generic MCP byte transfers before the PAT transport can prepare one', async () => {
     installPatActionTransportMock(() => { throw new Error('A generic MCP caller opened a prepared transfer'); });
     const executor = createCliActionExecutorFromCredentials({ credentials: { token: SYNTHETIC_API_TOKEN, encryption: null } });
