@@ -285,6 +285,8 @@ function TeamSetupPlanPage(
 
   const presetValue = resources.preset?.state.value ?? null;
   const githubServiceKey = resolveQualifiedConnectedAccountServiceKey(GITHUB_CONNECTED_SERVICE_ROUTE.params.serviceId);
+  // The Machine whose sign-in report has settled, told by the Sign-ins section itself.
+  const [signInsSettledFor, settleSignIns] = React.useState<string | null>(null);
   const [excluded, setExcluded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -447,13 +449,16 @@ function TeamSetupPlanPage(
   const sourcesState = resources.sources.state;
   const sourcesLoading = sourcesState.status === 'initial' || sourcesState.status === 'loading';
   const sourcesFailed = sourcesState.status === 'offline' || sourcesState.status === 'refused';
+  // The GitHub CLI's sign-in on the chosen Machine, shown while a GitHub repository is included.
+  const showsSignIns = !!machineId && !!githubServiceKey && included.some(source => source.repository?.provider.kind === 'github');
   // The page's own reads that shape the plan: Sources, each included repository's environment read, and on a chosen
-  // Machine its name and home folder and the checkout lookup. The view latches arrival once these and each found
-  // checkout's setup read have answered.
+  // Machine its name and home folder, the checkout lookup and its sign-in report (whose row and action decide the
+  // Sign-ins section's height). The view latches arrival once these and each found checkout's setup read have answered.
   const planReadsSettled = !sourcesLoading && (!requirementsEnabled || included.every((source) => {
     const entry = requirements.entries.get(source.id);
     return entry?.revision === source.revision && entry.read.status !== 'loading';
-  })) && (!machineId || (machineLabelState !== undefined && checkoutLookupSettled));
+  })) && (!machineId || (machineLabelState !== undefined && checkoutLookupSettled))
+    && (!showsSignIns || signInsSettledFor === machineId);
   const sourceIssue = sourcesFailed ? presentProjectSourceIssue(sourcesState.issue, context.homeName) : null;
   // Keys the Team already shares: sessions on any of the member's Machines use them without the value
   // reaching the member, so they need no step here. Keys a repository asks each member for are owed.
@@ -524,11 +529,11 @@ function TeamSetupPlanPage(
       hasPreset={hasPreset}
       // A sign-in is the person's own Machine and Account: the Machine's sign-in owner admits it, never the Team's
       // write availability, which closes during every routine Team revalidation and moved the page on cold arrival.
-      signIns={machineId && githubServiceKey && included.some(source => source.repository?.provider.kind === 'github') ? (
+      signIns={showsSignIns && machineId && githubServiceKey ? (
         <MachineSignInsSection serverId={context.scope.serverId} machineId={machineId}
           machineName={machineName ?? t('teams.join.setupPage.yourMachine')}
           presented={presented} editable={!running}
-          connectedServiceKey={githubServiceKey} />
+          connectedServiceKey={githubServiceKey} onReportSettled={settleSignIns} />
       ) : null}
       machinePlan={machinePlan}
       repositories={repositories}
@@ -904,7 +909,7 @@ export function TeamSetupPageView(
           ) : null}
         </>
       ) : null}
-      {/* Mounted hidden while arriving too, so the Machine's sign-in report is read alongside the plan's reads. */}
+      {/* Mounted hidden while arriving too: the Machine's sign-in report is one of the plan's reads, so it lands settled. */}
       {props.signIns ? <TeamSetupArrivalHold held={arriving}>{props.signIns}</TeamSetupArrivalHold> : null}
       {repositories.length > 0 ? (
         <TeamSetupArrivalHold testID="team-setup-repositories-frame" held={arriving}>

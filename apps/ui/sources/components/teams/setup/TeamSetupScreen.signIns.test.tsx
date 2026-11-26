@@ -5,6 +5,7 @@ import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+  applyProjectAccountRowsFixture,
   createMachineFixture,
   renderScreen,
   standardCleanup,
@@ -63,10 +64,13 @@ afterEach(async () => {
   await homes.reset();
 });
 
-it('keeps the Sign-ins actions in place while the Team revalidates', async () => {
-  // Cut 50 at 390: a routine Team revalidation closed Team writes for a moment, and the GitHub CLI's
-  // "Use connected account" left and came back, moving the repositories 38 px. A sign-in is the person's
-  // own Machine and Account, so the Team's write availability never decides it.
+/**
+ * A cold Team Setup for one GitHub Source on the person's remembered Machine, whose daemon reports the GitHub CLI
+ * signed in (one Machine id per test: the sign-in owner keeps reports per Machine for the app's lifetime) with a connected account available. `statusAnswered` holds that report back to order it after the plan.
+ */
+async function openColdSetup(machineId: string, statusAnswered: Promise<void> = Promise.resolve()) {
+  let statusRequested: () => void = () => {};
+  const requested = new Promise<void>((resolve) => { statusRequested = resolve; });
   const serverId = await homes.addHome({
     name: 'Setup Home',
     serverUrl: 'https://setup-sign-ins.example.test',
@@ -108,7 +112,6 @@ it('keeps the Sign-ins actions in place while the Team revalidates', async () =>
       coverage: { complete: true, nextCursor: null },
     },
   });
-  const machineId = 'devbox';
   const machine = createMachineFixture({ id: machineId, activeAt: Date.now() });
   const row = createPlainMachineRowFixture({
     id: machineId,
@@ -120,6 +123,8 @@ it('keeps the Sign-ins actions in place while the Team revalidates', async () =>
     body: { machine: row },
   });
   await publishMachineInventoryForTest({ serverId, accountId: 'member' }, [machine]);
+  // The checkout census has answered: this person has no checkout of the Source yet.
+  applyProjectAccountRowsFixture(storage);
   // The Machine this person last chose for Team Setup, as their device remembers it.
   await storage.getState().activateSettingsScope(scope);
   storage.getState().applySettingsForScope(scope, { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {
@@ -165,7 +170,9 @@ it('keeps the Sign-ins actions in place while the Team revalidates', async () =>
           },
         },
       };
-    if (method === 'daemon.agents.signIn.status')
+    if (method === 'daemon.agents.signIn.status') {
+      statusRequested();
+      await statusAnswered;
       return {
         installed: true,
         status: 'signedIn',
@@ -180,6 +187,7 @@ it('keeps the Sign-ins actions in place while the Team revalidates', async () =>
           },
         ],
       };
+    }
     throw new Error(`Unexpected fixture RPC ${method}`);
   });
   const screen = await renderScreen(
@@ -191,6 +199,14 @@ it('keeps the Sign-ins actions in place while the Team revalidates', async () =>
     </TeamSetupPlanProvider>,
   );
   const connected = `machine-setup-sign-in-connected:${toolId}`;
+  return { screen, serverId, scope, team, connected, requested };
+}
+
+it('keeps the Sign-ins actions in place while the Team revalidates', async () => {
+  // Cut 50 at 390: a routine Team revalidation closed Team writes for a moment, and the GitHub CLI's
+  // "Use connected account" left and came back, moving the repositories 38 px. A sign-in is the person's
+  // own Machine and Account, so the Team's write availability never decides it.
+  const { screen, serverId, scope, team, connected } = await openColdSetup('devbox');
   try {
     await waitForHomeGovernance(() =>
       expect(
@@ -206,6 +222,29 @@ it('keeps the Sign-ins actions in place while the Team revalidates', async () =>
     await act(async () => {
       invalidateTeamsSnapshotsForServer(scope.serverId);
     });
+    expect(screen.findByTestId(connected)).not.toBeNull();
+  } finally {
+    await screen.unmount();
+  }
+});
+
+it('reveals the plan once, with the Sign-ins row settled, when the sign-in report lands after the plan reads', async () => {
+  // Cut 50 / 6b16c88d6aa at 390: the plan showed with Sign-ins still holding one loading row, then the GitHub CLI row
+  // landed with its stacked action and pushed the repositories down 38 px. The sign-in report is one of the plan's
+  // first reads, so the plan shows once with the row in its final shape.
+  let answerStatus: () => void = () => {};
+  const statusAnswered = new Promise<void>((resolve) => { answerStatus = resolve; });
+  const { screen, connected, requested } = await openColdSetup('laptop', statusAnswered);
+  try {
+    await requested;
+    // Every other plan read answers while the Machine's sign-in report is still out.
+    await act(async () => { for (let turn = 0; turn < 20; turn += 1) await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.findByTestId('team-setup-run'), screen.getTextContent()).toBeNull();
+    expect(screen.findByTestId('team-setup-repositories-frame')?.props.style).toMatchObject({ visibility: 'hidden' });
+    answerStatus();
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-run'), screen.getTextContent()).not.toBeNull());
+    expect(screen.findByTestId('team-setup-repositories-frame')?.props.style).toBeUndefined();
+    expect(screen.findByTestId('machine-setup-sign-ins-loading')).toBeNull();
     expect(screen.findByTestId(connected)).not.toBeNull();
   } finally {
     await screen.unmount();

@@ -121,6 +121,11 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     presented: boolean;
     editable: boolean;
     connectedServiceKey?: string;
+    /**
+     * Told once this Machine's sign-in report has settled (rows landed, none installed, or the read failed), so a page
+     * that lands its sections together can count it among its own first reads.
+     */
+    onReportSettled?: (machineId: string) => void;
   }>,
 ) {
   const { items: rows, start, phase } = useMachineCliSignIns({
@@ -181,6 +186,11 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
   // The owner lists only CLIs installed on this Machine (512b12e307d); each row says what the Machine reported.
   // Until every CLI has reported, the owner publishes no rows and the section holds one row's shape; the rows then land
   // together. A Machine that reports none drops the held section.
+  const reportSettled = phase !== 'loading' && phase !== 'idle';
+  const { onReportSettled, machineId } = props;
+  React.useEffect(() => {
+    if (reportSettled) onReportSettled?.(machineId);
+  }, [machineId, onReportSettled, reportSettled]);
   if (rows.length === 0 && phase !== 'loading') return null;
   return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
     rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} onUseConnected={useConnected} />;
