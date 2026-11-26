@@ -8,12 +8,13 @@ function normalizeTimestamp(value: number): number | null {
   return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
 }
 
-/**
- * A `not_loaded` snapshot or an epoch observation makes an account addressable before its first
- * provider read. The epoch is not a time anything was read, including retained empty snapshots.
- */
+/** Zero is reserved for an addressable quota record that has no provider observation yet. */
+export function hasConnectedServiceQuotaObservationTime(observedAtMs: number | undefined): observedAtMs is number {
+  return observedAtMs !== undefined && observedAtMs > 0;
+}
+
 export function wasConnectedServiceQuotaObserved(snapshot: Readonly<{ state: string; observedAtMs: number }>): boolean {
-  return snapshot.state !== 'not_loaded' && snapshot.observedAtMs > 0;
+  return snapshot.state !== 'not_loaded' && hasConnectedServiceQuotaObservationTime(snapshot.observedAtMs);
 }
 
 export function isConnectedServiceQuotaObservationAtOrBeforeNow(input: Readonly<{

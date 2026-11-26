@@ -7,6 +7,7 @@ import { PROVIDER_ACCOUNT_USAGE_DAY_MS, StoredProviderAccountUsageDaySummaryV1Sc
     type ProviderAccountUsageDaySummaryReadV1Schema, type ProviderAccountUsageDaySummaryResponseV1Schema,
     type ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import type { z } from 'zod/mini';
+import { hasConnectedServiceQuotaObservationTime } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { ProviderAccountUsagePayloadInvariantError } from './types';
 import { readProviderAccountUsageHistoryCoverage, sameProviderAccountUsageHistoryCoverage } from './historyCoverage';
 import { clearProviderAccountUsagePageProjection } from './recordStorage';
@@ -95,14 +96,40 @@ export async function readProviderAccountUsageDaySummaries(params: Readonly<{ ac
         ...(range ? { dayStartAt: { gte: new Date(range.startAtMs), lt: new Date(range.endAtMs) } } : {}) };
     let missingDays: Response['missingDays'] = [];
     if (params.includeMissingDays || params.includeCoverage) {
-        const pending = await readProviderAccountUsagePendingDays(params, storage)
-            ?? await readProviderAccountUsageLegacyPendingDays({ ...params, range }, storage);
-        const legacy = params.includeMissingDays && (params.requireClockBounds || params.requireCompact)
+        const indexedPending = await readProviderAccountUsagePendingDays(params, storage);
+        const rangeStartAtMs = range?.startAtMs ?? 0;
+        const unreadAtMs = params.includeMissingDays && !hasConnectedServiceQuotaObservationTime(rangeStartAtMs)
+            ? rangeStartAtMs : undefined;
+        const pending = indexedPending ?? await readProviderAccountUsageLegacyPendingDays({
+            ...params, range, observedAfterAtMs: unreadAtMs,
+        }, storage);
+        let legacy = params.includeMissingDays && (params.requireClockBounds || params.requireCompact)
             ? await readLegacySummaryDays({ ...params, range }, storage) : [];
         const days = legacy.length ? [...new Set([...pending, ...legacy])] : pending;
-        const intervals = days.filter(day => !range || day >= range.startAtMs && day < range.endAtMs)
+        let intervals = days.filter(day => !range || day >= range.startAtMs && day < range.endAtMs)
             .map(day => ({ startAtMs: day, endAtMs: day + PROVIDER_ACCOUNT_USAGE_DAY_MS }));
-        missingDays = await readMissingCoverage({ ...params, intervals }, storage);
+          const legacyUnreadDay = unreadAtMs !== undefined && legacy.includes(unreadAtMs);
+        const unreadDay = unreadAtMs !== undefined && (indexedPending || legacyUnreadDay)
+            ? intervals.find(day => day.startAtMs === unreadAtMs) : undefined;
+        if (unreadDay) {
+            const observed = name('observedAt');
+            // Legacy rewrites can have no exact rows left. Their bounded frontier
+            // seek distinguishes compacted detail from a cohort of unread rows.
+            const lowerBound = legacyUnreadDay
+                ? prismaRuntime.sql`${observed} >= ${timestamp(unreadDay.startAtMs)}`
+                : prismaRuntime.sql`${observed} > ${timestamp(unreadDay.startAtMs)}`;
+            const [frontier] = await storage.$queryRaw<Array<{ observedAtMs: number | bigint }>>(prismaRuntime.sql`
+                SELECT ${usageObservedAtMs(observed)} AS ${name('observedAtMs')} FROM ${name('ProviderAccountUsageHistory')}
+                WHERE ${name('accountId')} = ${params.accountId} AND ${name('recordId')} = ${params.recordId}
+                    AND ${lowerBound} AND ${observed} < ${timestamp(unreadDay.endAtMs)}
+                ORDER BY ${observed} DESC LIMIT 1`);
+            const keepDay = frontier ? hasConnectedServiceQuotaObservationTime(Number(frontier.observedAtMs)) : legacyUnreadDay;
+            if (!keepDay) {
+                intervals = intervals.filter(day => day !== unreadDay);
+                legacy = legacy.filter(day => day !== unreadDay.startAtMs);
+            }
+        }
+      missingDays = await readMissingCoverage({ ...params, intervals }, storage);
         if (legacy.length) {
             const retainedDays = new Set(missingDays.map(day => day.dayStartAtMs));
             missingDays.push(...legacy.filter(day => !retainedDays.has(day)).map(dayStartAtMs => ({

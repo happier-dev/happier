@@ -23,13 +23,18 @@ export async function readProviderAccountUsagePendingDays(key: RecordKey, storag
 }
 
 /** Legacy initialization scans retained detail once, before an explicit [] exists. */
-export async function readProviderAccountUsageLegacyPendingDays(key: RecordKey & Readonly<{ range?: { startAtMs: number; endAtMs: number } }>, storage: Storage): Promise<number[]> {
+export async function readProviderAccountUsageLegacyPendingDays(key: RecordKey & Readonly<{
+    range?: { startAtMs: number; endAtMs: number };
+    observedAfterAtMs?: number;
+}>, storage: Storage): Promise<number[]> {
     const observed = prismaRuntime.sql`h.${name('observedAt')}`;
-    const range = key.range ? prismaRuntime.sql`AND ${observed} >= ${timestamp(key.range.startAtMs)} AND ${observed} < ${timestamp(key.range.endAtMs)}` : prismaRuntime.empty;
+    const lowerBound = key.observedAfterAtMs !== undefined ? prismaRuntime.sql`AND ${observed} > ${timestamp(key.observedAfterAtMs)}`
+        : key.range ? prismaRuntime.sql`AND ${observed} >= ${timestamp(key.range.startAtMs)}` : prismaRuntime.empty;
+    const upperBound = key.range ? prismaRuntime.sql`AND ${observed} < ${timestamp(key.range.endAtMs)}` : prismaRuntime.empty;
     const rows = await storage.$queryRaw<Array<{ dayStartAtMs: number | bigint }>>(prismaRuntime.sql`
         SELECT DISTINCT ${usageObservedDayStartMs(observed)} AS ${name('dayStartAtMs')}
         FROM ${name('ProviderAccountUsageHistory')} h
-        WHERE h.${name('accountId')} = ${key.accountId} AND h.${name('recordId')} = ${key.recordId} ${range}
+        WHERE h.${name('accountId')} = ${key.accountId} AND h.${name('recordId')} = ${key.recordId} ${lowerBound} ${upperBound}
             AND NOT EXISTS (SELECT 1 FROM ${name('ProviderAccountUsageDaySummary')} s
                 WHERE s.${name('accountId')} = h.${name('accountId')} AND s.${name('recordId')} = h.${name('recordId')}
                     AND s.${name('dayStartAt')} = ${usageObservedDayStart(observed)} AND ${coverageCount()} > 0)
