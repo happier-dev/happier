@@ -11781,6 +11781,13 @@ progress publishes conflicts, Details and choose-another when those controls
 are shown. These commands use the same presentation handlers as the controls;
 starting, retrying or resuming a handoff remains with its semantic Actions.
 
+The Fork chooser publishes Configure, replay-settings navigation and technical
+details while offered. Its unknown-outcome Check for Fork refreshes the Session
+projection and finds the original request's child; retry-open uses the existing
+child navigation. Neither command starts or repeats a Fork. Session header, Info,
+Session row and transcript launchers carry the existing mounted-command bridge;
+guarded close remains owned by the modal host.
+
 The mounted Sync conflict view also publishes Back, comparison choices, local source
 and target choices, and Ask Agent through that inventory. Ask Agent opens the
 same authored Session draft as the button. Resolution still uses its existing

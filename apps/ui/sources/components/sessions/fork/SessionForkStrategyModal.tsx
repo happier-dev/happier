@@ -1,5 +1,6 @@
 import type { Router } from 'expo-router';
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -255,6 +256,19 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
         announceAccessibilityMessage(announcement);
     }, [announcement]);
 
+    const checkForFork = () => fireAndForget(flow.checkForFork(), { tag: 'SessionForkStrategyModal.checkForFork' });
+    const retryOpen = () => fireAndForget(flow.retryOpen(), { tag: 'SessionForkStrategyModal.retryOpen' });
+    const openFailureDetails = () => {
+        if (failurePresentation?.technicalDetails) showActionFailureDetails(failurePresentation.technicalDetails);
+    };
+    useCurrentUiContextLocalCommands([
+        ...(onConfigureNewSession && !choicesDisabled ? [{ key: 'configure', title: t('session.forking.strategy.configure.title'), invoke: handleConfigureNewSession }] : []),
+        ...(!replayAvailable && !choicesDisabled ? [{ key: 'replay-settings', title: t('session.forking.strategy.unavailable.replaySettingsAction'), invoke: handleOpenReplaySettings }] : []),
+        ...(failurePresentation?.technicalDetails ? [{ key: 'details', title: t('approvals.technicalDetails'), invoke: openFailureDetails }] : []),
+        ...(phase.type === 'unknown' && !phase.checking ? [{ key: 'check', title: t('session.forking.strategy.unknown.checkAction'), invoke: checkForFork }] : []),
+        ...(phase.type === 'opening' && phase.stalled ? [{ key: 'open', title: t('session.forking.strategy.progress.openAction'), invoke: retryOpen }] : []),
+    ], { foregroundOverlay: true });
+
     return (
         <View style={styles.body} testID={`${SESSION_FORK_STRATEGY_MODAL_TEST_ID}-body`}>
             {sourcePreview ? (
@@ -335,9 +349,7 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                         <Text style={styles.noticeBody}>{failurePresentation.sentence}</Text>
                         {failurePresentation.technicalDetails ? (
                             <RoundButton size="small" testID="session-fork-strategy-failure-details"
-                                title={t('approvals.technicalDetails')} onPress={() => {
-                                    if (failurePresentation.technicalDetails) showActionFailureDetails(failurePresentation.technicalDetails);
-                                }} />
+                                title={t('approvals.technicalDetails')} onPress={openFailureDetails} />
                         ) : null}
                     </View>
                 </View>
@@ -377,9 +389,7 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                         title={t('session.forking.strategy.unknown.checkAction')}
                         loading={phase.checking}
                         disabled={phase.checking}
-                        onPress={() => fireAndForget(flow.checkForFork(), {
-                            tag: 'SessionForkStrategyModal.checkForFork',
-                        })}
+                        onPress={checkForFork}
                     />
                 </View>
             ) : null}
@@ -390,9 +400,7 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                         size="small"
                         testID="session-fork-strategy-open"
                         title={t('session.forking.strategy.progress.openAction')}
-                        onPress={() => fireAndForget(flow.retryOpen(), {
-                            tag: 'SessionForkStrategyModal.retryOpen',
-                        })}
+                        onPress={retryOpen}
                     />
                 </View>
             ) : null}

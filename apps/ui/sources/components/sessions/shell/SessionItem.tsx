@@ -1,4 +1,5 @@
 import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { resolveSessionRowPaint } from './row/sessionRowPaint';
@@ -621,6 +622,7 @@ const SessionItemContent = React.memo(
         appearanceColor,
     }: SessionItemContentProps) => {
         const router = useDestinationRouter();
+        const commandBridge = useCurrentUiContextCommandBridge();
         const { theme } = useUnistyles();
         // A Project-led mark observes the Project's one shared favicon result (P5 U5): the visible Project
         // header owns the demand, so a row never resolves, retries or holds the request (`demand: false`).
@@ -933,6 +935,7 @@ const SessionItemContent = React.memo(
                     serverId ? { serverId, sessionId: resolvedSession.id } : resolvedSession.id,
                 );
                 openSessionForkStrategyFlow({
+                    commandBridge,
                     navigation: router,
                     sessionId: resolvedSession.id,
                     forkSupportSource: currentSession,
@@ -955,6 +958,7 @@ const SessionItemContent = React.memo(
             })(), { tag: 'SessionItem.openSessionForkStrategyFlow' });
         }, [
             agentSwitchingEnabled,
+            commandBridge,
             forkActionContext,
             navigateToSession,
             router,

@@ -57,6 +57,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useSessionHandoffAction } from '@/sync/domains/sessionHandoff/useSessionHandoffAction';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
@@ -268,6 +269,7 @@ function SessionInfoContent({
     sessionId: session.id, serverId: sessionServerId, cockpitEnabled, surface: 'skills', rightTabId: 'skills',
   }) as never), [router, session.id, sessionServerId, cockpitEnabled]);
   const sessionActions = useMountedActionExecution(sessionServerId);
+  const commandBridge = useCurrentUiContextCommandBridge();
   const writeClipboard = useClipboardWrite(sessionServerId);
   const profile = useProfile();
   const sessionPluginAddress = useSessionAddressForSessionId(
@@ -1026,6 +1028,7 @@ function SessionInfoContent({
   // before any fork effect is issued, from every UI entry point.
   const performFork = React.useCallback(() => {
     openSessionForkStrategyFlow({
+      commandBridge,
       navigation: router,
       sessionId: session.id,
       forkSupportSource: session,
@@ -1054,6 +1057,7 @@ function SessionInfoContent({
     });
   }, [
     agentSwitchingEnabled,
+    commandBridge,
     currentAgentCapabilities,
     executionRunsEnabled,
     reachableMachineId,

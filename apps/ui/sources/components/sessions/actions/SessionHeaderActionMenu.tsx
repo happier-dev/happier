@@ -53,6 +53,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useSessionHandoffAction } from '@/sync/domains/sessionHandoff/useSessionHandoffAction';
 import {
   resolveSessionHandoffUiAvailability,
@@ -428,6 +429,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
   const { open, setOpen, session, sessionServerId, companionAddress, followEditor, showCompanionInOverflow,
     companionHeaderIntent, applyCompanionHeaderIntent, invokePluginHeaderAction } = props;
   const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
+  const commandBridge = useCurrentUiContextCommandBridge();
   const presentationActiveSignal = useLayoutPresentationSignal();
   const followControllerRef = React.useRef<AbortController | null>(null);
   React.useEffect(() => {
@@ -1070,6 +1072,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
       // path behind the modal: the user chooses Native, Replay or Configure
       // before any fork effect is issued.
       openSessionForkStrategyFlow({
+        commandBridge,
         navigation: router,
         sessionId: props.sessionId,
         forkSupportSource: session,

@@ -22,6 +22,9 @@ const forkSessionMock = vi.hoisted(() => vi.fn());
 const announceAccessibilityMessageMock = vi.hoisted(() => vi.fn());
 const routerPushMock = vi.hoisted(() => vi.fn());
 
+// The renderer has no DOM; keep real modal/command logic over the shared native-host boundary.
+vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
@@ -419,4 +422,161 @@ describe('SessionForkStrategyModal', () => {
         await act(async () => { await openButton?.props.onPress(); });
         await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     });
+    async function installCommandMachineFixture() {
+        const { createHydratedPlainMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION } = await import('@/utils/system/versionUtils');
+        const machine = createHydratedPlainMachineFixture({ id: 'machine_1', accountId: 'alice',
+            machine: { daemonState: { cliVersion: MINIMUM_CLI_SESSION_FORK_REQUEST_ID_VERSION } } });
+        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        homes.answer(serverId, '/v1/machines/machine_1', { body: {
+            machine: createPlainMachineRowFixture({ id: machine.id, accountId: 'alice', machine }),
+        } });
+    }
+
+    it('publishes only enabled presentation and reconciliation commands, never a fork', async () => {
+        await installCommandMachineFixture();
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        const close = vi.fn();
+        const configure = vi.fn();
+        const navigate = vi.fn();
+        const screen = await renderMountedCurrentUiContext(<><Observe /><SessionForkStrategyModal
+            request={{ ...REQUEST, serverId }} availability={{ native: true, replay: false, configure: true, nativeUnavailableReason: null }}
+            navigate={navigate} navigation={{ push: routerPushMock }} onClose={close} setChrome={vi.fn()} onConfigureNewSession={configure} /></>);
+        const current = reader!;
+        const titles = () => current.readCurrentUiContext()!.commands.map(command => command.title);
+        await vi.waitFor(() => expect(titles()).toEqual([
+            'session.forking.strategy.configure.title', 'session.forking.strategy.unavailable.replaySettingsAction',
+        ]));
+        const address = current.readCurrentUiContext()!.commands[0]!.id;
+        const command = current.resolveCurrentUiCommand(address)!;
+        if (command.command.kind !== 'hostLocal') throw new Error('Expected local command');
+        await act(async () => { await command.command.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } }); });
+        expect(configure).toHaveBeenCalledOnce();
+        expect(close).toHaveBeenCalledOnce();
+        expect(forkSessionMock).not.toHaveBeenCalled();
+        const settings = current.resolveCurrentUiCommand(current.readCurrentUiContext()!.commands[1]!.id)!;
+        if (settings.command.kind !== 'hostLocal') throw new Error('Expected local settings command');
+        await act(async () => { await settings.command.invoke({ signal: settings.retirementSignal, context: { surface: 'agent' } }); });
+        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/session/resume');
+        forkSessionMock.mockResolvedValue({ ok: false, errorCode: 'SESSION_WEBHOOK_TIMEOUT', errorMessage: 'timed out' });
+        await screen.pressByTestIdAsync('session-fork-strategy-native');
+        await vi.waitFor(() => expect(titles()).toEqual(['session.forking.strategy.unknown.checkAction']));
+        const { SessionForkRpcParamsSchema } = await import('@happier-dev/protocol/sessions/fork');
+        const submitted = SessionForkRpcParamsSchema.parse(forkSessionMock.mock.calls[0]![0]);
+        expect(submitted.requestId).toBeTruthy();
+        for (const [id, requestId] of [['other_child', 'another-request'], ['reconciled_child', submitted.requestId]] as const) {
+            installSessionActionFixture({ homes, storage, serverId, session: { id,
+                metadata: { path: '/repo', host: 'tester.local', machineId: 'machine_1', flavor: 'codex',
+                    forkV1: { v: 1, parentSessionId: 'parent_1', parentCutoffSeqInclusive: 12, createdAtMs: 1,
+                        strategy: 'provider_native', requestId } } } });
+        }
+        const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { createCompactSessionListRowFixture } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+        homes.answer(serverId, '/v2/sessions', { body: {
+            sessions: Object.values(storage.getState().sessions).map(session =>
+                createCompactSessionListRowFixture(createPlainSessionByIdResponseFixture(session).session)),
+            nextCursor: null, hasNext: false,
+        } });
+        const check = current.resolveCurrentUiCommand(current.readCurrentUiContext()!.commands[0]!.id)!;
+        if (check.command.kind !== 'hostLocal') throw new Error('Expected local check');
+        await act(async () => { await check.command.invoke({ signal: check.retirementSignal, context: { surface: 'agent' } }); });
+        await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('reconciled_child', { serverId }));
+        expect(forkSessionMock).toHaveBeenCalledOnce();
+        await screen.update(<Observe />);
+        expect(titles()).toEqual([]);
+        expect(current.resolveCurrentUiCommand(address)).toBeNull();
+    });
+    it('opens the same failure details from the mounted command and the press', async () => {
+        await installCommandMachineFixture();
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        forkSessionMock.mockResolvedValue({ ok: false, errorCode: 'SPAWN_FAILED', errorMessage: 'boom' });
+        const screen = await renderMountedCurrentUiContext(<><Observe /><SessionForkStrategyModal
+            request={{ ...REQUEST, serverId }} availability={{ native: true, replay: true, configure: true, nativeUnavailableReason: null }}
+            navigate={vi.fn()} navigation={{ push: routerPushMock }} onClose={vi.fn()} onConfigureNewSession={vi.fn()} /></>,
+        { withModalProvider: true });
+        await vi.waitFor(() => expect(screen.findByTestId('session-fork-strategy-native')?.props.disabled).not.toBe(true));
+        await screen.pressByTestIdAsync('session-fork-strategy-native');
+        const current = reader!;
+        await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.map(command => command.title).sort())
+            .toEqual(['approvals.technicalDetails', 'session.forking.strategy.configure.title']));
+        const address = current.readCurrentUiContext()!.commands.find(command => command.title === 'approvals.technicalDetails')!.id;
+        const resolved = current.resolveCurrentUiCommand(address)!;
+        if (resolved.command.kind !== 'hostLocal') throw new Error('Expected local command');
+        await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+        const alert = screen.findAllByType(WebAlertModal).find(node => node.props.visible)!;
+        expect(alert.props.config.title).toBe('approvals.technicalDetails');
+        const message = alert.props.config.message;
+        expect(message).toContain('SPAWN_FAILED');
+        await act(async () => { alert.props.onClose(); });
+        await screen.pressByTestIdAsync('session-fork-strategy-failure-details');
+        expect(screen.findAllByType(WebAlertModal).find(node => node.props.visible)!.props.config.message).toBe(message);
+        expect(forkSessionMock).toHaveBeenCalledOnce();
+    });
+
+    it('publishes commands through the real modal opener and retires them on close', async () => {
+        await installCommandMachineFixture();
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { useCurrentUiContextCommandBridge } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { openSessionForkStrategyModal } = await import('./openSessionForkStrategyModal');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        let open: (() => void) | undefined;
+        function Opener() {
+            reader = useOptionalCurrentUiContextReader();
+            const commandBridge = useCurrentUiContextCommandBridge();
+            open = () => { openSessionForkStrategyModal({ commandBridge, request: { ...REQUEST, serverId },
+                availability: { native: true, replay: true, configure: true, nativeUnavailableReason: null },
+                navigate: vi.fn(), navigation: { push: routerPushMock }, configureNewSession: vi.fn() }); };
+            return null;
+        }
+        await renderMountedCurrentUiContext(<Opener />, { withModalProvider: true });
+        await act(async () => { open!(); });
+        const current = reader!;
+        await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.map(command => command.title).sort())
+            .toEqual(['common.close', 'session.forking.strategy.configure.title']));
+        const address = current.readCurrentUiContext()!.commands.find(command => command.title === 'common.close')!.id;
+        const resolved = current.resolveCurrentUiCommand(address)!;
+        if (resolved.command.kind !== 'hostLocal') throw new Error('Expected local command');
+        await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+        expect(current.resolveCurrentUiCommand(address)).toBeNull();
+        expect(forkSessionMock).not.toHaveBeenCalled();
+    });
+
+    it('publishes only retry-open after the child was created and never repeats the fork', async () => {
+        await installCommandMachineFixture();
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+        function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+        forkSessionMock.mockResolvedValue({ ok: true, childSessionId: 'child_1' });
+        hydrateChild = false;
+        homes.answer(serverId, '/v2/sessions/child_1?accessProjectionVersion=1', { status: 404, body: { error: 'not_found' } });
+        const navigate = vi.fn();
+        const screen = await renderMountedCurrentUiContext(<><Observe /><SessionForkStrategyModal
+            request={{ ...REQUEST, serverId }} availability={{ native: true, replay: true, configure: false, nativeUnavailableReason: null }}
+            navigate={navigate} navigation={{ push: routerPushMock }} onClose={vi.fn()} onConfigureNewSession={null} /></>);
+        await vi.waitFor(() => expect(screen.findByTestId('session-fork-strategy-native')?.props.disabled).not.toBe(true));
+        await screen.pressByTestIdAsync('session-fork-strategy-native');
+        const current = reader!;
+        await vi.waitFor(() => expect(current.readCurrentUiContext()!.commands.map(command => command.title))
+            .toEqual(['session.forking.strategy.progress.openAction']));
+        const address = current.readCurrentUiContext()!.commands[0]!.id;
+        installChild('child_1');
+        const command = current.resolveCurrentUiCommand(address)!;
+        if (command.command.kind !== 'hostLocal') throw new Error('Expected local command');
+        await act(async () => { await command.command.invoke({ signal: command.retirementSignal, context: { surface: 'agent' } }); });
+        await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('child_1', { serverId }));
+        expect(forkSessionMock).toHaveBeenCalledOnce();
+        expect(current.readCurrentUiContext()!.commands).toEqual([]);
+        expect(current.resolveCurrentUiCommand(address)).toBeNull();
+    });
+
+
 });

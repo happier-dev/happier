@@ -1,4 +1,5 @@
 import { Modal } from '@/modal';
+import type { BaseModalConfig } from '@/modal/types';
 import type { Router } from 'expo-router';
 import { t } from '@/text';
 import type { SessionForkStrategyAvailability } from '@/sync/domains/sessionFork/forkUiSupport';
@@ -11,6 +12,7 @@ import {
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 export type OpenSessionForkStrategyModalParams = Readonly<{
+    commandBridge?: BaseModalConfig['commandBridge'];
     request: SessionForkStrategyRequest;
     availability: SessionForkStrategyAvailability;
     /** Short quotation of the message this fork branches from, when there is one. */
@@ -36,6 +38,7 @@ export type OpenSessionForkStrategyModalParams = Readonly<{
  */
 export function openSessionForkStrategyModal(params: OpenSessionForkStrategyModalParams): string {
     return Modal.show({
+        commandBridge: params.commandBridge,
         component: SessionForkStrategyModal,
         props: {
             request: params.request,

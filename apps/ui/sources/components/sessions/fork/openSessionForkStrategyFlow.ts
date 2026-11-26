@@ -22,6 +22,7 @@ import {
 } from './openSessionForkStrategyModal';
 
 export type OpenSessionForkStrategyFlowParams = Readonly<{
+    commandBridge?: OpenSessionForkStrategyModalParams['commandBridge'];
     sessionId: string;
     /** The interaction-derived fork source; a read-only transcript supplies null. */
     forkSupportSource: SessionForkSupportSource | null | undefined;
@@ -78,6 +79,7 @@ export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowP
     });
 
     const modalParams: OpenSessionForkStrategyModalParams = {
+        commandBridge: params.commandBridge,
         availability,
         sourcePreview: params.sourcePreview ?? null,
         request: {

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
 import type { TranscriptForkCommon } from '../transcriptSessionCommon';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -18,6 +19,7 @@ export function useForkMessageAction(props: Readonly<{
     isForkAllowed: () => boolean;
 }>) {
     const source = useSessionTranscriptSource();
+    const commandBridge = useCurrentUiContextCommandBridge();
     return React.useCallback(() => {
         if (!props.isForkAllowed() || source.navigate === null) return;
         const forkSource = props.forkCommon.sessionForkSupportSource;
@@ -27,6 +29,7 @@ export function useForkMessageAction(props: Readonly<{
             : props.sessionId);
         const serverId = resolveTranscriptMessageServerId(props.sessionId, props.serverId, forkSource?.serverId);
         openSessionForkStrategyFlow({
+            commandBridge,
             navigation: { push: (href) => source.navigate?.(String(href)) },
             sessionId: props.sessionId,
             forkSupportSource: forkSource,
@@ -55,6 +58,6 @@ export function useForkMessageAction(props: Readonly<{
                 source.navigate?.(query ? `${route.pathname}?${query}` : route.pathname);
             },
         });
-    }, [props.sessionId, props.serverId, props.upToSeqInclusive, props.restoredDraftText,
+    }, [commandBridge, props.sessionId, props.serverId, props.upToSeqInclusive, props.restoredDraftText,
         props.messageId, props.forkCommon, props.isForkAllowed, source]);
 }
