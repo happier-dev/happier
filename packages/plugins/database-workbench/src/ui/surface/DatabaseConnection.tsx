@@ -7,7 +7,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { DatabaseDescriptorV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { Action, Button, Form, SelectionTiles, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Action, Button, ErrorState, Form, Row, SelectionTiles, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList } from '@happier-dev/plugin-ui/components';
 import {
   projectPluginActionControlExecutionV1, projectPluginActionRejectionV1, usePluginHostApi, type PluginActionExecution,
@@ -101,14 +101,43 @@ function SQLiteFileConnection({ scope, onOpened, onCancel }: Readonly<{ scope: W
   const host = usePluginHostApi();
   const [path, setPath] = React.useState('');
   const [execution, setExecution] = React.useState<PluginActionExecution>({ status: 'idle' });
+  const [picking, setPicking] = React.useState(false);
+  const [unavailable, setUnavailable] = React.useState<'checkout_unavailable' | 'outside_checkout' | null>(null);
+  // The host's checkout picker fills the same field typing does: a dismissal changes nothing and is not an error, and a
+  // checkout the host cannot offer says its typed reason (Host API 1.3 pickWorkspaceFile).
+  const pick = async () => {
+    setPicking(true);
+    try {
+      const picked = await host.pickWorkspaceFile();
+      if (picked.kind === 'picked') {
+        setUnavailable(null);
+        setPath(picked.relativePath);
+      } else if (picked.kind === 'unavailable') {
+        setUnavailable(picked.reason);
+      }
+    } catch (error) {
+      setExecution(projectPluginActionRejectionV1(error, t));
+    } finally {
+      setPicking(false);
+    }
+  };
 
   return <>
-    <TextField
-      label={t('plugins.database.connect.filePath', 'SQLite file path')}
-      placeholder={t('plugins.database.connect.filePathPlaceholder', 'Path relative to the checkout')}
-      value={path}
-      onChange={setPath}
-    />
+    <Row gap="small" align="flex-end">
+      <Stack grow>
+        <TextField
+          label={t('plugins.database.connect.filePath', 'SQLite file path')}
+          placeholder={t('plugins.database.connect.filePathPlaceholder', 'Path relative to the checkout')}
+          value={path}
+          onChange={setPath}
+        />
+      </Stack>
+      <Button variant="secondary" title={t('plugins.database.connect.chooseFile', 'Choose file…')} busy={picking}
+        disabled={picking} onPress={() => { void pick(); }} />
+    </Row>
+    {unavailable === null ? null : <ErrorState layout="line" title={unavailable === 'outside_checkout'
+      ? t('plugins.database.connect.fileOutsideCheckout', 'That file is outside this checkout')
+      : t('plugins.database.connect.checkoutUnavailable', 'This checkout isn’t available on its Machine right now')} />}
     <Action.Failure execution={execution} />
     <ConnectActions onCancel={onCancel}>
     <Action.Control

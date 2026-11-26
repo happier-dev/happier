@@ -1674,6 +1674,61 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
+  it.each(['servicesPanel', 'rightSidebarTab'] as const)('picks the SQLite file from the checkout on %s; a dismissal changes nothing and an unavailable checkout says why', async container => {
+    const path = 'data/picked.sqlite';
+    const target = { ...scope, source: { kind: 'sqlite_file' as const, path } };
+    const selected: DatabaseDescriptorV1 = { ...descriptor, target, engine: 'sqlite', label: path, origin: { label: path } };
+    const dispatch = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async request => {
+      expect(request).toMatchObject({ input: { operation: 'describe', target } });
+      return { ok: true, result: projectNativeJsonValueForTransport({ ok: true, operation: 'describe', descriptor: selected }) };
+    });
+    const control = createPluginUiActionControlTestHost(dispatch);
+    const answers = [
+      { kind: 'cancelled' as const },
+      { kind: 'unavailable' as const, reason: 'checkout_unavailable' as const },
+      { kind: 'picked' as const, relativePath: path },
+    ];
+    const pickWorkspaceFile = vi.fn(async () => answers.shift()!);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `pick-${container}`, mountNonce: 'picked-sqlite-file' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: container === 'servicesPanel' ? renderPanel : renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: container === 'servicesPanel' ? 'databases-panel' : 'database-session-rail',
+      }, container },
+      target: container === 'servicesPanel' ? { kind: 'services' } : { kind: 'session', sessionId: 'session' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: daemonAnswers([]), actionControl: control.handler, pickWorkspaceFile },
+    });
+    try {
+      await fixture.press(await fixture.findByRole('button', { name: 'Connect a database' }));
+      await fixture.press(await fixture.getByRole('radio', { name: 'A SQLite file, A file in this checkout' }));
+      const field = () => document.querySelector<HTMLInputElement>('input[aria-label="SQLite file path"]')!;
+      // Typing stays the alternative; the picker fills the same field.
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field(), 'typed.sqlite');
+        field().dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const choose = async () => { await fixture.press(await fixture.getByRole('button', { name: 'Choose file…' })); await settle(); };
+      // Dismissed: the field keeps what was there, and nothing is called an error.
+      await choose();
+      expect(field().value).toBe('typed.sqlite');
+      expect(await fixture.queryByText('This checkout isn’t available on its Machine right now')).toBeUndefined();
+      // An unavailable checkout says its typed reason; the field is unchanged.
+      await choose();
+      expect(await fixture.queryByText('This checkout isn’t available on its Machine right now')).toBeTruthy();
+      expect(field().value).toBe('typed.sqlite');
+      // Picked: the checkout-relative path fills the field and opens as typed would.
+      await choose();
+      expect(field().value).toBe(path);
+      expect(await fixture.queryByText('This checkout isn’t available on its Machine right now')).toBeUndefined();
+      await act(async () => control.press('Open SQLite file'));
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(pickWorkspaceFile).toHaveBeenCalledTimes(3);
+    } finally { await fixture.dispose(); }
+  });
+
   it('opens the selected table and Refresh reads its structure and rows once', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({
