@@ -252,6 +252,25 @@ it('shows a watched service in Machine Overview from the same live Resource as S
     } finally { await hook.unmount(); }
 });
 
+it('opens Overview inventory with one Services acquisition and no Account Check subscriptions', async () => {
+    const row = service('Overview watch');
+    const resource = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+    const { MachineInventoryBlock } = await import('@/components/machines/page/MachineInventoryBlock');
+    const subscriptions = vi.spyOn(await import('@/sync/domains/state/storageSubscriptions'), 'subscribeStoragePaths');
+    const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+        <MachineInventoryBlock serverId={serverId} machineId={machineId} scope={{ serverId, accountId }} />
+    </AccountNoticeInvestigationBoundary>);
+    try {
+        await vi.waitFor(() => expect(resource.reads).toBe(1));
+        const checkAcquisitions = subscriptions.mock.calls.filter(([paths]) => paths.some(path =>
+            path[0] === 'state' && (path[1] === 'automations' || path[1] === 'automationDefinitionNextCursor')));
+        expect(checkAcquisitions).toHaveLength(0);
+    } finally {
+        subscriptions.mockRestore();
+        await screen.unmount();
+    }
+});
+
 it('retains settled Services during credential resolution, publishes changes once and retires another Account\'s rows', async () => {
     const row = service('Continuity');
     const stableRow = service('Unchanged');

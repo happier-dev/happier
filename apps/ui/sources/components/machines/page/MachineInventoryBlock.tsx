@@ -4,6 +4,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { inventoryMachineKey } from '@/components/store/inventory/inventoryRows';
 import { MANAGED_INVENTORY_PREVIEW_ROWS, ManagedInventoryDirectory } from '@/components/store/inventory/ManagedInventoryDirectory';
+import type { ManagedInventoryKind } from '@/components/store/inventory/useManagedInventory';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -17,6 +18,10 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { MachineManagedInventorySection } from './MachineManagedInventorySection';
 
 const NO_OPEN = () => {};
+const OVERVIEW_INVENTORY_KINDS = [
+  'app', 'browserExtension', 'mcpServer', 'skill', 'agent', 'provider', 'plugin',
+  'software', 'watchedService', 'setup', 'configuredBackup',
+] as const satisfies readonly ManagedInventoryKind[];
 
 /**
  * What's on this Machine (S50 lab `i:machine`): the same inventory composition as Store → Installed,
@@ -51,6 +56,7 @@ export function MachineInventoryBlock(
             scope: props.scope,
             machine,
             projectKey: null,
+            kinds: OVERVIEW_INVENTORY_KINDS,
             presented: focused && layoutPresented,
           }
         : null,

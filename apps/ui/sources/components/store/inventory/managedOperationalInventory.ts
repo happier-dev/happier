@@ -10,7 +10,7 @@ import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from '..
 import type { MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
-import { useAutomations, useIsDataReady } from '@/sync/store/hooks';
+import { useAutomations } from '@/sync/store/hooks';
 import { useAutomationDefinitionPagination } from '@/components/automations/list/useAutomationDefinitionPagination';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { isPluginEventAutomationTrigger, type AutomationDefinition } from '@/sync/domains/automations/automationTypes';
@@ -230,18 +230,18 @@ export function useAccountConfiguredChecks(scope: ServerAccountScope | null, pre
 
 export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission,
     selection?: ConfiguredCheckSelection, completeCoverage = false): ConfiguredCheckResult {
-    const allAutomations = useAutomations();
+    const scope = admitted.scope;
+    const listed = demand.presented && !!scope && !input.projectKey && !input.machine;
+    const allAutomations = useAutomations({ enabled: listed });
     const automationId = selection?.automationId;
     const triggerId = selection?.triggerId;
     const automations = React.useMemo(() => automationId === undefined ? allAutomations
         : allAutomations.filter(row => row.id === automationId), [allAutomations, automationId]);
-    const ready = useIsDataReady();
-    const scope = admitted.scope;
-    const listed = demand.presented && !!scope && !input.projectKey && !input.machine;
+    const ready = getStorage()(state => listed && state.isDataReady);
     const lifetime = React.useMemo(() => admitted.binding ? readServerAccountScopeOwnerLifetime(admitted.binding) : null, [admitted.binding]);
     const definitions = useConfiguredCheckDefinitions(lifetime, listed, automations, selection);
     const complete = completeCoverage && !selection;
-    const { nextCursor, loadMoreFailed, requestPage } = useAutomationDefinitionPagination(complete && listed && ready);
+    const { nextCursor, loadMoreFailed, requestPage } = useAutomationDefinitionPagination({ automatic: complete && ready, enabled: listed });
     // A Check is one kind of Automation, paged with all the others: one Show more reads on until the next saved Check
     // arrives or the list ends, so it never answers with nothing (SERVICES-ACCEPT-1116 F4).
     const loadAutomations = React.useCallback(async () => {

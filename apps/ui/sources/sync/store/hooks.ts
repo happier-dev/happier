@@ -3662,16 +3662,17 @@ export function useAutomationCatalogRead(enabled: boolean, serverId?: string | n
   }, [lifetime, serverId]);
 }
 
-export function useAutomations(options: Readonly<{ read?: boolean }> = {}): AutomationDefinition[] {
-  useAutomationCatalogRead(options.read === true);
+export function useAutomations(options: Readonly<{ read?: boolean; enabled?: boolean }> = {}): AutomationDefinition[] {
+  const enabled = options.enabled !== false;
+  useAutomationCatalogRead(enabled && options.read === true);
   // An Account can hold a high-cardinality Automation catalog with no aggregate
   // definition ceiling, and a selector runs on every store mutation. Subscribe
   // to the stable record instead and order it once per actual Automation change
   // (see the note on useSessionMessages).
-  const isDataReady = getStorage()((state) => state.isDataReady);
-  const automations = getStorage()((state) => state.automations);
+  const isDataReady = getStorage()((state) => enabled && state.isDataReady);
+  const automations = getStorage()((state) => enabled ? state.automations : null);
   return React.useMemo(
-    () => (isDataReady
+    () => (isDataReady && automations
       ? sortValuesByUpdatedAtDescending(automations).sort((left, right) => (
           right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)
         ))
@@ -3680,8 +3681,8 @@ export function useAutomations(options: Readonly<{ read?: boolean }> = {}): Auto
   );
 }
 
-export function useAutomationDefinitionNextCursor(): string | null {
-  return getStorage()((state) => state.automationDefinitionNextCursor);
+export function useAutomationDefinitionNextCursor(enabled = true): string | null {
+  return getStorage()((state) => enabled ? state.automationDefinitionNextCursor : null);
 }
 
 export function useEnabledAutomationsCountForSession(

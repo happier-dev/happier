@@ -17,10 +17,11 @@ type PageRequestState = Readonly<{
  * The cursor and exact-CAS append stay in the sync/store owners; this hook only
  * prevents duplicate scroll requests and exposes retry state to list hosts.
  */
-export function useAutomationDefinitionPagination(automatic = false) {
+export function useAutomationDefinitionPagination(options: Readonly<{ automatic?: boolean; enabled?: boolean }> = {}) {
+    const { automatic = false, enabled = true } = options;
     const accountScope = useActiveServerAccountScope();
     const scopeKey = accountScope ? serverAccountScopeKeySuffix(accountScope) : 'unscoped';
-    const nextCursor = useAutomationDefinitionNextCursor();
+    const nextCursor = useAutomationDefinitionNextCursor(enabled);
     const [request, setRequest] = React.useState<PageRequestState>(null);
     const requestRef = React.useRef<PageRequestState>(null);
     const currentScopeRef = React.useRef(scopeKey);
