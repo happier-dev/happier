@@ -227,9 +227,16 @@ describe('computer runtime Actions from Happier', () => {
     });
 
     it('returns the computer owner’s refusal as a failure, not as a payload', async () => {
-        const machine = vi.fn<ComputerMachineRpc>(async () => ({ ok: false, errorCode: 'computer_target_in_use', error: 'computer_target_in_use' }));
-        expect(await executorWith(machine).execute('computer.target.select', { machineId: 'machine_1', target }, {
+        const failure = { ok: false, errorCode: 'computer_target_in_use', error: 'PRIVATE_MACHINE_PROSE',
+            details: { reason: 'private_project_name' }, requestId: 'computer-boundary-request', effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } } as const;
+        const machine = vi.fn<ComputerMachineRpc>(async () => failure);
+        const result = await executorWith(machine).execute('computer.target.select', { machineId: 'machine_1', target }, {
             surface: 'ui', authority: 'present_user', defaultSessionId: 'session_1',
-        })).toMatchObject({ ok: false, errorCode: 'computer_target_in_use' });
+        });
+        expect(result).toMatchObject({ ok: false, errorCode: failure.errorCode, error: failure.errorCode,
+            requestId: failure.requestId, effectAttempted: false, failureCause: failure.failureCause });
+        expect(result).not.toHaveProperty('details');
+        expect(JSON.stringify(result)).not.toContain('PRIVATE_MACHINE_PROSE');
     });
 });

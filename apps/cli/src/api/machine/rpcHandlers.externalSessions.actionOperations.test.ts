@@ -2,7 +2,7 @@ import { createExternalSessionActionOperationOwner, projectExternalSessionAction
 import { createExternalSessionMaterializeActionExecutor } from '@/session/actions/externalSessions/materializeAction';
 import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import { createExternalSessionOperationPrivateStagingStore } from '@/session/external/staging/operationPrivateStaging';
-import { readExternalSessionOperationRecord } from '@/session/actions/externalSessions/operationRecordStore';
+import { captureExternalSessionOperationAccountAdmission, readExternalSessionOperationRecord } from '@/session/actions/externalSessions/operationRecordStore';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ExternalSessionOperationRecordV1Schema, resolveExternalSessionOperationTimelineV1, type ExternalSessionOperationRecordV1 } from '@happier-dev/protocol';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { registerActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { acknowledgeExternalSessionOperationProgressProjection, compactExternalSessionOperationRecordToTerminalReceipt, mutateExternalSessionOperationRecordAtRevision, writeExternalSessionOperationRecord } from '@/session/actions/externalSessions/operationRecordStore';
 import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
 import type { ActionOperationDomainOwner } from '@/daemon/actionOperations/actionOperationTypes';
@@ -374,11 +377,12 @@ describe('durable external operations in shared Action Operations', () => {
       .toMatchObject({ state: 'running', progress: { kind: 'phase', phase: 'importing' } });
   });
 
-  it('delegates shared Stop to the real import executor and observes its durable cancellation', async () => {
+  it.each(['action_refusal', 'domain_refusal', 'cancelled'] as const)('keeps the shared Stop outcome %s through Machine RPC', async outcome => {
     environment.activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-activity-stop-'));
     roots.push(environment.activeServerDir);
     const initial = record();
     await writeExternalSessionOperationRecord(environment.activeServerDir, initial);
+    let denyAccountRead = false;
     const executor = createExternalSessionMaterializeActionExecutor({
       activeServerDir: environment.activeServerDir,
       operationExclusion: createExternalSessionOperationExclusion({ activeServerDir: environment.activeServerDir, ownerId: 'shared-stop-fixture' }),
@@ -389,6 +393,12 @@ describe('durable external operations in shared Action Operations', () => {
       readNewestFirstPages: async function* () { throw new Error('Provider pages must not be read during Stop'); },
       readFinalCatchUpPages: async function* () { throw new Error('Provider pages must not be read during Stop'); },
       sendHistoricalCommand: async () => { throw new Error('No import job exists to send a network command'); },
+      captureAccount: async () => {
+        if (denyAccountRead) throw new Error('Credential store unavailable');
+        const admission = await captureExternalSessionOperationAccountAdmission(environment.activeServerDir);
+        if (!admission) throw new Error('Expected credentials');
+        return admission;
+      },
     });
     const runtime = createHostActionOperationRuntime({ machineId: 'machine-1', resolveAccountId: async () => 'account-1' });
     await expect(executor.cancel({ sessionId: 'foreign-session', operationId: initial.operationId, revision: 0 }))
@@ -397,16 +407,24 @@ describe('durable external operations in shared Action Operations', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'operation_not_found' } });
     await expect(readExternalSessionOperationRecord(environment.activeServerDir, initial.operationId))
       .resolves.toMatchObject({ status: 'awaiting_user_resume', revision: 0 });
+    const owningRefusal = ActionExecuteFailureSchema.parse({
+      ok: false, errorCode: 'custodian_only', error: 'Forbidden', requestId: 'cancel-admitted', effectAttempted: false,
+      failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 },
+    });
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain' });
+    registerActionOperationRpcHandlers(rpc, runtime.handlers);
     let racedProgressCommit = false;
     let cancelRequests = 0;
     const detach = runtime.attachOwner(createExternalSessionActionOperationOwner({
       activeServerDir: environment.activeServerDir,
-      // A transport adapter to the real domain executor, with no fabricated lifecycle outcomes.
+      // A refusing Action transport can block delivery before the real import executor runs.
       execute: async (actionId, input) => {
         if (actionId !== 'sessions.external.operation.cancel') throw new Error('Unexpected Action');
         cancelRequests += 1;
-        // A progress commit while the transport delivers Stop must use the owner's stale-revision response.
-        if (!racedProgressCommit) {
+        if (outcome === 'action_refusal') return owningRefusal;
+        denyAccountRead = outcome === 'domain_refusal';
+        // Stop operates on the latest committed progress for this operation.
+        if (outcome === 'cancelled' && !racedProgressCommit) {
           racedProgressCommit = true;
           const advanced = await mutateExternalSessionOperationRecordAtRevision(environment.activeServerDir, initial.operationId, 0,
             (current) => ({ ...current, revision: 1, updatedAtMs: Date.now() }));
@@ -416,11 +434,24 @@ describe('durable external operations in shared Action Operations', () => {
       },
     }));
     try {
-      await expect(runtime.handlers.cancel({ operationId: initial.operationId })).resolves.toEqual({ kind: 'requested' });
-      // Stop is one semantic request; progress does not make a consumer re-admit it.
+      const response = await rpc.handleRequest({ method: `machine-1:${ACTION_OPERATION_RPC_METHODS_V1.cancel}`,
+        params: { operationId: initial.operationId } });
+      if (outcome === 'action_refusal') {
+        expect(response).toMatchObject({ error: owningRefusal.error, errorCode: owningRefusal.errorCode,
+          failureCause: owningRefusal.failureCause });
+      } else if (outcome === 'domain_refusal') {
+        expect(response).toMatchObject({ error: 'Materialization operation identity is unavailable.', errorCode: 'source_unavailable' });
+      } else {
+        expect(response).toEqual({ kind: 'requested' });
+      }
       expect(cancelRequests).toBe(1);
-      await expect(readExternalSessionOperationRecord(environment.activeServerDir, initial.operationId)).resolves.toMatchObject({ status: 'cancelled', currentStorageState: 'machine_only', cancellation: { requestedAtRevision: 1 } });
-      await expect(runtime.handlers.get({ operationId: initial.operationId })).resolves.toMatchObject({ kind: 'found', operation: { state: 'cancelled', cancellation: 'unsupported' } });
+      const settled = await readExternalSessionOperationRecord(environment.activeServerDir, initial.operationId);
+      if (outcome === 'cancelled') {
+        expect(settled).toMatchObject({ status: 'cancelled', currentStorageState: 'machine_only', cancellation: { requestedAtRevision: 1 } });
+        await expect(runtime.handlers.get({ operationId: initial.operationId })).resolves.toMatchObject({ kind: 'found', operation: { state: 'cancelled', cancellation: 'unsupported' } });
+      } else {
+        expect(settled).toMatchObject({ status: initial.status, revision: initial.revision });
+      }
     } finally { detach(); }
   });
 

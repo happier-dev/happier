@@ -53,7 +53,7 @@ export async function openSavedSecretDisclosureInContext(context: LazyActionAcco
     if (!isCurrent()) return { ok: false as const, reason: 'changed' as const };
     const requested = await recordSavedSecretDisclosureInContext(context, { ...input, deviceId, outcome: 'requested' }, 'reveal', signal);
     if (!isCurrent()) return { ok: false as const, reason: 'changed' as const };
-    if (!requested.ok) return { ok: false as const, reason: requested.failure.code ?? requested.failure.kind };
+    if (!requested.ok) return requested;
     const historyEntryId = requested.value.historyEntryId;
     const accountMode = await context.resolveAccountMode();
     if (!isCurrent()) return { ok: false as const, reason: 'changed' as const };
@@ -64,7 +64,7 @@ export async function openSavedSecretDisclosureInContext(context: LazyActionAcco
         outcome: material.ok ? 'displayed' : 'refused' }, 'reveal', signal);
     if (!isCurrent()) return { ok: false as const, reason: 'changed' as const };
     if (!material.ok) return material;
-    if (!settled.ok) return { ok: false as const, reason: settled.failure.code ?? settled.failure.kind };
+    if (!settled.ok) return settled;
     context.assertCurrent();
     signal?.throwIfAborted();
     return { ok: true as const, value: material.value, historyEntryId, accountMode };

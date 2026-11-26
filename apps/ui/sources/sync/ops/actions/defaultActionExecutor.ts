@@ -5997,9 +5997,7 @@ export async function readArtifactViewThroughAction(
     if (!result.ok) {
       if (result.errorCode === 'content_unavailable' && artifact?.isDecrypted === false) return { artifact };
       if (result.errorCode === 'not_found') return null;
-      throw Object.assign(new Error(result.error), {
-        code: result.errorCode, details: result.details, failureCause: result.failureCause,
-      });
+      throw createActionExecuteFailureError(result);
     }
     return artifact ? account.prepareArtifactView(artifact, signal) : null;
   }, 'artifact.get');

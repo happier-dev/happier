@@ -17,6 +17,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
     sessionId: string;
     serverId: string | null;
     accountId: string;
+    targetMachineId?: string;
     workspaceSyncEnabled?: boolean;
     machineCreation?: SessionHandoffMachineCreationProgress;
     store?: ActionOperationStore;
@@ -38,6 +39,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
         props: {
             serverId: params.serverId,
             sourceSessionId: params.sessionId,
+            ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
             ...(params.workspaceSyncEnabled ? { workspaceSyncEnabled: true } : {}),
             ...(params.machineCreation ? { machineCreation: params.machineCreation } : {}),
             ...(params.onOpenConflicts ? { onOpenConflicts: params.onOpenConflicts } : {}),

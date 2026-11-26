@@ -5,6 +5,9 @@ import { renderSettingsView } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTestHelpers';
 import type { ComputerProviderSettingsRow } from '@/sync/domains/computer/computerProviderSettings';
 
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { t } from '@/text';
+
 import { MachineComputerUseSectionView, type MachineComputerUseSectionViewProps } from './MachineComputerUseSection';
 
 installUiListsCommonModuleMocks();
@@ -40,11 +43,24 @@ describe('Computer use page body', () => {
     });
 
     it('puts a retry on the row whose install failed and routes it to that provider', async () => {
-        const props = base({ mutation: { phase: 'failed', errorCode: 'install_failed', error: 'interrupted', provider: 'agent-desktop' } });
+        const props = base({ mutation: { phase: 'failed', failure: { ok: false, errorCode: 'install_failed', error: 'interrupted' }, provider: 'agent-desktop' } });
         const screen = await renderSettingsView(<MachineComputerUseSectionView {...props} />);
         expect(screen.findByTestId('machine-computer-use-provider-cua.retry')).toBeNull();
         await screen.pressByTestIdAsync('machine-computer-use-provider-agent-desktop.retry');
         expect(props.onRepair).toHaveBeenCalledWith(rows[1]);
+    });
+
+    it('keeps the installer’s denial on its own row with the existing retry', async () => {
+        const failure = { ok: false, errorCode: 'action_forbidden', error: 'Private computer installer diagnostic',
+            requestId: 'computer-provider-install-refusal', effectAttempted: false,
+        } satisfies ActionExecuteFailure;
+        const props = base({ mutation: { phase: 'failed', provider: 'agent-desktop', failure } });
+        const screen = await renderSettingsView(<MachineComputerUseSectionView {...props} />);
+        expect(screen.getTextContent()).toContain(t('errors.permissionDenied'));
+        expect(screen.getTextContent()).not.toContain(failure.error);
+        await screen.pressByTestIdAsync('machine-computer-use-provider-agent-desktop.retry');
+        expect(props.onRepair).toHaveBeenCalledWith(rows[1]);
+        await screen.unmount();
     });
 
     it('locks an enabled provider while the Machine is unreachable and explains the next step on its row', async () => {

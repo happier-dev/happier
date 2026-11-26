@@ -68,7 +68,7 @@ export function useComputerScreen(props: Readonly<{
         },
     }, writeClipboard), [clipboardOperation, writeClipboard]);
     const driverRepair = useComputerDriverRepair(scope, accountLifetime, control.refresh,
-        control.failure ? resolveComputerRecovery({ kind: 'failed', code: control.failure, details: control.details }, 'use') : null);
+        control.failure ? resolveComputerRecovery({ kind: 'failed', code: control.failure, details: control.actionFailure?.details }, 'use') : null);
     const streamInput = {
         scope,
         machineId: scope.machineId,
@@ -137,6 +137,7 @@ export function useComputerScreen(props: Readonly<{
         offlineReason: reachability.unreachable ? describeCheckoutUnreachable(reachability) : null,
         grants: control.grants,
         openSettings: control.openSettings,
+        openSettingsFailure: control.openSettingsFailure,
         onOpenSettings: control.requestSettings,
         onRefresh: control.refresh,
         stream: null,
@@ -146,8 +147,7 @@ export function useComputerScreen(props: Readonly<{
         checking: control.busy === 'check',
         stopping: control.busy === 'stop',
         failure: control.failure,
-        failureCause: control.failureCause,
-        failureDetails: control.details,
+        actionFailure: control.actionFailure,
         stopFailed: control.stopFailed,
         onRepairDriver: driverRepair.repair,
         repairingDriver: driverRepair.repairing,

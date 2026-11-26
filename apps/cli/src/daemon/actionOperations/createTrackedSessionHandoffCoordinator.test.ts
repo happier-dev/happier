@@ -1005,7 +1005,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     }));
   });
 
-  it.each(['member', 'machine_manage_required'] as const)('consumes the TARGET workspace capture decision before any workspace effect (%s)', async decision => {
+  it.each(['member', 'machine_manage_required', 'workspace_private_checkout_review_required'] as const)('consumes the TARGET workspace capture decision before any workspace effect (%s)', async decision => {
     const policyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const action = { kind: 'copy_once' as const,
       contentPolicy: { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) } };
@@ -1017,6 +1017,11 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       commit: vi.fn(async () => prepared),
       abort: vi.fn(async () => undefined),
     };
+    const reviewedFolder = { accountId: 'member-a', serverId: 'server-1', machineId: 'target-1',
+      destinationParentPath: '/members/member-a', destinationDirectoryName: 'workspace' };
+    const reviewCause = { phase: 'session.handoff.workspace_capture', errorClass: 'Error',
+      errorCode: 'workspace_private_checkout_review_required', httpStatus: null,
+      nativeErrorReason: 'workspace_private_checkout_review_required' };
     const captures: unknown[] = [];
     // The TARGET daemon is the network boundary; the coordinator, transport
     // wrapping and the workspace input it builds stay real.
@@ -1026,6 +1031,10 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         const request = input.request as { input: { release?: true } };
         captures.push(request.input);
         if (request.input.release) return { ok: true, capture: 'released' };
+        if (decision === 'workspace_private_checkout_review_required') {
+          return { ok: false, errorCode: decision, failureCause: reviewCause,
+            details: { kind: 'refused', code: decision, failureCause: reviewCause, destinationReview: reviewedFolder } };
+        }
         return decision === 'member'
           ? { ok: true, capture: 'member', sourceWorkspaceRefId: 'source-ref',
             targetRootPath: '/members/member-a/workspace', targetWorkspaceRefId: 'workspace' }
@@ -1052,8 +1061,11 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     expect(captures[0]).toMatchObject({ sessionId: 'session-1', sourceMachineId: 'source-1', targetMachineId: 'target-1',
       operationId: 'operation-1', accountServerId: 'server-1', sourceRootPath: '/source/workspace',
       targetPath: '/members/member-a/workspace', workspaceAction: action });
-    if (decision === 'machine_manage_required') {
-      expect(result).toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
+    if (decision !== 'member') {
+      expect(result).toMatchObject(decision === 'workspace_private_checkout_review_required'
+        ? { ok: false, errorCode: decision, failureCause: reviewCause,
+          details: { kind: 'refused', code: decision, failureCause: reviewCause, destinationReview: reviewedFolder } }
+        : { ok: false, errorCode: decision });
       expect(workspaceSyncAdapter.prepare).not.toHaveBeenCalled();
       expect(start).not.toHaveBeenCalled();
       expect(captures).toHaveLength(1);

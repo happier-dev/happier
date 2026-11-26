@@ -199,7 +199,10 @@ describe('built-in approval decisions through the canonical owner', () => {
                 const inline = await renderHook(() => useInlineApprovalDecision(artifact, request, 'source', serverId, onDecided));
                 try {
                     await act(async () => { await inline.getCurrent().answer('reject'); });
-                    expect(inline.getCurrent().failure).toMatchObject({ decision: 'reject', cause: { code: 'unavailable', failureCause } });
+                    const decisionFailure = inline.getCurrent().failure;
+                    expect(decisionFailure).toMatchObject({ decision: 'reject', cause: { code: 'unavailable', failureCause } });
+                    const requestId = decisionFailure?.cause instanceof HappyError ? decisionFailure.cause.requestId : undefined;
+                    expect(requestId).toEqual(expect.any(String));
                     expect(inline.getCurrent().deciding).toBeNull();
                     expect(onDecided).not.toHaveBeenCalled();
                     expect(Modal.alert).not.toHaveBeenCalled();
@@ -212,6 +215,11 @@ describe('built-in approval decisions through the canonical owner', () => {
                             expect(screen.findHostByTestId('draft-review-failure')).not.toBeNull();
                             expect(screen.getTextContent()).toContain(t('approvals.transientFailure'));
                             expect(screen.getTextContent()).toContain(t('common.retry'));
+                            expect(screen.getTextContent()).not.toContain(failureCause.phase);
+                            await screen.pressByTestIdAsync('draft-review-failure-details-toggle');
+                            expect(screen.getTextContent()).toContain(failureCause.phase);
+                            expect(screen.getTextContent()).toContain(requestId);
+                            expect(screen.getTextContent()).toContain('database_transaction_conflict_exhausted');
                         } finally { await screen.unmount(); }
                     }
                     harness.answer(serverId, `POST ${reviewPath}`, { body: { v: 1, ok: true, progress: {
@@ -229,7 +237,7 @@ describe('built-in approval decisions through the canonical owner', () => {
             }
         } finally { await hook.unmount(); }
     });
-    it('recovers a lost daemon decision receipt from the public approval projection without replay authority', async () => {
+    it.each(['executed', 'failed', 'refused'] as const)('retains the daemon decision receipt for a %s outcome without replay authority', async status => {
         const serverId = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://approval-settlement.test',
             serverIdentityId: 'srv_approval-settlement', accountId: 'bob', currentAccount: true });
         await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'bob', machineId: 'machine' });
@@ -256,10 +264,21 @@ describe('built-in approval decisions through the canonical owner', () => {
         }) });
         // The daemon is the process boundary: it committed a valid settlement
         // before the HTTP caller lost its receipt. The public reader remains real.
+        let decisionRequestId: string | undefined;
         harness.answer(serverId, '/v1/actions/approval.request.decide', { select: async input => {
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
-            const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: 3,
-                decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true, result: {} } });
+            decisionRequestId = envelope.requestId;
+            if (status === 'refused') return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
+                actionId: 'approval.request.decide', requestId: envelope.requestId,
+                execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', effectAttempted: false,
+                    failureCause: { phase: 'session.archive', errorClass: 'RpcError', errorCode: 'machine_offline', httpStatus: null } },
+            }) };
+            const execution = status === 'executed' ? { executedAtMs: 3, ok: true, result: {} }
+                : { executedAtMs: 3, ok: false, requestId: envelope.requestId, effectAttempted: false,
+                    errorCode: 'target_unavailable', error: 'target_unavailable',
+                    failureCause: { phase: 'session.archive', errorClass: 'RpcError', errorCode: 'machine_offline', httpStatus: null } };
+            const settled = ApprovalRequestV2Schema.parse({ ...request, status, updatedAtMs: 3,
+                decision: { kind: 'approve', decidedAtMs: 2 }, execution });
             const context = await captureActionAccountContext(serverId);
             try {
                 // The deciding executor already persisted consent. Use the
@@ -271,14 +290,35 @@ describe('built-in approval decisions through the canonical owner', () => {
                 const persisted = await context.fetchArtifact(artifact.id);
                 expect(persisted?.isDecrypted).toBe(true);
                 expect(approvalArtifactBodyMatchesHeaderV1(persisted?.header ?? {},
-                    typeof persisted?.body === 'string' ? persisted.body : null)?.request.status).toBe('executed');
+                    typeof persisted?.body === 'string' ? persisted.body : null)?.request.status).toBe(status);
             } finally { context.dispose(); }
             return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide', requestId: envelope.requestId,
                 execution: { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' } }) };
         } });
         const hook = await renderHook(() => useApprovalDecisionHandler(artifact, request, 'source', serverId));
         try {
-            await expect(hook.getCurrent()('approve')).resolves.toBe(true);
+            if (status === 'executed') await expect(hook.getCurrent()('approve')).resolves.toBe(true);
+            else {
+                const failure: unknown = await hook.getCurrent()('approve').catch((error: unknown) => error);
+                const { alertApprovalFailure } = await import('./useApprovalDecisionHandler');
+                const { Modal } = await import('@/modal');
+                vi.mocked(Modal.alert).mockClear();
+                alertApprovalFailure(failure);
+                const details = vi.mocked(Modal.alert).mock.calls[0]?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+                expect(details).toBeDefined();
+                await details?.onPress?.();
+                const disclosed = String(vi.mocked(Modal.alert).mock.calls[1]?.[1]);
+                expect(disclosed).toContain('target_unavailable');
+                expect(disclosed).toContain('session.archive');
+                expect(disclosed).toContain('machine_offline');
+                expect(disclosed).toContain('false');
+                expect(decisionRequestId).toEqual(expect.any(String));
+                expect(disclosed).toContain(decisionRequestId);
+                if (status === 'failed') {
+                    const recorded = JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null');
+                    expect(recorded.execution.requestId).toBe(decisionRequestId);
+                }
+            }
             expect(harness.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
             expect(harness.artifacts(serverId).readPlainBody(artifact.id)).toContain('synthetic-private-daemon-authorization');
         } finally { await hook.unmount(); }
@@ -324,7 +364,8 @@ describe('built-in approval decisions through the canonical owner', () => {
         // proof of an approval-domain stale execution.
         const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'failed', updatedAtMs: request.updatedAtMs + 2,
             decision: { kind: 'approve', decidedAtMs: request.updatedAtMs + 1 },
-            execution: { executedAtMs: request.updatedAtMs + 2, ok: false, errorCode: 'approval_stale', error: 'approval_stale' },
+            execution: { executedAtMs: request.updatedAtMs + 2, ok: false, errorCode: 'approval_stale', error: 'approval_stale',
+                details: { reason: 'session_changed' } },
         });
         const context = await captureActionAccountContext(serverId);
         try {
@@ -337,7 +378,7 @@ describe('built-in approval decisions through the canonical owner', () => {
             const decision = hook.getCurrent()('approve');
             await expect(decision).rejects.toMatchObject({ code: 'approval_stale', canTryAgain: false });
             const failure: unknown = await decision.catch((error: unknown) => error);
-            expect(presentApprovalFailure(failure).reason).toBe(t('approvals.staleFailure'));
+            expect(presentApprovalFailure(failure).reason).toBe(t('approvals.staleSessionChanged'));
             expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!)).toMatchObject({
                 status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode: 'approval_stale' },
             });

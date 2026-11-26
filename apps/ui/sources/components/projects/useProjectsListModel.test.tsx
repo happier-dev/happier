@@ -1,6 +1,9 @@
 import * as React from 'react';
-import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
+import { t } from '@/text';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import type { IModal } from '@/modal';
 import { createMachineFixture, createSessionListRenderableSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -101,6 +104,17 @@ afterEach(async () => {
     const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
     await disconnectActiveServerConnection(); await homes.reset();
 });
+
+function expectRemovalFailureDetails(alerts: MockInstance<IModal['alert']>, outcome: unknown) {
+    const failure = ActionExecuteFailureSchema.parse(outcome);
+    expect(failure).toMatchObject({ errorCode: 'action_disabled', requestId: expect.any(String) });
+    const details = alerts.mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+    expect(details?.onPress).toBeTypeOf('function');
+    details?.onPress?.();
+    expect(readActionFailureDetails(alerts.mock.calls.at(-1)?.[1])).toMatchObject({
+        code: failure.errorCode, requestId: failure.requestId,
+    });
+}
 
 describe('separating a checkout after its Home learns its identity', () => {
     it('keeps the separated checkout listed when its stored server id is a profile alias', async () => {
@@ -485,9 +499,7 @@ describe('Projects model Action admission', () => {
         const ref = hook.getCurrent().groups.projectGroups[0]!.items[0]!;
         let outcome: unknown;
         await act(async () => { outcome = await hook.getCurrent().removeProject(ref); });
-        const { presentWorkspaceSyncFailure } = await import('@/sync/domains/sessionHandoff/workspaceSyncPresentation');
-        expect(outcome).toMatchObject({ ok: false, errorCode: 'action_disabled' });
-        expect(alerts).toHaveBeenCalledWith(expect.any(String), presentWorkspaceSyncFailure(createActionExecuteFailureError(ActionExecuteFailureSchema.parse(outcome)))?.message);
+        expectRemovalFailureDetails(alerts, outcome);
         expect(rows.find(row => row.key.kind === 'workspace-ref')?.content).not.toBeNull();
         await hook.unmount();
     });
@@ -593,9 +605,7 @@ describe('Projects model Action admission', () => {
         let outcome: unknown;
         await act(async () => { outcome = await hook.getCurrent().removeProject(ref); });
         if (disabled) {
-            const { presentWorkspaceSyncFailure } = await import('@/sync/domains/sessionHandoff/workspaceSyncPresentation');
-            expect(outcome).toMatchObject({ ok: false, errorCode: 'action_disabled' });
-            expect(alerts).toHaveBeenCalledWith(expect.any(String), presentWorkspaceSyncFailure(createActionExecuteFailureError(ActionExecuteFailureSchema.parse(outcome)))?.message);
+            expectRemovalFailureDetails(alerts, outcome);
             expect(rows).toEqual(before);
             await hook.unmount();
             return;
@@ -681,4 +691,43 @@ describe('Projects model failed census refresh', () => {
         expect(hook.getCurrent().treeProjects).toHaveLength(1);
         await hook.unmount();
     });
+});
+
+it('shows the Forget refusal when the Home reports a link newer than the Project list', async () => {
+    const alerts = vi.spyOn((await import('@/modal')).Modal, 'alert');
+    const hook = await renderHook(() => useProjectsListModel());
+    try {
+        const model = hook.getCurrent();
+        const ref = model.groups.projectGroups[0]!.items[0]!;
+        expect(storage.getState().projectAccountRows?.relationships).toHaveLength(0);
+
+        // The Home observes a link created on the other client before this button handler renders it.
+        const targetKey = { kind: 'workspace-ref' as const, serverId, id: 'late-target' };
+        const graphKey = { kind: 'relationship-graph' as const };
+        const contentPolicy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+        const relationship = WorkspaceSyncRelationshipV1Schema.parse({ v: 1, relationshipId: 'late-link', controllerMachineId: 'machine',
+            alphaWorkspaceRefId: ref.id, betaWorkspaceRefId: targetKey.id, mode: 'keep_synced', enabled: true,
+            contentPolicy: { ...contentPolicy, policyDigest: computeWorkspaceSyncPolicyDigest(contentPolicy) }, createdAtMs: 1, updatedAtMs: 1 });
+        rows.push({ key: targetKey, revision: 0, content: { t: 'plain', v: { key: targetKey, value: {
+            id: targetKey.id, serverId, machineId: 'other', rootPath: '/late-target', projectKey: ref.projectKey, createdAtMs: 1,
+        } } } }, { key: graphKey, revision: 0, content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } });
+        const before = [...rows];
+
+        let outcome: unknown;
+        await act(async () => { outcome = await model.removeProject(ref); });
+        expect(storage.getState().projectAccountRows?.relationships).toEqual([relationship]);
+        expect(rows).toEqual(before);
+        expect(homes.requestsFor(mutationPath)).toEqual([]);
+        const details = alerts.mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+        expect(details?.onPress).toBeTypeOf('function');
+        const failure = ActionExecuteFailureSchema.parse(outcome);
+        expect(failure).toMatchObject({ errorCode: 'workspace_ref_in_use', details: { relationshipIds: ['late-link'] },
+            requestId: expect.any(String) });
+        details?.onPress?.();
+        expect(readActionFailureDetails(alerts.mock.calls.at(-1)?.[1])).toMatchObject({
+            code: failure.errorCode, requestId: failure.requestId,
+        });
+    } finally {
+        await hook.unmount();
+    }
 });

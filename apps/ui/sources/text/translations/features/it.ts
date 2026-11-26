@@ -22015,6 +22015,7 @@ const it = completeWorkspaceSyncTranslation({
         manageRequired: "Serve l’accesso di gestione alla macchina di destinazione. Chiedilo al proprietario.",
         projectWorkspaceChanged: "Quella cartella appartiene a un altro progetto. Scegli una nuova cartella o usa il progetto a cui appartiene già.",
         requesterLinkUnavailable: "Per portare una copia, apri prima il progetto sulla tua macchina. Oppure passa la sessione senza copia.",
+        seedFromSharedMachineRefused: "Il server ha rifiutato di copiare l’area di lavoro usando la macchina di un’altra persona.",
         dependenciesUnavailable: "Non è stato possibile controllare sull’altra macchina il lavoro che usa questa copia. Riprova o chiedi al proprietario di quella macchina.",
         provenanceConflict: "Queste cartelle sono già sincronizzate per un altro scopo. Scegli un’altra cartella.",
         notWorkerCopy: "Questa cartella non è stata creata come copia di lavoro, quindi Happier l’ha lasciata dov’era. Non è stato rimosso nulla.",

@@ -13,7 +13,7 @@ import { readUiWorkspaceSyncChildMachineFacts } from '@/sync/ops/workspaceSyncCh
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
-import { presentLocalServiceActionFailure, readLocalServiceActionFailureReason, readLocalServiceActionOutcome } from './localServiceActionOutcome';
+import { presentLocalServiceActionFailure, readLocalServiceActionOutcome, readLocalServiceFailureOutcome } from './localServiceActionOutcome';
 import { selectLocalServiceLaunchTargets, snapshotFromLocalServiceLauncherState } from '@/sync/domains/local/services/launch/store';
 import { reconcileLocalServiceLauncherTargets } from '@/sync/domains/local/services/launch/store';
 
@@ -115,18 +115,15 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
 /** User Refresh uses the Action owner; successful inventory publication drives
  * observation. Launcher invalidation below is only its derived read. */
 async function refreshLocalServiceMachine(input: Readonly<{ serverId: string; machineId: string; sessionId?: string | null; accountId: string; isCurrent(): boolean }>) {
-    try {
-        const result = await createFrontDoorRuntimeActionExecutor()({ actionId: 'localServices.inventory.refresh',
-            input: { machineId: input.machineId, ...(input.sessionId ? { sessionId: input.sessionId } : {}) },
-            context: { surface: 'ui', serverId: input.serverId, ...(input.accountId ? { expectedAccountId: input.accountId } : {}) } });
-        if (!input.isCurrent()) return false;
-        const outcome = readLocalServiceActionOutcome(result);
-        if (outcome.kind === 'succeeded') return true;
-        if (outcome.kind === 'failed') presentLocalServiceActionFailure({ title: t('common.refresh'), reasonCode: outcome.reasonCode });
-    } catch (error) {
-        if (input.isCurrent()) presentLocalServiceActionFailure({ title: t('common.refresh'), reasonCode: readLocalServiceActionFailureReason(error) });
+    const outcome = await createFrontDoorRuntimeActionExecutor()({ actionId: 'localServices.inventory.refresh',
+        input: { machineId: input.machineId, ...(input.sessionId ? { sessionId: input.sessionId } : {}) },
+        context: { surface: 'ui', serverId: input.serverId, ...(input.accountId ? { expectedAccountId: input.accountId } : {}) },
+    }).then(readLocalServiceActionOutcome, readLocalServiceFailureOutcome);
+    if (!input.isCurrent()) return false;
+    if (outcome.kind === 'failed' || outcome.kind === 'outcome_unknown') {
+        presentLocalServiceActionFailure({ title: t('common.refresh'), ...outcome });
     }
-    return false;
+    return outcome.kind === 'succeeded';
 }
 
 type ServiceActual = Extract<ProjectServicePlacementGetResultV1, { status: 'ready' }>['actual'];

@@ -7,19 +7,20 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 import { sharePrincipalKey } from '../sharePrincipalPresentation';
-import type { ShareGrantRowModel, ShareUiError } from '../shareSheetTypes';
-import { useDocumentShareController } from './useDocumentShareController';
+import type { ShareGrantRowModel } from '../shareSheetTypes';
+import {
+  useDocumentShareController,
+  type DocumentAudienceShareResult,
+  type DocumentShareIssue,
+} from './useDocumentShareController';
 
 type LinkedWorkflowsRead = NonNullable<
   ReturnType<typeof useDocumentShareController>['linkedWorkflows']
 >;
-type Outcome =
-  | Readonly<{ kind: 'shared' }>
-  | Readonly<{ kind: 'error'; error: ShareUiError }>;
 type Runs = Readonly<{
   audienceKey: string;
   active: string | null;
-  outcomes: Readonly<Record<string, Outcome>>;
+  outcomes: Readonly<Record<string, DocumentAudienceShareResult>>;
 }>;
 
 /** One linked Workflow the profile's new recipients cannot use yet, as the share sheet offers it. */
@@ -28,7 +29,7 @@ export type DocumentLinkedWorkflowChoice = Readonly<{
   title: string;
   sharing: boolean;
   shared: boolean;
-  issue?: ShareUiError;
+  issue?: DocumentShareIssue;
   /** Absent while another Workflow is being shared or once this one is shared. */
   share?: () => void;
 }>;
@@ -54,7 +55,7 @@ function LinkedWorkflowShareRun(
     scope: ServerAccountScope;
     artifactId: string;
     audience: readonly PrincipalRefV1[];
-    onSettled(outcome: Outcome): void;
+    onSettled(outcome: DocumentAudienceShareResult): void;
   }>,
 ): null {
   const review = useDocumentShareController({
@@ -71,16 +72,10 @@ function LinkedWorkflowShareRun(
     if (started.current) return;
     if (missingAudience !== undefined) {
       started.current = true;
-      void shareMissingAudience().then((result) =>
-        settled.current(
-          result.ok
-            ? { kind: 'shared' }
-            : { kind: 'error', error: result.error },
-        ),
-      );
+      void shareMissingAudience().then((result) => settled.current(result));
     } else if (issue && !loading) {
       started.current = true;
-      settled.current({ kind: 'error', error: issue });
+      settled.current({ ok: false, shared: NO_AUDIENCE, error: issue });
     }
   }, [missingAudience, shareMissingAudience, issue, loading]);
   return null;
@@ -147,7 +142,7 @@ export function useLinkedWorkflowShareOffer(
     [audienceKey],
   );
   const settle = React.useCallback(
-    (ref: string, outcome: Outcome) =>
+    (ref: string, outcome: DocumentAudienceShareResult) =>
       setRuns((previous) =>
         previous.audienceKey !== audienceKey
           ? previous
@@ -177,13 +172,13 @@ export function useLinkedWorkflowShareOffer(
             choices: refs.map((ref) => {
               const outcome = current.outcomes[ref];
               const sharing = current.active === ref;
-              const shared = outcome?.kind === 'shared';
+              const shared = outcome?.ok === true;
               return {
                 ref,
                 title: titleOf(ref) ?? t('tools.workflowActivityView.untitled'),
                 sharing,
                 shared,
-                ...(outcome?.kind === 'error' ? { issue: outcome.error } : {}),
+                ...(outcome?.ok === false ? { issue: outcome.error } : {}),
                 ...(!shared && current.active === null
                   ? { share: () => share(ref) }
                   : {}),

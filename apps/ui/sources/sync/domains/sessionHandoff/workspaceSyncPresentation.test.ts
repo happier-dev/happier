@@ -26,7 +26,8 @@ describe('workspaceSyncPresentation', () => {
         expect(presented?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'reason',
             value: expect.stringContaining('no space left on device') }));
         expect(JSON.stringify(presented)).not.toContain('fixture-sync-secret');
-        expect(JSON.stringify(presented)).not.toContain('private-request-reference');
+        expect(presented?.message).not.toContain('private-request-reference');
+        expect(presented?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'requestId', value: 'private-request-reference' }));
     });
 
     it('explains unavailable requester access while preserving the original relationship refusal', () => {
@@ -50,17 +51,18 @@ describe('workspaceSyncPresentation', () => {
         failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'workspace_private_checkout_review_required', httpStatus: null } };
     it('never gives a Manage placement the Can use own-folder guidance', () => {
         expect(presentWorkspaceSyncFailure(nativeRefusal, 'source_relationship'))
-            .toEqual(failure(t('workspaceSync.error.needsAttention'), 'workspace_private_checkout_review_required'));
+            .toMatchObject({ message: t('workspaceSync.error.needsAttention'), code: 'workspace_private_checkout_review_required' });
         expect(presentWorkspaceSyncFailure(nativeRefusal, 'destination_open'))
-            .toEqual(failure(t('workspaceSync.error.ownFolderOnly'), 'workspace_private_checkout_review_required'));
+            .toMatchObject({ message: t('workspaceSync.error.ownFolderOnly'), code: 'workspace_private_checkout_review_required' });
     });
 
     it('shows the human message for the typed cause and keeps diagnostics and the request id off the screen', () => {
         const homeRefusal = { code: 'credential_scope_denied', requestId: 'request-home', details: { reason: 'target_not_authorized' },
             failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } };
         expect(presentWorkspaceSyncFailure(homeRefusal, 'destination_open'))
-            .toEqual(failure(t('workspaceSync.error.manageRequired'), 'machine_manage_required'));
-        const message = JSON.stringify(presentWorkspaceSyncFailure(nativeRefusal, 'destination_open'));
+            .toMatchObject({ message: t('workspaceSync.error.manageRequired'), code: 'machine_manage_required', technicalDetails: expect.arrayContaining([expect.objectContaining({ key: 'requestId', value: 'request-home' }), expect.objectContaining({ key: 'causePhase', value: 'execution_authorization' })]) });
+        expect(presentWorkspaceSyncFailure(nativeRefusal, 'destination_open')?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'effectAttempted', value: 'false' }));
+        const message = presentWorkspaceSyncFailure(nativeRefusal, 'destination_open')?.message ?? '';
         for (const diagnostic of ['dispatch', ' · ', 'Error', 'request-r126s3', 'false']) expect(message).not.toContain(diagnostic);
     });
 
@@ -177,21 +179,25 @@ describe('workspaceSyncPresentation', () => {
             nativeErrorReason: 'root_fingerprint.absence_vs_presence',
         } });
         const presented = presentWorkspaceSyncFailure(error);
-        expect(presented).toEqual(failure(t('workspaceSync.error.reviewedFolderChanged'), 'approval_stale'));
-        expect(JSON.stringify(presented)).not.toContain('root_fingerprint');
+        expect(presented).toMatchObject({ message: t('workspaceSync.error.reviewedFolderChanged'), code: 'approval_stale' });
+        expect(presented?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'causePhase', value: 'workspace_sync.target_bootstrap' }));
+        expect(presented?.message).not.toContain('root_fingerprint');
+        expect(presented?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'nativeErrorReason', value: 'root_fingerprint.absence_vs_presence' }));
     });
 
     it('says how to bring a copy when the handoff link owner refused it, from its carried cause', () => {
         const refusal = { code: 'RPC_FORBIDDEN', failureCause: { phase: 'workspace_sync.relationship_owner.select', errorClass: 'Error',
             errorCode: 'workspace_sync_requester_link_unavailable', httpStatus: null } };
         expect(presentWorkspaceSyncFailure(refusal))
-            .toEqual(failure(t('workspaceSync.error.requesterLinkUnavailable'), 'workspace_sync_requester_link_unavailable'));
+            .toMatchObject({ message: t('workspaceSync.error.requesterLinkUnavailable'), code: 'workspace_sync_requester_link_unavailable' });
+        expect(presentWorkspaceSyncFailure(refusal)?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'code', value: 'RPC_FORBIDDEN' }));
     });
 
     it('says a Fresh copy was kept when its dependency check was refused, and keeps the surface fallback for unknown codes', () => {
         const refusal = { code: 'workspace_sync_dependencies_unavailable', failureCause: { phase: 'workspace_sync.retirement.dependencies',
             errorClass: 'Error', errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null, nativeErrorCode: 'RPC_FORBIDDEN' } };
         expect(presentWorkspaceSyncFailure(refusal, undefined, 'fallback')?.message).toBe(t('workspaceSync.error.dependenciesUnavailable'));
+        expect(presentWorkspaceSyncFailure(refusal)?.technicalDetails).toContainEqual(expect.objectContaining({ key: 'nativeErrorCode', value: 'RPC_FORBIDDEN' }));
         expect(presentWorkspaceSyncFailure({ code: 'something_new' }, undefined, 'fallback')?.message).toBe('fallback');
     });
 

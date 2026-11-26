@@ -79,7 +79,8 @@ import {
   useApprovalDecisionHandler,
   type ApprovalDecisionOptions,
 } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
-import { presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { presentApprovalResultDelivery, readApprovalResultDelivery } from '@/components/approvals/approvalResultDelivery';
 import { useRetargetNavigationFocusReturnIntent } from '@/keyboard/focusReturn';
 import { useApprovalSessionReading } from './useApprovalSessionReading';
@@ -583,11 +584,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const deliveryReceipt = presentApprovalResultDelivery(originalDelivery, {
     sayDelivered: parsed.request.status === 'failed' || parsed.request.status === 'outcome_unknown' });
   const deliveryFailure = deliveryReceipt?.failure ?? null;
-  const executionFailureResult = builtInExecutionFailure ?? (parsed.kind === 'host_action'
-    || parsed.request.status !== 'failed' && parsed.request.status !== 'outcome_unknown'
-    || parsed.request.execution?.ok !== false
-    ? null
-    : { errorCode: parsed.request.execution.errorCode, error: parsed.request.execution.error });
+  const executionFailureResult = builtInExecutionFailure ?? (parsed.kind === 'target'
+    && (parsed.request.status === 'failed' || parsed.request.status === 'outcome_unknown')
+    ? readApprovalExecutionFailure(parsed.request) : null);
   // The readable reason leads; its typed code waits in the technical disclosure.
   const executionFailure = executionFailureResult
     ? presentRecordedApprovalFailure(executionFailureResult)
@@ -596,8 +595,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const failureOutcome = parsed.kind === 'built_in' && builtInExecutionFailure
     ? presentApprovalFailureOutcome(parsed.request, builtInExecutionFailure) : null;
   const failureTechnicalDetails = [
-    ...(failureOutcome?.technicalDetails ?? (executionFailure?.code
-      ? presentActionFailureTechnicalDetails({ errorCode: executionFailure.code, error: executionFailure.code }) : [])),
+    ...(failureOutcome?.technicalDetails ?? (executionFailureResult && executionFailure?.code
+      ? presentActionExecutionFailure(executionFailureResult, executionFailure.reason, { closedCodesOnly: true }).technicalDetails
+      : [])),
     ...(deliveryFailure?.technicalDetails.map(line => ({ ...line, key: `delivery-${line.key}` })) ?? []),
   ];
   // A confidential entry that did not happen is said here, from its durable record, in the entry's own words.

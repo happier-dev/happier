@@ -46,6 +46,7 @@ import { useBrowserSessionAgentIdentity, type BrowserShellAgentPresence } from '
 import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { bindServicesOpenInBrowser, type OpenBrowserViewTarget } from '../surfaces/openBrowserTargetInWorkspace';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { describeBrowserSandboxAllowance, useBrowserSandboxAllowance } from '../streamed/useBrowserSandboxAllowance';
 
 export type BrowserLaunchpadOpenTargetOptions = Readonly<{
@@ -91,19 +92,21 @@ export type BrowserLaunchpadAgentBrowser = Readonly<{
     reasonCode: 'managed_package_missing' | 'browser_runtime_provisioning_failed' | 'sandbox_unavailable' | 'daemon_restarted';
     agent: BrowserShellAgentPresence | null;
     onRetry?: () => void;
+    actionFailure?: BrowserStreamedSurfaceRuntime['firstUseFailure'];
     /** Allow the sandbox on the Machine; resolves to its outcome, or null when the person declined. */
     onAllowSandbox?: () => Promise<BrowserSandboxInstallOutcome | null>;
 }>;
 
 /** The first-use state wins over the discovery prerequisite: it is the more specific, newer fact. */
 export function resolveAgentBrowserPrerequisite(
-    runtime: Pick<BrowserStreamedSurfaceRuntime, 'firstUse' | 'unavailableReason' | 'onRetry' | 'closedAfterRestart' | 'onReopen'> | null | undefined,
+    runtime: Pick<BrowserStreamedSurfaceRuntime, 'firstUse' | 'firstUseFailure' | 'unavailableReason' | 'onRetry' | 'closedAfterRestart' | 'onReopen'> | null | undefined,
     agent: BrowserShellAgentPresence | null,
     onAllowSandbox: BrowserLaunchpadAgentBrowser['onAllowSandbox'],
 ): BrowserLaunchpadAgentBrowser | undefined {
     if (!runtime) return undefined;
     if (runtime.closedAfterRestart) return { reasonCode: 'daemon_restarted', agent, onRetry: runtime.onReopen };
-    if (runtime.firstUse === 'installFailed') return { reasonCode: 'browser_runtime_provisioning_failed', agent };
+    if (runtime.firstUse === 'installFailed') return { reasonCode: 'browser_runtime_provisioning_failed', agent,
+            ...(runtime.firstUseFailure ? { actionFailure: runtime.firstUseFailure } : {}) };
     if (runtime.firstUse === 'sandboxUnavailable') return { reasonCode: 'sandbox_unavailable', agent, onAllowSandbox, onRetry: runtime.onRetry };
     return runtime.unavailableReason === 'managed_package_missing'
         ? { reasonCode: runtime.unavailableReason, agent, onRetry: runtime.onRetry }
@@ -589,6 +592,8 @@ function AgentBrowserPrerequisite(props: BrowserLaunchpadAgentBrowser & Readonly
     // Chromium downloads on the first open too, so opening an address is its one action: a re-check
     // button beside that sentence would not say what it does.
     const installFailed = props.reasonCode === 'browser_runtime_provisioning_failed';
+    const presentation = props.actionFailure
+        ? presentActionExecutionFailure(props.actionFailure, reason.body, { closedCodesOnly: true }) : null;
     const offersRecheck = !installFailed && props.reasonCode !== 'managed_package_missing';
     return (
         <SurfaceStateCard
@@ -596,8 +601,10 @@ function AgentBrowserPrerequisite(props: BrowserLaunchpadAgentBrowser & Readonly
             kind={installFailed ? 'error' : 'unavailable'}
             iconName={installFailed ? undefined : 'browsers'}
             title={installFailed ? t('browserPresence.stream.installFailedTitle') : t('browserPresence.stream.setupTitle', { agent: identity.name })}
-            reason={reason.body}
+            reason={presentation?.reason ?? reason.body}
             diagnosticCode={reason.diagnosticCode}
+            diagnosticDetail={presentation?.technicalDetails.filter(line => line.key !== 'code')
+                .map(line => `${line.label}: ${line.value}`).join('\n')}
             action={offersRecheck && props.onRetry ? { label: t('browserPresence.stream.tryAgain'), onPress: props.onRetry } : undefined}
             accessibilitySemantics={installFailed ? 'alert' : 'status'}
         />
@@ -628,6 +635,8 @@ function BrowserSandboxPrerequisite(props: Readonly<{
                 title={settled.title}
                 reason={settled.reason}
                 diagnosticCode={settled.code || undefined}
+                diagnosticDetail={settled.technicalDetails?.filter(line => line.key !== 'code')
+                    .map(line => `${line.label}: ${line.value}`).join('\n')}
                 action={settled.kind === 'success' ? undefined : action}
                 accessibilitySemantics={settled.kind === 'success' ? 'status' : 'alert'}
             />

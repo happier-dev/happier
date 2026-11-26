@@ -12,7 +12,7 @@ import { ArtifactFolderTree, useArtifactFolderCommands, type ArtifactFolderTreeH
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { ArtifactsBrowser } from './ArtifactsBrowserScreen';
-import { ModalProvider } from '@/modal';
+import { Modal, ModalProvider } from '@/modal';
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn(), replace: vi.fn() }));
@@ -196,6 +196,19 @@ it('removes an empty folder directly through its safe Action', async () => {
     await vi.waitFor(() => expect(state.read().folders).toEqual([]));
     expect(state.boundary.requests).toHaveLength(1);
     expect(state.screen.findAll(node => node.props.accessibilityRole === 'dialog')).toEqual([]);
+});
+
+it('keeps a refused deletion available through Technical details', async () => {
+    const state = await setup('all', [{ id: 'original', name: 'Original', parentId: null }]);
+    state.setOutcome('failed');
+    const alert = vi.spyOn(Modal, 'alert');
+    await state.select('delete');
+    await vi.waitFor(() => expect(alert).toHaveBeenCalled());
+    const details = alert.mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+    expect(details).toBeDefined();
+    await act(async () => { details?.onPress?.(); });
+    expect(alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.requestId:'));
+    expect(state.read().folders).toHaveLength(1);
 });
 
 it('presents the revision conflict returned by a folder drop through the shared refusal owner', async () => {
@@ -400,6 +413,10 @@ describe.each(['all', 'prompt'] as const)('shared folder inline writes (%s)', ki
         await vi.waitFor(() => expect(state.screen.findByTestId('folders:edit:refused')).toBeTruthy());
         expect(state.screen.findByTestId('folders:edit:name')!.props.value).toBe('  Keep   my draft  ');
         expect(state.screen.getTextContent()).toContain(outcome === 'conflict' ? 'approvals.conflictFailure' : 'artifacts.browser.folders.refusedOther');
+        if (outcome === 'failed') {
+            await state.screen.pressByTestIdAsync('folders:edit:refused-details-toggle');
+            expect(state.screen.getTextContent()).toContain('approvals.failureTechnicalLabels.requestId:');
+        }
         expect(state.read().folders).toEqual([]);
         state.setOutcome('updated');
         await state.screen.pressByTestIdAsync('folders:edit:save');

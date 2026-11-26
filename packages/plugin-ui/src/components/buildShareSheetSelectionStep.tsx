@@ -138,6 +138,7 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             // and offers that step where Add was: adding again could only be refused again. The Home can say it
             // before any Add (the row's own addition) or answer an Add with it (the row's operation).
             const resolution = row.operation.kind === 'error' ? row.operation.error.action : reason?.action;
+            const details = row.operation.kind === 'error' ? adapter.renderCandidateDetails?.(row, context) : null;
             // A candidate the Home refuses reads as unavailable: a short state instead of Add, and pressing the row
             // explains it in full. The reason itself is not repeated on every row; a refusal shared by the whole
             // sheet (an archived context Team) is said once by the adapter, and a row's own reason is one press away.
@@ -150,6 +151,8 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
                 icon: visual(row.principal),
                 loading: row.operation.kind === 'saving',
                 disabled: row.operation.kind === 'saving',
+                ...(details != null ? { expandedContent: details, expandedContentInset: 'text' as const,
+                    expandedContentVisibility: 'always' as const } : {}),
                 ...(resolution ? { subtitleLines: 0 } : {}),
                 onSelect: () => resolution ? resolution.onPress() : reason ? actions.explain(reason) : actions.addPrincipal(row.principal.ref),
                 ...(resolution ? { rightAccessoryOutsidePressable: true,

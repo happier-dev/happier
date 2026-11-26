@@ -1,3 +1,4 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     SimulatorDeviceResourceV1} from '@happier-dev/protocol/devices/simulator/v1';
 import type {
@@ -14,6 +15,7 @@ import {
 export type SimulatorPreviewDaemonState = Readonly<{
     generatedAt: number | null;
     refreshState: 'idle' | 'refreshing' | 'error';
+    snapshotFailure?: ActionExecuteFailure;
     resources: readonly SimulatorDeviceResourceV1[] | null;
     previewStatesBySimulatorId: Readonly<Record<string, SimulatorPreviewState | undefined>>;
     diagnostics: readonly unknown[];
@@ -52,12 +54,17 @@ export function applySimulatorPreviewDaemonRefreshStarted(
 export function applySimulatorPreviewDaemonRefreshFailed(
     state: SimulatorPreviewDaemonState,
     generatedAt: number,
+    snapshotFailure?: ActionExecuteFailure,
 ): SimulatorPreviewDaemonState {
-    if (state.refreshState === 'error') return state;
+    if (state.refreshState === 'error') {
+        if (!snapshotFailure || state.snapshotFailure === snapshotFailure) return state;
+        return { ...state, snapshotFailure };
+    }
     return {
         ...state,
         generatedAt,
         refreshState: 'error',
+        ...(snapshotFailure ? { snapshotFailure } : {}),
     };
 }
 
@@ -74,8 +81,9 @@ export function applySimulatorPreviewDaemonSnapshot(
             resources = [...observedResources.values()];
         }
     }
+    const { snapshotFailure: _previousFailure, ...previous } = state;
     return {
-        ...state,
+        ...previous,
         generatedAt: snapshot.generatedAt,
         refreshState: snapshot.refreshState,
         resources,

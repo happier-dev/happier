@@ -54,11 +54,12 @@ describe('session handoff UI request client', () => {
         expect(result).toMatchObject({ ok: true, result: { handoffId: actionRequestId ?? expect.any(String) } });
     });
 
-    it.each(['returned', 'thrown'] as const)('preserves the target preflight refusal and repair reason (%s)', async mode => {
+    it.each(['returned', 'thrown'] as const)('keeps target preflight refusal evidence (%s)', async mode => {
         const failureCause = { phase: 'rpc.handler', errorClass: 'RpcError', errorCode: 'workspace_root_unsafe', httpStatus: null } as const;
-        const refusal = { errorCode: 'workspace_root_unsafe', error: 'Workspace target parent cannot be inspected', failureCause };
+        const refusal = { errorCode: 'workspace_root_unsafe', error: 'Workspace target parent cannot be inspected', failureCause,
+            requestId: 'target-preflight-request', effectAttempted: false };
         if (mode === 'returned') machineRpc.mockResolvedValueOnce(refusal);
-        else machineRpc.mockRejectedValueOnce(Object.assign(new Error(refusal.error), { rpcErrorCode: refusal.errorCode, failureCause }));
+        else machineRpc.mockRejectedValueOnce(Object.assign(new Error(refusal.error), refusal, { rpcErrorCode: refusal.errorCode }));
         await expect(preflightWorkspaceDestinationReplacement({ serverId: 'srv_fx14_owned', targetMachineId: 'target-1',
             targetPath: '/worker/copies/project', operationId: 'create-worker', workspaceAction: { kind: 'none' },
             destinationIntent: 'materialize_from_source_workspace' })).resolves.toEqual({

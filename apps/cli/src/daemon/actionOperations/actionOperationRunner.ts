@@ -621,7 +621,8 @@ export function createActionOperationRunner(deps: Readonly<{
               : null;
             const handoffDetails = projectSessionHandoffFailureDetails(action.actionId, executionResult);
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
-              ...(handoffDetails ? { details: { diagnostics: handoffDetails.diagnostics } } : {}),
+              ...(handoffDetails ? { details: 'diagnostics' in handoffDetails
+                ? { diagnostics: handoffDetails.diagnostics } : handoffDetails } : {}),
               ...(handoffRecovery?.success ? { handoffRecovery: handoffRecovery.data } : {}),
               ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),

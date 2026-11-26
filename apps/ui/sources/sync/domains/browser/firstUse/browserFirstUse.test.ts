@@ -62,7 +62,9 @@ describe('readBrowserOpenFirstUse', () => {
         actionOperationStore.mergeSnapshots({ serverId: scope.serverId, snapshots: [open({ operationId: 'open-2', createdAt: 5, startedAt: 6,
             revision: 2, state: 'failed', settledAt: 7,
             error: { errorCode: 'browser_runtime_provisioning_failed', error: 'Could not prepare the browser.' } })] });
-        expect(read()).toEqual({ kind: 'installFailed' });
+        expect(read()).toEqual({ kind: 'installFailed', actionFailure: {
+            ok: false, errorCode: 'browser_runtime_provisioning_failed', error: 'Could not prepare the browser.',
+        } });
 
         actionOperationStore.mergeSnapshots({ serverId: scope.serverId, snapshots: [open({ operationId: 'open-3', createdAt: 9, startedAt: 10,
             revision: 2, state: 'succeeded', settledAt: 11,
@@ -93,7 +95,8 @@ describe('readBrowserSandboxInstallOutcome', () => {
             .toEqual({ status: 'failed', code: 'os_authorization_required' });
         expect(readBrowserSandboxInstallOutcome({ ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' })).toBeNull();
         expect(readBrowserSandboxInstallOutcome({ ok: false, errorCode: 'runtime_action_disabled', error: 'x' }))
-            .toEqual({ status: 'failed', code: 'runtime_action_disabled' });
+            .toEqual({ status: 'failed', code: 'runtime_action_disabled',
+                actionFailure: { ok: false, errorCode: 'runtime_action_disabled', error: 'x' } });
         expect(readBrowserSandboxInstallOutcome({ ok: true, result: { nonsense: true } }))
             .toEqual({ status: 'failed', code: 'invalid_action_output' });
     });

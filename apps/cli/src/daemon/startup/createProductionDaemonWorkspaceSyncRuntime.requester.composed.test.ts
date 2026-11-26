@@ -1501,6 +1501,7 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
 // capture; Manage keeps today's native placement.
 it.skipIf(process.platform !== 'linux').each([
   ['use', 'before-effects refusals'], ['use', 'retained custody'], ['manage', 'native control'],
+  ['use', 'private checkout refusals'],
 ] as const)(
   'captures a %s handoff copy at the TARGET owner (%s)', async (role, scenario) => {
   executionBoundary.member = role === 'use';
@@ -1554,6 +1555,27 @@ it.skipIf(process.platform !== 'linux').each([
   };
   if (role === 'manage') {
     expect(await capture()).toEqual({ ok: true, capture: 'not_required' });
+    expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })).toBeNull();
+    return;
+  }
+  if (scenario === 'private checkout refusals') {
+    const rootRefusal = await capture({ targetPath: '/' });
+    expect(rootRefusal).toMatchObject({
+      ok: false, errorCode: 'workspace_private_checkout_required',
+      failureCause: { phase: 'session.handoff.workspace_capture', nativeErrorReason: 'workspace_private_checkout_required' },
+      details: { kind: 'refused', code: 'workspace_private_checkout_required' },
+    });
+    expect(rootRefusal.ok ? undefined : rootRefusal.details?.destinationReview).toBeUndefined();
+    await expect(capture({ targetPath: custodianRef.rootPath })).resolves.toMatchObject({
+      ok: false, errorCode: 'workspace_private_checkout_review_required',
+      failureCause: { phase: 'session.handoff.workspace_capture', nativeErrorReason: 'workspace_private_checkout_review_required' },
+      details: {
+        kind: 'refused', code: 'workspace_private_checkout_review_required', destinationReview: {
+          accountId: admission.actorAccountId, serverId: home, machineId: installed.machineId,
+          destinationParentPath: setup.member.workspaceRoot, destinationDirectoryName: expect.any(String),
+        },
+      },
+    });
     expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })).toBeNull();
     return;
   }

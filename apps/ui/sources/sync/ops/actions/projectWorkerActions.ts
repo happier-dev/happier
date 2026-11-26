@@ -1,4 +1,6 @@
-import { ActionApprovalRequestCreatedResultSchema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/executor/types';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectWorkerActionOutputSchemasV1, type ProjectWorkerActionIdV1, type ProjectWorkerActionInputV1, type ProjectWorkerActionOutputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { randomUUID } from '@/platform/randomUUID';
 import { executeDefaultActionInCapturedAccount } from '@/sync/ops/actions/defaultActionExecutor';
@@ -14,12 +16,17 @@ export type ProjectWorkerActionOptions = Readonly<{
 }>;
 
 export class ProjectWorkerActionError extends Error {
-    constructor(readonly errorCode: string, readonly approvalArtifactId?: string, readonly details?: unknown,
-        /** The owner's typed cause (phase, answering Machine's code), for Technical details. */
-        readonly failureCause?: ActionFailureCauseV1) {
-        super(errorCode);
+    readonly failure: ActionExecuteFailure;
+    constructor(failure: ActionExecuteFailure | string, readonly approvalArtifactId?: string) {
+        const result = typeof failure === 'string'
+            ? readActionFailureEnvelope({ ok: false, errorCode: failure })! : failure;
+        super(result.error);
+        this.failure = result;
         this.name = 'ProjectWorkerActionError';
     }
+    get errorCode() { return this.failure.errorCode; }
+    get details() { return this.failure.details; }
+    get failureCause() { return this.failure.failureCause; }
 }
 
 /** Settings controls consume the public Action front door, never the row HTTP port. */
@@ -43,8 +50,7 @@ export async function executeProjectWorkerActionV1<TActionId extends ProjectWork
                     ...(options?.expectedAccountId ? { expectedAccountId: options.expectedAccountId } : {}),
                     actionRequestId: requestId, ...(options?.signal ? { signal: options.signal } : {}),
                 });
-                if (!outcome.ok) return { ok: false, error: new ProjectWorkerActionError(
-                    outcome.errorCode ?? 'unsupported_action', undefined, outcome.details, outcome.failureCause) };
+                if (!outcome.ok) return { ok: false, error: new ProjectWorkerActionError(outcome) };
                 const approval = ActionApprovalRequestCreatedResultSchema.safeParse(outcome.result);
                 if (!approval.success) return parseReceipt(outcome.result);
                 if (!options?.onApprovalPending) throw new ProjectWorkerActionError('approval_required', approval.data.artifactId);
@@ -71,7 +77,7 @@ export async function executeProjectWorkerActionV1<TActionId extends ProjectWork
                         return parseReceipt(output.data);
                     }
                 }
-                return { ok: false, error: new ProjectWorkerActionError(code, undefined, failure?.details, failure?.failureCause) };
+                return { ok: false, error: new ProjectWorkerActionError(failure ?? code) };
             },
             aborted: () => ({ ok: false, error: new ProjectWorkerActionError('cancelled') }),
         });

@@ -33,6 +33,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
 import { joinList } from '@/utils/text/joinList';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
@@ -308,7 +309,7 @@ export function FreshCopyRow(
           title={props.notice.text}
           description={props.notice.reason}
           details={dependencyLines.length > 0 ? dependencyLines : undefined}
-          secondaryAction={props.notice.kind === 'failed' && props.notice.errorCode ? {
+          secondaryAction={props.notice.kind === 'failed' && props.notice.failure ? {
             label: t('approvals.technicalDetails'),
             testID: `${props.testID}.technicalDetails`,
             onPress: () => showFreshCopyFailureDetails(props.notice!),
@@ -350,13 +351,11 @@ export function FreshCopyRow(
 
 /** The deliberate reveal of a refused removal: its code and the owner's typed cause, never prose. */
 function showFreshCopyFailureDetails(notice: MachineFreshCopyNotice) {
-  const cause = notice.failureCause && !('kind' in notice.failureCause) ? notice.failureCause : null;
-  showActionFailureDetails({ code: notice.errorCode ?? '', context: cause ? {
-    causePhase: cause.phase,
-    // The answering Machine's own code is the cause the person can quote; the wrapper code is already shown.
-    ...(cause.nativeErrorCode ? { causeCode: cause.nativeErrorCode }
-      : cause.errorCode && cause.errorCode !== notice.errorCode ? { causeCode: cause.errorCode } : {}),
-  } : {} });
+  if (!notice.failure) return;
+  const presentation = presentActionExecutionFailure(notice.failure, notice.text, { closedCodesOnly: true });
+  showActionFailureDetails({ code: notice.failure.errorCode, context: Object.fromEntries(
+    presentation.technicalDetails.filter(detail => detail.key !== 'code').map(detail => [detail.key, detail.value])),
+  });
 }
 
 const NO_MACHINE_IDS: readonly string[] = Object.freeze([]);

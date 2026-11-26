@@ -92,6 +92,7 @@ export type SimulatorPreviewStreamState = Pick<
 export type SimulatorPreviewViewModel = Readonly<{
     kind: 'loading' | 'unavailable' | 'empty' | 'selected';
     snapshotRefreshState?: SimulatorPreviewDaemonState['refreshState'];
+    snapshotFailure?: SimulatorPreviewDaemonState['snapshotFailure'];
     viewerId: string;
     devices: readonly SimulatorPreviewDeviceOption[];
     selectedSimulatorId: string | null;
@@ -108,7 +109,7 @@ export type SimulatorPreviewViewModel = Readonly<{
 
 export type SimulatorPreviewSelectionInput = Readonly<{
     /** The selected daemon's existing snapshot lifecycle, when discovery owns the inventory. */
-    snapshotState?: Pick<SimulatorPreviewDaemonState, 'resources' | 'refreshState'>;
+    snapshotState?: Pick<SimulatorPreviewDaemonState, 'resources' | 'refreshState' | 'snapshotFailure'>;
     resources: readonly SimulatorDeviceResourceV1[];
     selectedSimulatorId?: string | null;
     viewerId: string;

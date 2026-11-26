@@ -6,8 +6,8 @@ import {
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { isActionApprovalDeclinedErrorCode, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOperationTerminalResultV1, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { isActionOperationTerminal, type ActionOperationStoreSnapshot } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -36,6 +36,7 @@ export type BrowserOpenOperationState = Readonly<{
     kind: 'preparing' | 'connecting' | 'opened' | 'installFailed' | 'sandboxUnavailable' | 'failed';
     /** The typed reason of a failure, for diagnostics; never product copy. */
     code?: string;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 const PROVISIONING_PHASE = 'browser_runtime_provisioning';
@@ -52,8 +53,12 @@ export function projectBrowserOpenOperation(snapshot: ActionOperationSnapshotV1)
     }
     if (snapshot.state === 'failed') {
         const code = snapshot.error?.errorCode;
-        return code === PROVISIONING_FAILED_CODE ? { kind: 'installFailed', code }
-            : { kind: 'failed', ...(code ? { code } : {}) };
+        const result = snapshot.error ? readActionOperationTerminalResultV1(snapshot) : null;
+        return {
+            kind: code === PROVISIONING_FAILED_CODE ? 'installFailed' : 'failed',
+            ...(code ? { code } : {}),
+            ...(result && !result.ok ? { actionFailure: result } : {}),
+        };
     }
     if (snapshot.state !== 'succeeded') return null;
     const result = BrowserCommandDispatchResultV1Schema.safeParse(snapshot.result);
@@ -68,6 +73,7 @@ export type BrowserOpenFirstUse = Readonly<{
     kind: 'preparing' | 'connecting' | 'dispatched' | 'installFailed' | 'sandboxUnavailable';
     /** The page the agent asked for, when the open's approval receipt names it. */
     targetUrl?: string;
+    actionFailure?: BrowserOpenOperationState['actionFailure'];
 }>;
 
 const PREPARING: BrowserOpenFirstUse = Object.freeze({ kind: 'preparing' });
@@ -111,7 +117,7 @@ export function readBrowserOpenFirstUse(
         case 'preparing': return PREPARING;
         case 'connecting': return CONNECTING;
         case 'opened': return DISPATCHED;
-        case 'installFailed': return INSTALL_FAILED;
+        case 'installFailed': return projected.actionFailure ? { ...INSTALL_FAILED, actionFailure: projected.actionFailure } : INSTALL_FAILED;
         case 'sandboxUnavailable': return SANDBOX_UNAVAILABLE;
         default: return null;
     }
@@ -146,7 +152,7 @@ export function readBrowserOpenTargetUrl(artifacts: readonly DecryptedArtifact[]
 
 export type BrowserSandboxInstallOutcome = Readonly<
     | { status: 'installed' }
-    | { status: 'failed'; code: string }
+    | { status: 'failed'; code: string; actionFailure?: ActionExecuteFailure }
 >;
 
 /**
@@ -155,7 +161,7 @@ export type BrowserSandboxInstallOutcome = Readonly<
  */
 export function readBrowserSandboxInstallOutcome(result: ActionExecuteResult): BrowserSandboxInstallOutcome | null {
     if (!result.ok) {
-        return isActionApprovalDeclinedErrorCode(result.errorCode) ? null : { status: 'failed', code: result.errorCode };
+        return isActionApprovalDeclinedErrorCode(result.errorCode) ? null : { status: 'failed', code: result.errorCode, actionFailure: result };
     }
     const parsed = getActionSpec('browser.sandbox.install').outputSchema?.safeParse(result.result);
     const value: unknown = parsed?.success ? parsed.data : null;

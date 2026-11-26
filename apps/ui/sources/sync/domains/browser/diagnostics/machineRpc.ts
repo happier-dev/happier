@@ -1,3 +1,4 @@
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     DaemonBrowserDiagnosticsSnapshotRequestV1Schema,
     DaemonBrowserDiagnosticsSnapshotResponseV1Schema,
@@ -5,7 +6,7 @@ import {
     type BrowserDiagnosticsRequestDetailV1,
 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
+import { projectMachineDaemonRpcFailure, readMachineDaemonRpcFailureEnvelope, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
 
@@ -21,7 +22,7 @@ export type BrowserDiagnosticsSnapshotClientInput = Readonly<{
 export type BrowserDiagnosticsSnapshotClientResult =
     | Readonly<{ ok: true; snapshot: BrowserDiagnosticsSnapshotV1; revision?: number; requestDetail?: BrowserDiagnosticsRequestDetailV1 }>
     | (Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>
-        & Pick<MachineDaemonRpcFailure, 'errorCode' | 'failureCause' | 'details'>);
+        & Omit<MachineDaemonRpcFailure, 'reason'>);
 
 export async function fetchBrowserDiagnosticsSnapshotViaMachineRpc(
     input: BrowserDiagnosticsSnapshotClientInput,
@@ -44,10 +45,12 @@ export async function fetchBrowserDiagnosticsSnapshotViaMachineRpc(
             signal: input.signal,
             ...(input.sinceRevision === undefined ? {} : { operationTimeoutMs: null }),
         });
+        const failure = readMachineDaemonRpcFailureEnvelope(raw);
         if (isRpcMethodNotFoundResult(raw)) {
-            return { ok: false, reason: 'unavailable' };
+            return { ok: false, ...(isActionExecuteFailure(raw) ? failure : null), reason: 'unavailable' };
         }
 
+        if (failure) return { ...failure, reason: 'request_failed' };
         const parsed = DaemonBrowserDiagnosticsSnapshotResponseV1Schema.safeParse(raw);
         if (!parsed.success || parsed.data.snapshot.machineId !== input.machineId) {
             return { ok: false, reason: 'invalid_response' };

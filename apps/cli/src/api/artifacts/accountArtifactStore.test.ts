@@ -35,6 +35,7 @@ import { buildWidgetDefinitionArtifactHeaderV1, createWidgetDefinitionArtifactPo
   readWidgetDefinitionArtifactSummaryV1, WidgetDefinitionV1Schema, type WidgetDefinitionDraftV1 } from '@happier-dev/protocol/widgets';
 import { readArtifactPublicNetworkPolicyV1 } from '@happier-dev/protocol/sharing/public-viewer';
 import { createActionExecutor, type V2SessionRecord } from '@happier-dev/protocol';
+import { createArtifactAccessActionsV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createWorkBoardV1, buildWorkBoardArtifactHeaderV1 } from '@happier-dev/protocol';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
@@ -1755,9 +1756,13 @@ describe('createAccountArtifactStore', () => {
       .toEqual(dataKey);
   });
   it.each([
-    { error: 'public_share_isolation_unavailable', expected: 'public_share_isolation_unavailable' },
-    { error: 'untrusted_server_detail', expected: 'public_share_request_failed' },
-  ])('normalizes an HTTP 503 public-link refusal through the public Action (%j)', async ({ error, expected }) => {
+    { data: { error: 'public_share_isolation_unavailable' }, expected: { errorCode: 'public_share_isolation_unavailable' } },
+    { data: { error: 'untrusted_server_detail' }, expected: { errorCode: 'public_share_request_failed' } },
+    { data: { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, expected: {
+      errorCode: 'database_transaction_timeout', effectAttempted: false,
+      failureCause: { phase: 'home.database.transaction', errorCode: 'database_transaction_timeout', httpStatus: 503 },
+    } },
+  ])('normalizes an HTTP 503 public-link refusal through the public Action ($data.error)', async ({ data, expected }) => {
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
     mockGet.mockResolvedValue({ status: 200, data: {
       id: 'document', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
@@ -1766,15 +1771,50 @@ describe('createAccountArtifactStore', () => {
       body: encodePlainArtifactStoredContent({ body: 'definition' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
       headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
     } });
-    mockPost.mockResolvedValue({ status: 503, data: { error } });
+    mockPost.mockResolvedValue({ status: 503, data });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       artifactAction: createCliArtifactActions({ store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null }),
     });
     expect(await executor.execute('artifact.public_link.create', { artifactId: 'document' },
       { surface: 'cli', serverId: 'home', authority: 'present_user',
-        presentUserConfirmation: { actionId: 'artifact.public_link.create' } })).toMatchObject({ ok: false, errorCode: expected, error: expected });
+        presentUserConfirmation: { actionId: 'artifact.public_link.create' } })).toMatchObject({ ok: false, error: expected.errorCode, ...expected });
     expect(mockPost).toHaveBeenCalledWith(expect.stringContaining('/v1/public-shares'),
       expect.objectContaining({ subject: { kind: 'artifact', id: 'document' } }), expect.objectContaining({ validateStatus: expect.any(Function) }));
+  });
+
+  it('preserves the Home-confirmed rollback from an Artifact read in the CLI Action', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 503, data: { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      artifactAction: createCliArtifactActions({ store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null }),
+    });
+    expect(await executor.execute('artifact.get', { artifactId: 'document' },
+      { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({
+      ok: false, errorCode: 'artifact_read_unavailable', effectAttempted: false,
+      failureCause: { phase: 'home.database.transaction', errorCode: 'database_transaction_timeout', httpStatus: 503 },
+    });
+  });
+
+  it('preserves the Home-confirmed rollback from a grant mutation in the CLI Action', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 200, data: {
+      id: 'document', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId: 'document',
+        revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } }),
+      body: encodePlainArtifactStoredContent({ body: 'definition' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    } });
+    mockPut.mockResolvedValue({ status: 503, data: { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      artifactAccessAction: createArtifactAccessActionsV1({ read: store.read, transport: store.accessGrants }),
+    });
+    expect(await executor.execute('artifact.access.grants.set', {
+      artifactId: 'document', principal: { kind: 'account', accountId: 'viewer' }, accessLevel: 'view',
+    }, { surface: 'cli', serverId: 'home', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'artifact.access.grants.set' } })).toMatchObject({
+      ok: false, errorCode: 'database_transaction_timeout', effectAttempted: false,
+      failureCause: { phase: 'home.database.transaction', errorCode: 'database_transaction_timeout', httpStatus: 503 },
+    });
   });
 
   it.each(['widget-area-layout.v1', 'bot_template.v1'])('projects current %s sharing and header-only revision from the actual Artifact access boundary', async kind => {

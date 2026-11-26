@@ -28,7 +28,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ActionOperationDetailControls } from '@/components/inbox/actionOperations/ActionOperationDetailControls';
 import { presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
-import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { readProjectOpenPrivateDestinationReview } from '@/components/projects/activation/projectOpenRefusalPresentation';
 import { SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED, type ExecuteSessionHandoffActionResult } from '@/sync/domains/sessionHandoff/executeSessionHandoffAction';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
@@ -56,6 +56,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     operation?: ActionOperationSnapshotV1;
     serverId?: string | null;
     sourceSessionId?: string;
+    targetMachineId?: string;
     onResume?: () => Promise<void> | void;
     workspaceSyncEnabled?: boolean;
     requestFailure?: Extract<ExecuteSessionHandoffActionResult, { ok: false }>;
@@ -466,7 +467,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, sourceSessionId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry, route }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, sourceSessionId, targetMachineId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry, route }: Props) {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const styles = stylesheet;
@@ -615,20 +616,18 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         ? presentProviderError(requestFailure?.error ?? operation?.error?.error)
         : null;
     const providerFailureMessage = providerFailure?.action ? t(providerFailure.descriptionKey) : null;
-    // The carried failure, read once by the Sync presenter: its typed cause decides the sentence, and the code
-    // and phase stay under Details the way the shared failure alert reveals them.
     const carriedFailure = requestFailure ?? (operationFailed ? operation?.error : undefined);
-    const carriedCause = carriedFailure?.failureCause && !('kind' in carriedFailure.failureCause) ? carriedFailure.failureCause : null;
-    const failurePresentation = operationFailureCode && operationFailureCode !== SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED
-        ? presentWorkspaceSyncFailure({ code: operationFailureCode, failureCause: carriedFailure?.failureCause,
-            details: carriedFailure && 'details' in carriedFailure ? carriedFailure.details : undefined },
-            undefined, t('sessionHandoff.failure.message'))
+    const refusal = carriedFailure?.details;
+    const reviewMachineId = targetMachineId ?? (operation?.domainRef?.kind === 'handoff' ? operation.domainRef.targetMachineId : undefined);
+    const review = serverId && reviewMachineId && refusal && 'kind' in refusal && refusal.kind === 'refused'
+        ? readProjectOpenPrivateDestinationReview(refusal, { serverId, machineId: reviewMachineId })
         : null;
-    const failureTechnicalDetails = operationFailureCode ? formatActionFailureDetails({ code: operationFailureCode, context: {
-        ...(carriedCause ? { causePhase: carriedCause.phase } : {}),
-        ...(carriedCause?.errorCode && carriedCause.errorCode !== operationFailureCode ? { causeCode: carriedCause.errorCode } : {}),
-        ...(carriedFailure && 'requestId' in carriedFailure && carriedFailure.requestId ? { requestId: carriedFailure.requestId } : {}),
-    } }) : null;
+    const failurePresentation = operationFailureCode
+        ? presentWorkspaceSyncFailure({ ...carriedFailure, ok: false, errorCode: operationFailureCode },
+            review ? 'destination_open' : undefined, t('sessionHandoff.failure.message'))
+        : null;
+    const failureTechnicalDetails = failurePresentation?.technicalDetails
+        .map(({ label, value }) => `${label}: ${value}`).join('\n');
     // While the machine is created, its step carries what is happening; the status line stays the handoff's own.
     const resolvedMessage =
         message
@@ -669,7 +668,7 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         ? operationProgress.phase
         : operationProgressLabel;
     const hasTechnicalDetails = Boolean(operation || currentCheckpoint || summaryChips.length > 0 || progressStats.length > 0 || currentDetailLabel
-        || (isFailureState && failureTechnicalDetails));
+        || (isFailureState && (review || failureTechnicalDetails)));
     const [detailsExpanded, setDetailsExpanded] = React.useState(false);
     const resumeInFlightRef = React.useRef(false);
     const [resumeInFlight, setResumeInFlight] = React.useState(false);
@@ -879,6 +878,11 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                         )}
                     >
                         <View style={styles.detailsBody}>
+                            {isFailureState && review ? (
+                                <Text style={styles.progressMetaText} selectable>
+                                    {t('workspaceSync.endpoint.destination', { label: review.destination })}
+                                </Text>
+                            ) : null}
                             {isFailureState && failureTechnicalDetails ? (
                                 <Text testID="session-handoff-failure-technical-details" style={styles.progressMetaText} selectable>
                                     {failureTechnicalDetails}

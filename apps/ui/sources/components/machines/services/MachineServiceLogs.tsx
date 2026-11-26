@@ -29,7 +29,7 @@ import { useMachineSetupRecipeOptions } from '@/components/store/catalog/storeSo
 import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { describeActionExecutionPrerequisite, presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import { useServiceOccurrenceLogViewer, type useNativeLogViewer } from './useMachineServiceLogViewer';
 
@@ -198,6 +198,10 @@ export function ServiceOccurrenceLogs(props: Readonly<{
       );
     }
     if (first.kind === 'failed') {
+      const { code, message: _privateError, ...metadata } = first.error;
+      const diagnosticDetail = presentActionExecutionFailure({ ...metadata, ok: false, errorCode: code },
+        undefined, { closedCodesOnly: true }).technicalDetails.filter(line => line.key !== 'code')
+        .map(line => line.label + ': ' + line.value).join('\n');
       const unavailable = ManagedServiceUnavailableReasonV1Schema.safeParse(
         ADMISSION_CODES.has(first.error.code) ? 'admission_unavailable' : first.error.code,
       );
@@ -206,8 +210,9 @@ export function ServiceOccurrenceLogs(props: Readonly<{
           <UnavailableLogs
             reason={unavailable.data}
             machineName={machineName}
-            code={first.error.code}
+            code={code}
             details={first.error.details}
+            diagnosticDetail={diagnosticDetail}
             onOpenEnvironment={props.onOpenEnvironment ?? null}
           />
         );
@@ -218,7 +223,8 @@ export function ServiceOccurrenceLogs(props: Readonly<{
           size="line"
           title={t('machineServices.logs.error.title')}
           reason={machineServiceLogReadFailureReason(first.error, machineName)}
-          diagnosticCode={first.error.code}
+          diagnosticCode={code}
+          diagnosticDetail={diagnosticDetail}
           action={describeActionExecutionPrerequisite(first.error.code) ? undefined : {
             label: t('common.retry'),
             onPress: () => {
@@ -434,6 +440,7 @@ function UnavailableLogs(
     machineName: string;
     code: string;
     details?: unknown;
+    diagnosticDetail?: string;
     onOpenEnvironment?: (() => void) | null;
     /** The source's named recipe that would let it read; its Store listing on this Machine owns inputs and review. */
     recipeRemedy?: LogRecipeRemedyInput | null;
@@ -456,6 +463,7 @@ function UnavailableLogs(
         onPress: props.onOpenEnvironment, testID: 'machine-service-logs-open-environment' } }
         : remedy ? { action: remedy.action } : {})}
       diagnosticCode={props.code}
+      diagnosticDetail={props.diagnosticDetail}
     />
   );
 }

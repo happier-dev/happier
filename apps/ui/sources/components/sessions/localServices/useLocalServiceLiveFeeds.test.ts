@@ -12,6 +12,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { storage } from '@/sync/domains/state/storage';
+import { t } from '@/text';
 import { createLocalServiceInventoryState } from '@/sync/domains/local/services/inventory/store';
 import { getLocalServiceLauncherState, invalidateLocalServiceLauncherStore, readLocalServiceLauncherStore, publishLocalServiceLauncherSnapshot, resetLocalServiceLauncherStoreForTests } from '@/sync/domains/local/services/launch/sharedStore';
 import { resetLocalServiceInventoryStoreForTests } from '@/sync/domains/local/services/inventory/sharedStore';
@@ -582,7 +583,9 @@ describe('Project Services source feed plus actual native binding', () => {
     remote.mockImplementation(async ({ method, machineId }: { method: string; machineId: string }) => {
       if (method.endsWith('.watch')) return new Promise(() => {});
       if (refuseRefresh && method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
-        throw new RpcError('private transport detail', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+        throw Object.assign(new RpcError('private transport detail', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, { phase: 'rpc.discovery' }), {
+          effectAttempted: false,
+        });
       }
       return { protocolVersion: 1, snapshot: { v: 1, machineId, generatedAt: 2,
         refreshState: 'idle', entries: [], diagnostics: [] } };
@@ -599,6 +602,11 @@ describe('Project Services source feed plus actual native binding', () => {
       const buttons = alert.mock.calls[0]?.[2] as import('@/modal/types').AlertButton[];
       buttons.find(button => button.onPress)?.onPress?.();
       expect(alert.mock.calls[1]?.[1]).toContain(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+      const requestIdLabel = t('browserDiagnostics.host.devtools.fields.requestId') + ': ';
+      const requestIdLine = alert.mock.calls[1]?.[1].split('\n').find((line: string) => line.startsWith(requestIdLabel));
+      expect(requestIdLine?.slice(requestIdLabel.length)).toBeTruthy();
+      expect(alert.mock.calls[1]?.[1]).toContain('false');
+      expect(alert.mock.calls[1]?.[1]).toContain('rpc.discovery');
     } finally {
       await hook.unmount();
     }

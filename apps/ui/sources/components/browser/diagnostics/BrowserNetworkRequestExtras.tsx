@@ -7,6 +7,8 @@ import type {
   BrowserDiagnosticsRequestDetailV1,
 } from '@happier-dev/protocol/browser/diagnostics/v1';
 
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { Text } from '@/components/ui/text/Text';
 import {
   useBrowserDiagnosticsRequestDetail,
@@ -188,6 +190,13 @@ function RequestExtrasLeaf(
     );
   }
   if (state.status === 'unavailable') {
+    const failure = 'actionFailure' in state ? state.actionFailure : undefined;
+    if (failure) {
+      const presentation = presentActionExecutionFailure(failure, detailUnavailableCopy(state.reason), { closedCodesOnly: true });
+      return <SurfaceStateCard kind="unavailable" size="line" title={presentation.reason}
+        diagnosticCode={failure.errorCode} diagnosticDetail={presentation.technicalDetails.filter(line => line.key !== 'code')
+          .map(line => `${line.label}: ${line.value}`).join('\n')} testID={`${props.testID}-unavailable`} />;
+    }
     return (
       <Text testID={`${props.testID}-unavailable`} style={styles.fieldLabel}>
         {detailUnavailableCopy(state.reason)}

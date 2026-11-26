@@ -27,13 +27,13 @@ describe('computer provider row state', () => {
     });
 
     it('puts a failed install on its own row with a retry the person can see', () => {
-        const failed = { phase: 'failed', errorCode: 'install_failed', error: 'checksum mismatch', provider: 'agent-desktop' } as const;
+        const failed = { phase: 'failed', failure: { ok: false, errorCode: 'install_failed', error: 'checksum mismatch' }, provider: 'agent-desktop' } as const;
         expect(resolveComputerProviderRowState({ row: row(), mutation: failed, online: true }))
             .toMatchObject({ status: { kind: 'failed', tone: 'bad' }, action: 'retry', toggle: { value: false, disabled: false } });
         expect(resolveComputerProviderRowState({ row: row({ provider: 'cua', enabled: true, isDefault: true, availability: 'ready' }), mutation: failed, online: true })
             .status.kind).toBe('installed');
         // A failed save names no provider: no row claims it.
-        expect(resolveComputerProviderRowState({ row: row(), mutation: { phase: 'failed', errorCode: 'x', error: 'y' }, online: true }).status.kind)
+        expect(resolveComputerProviderRowState({ row: row(), mutation: { phase: 'failed', failure: { ok: false, errorCode: 'x', error: 'y' } }, online: true }).status.kind)
             .toBe('installsOnEnable');
     });
 

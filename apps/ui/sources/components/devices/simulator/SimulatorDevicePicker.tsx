@@ -34,6 +34,7 @@ function availabilityDetail(state: SimulatorPreviewDeviceOption['availability'][
 export function SimulatorDevicePicker(props: Readonly<{
     devices: readonly SimulatorPreviewDeviceOption[];
     kind?: SimulatorPreviewViewModel['kind'];
+    failurePresentation?: React.ComponentProps<typeof SimulatorUnavailableState>['failurePresentation'];
     selectedSimulatorId: string | null;
     onSelectDevice: (simulatorId: string) => void;
     onStartDevice?: (simulatorId: string) => void;
@@ -56,7 +57,7 @@ export function SimulatorDevicePicker(props: Readonly<{
                         title={t('common.loading')}
                     />
                 ) : props.kind === 'unavailable' ? (
-                    <SimulatorUnavailableState testID={props.testID} />
+                    <SimulatorUnavailableState testID={props.testID} failurePresentation={props.failurePresentation} />
                 ) : (
                     <SurfaceStateCard
                         testID={`${props.testID}-empty`}

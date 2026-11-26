@@ -21945,6 +21945,7 @@ const ja = completeWorkspaceSyncTranslation({
         manageRequired: "この操作には同期先マシンの管理権限が必要です。所有者に管理権限を依頼してください。",
         projectWorkspaceChanged: "そのフォルダは別のプロジェクトに属しています。新しいフォルダを選ぶか、そのフォルダが属するプロジェクトを使ってください。",
         requesterLinkUnavailable: "コピーを持っていくには、まず自分のマシンでプロジェクトを開いてください。コピーなしで引き継ぐこともできます。",
+        seedFromSharedMachineRefused: "サーバーは、他の人のマシンを使ったワークスペースのコピーを拒否しました。",
         dependenciesUnavailable: "このコピーを使う作業がもう一方のマシンにあるか確認できませんでした。もう一度試すか、そのマシンの所有者に確認してください。",
         provenanceConflict: "これらのフォルダは別の目的ですでに同期されています。別のフォルダを選んでください。",
         notWorkerCopy: "このフォルダは作業用コピーとして作成されたものではないため、Happier はそのまま残しました。何も削除されていません。",

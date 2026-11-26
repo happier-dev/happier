@@ -319,6 +319,53 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
             ? RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE : RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE}`, params: input })]);
     });
 
+    it.each(['admission', 'launch', 'forget'] as const)('presents the owning %s refusal from a compiled Services command', async kind => {
+        const forget = kind === 'forget';
+        const path = ['services', forget ? 'forget' : 'start'];
+        const command = findCompiledActionCliCommand(path, listCompiledActionCliCommands());
+        if (!command) throw new Error('Expected a compiled Services command');
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
+            errorCode: 'custodian_only', httpStatus: 403 } as const;
+        const launchRequest = { machineId: 'machine-a', targetId: 'project-service:selected' };
+        const forgetRequest = LocalServiceActionRequestV1Schema.parse({ requestId: 'reviewed-forget', action: 'forget',
+            target: { kind: 'inventory_entry', inventoryEntryId: 'instance-web', machineId: 'machine-a' } });
+        const input = forget ? forgetRequest : launchRequest;
+        const response = forget ? await createLocalServiceActionRoutes({
+            machineId: 'machine-a', inventoryRegistry: createLocalServiceInventoryRegistry(),
+        }).execute(forgetRequest) : kind === 'launch' ? DaemonLocalServiceLauncherStartResponseV1Schema.parse({
+            ...launchRequest, protocolVersion: 1, status: 'failed', reasonCode: 'service_unavailable', failureCause,
+            snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [] },
+        }) : ActionExecuteFailureSchema.parse({
+            ok: false, errorCode: 'custodian_only', error: 'Forbidden', effectAttempted: false, failureCause,
+            details: { privateDiagnostic: 'never-copy' },
+        });
+        const { executor } = receivingMachineBoundary(response, command.actionId);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            await runCompiledActionCliCommand({ command,
+                argv: [...path, '--server-id', 'home-a', '--input-json', JSON.stringify(input)],
+                deps: { readCredentialsForServerIdFn: async () => ({ token: 'test-token', encryption: null }),
+                    getServerProfileFn: async () => ({ id: 'home-a', name: 'Selected Home', serverUrl: 'https://selected-home.example',
+                        webappUrl: 'https://selected-home.example', createdAt: 1, updatedAt: 1, lastUsedAt: 1 }),
+                    createExecutorFn: () => ({
+                        execute: (actionId, input, context) => executor.execute(actionId, input, { ...context, runtimeAccountId: 'owner' }),
+                        resolveSessionTarget: async () => ({ ok: false as const, code: 'not_found' as const }),
+                    }) } });
+            const text = error.mock.calls.flat().join(' ');
+            if (forget) {
+                expect(text).toContain('unknown_inventory_entry');
+                expect(text).toContain(forgetRequest.requestId);
+            } else {
+                expect(text).toContain(kind === 'launch' ? 'service_unavailable' : 'custodian_only');
+                expect(text).toContain(failureCause.phase);
+                expect(text).toContain('HTTP 403');
+            }
+            if (kind === 'admission') expect(text).toContain('No effect attempted');
+            expect(text).not.toContain('never-copy');
+            expect(process.exitCode).toBe(1);
+        } finally { process.exitCode = undefined; }
+    });
+
     it.each(['inventoryEntryId', 'managedServiceId', 'launchTargetId'] as const)('preserves the private-preview %s selector and initial path', async selector => {
         const refused = { ok: false, errorCode: 'service_unavailable', error: 'service_unavailable' };
         const { executor, requests, context } = receivingMachineBoundary(refused, 'localServices.preview.openOrCreate');

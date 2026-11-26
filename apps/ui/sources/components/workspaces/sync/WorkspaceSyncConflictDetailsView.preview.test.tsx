@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { expandDisclosureAsync, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkspaceSyncHarness } from '@/dev/testkit/harness/workspaceSyncHarness';
 
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -20,6 +19,8 @@ vi.mock('react-native-unistyles', async () => {
 });
 const workspace = createWorkspaceSyncHarness(request => machineRpc(request));
 await workspace.ready;
+const { WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema } =
+    await import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas');
 
 const a = { kind: 'file' as const, digest: 'a'.repeat(40), executable: false, size: 3 };
 const b = { kind: 'file' as const, digest: 'b'.repeat(40), executable: false, size: 3 };
@@ -79,7 +80,61 @@ describe('workspace sync selected previews', () => {
         await act(async () => { apply()!.props.onPress(); });
         await vi.waitFor(() => expect(machineRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE)).toBe(true));
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('workspaceSync.error.manageRequired')));
+        expect(screen.getTextContent()).not.toContain('rpc.handler');
+        await expandDisclosureAsync(screen.findAllByTestId('workspace-sync-conflict-resolution-technical-details'), 'conflict refusal details');
+        expect(screen.getTextContent()).toContain('rpc.handler');
+        expect(screen.getTextContent()).toContain('credential_scope_denied');
+        expect(screen.getTextContent()).toContain('machine_manage_required');
         await screen.unmount();
+    });
+
+    it.each(['inspection', 'preview'] as const)('carries a typed %s refusal into the conflict view', async failedRead => {
+        const path = `src/${failedRead}`;
+        const inspection = WorkspaceSyncConflictInspectRpcResultV1Schema.parse({
+            controllerMachineId: 'machine-a', hubWorkspaceRefId: 'hub', path,
+            endpoints: [
+                { workspaceRefId: 'hub', outcome: 'observed', observation: a, selections: [] },
+                { workspaceRefId: 'spoke', outcome: 'observed', observation: b, selections: [] },
+            ],
+            versions: [
+                { endpointWorkspaceRefIds: ['hub'], entry: a },
+                { endpointWorkspaceRefIds: ['spoke'], entry: b },
+            ],
+            coverage: { complete: true },
+        });
+        machineRpc.mockImplementation(async ({ method, payload }: { method: string; payload: unknown }) => {
+            if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) return {
+                status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null,
+                conflicts: [{ relationshipId: 'link-1', path, alpha: a, beta: b }],
+            };
+            if (method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT) return {};
+            const { preview } = WorkspaceSyncConflictInspectRpcRequestV1Schema.parse(payload);
+            if ((!preview && failedRead === 'inspection') || (preview?.workspaceRefId === 'hub' && failedRead === 'preview')) {
+                return { error: 'Refused', errorCode: 'credential_scope_denied',
+                    failureCause: { phase: 'rpc.handler', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } };
+            }
+            if (!preview) return inspection;
+            return { ...inspection, versions: inspection.versions.map(version => version.endpointWorkspaceRefIds.includes(preview.workspaceRefId)
+                ? { ...version, preview: { workspaceRefId: preview.workspaceRefId,
+                    preview: { status: 'text', text: 'comparison text', digest: b.digest, size: b.size } } }
+                : version) };
+        });
+        const { WorkspaceSyncConflictDetailsView } = await import('./WorkspaceSyncConflictDetailsView');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(React.createElement(WorkspaceSyncConflictDetailsView, { resource: {
+            kind: 'workspaceSyncConflicts', hubWorkspaceRefId: 'hub', workspaceRefId: 'spoke',
+            controllerMachineId: 'machine-a', serverId: workspace.serverId, initialPath: path,
+        } }));
+        try {
+            await vi.waitFor(() => expect(machineRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT
+                && Boolean(request.payload.preview) === (failedRead === 'preview'))).toBe(true));
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('workspaceSync.error.manageRequired')));
+            if (failedRead === 'preview') await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('workspaceSync.fileState.text')));
+            expect(screen.getTextContent()).not.toContain('rpc.handler');
+            await expandDisclosureAsync(screen.findAllByTestId(`workspace-sync-conflict-${failedRead}-technical-details`), 'conflict read refusal details');
+            expect(screen.getTextContent()).toContain('rpc.handler');
+            expect(screen.getTextContent()).toContain('machine_manage_required');
+        } finally { await screen.unmount(); }
     });
 
     it('reads only the selected two versions and keeps one useful when the other endpoint fails', async () => {

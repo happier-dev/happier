@@ -68,8 +68,8 @@ export function useArtifactNetworkEditor(
     setState({ artifactId: artifact.id, phase: 'opening' });
     try {
       const read = await client.getArtifact(artifact.id);
-      if (!read.ok) throw createActionExecuteFailureError({ ok: false, errorCode: read.failure.code,
-        error: read.failure.code, failureCause: read.failure.failureCause });
+      if (!read.ok) throw createActionExecuteFailureError({ ...read.failure, ok: false, errorCode: read.failure.code,
+        error: read.failure.error ?? read.failure.code });
       const opened = read.value.artifact;
       if (!opened)
         throw createActionExecuteFailureError({ ok: false, errorCode: 'artifact_not_found', error: 'artifact_not_found' });
@@ -111,8 +111,8 @@ export function useArtifactNetworkEditor(
               payload as Parameters<typeof client.updateArtifact>[0],
             );
             if ('approvalId' in outcome) return null;
-            if (!outcome.ok) throw createActionExecuteFailureError({ ok: false, errorCode: outcome.failure.code,
-              error: outcome.failure.code, failureCause: outcome.failure.failureCause });
+            if (!outcome.ok) throw createActionExecuteFailureError({ ...outcome.failure, ok: false, errorCode: outcome.failure.code,
+              error: outcome.failure.error ?? outcome.failure.code });
             return outcome.value;
           },
         });

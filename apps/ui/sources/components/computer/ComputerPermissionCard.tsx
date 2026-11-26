@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ComputerGrantStatusV1 } from '@happier-dev/protocol/computer/v1';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ITEM_GROUP_CONTAINER_HORIZONTAL_PADDING_PX } from '@/components/ui/lists/itemGroupSpacing';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SystemPermissionRow, type SystemPermissionRowState } from '@/components/systemPermissions/SystemPermissionRow';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { useHostActivelyFocusedEffect } from '@/utils/runtime/useHostActivelyViewed';
 import { resolveComputerRecovery } from '@/sync/domains/computer/targets';
@@ -48,6 +50,7 @@ export function ComputerPermissionCard(props: Readonly<{
     machineName: string;
     grants: ComputerGrantStatusV1;
     openSettings: ComputerOpenSettingsState;
+    openSettingsFailure?: ActionExecuteFailure;
     onOpenSettings: (permission: 'capture' | 'input') => void;
     onCheckAgain: () => void;
     testID?: string;
@@ -56,6 +59,9 @@ export function ComputerPermissionCard(props: Readonly<{
     const machine = props.machineName;
     const unknown = props.grants[permission] === 'unknown';
     const testID = props.testID ?? 'computer-permission';
+    const failure = props.openSettings === 'failed' ? props.openSettingsFailure : undefined;
+    const failureCopy = t('computerUse.permission.openFailed');
+    const presentation = failure ? presentActionExecutionFailure(failure, failureCopy, { closedCodesOnly: true }) : null;
     // The OS offers no grant-change event, so the natural boundary is the person's return: once the
     // pane was opened on the machine, coming back to Happier re-reads its grants exactly once. A second
     // return re-reads only after the pane is opened again; Check again stays for everything else.
@@ -86,7 +92,10 @@ export function ComputerPermissionCard(props: Readonly<{
                 // Waiting on a person, not on work in flight: the line carries no working mark.
                 live={props.openSettings === 'opened'
                     ? { text: t('computerUse.permission.opened', { machine }) }
-                    : props.openSettings === 'failed' ? { text: t('computerUse.permission.openFailed') } : undefined}
+                    : props.openSettings === 'failed' ? { text: presentation?.reason ?? failureCopy } : undefined}
+                diagnosticCode={failure?.errorCode}
+                diagnosticDetail={presentation?.technicalDetails.filter(line => line.key !== 'code')
+                    .map(line => `${line.label}: ${line.value}`).join('\n')}
                 // Opening the pane is the way in, not a retry: the card's one filled primary (lab `computer` OG).
                 action={{
                     invitation: true,

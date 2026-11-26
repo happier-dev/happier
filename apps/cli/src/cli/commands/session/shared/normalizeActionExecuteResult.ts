@@ -1,6 +1,8 @@
+import { stripVTControlCharacters } from 'node:util';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionFailureCauseV1Schema, parseActionExecuteFailure, projectActionExecuteFailure, projectActionFailureForAgentV1, readActionErrorCodeV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { projectSessionHandoffFailureDetails } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import { readDeploymentInstallationReplacementRefusalV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { SessionGoalControlFailureV1Schema, type SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
@@ -132,18 +134,39 @@ export function projectCliActionFailure(failure: CliActionFailure, requestId?: s
     ...(errorMessage || projected.error !== failure.errorCode ? { message: projected.error } : {}),
     ...(failure.candidates ? { candidates: failure.candidates } : {}),
     ...(projected.details !== undefined ? { details: projected.details } : {}),
-    ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
-    ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}),
+    ...(projected.failureCause ? { failureCause: projected.failureCause } : {}),
+    ...(projected.effectAttempted !== undefined ? { effectAttempted: projected.effectAttempted } : {}),
     ...(failure.goalControlFailure ? { goalControlFailure: failure.goalControlFailure } : {}),
   };
 }
 
-export function formatCliActionFailureText(message: string, failure: CliActionFailure): string {
-  const diagnosticLine = [
-    ...(failure.failureCause ? [`Phase: ${failure.failureCause.phase}`] : []),
-    ...(failure.requestId ? [`requestId: ${failure.requestId}`] : []),
-  ].join('; ');
-  return diagnosticLine ? `${message}\n${diagnosticLine}` : message;
+export function formatCliActionFailureText(
+  message: string | undefined,
+  failure: CliActionFailure,
+  options?: Readonly<{ actionId?: string; requestId?: string; suffix?: string | null }>,
+): string {
+  const projected = projectCliActionFailure(failure, options?.requestId);
+  const heading = message ?? projected.message ?? projected.code;
+  const summary = options?.suffix ? `${heading} ${options.suffix}` : heading;
+  const cause = projected.failureCause;
+  const handoff = projectSessionHandoffFailureDetails(options?.actionId ?? '', {
+    errorCode: projected.code, details: projected.details,
+  });
+  const terminalField = (value: string) => stripVTControlCharacters(value).replace(/\p{Cc}/gu, ' ');
+  const diagnostics = [
+    cause && heading !== projected.code ? `Code: ${terminalField(projected.code)}` : null,
+    cause ? `Phase: ${cause.phase}` : null,
+    cause?.errorCode && cause.errorCode !== projected.code ? `Cause: ${cause.errorCode}` : null,
+    cause && cause.httpStatus !== null ? `HTTP ${cause.httpStatus}` : null,
+    cause && 'nativeErrorCode' in cause && cause.nativeErrorCode ? `Native code: ${cause.nativeErrorCode}` : null,
+    cause && 'nativeErrorReason' in cause && cause.nativeErrorReason ? `Reason: ${cause.nativeErrorReason}` : null,
+    ...(handoff && 'diagnostics' in handoff ? handoff.diagnostics.map(({ code, details }) =>
+      `Handoff diagnostic: ${code} (${details.pathKind})`) : []),
+    projected.requestId ? `requestId: ${terminalField(projected.requestId)}` : null,
+    projected.effectAttempted === false ? 'No effect attempted' : null,
+    projected.effectAttempted === true ? 'Effect attempted' : null,
+  ].filter(part => part !== null).join('; ');
+  return diagnostics ? `${summary}\n${diagnostics}` : summary;
 }
 
 /** Every thrown Action failure consumes the Protocol owner's typed carrier. */

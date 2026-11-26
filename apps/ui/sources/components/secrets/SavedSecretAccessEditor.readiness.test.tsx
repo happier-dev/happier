@@ -165,6 +165,13 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
         expect(account.request.mock.calls.filter(([, init]) => init?.method === 'POST' && String(init?.body).includes('resource-a'))).toEqual([]);
     });
 
+    it('shows a recipient census permission refusal in the sharing editor', async () => {
+        const { screen } = await mount({ mode: 'e2ee', handleRequest: async path => path.startsWith('/v1/account/saved-secrets/resources/envelope-census?')
+            ? Response.json({ error: 'forbidden' }, { status: 403 }) : null });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.permissionDenied'));
+        expect(screen.findByTestId('saved-secret-recipient-readiness-retry')).not.toBeNull();
+    });
+
     it('does not read a census for a Home-managed secret', async () => {
         const { account } = await mount();
         expect(account.request.mock.calls.filter(([url]) => String(url).includes('/envelope-census'))).toEqual([]);

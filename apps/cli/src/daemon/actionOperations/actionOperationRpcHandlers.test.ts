@@ -53,6 +53,11 @@ describe('action operation observation RPC handlers', () => {
       errorCode: 'handoff_failed', public: false },
     { label: 'wrong Action', details: { diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }] },
       actionId: 'session.fork' as const, public: false },
+    { label: 'a reviewed private checkout destination', errorCode: 'workspace_private_checkout_review_required', public: true,
+      details: { kind: 'refused', code: 'workspace_private_checkout_review_required', destinationReview: {
+        accountId: 'account', serverId: 'home', machineId: 'destination',
+        destinationParentPath: '/member/workspaces', destinationDirectoryName: 'copy',
+      } } },
     { label: 'no details on an earlier failure', details: undefined, public: false },
     { label: 'raw vendor details', details: { vendorCode: 'UNAUTHORED_VENDOR_CODE', credential: 'private' }, public: false },
   ];

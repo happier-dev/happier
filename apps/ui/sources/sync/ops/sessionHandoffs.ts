@@ -191,7 +191,9 @@ export async function preflightWorkspaceDestinationReplacement(
         });
         const refusal = readError(raw);
         if (refusal) return { type: 'error', result: { ok: false, errorCode: refusal.errorCode, error: refusal.errorMessage,
-            ...(refusal.failureCause === undefined ? {} : { failureCause: refusal.failureCause }) } };
+            ...(refusal.failureCause === undefined ? {} : { failureCause: refusal.failureCause }),
+            ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
+            ...(refusal.effectAttempted === undefined ? {} : { effectAttempted: refusal.effectAttempted }) } };
         const parsed = HandoffTargetReplacementPreflightResultV1Schema.safeParse(raw);
         return parsed.success ? parsed.data : { type: 'error', result: { ok: false,
             errorCode: 'invalid_response', error: 'Workspace target returned an invalid preflight response' } };
@@ -204,7 +206,9 @@ export async function preflightWorkspaceDestinationReplacement(
         const refusal = readError(error);
         const errorCode = refusal?.errorCode ?? readRpcErrorCode(error) ?? 'target_unavailable';
         return { type: 'error', result: { ok: false, errorCode, error: refusal?.errorMessage ?? (error instanceof Error ? error.message : errorCode),
-            ...(refusal?.failureCause === undefined ? {} : { failureCause: refusal.failureCause }) } };
+            ...(refusal?.failureCause === undefined ? {} : { failureCause: refusal.failureCause }),
+            ...(refusal?.requestId === undefined ? {} : { requestId: refusal.requestId }),
+            ...(refusal?.effectAttempted === undefined ? {} : { effectAttempted: refusal.effectAttempted }) } };
     }
 }
 

@@ -18,6 +18,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
 import { Text } from '@/components/ui/text/Text';
@@ -34,7 +36,7 @@ import {
 import { projectLoadedWorkspaceSyncConflicts, buildReviewedWorkspaceSyncResolution, isReviewedWorkspaceSyncResolutionCurrent, resolveWorkspaceSyncComparisonText } from '@/sync/domains/sessionHandoff/workspaceSyncConflictReviewModel';
 import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope, resolveWorkspaceSyncSummaryStateLabel } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
 import { refreshWorkspaceSyncStatuses } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
-import { formatWorkspaceSyncRelationshipTitle, presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode, resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { formatWorkspaceSyncRelationshipTitle, presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode, resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey, type WorkspaceSyncFailurePresentation } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { openSessionAuthoringSeed } from '@/sync/ops/actions/openSessionAuthoringSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
@@ -92,19 +94,35 @@ function previewLabel(preview: ReadWorkspaceSyncFileResultV1 | null): string {
     }
 }
 
+type ConflictFailure = Readonly<{
+    message: string;
+    technicalDetails?: WorkspaceSyncFailurePresentation['technicalDetails'];
+}>;
+
+type SelectedPreview = Readonly<{
+    phase: 'idle' | 'loading' | 'refreshing' | 'ready' | 'error';
+    value: ReadWorkspaceSyncFileResultV1 | null;
+    failure?: ConflictFailure;
+}>;
+
+function ConflictFailureNotice(props: Readonly<{ failure: ConflictFailure; testID: string }>) {
+    return <>
+        <Text accessibilityLiveRegion="polite">{props.failure.message}</Text>
+        {props.failure.technicalDetails?.length ? <ItemGroupRowPositionBoundary>
+            <TechnicalDetailsDisclosure testID={props.testID} title={t('approvals.technicalDetails')}
+                lines={props.failure.technicalDetails} />
+        </ItemGroupRowPositionBoundary> : null}
+    </>;
+}
+
 export function useSelectedPreview(input: Readonly<{
     controllerMachineId: string;
     serverId?: string | null;
     path: string | null;
     workspaceRefId: string | null;
     entry: WorkspaceSyncEntryExpectationV1 | null;
-}>): Readonly<{ phase: 'idle' | 'loading' | 'refreshing' | 'ready' | 'error'; value: ReadWorkspaceSyncFileResultV1 | null }> {
-    const [state, setState] = React.useState<Readonly<{
-        key: string;
-        identity: string;
-        phase: 'loading' | 'refreshing' | 'ready' | 'error';
-        value: ReadWorkspaceSyncFileResultV1 | null;
-    }> | null>(null);
+}>): SelectedPreview {
+    const [state, setState] = React.useState<(SelectedPreview & Readonly<{ key: string; identity: string }>) | null>(null);
     const identity = input.path && input.workspaceRefId
         ? JSON.stringify([input.controllerMachineId, input.serverId, input.path, input.workspaceRefId]) : null;
     const key = input.path && input.workspaceRefId && input.entry?.kind === 'file'
@@ -132,9 +150,13 @@ export function useSelectedPreview(input: Readonly<{
             const preview = result.versions.find((version) => version.preview?.workspaceRefId === input.workspaceRefId)?.preview?.preview ?? null;
             setState((previous) => ({ key, identity, phase: preview ? 'ready' : 'error',
                 value: preview ?? (previous?.identity === identity ? previous.value : null) }));
-        }, () => {
-            if (current) setState((previous) => ({ key, identity, phase: 'error',
-                value: previous?.identity === identity ? previous.value : null }));
+        }, (error: unknown) => {
+            if (!current) return;
+            const failure = presentWorkspaceSyncFailure(error);
+            setState((previous) => ({ key, identity, phase: 'error',
+                value: previous?.identity === identity ? previous.value : null,
+                ...(failure ? { failure } : {}),
+            }));
         });
         return () => { current = false; controller.abort(); };
     }, [input.controllerMachineId, input.path, input.serverId, input.workspaceRefId, identity, key]);
@@ -226,7 +248,14 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
         ]),
     ]);
     const [inspection, setInspection] = React.useState<Readonly<{ scopeKey: string; value: WorkspaceSyncConflictInspectRpcResultV1 }> | null>(null);
-    const [inspectionPhase, setInspectionPhase] = React.useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+    const [inspectionState, setInspectionState] = React.useState<
+        | Readonly<{ phase: 'idle' | 'loading' | 'ready' }>
+        | Readonly<{ phase: 'error'; scopeKey: string; path: string; failure: ConflictFailure }>
+    >({ phase: 'idle' });
+    const inspectionPhase = inspectionState.phase;
+    const inspectionFailure = inspectionState.phase === 'error'
+        && inspectionState.scopeKey === inspectionScopeKey && inspectionState.path === selectedPath
+        ? inspectionState.failure : null;
     const [inspectionRevision, refreshInspection] = React.useReducer((value: number) => value + 1, 0);
     const [sourceWorkspaceRefId, setSourceWorkspaceRefId] = React.useState<string | null>(props.approvedRequest?.source.workspaceRefId ?? null);
     const [selectedTargetWorkspaceRefIds, setSelectedTargetWorkspaceRefIds] = React.useState<readonly string[] | null>(
@@ -235,7 +264,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
     const [compareWorkspaceRefId, setCompareWorkspaceRefId] = React.useState<string | null>(null);
     const [outcome, setOutcome] = React.useState<WorkspaceSyncConflictResolutionResultV1 | null>(null);
     const visibleOutcome = props.reportedOutcome ?? outcome;
-    const [resolveError, setResolveError] = React.useState<string | null>(null);
+    const [resolveError, setResolveError] = React.useState<ConflictFailure | null>(null);
     const [resolving, setResolving] = React.useState(false);
     const [actionPhase, setActionPhase] = React.useState<'requesting_approval' | 'applying' | null>(null);
     const [reinspectingTerminal, setReinspectingTerminal] = React.useState(false);
@@ -323,7 +352,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
         if (!selectedPath) return;
         const controller = new AbortController();
         let current = true;
-        setInspectionPhase('loading');
+        setInspectionState({ phase: 'loading' });
         void inspectWorkspaceSyncConflict({
             controllerMachineId: currentControllerMachineId,
             serverId: currentServerId,
@@ -332,20 +361,21 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
         }).then((result) => {
             if (!current) return;
             setInspection({ scopeKey: inspectionScopeKey, value: result });
-            setInspectionPhase('ready');
+            setInspectionState({ phase: 'ready' });
             if (reinspectAfterTerminalRef.current) {
                 reinspectAfterTerminalRef.current = false;
                 setReinspectingTerminal(false);
                 setOutcome(null);
                 setResolveError(null);
             }
-        }, () => {
-            if (current) {
-                setInspectionPhase('error');
-                if (reinspectAfterTerminalRef.current) {
-                    reinspectAfterTerminalRef.current = false;
-                    setReinspectingTerminal(false);
-                }
+        }, (error: unknown) => {
+            if (!current) return;
+            setInspectionState({ phase: 'error', scopeKey: inspectionScopeKey, path: selectedPath,
+                failure: presentWorkspaceSyncFailure(error) ?? { message: t('workspaceSync.review.inspectionUnavailable') },
+            });
+            if (reinspectAfterTerminalRef.current) {
+                reinspectAfterTerminalRef.current = false;
+                setReinspectingTerminal(false);
             }
         });
         return () => { current = false; controller.abort(); };
@@ -489,8 +519,12 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
         } catch (error: unknown) {
             if (!isCurrentRequest()) return;
             const code = readWorkspaceSyncErrorCode(error);
-            setResolveError(code === 'conflict_changed' ? t('workspaceSync.resolve.changedBody')
-                : presentWorkspaceSyncFailure(error)?.message ?? t('errors.operationFailed'));
+            const failure = presentWorkspaceSyncFailure(error);
+            setResolveError({
+                message: code === 'conflict_changed' ? t('workspaceSync.resolve.changedBody')
+                    : failure?.message ?? t('errors.operationFailed'),
+                technicalDetails: failure?.technicalDetails,
+            });
             if (code === 'conflict_changed') refresh();
         } finally {
             if (isCurrentRequest()) {
@@ -521,7 +555,9 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                 </View>
                 <ScrollView scrollEnabled={!props.embedded} style={props.embedded ? undefined : { flex: 1 }} contentContainerStyle={{ paddingBottom: theme.space.s24 }}>
                     {inspectionPhase === 'loading' ? <Text style={{ padding: theme.space.s16 }}>{t('common.loading')}</Text> : null}
-                    {inspectionPhase === 'error' ? <Text accessibilityLiveRegion="polite" style={{ padding: theme.space.s16 }}>{t('workspaceSync.review.inspectionUnavailable')}</Text> : null}
+                    {inspectionFailure ? <View style={{ padding: theme.space.s16 }}>
+                        <ConflictFailureNotice failure={inspectionFailure} testID="workspace-sync-conflict-inspection-technical-details" />
+                    </View> : null}
                     {props.approvedRequest && inspectionPhase === 'ready' && !approvedCurrent ? <Text accessibilityLiveRegion="polite"
                         style={{ padding: theme.space.s16, color: theme.colors.state.warning.textForeground }}>
                         {t('workspaceSync.resolve.changedBody')}
@@ -611,9 +647,13 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                             </ItemGroup> : null}
                             <ItemGroup title={t('workspaceSync.review.comparison')}>
                                 <Item title={sourceId ? endpointLabel(sourceId) : t('workspaceSync.review.unknown')}
-                                    subtitle={sourceVersion ? entryLabel(sourceVersion.entry) : t('workspaceSync.review.unknown')} mode="info" />
+                                    subtitle={sourceVersion ? entryLabel(sourceVersion.entry) : t('workspaceSync.review.unknown')} mode="info"
+                                    bottomElement={sourcePreview.failure ? <ConflictFailureNotice failure={sourcePreview.failure}
+                                        testID="workspace-sync-conflict-preview-technical-details" /> : null} />
                                 <Item title={compareId ? endpointLabel(compareId) : t('workspaceSync.review.unknown')}
-                                    subtitle={compareVersion ? entryLabel(compareVersion.entry) : t('workspaceSync.review.unknown')} mode="info" />
+                                    subtitle={compareVersion ? entryLabel(compareVersion.entry) : t('workspaceSync.review.unknown')} mode="info"
+                                    bottomElement={comparePreview.failure ? <ConflictFailureNotice failure={comparePreview.failure}
+                                        testID="workspace-sync-conflict-comparison-technical-details" /> : null} />
                                 {sourcePreview.phase === 'refreshing' || comparePreview.phase === 'refreshing'
                                     || (sourcePreview.phase === 'error' && sourcePreview.value)
                                     || (comparePreview.phase === 'error' && comparePreview.value)
@@ -686,9 +726,9 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                             loading={inspectionPhase === 'loading'} disabled={inspectionPhase === 'loading'}
                             onPress={refresh} />
                     </View> : null}
-                    {resolveError ? <Text accessibilityLiveRegion="polite" style={{ padding: theme.space.s16 }}>
-                                {resolveError}
-                            </Text> : null}
+                    {resolveError ? <View style={{ padding: theme.space.s16 }}>
+                        <ConflictFailureNotice failure={resolveError} testID="workspace-sync-conflict-resolution-technical-details" />
+                    </View> : null}
                 </ScrollView>
                 {!props.approvedRequest && currentInspection && sourceId ? <View style={{ padding: theme.space.s12, gap: theme.space.s8 }}>
                     <Text numberOfLines={2}>{endpointLabel(sourceId)} · {sourceVersion ? entryLabel(sourceVersion.entry) : t('workspaceSync.review.unknown')}</Text>

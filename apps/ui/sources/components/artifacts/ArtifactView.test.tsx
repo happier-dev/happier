@@ -181,13 +181,19 @@ describe('Artifact composed view reads', () => {
     });
 
     it('retains the typed network editor open refusal and allows another open', async () => {
-        let refused = true;
-        const { row, head, served } = await setup('html', undefined, false, request =>
-            refused && request.path === '/v1/artifacts/document'
-                ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined);
+        const privateTransportMessage = 'Unclassified native failure reading an owner-only file';
+        let refusal: 'rollback' | 'unrecognized' | null = 'rollback';
+        const { row, head, served } = await setup('html', undefined, false, request => {
+            if (request.path !== '/v1/artifacts/document') return undefined;
+            if (refusal === 'rollback') {
+                return Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 });
+            }
+            if (refusal === 'unrecognized') return Response.json({ error: privateTransportMessage }, { status: 400 });
+        });
         head.body = encodePlainArtifactStoredContent({ body: '<!doctype html><h1>Saved HTML</h1>' });
         const anchorRef = React.createRef<React.ComponentRef<typeof import('react-native').View>>();
         const hook = await renderHook(() => useArtifactNetworkEditor(row, true, anchorRef));
+        try {
         vi.mocked(Modal.alert).mockClear();
         await act(async () => { await hook.getCurrent().open(); });
         await waitForHomeGovernance(() => expect(Modal.alert).toHaveBeenCalled());
@@ -195,12 +201,28 @@ describe('Artifact composed view reads', () => {
         const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
         expect(details).toBeDefined();
         await act(async () => { details?.onPress?.(); });
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.requestId:'));
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('home.database.transaction');
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('approvals.failureTechnicalLabels.effectAttempted: false');
         expect(hook.getCurrent().panel).toBeNull();
-        refused = false;
+
+        refusal = 'unrecognized';
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => { await hook.getCurrent().open(); });
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1] === privateTransportMessage).toBe(false);
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toBe('sessionBoard.item.network.failed');
+        const unrecognizedDetails = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+        expect(unrecognizedDetails).toBeDefined();
+        await act(async () => { unrecognizedDetails?.onPress?.(); });
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]?.includes(privateTransportMessage)).toBe(false);
+        expect(hook.getCurrent().panel).toBeNull();
+
+        refusal = null;
         await act(async () => { await hook.getCurrent().open(); });
         expect(hook.getCurrent().panel).not.toBeNull();
-        await hook.unmount();
+        } finally {
+            await hook.unmount();
+        }
     });
 
     it('retains the typed network save refusal and keeps the editor open for retry', async () => {
@@ -208,13 +230,14 @@ describe('Artifact composed view reads', () => {
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const { row, head, served } = await setup('html', undefined, false, request => {
             if (request.path !== '/v1/artifacts/document' || request.method === 'GET') return undefined;
-            return refused ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 })
+            return refused ? Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 })
                 : artifacts.handle(request.path, { method: request.method, body: JSON.stringify(request.body) }) ?? undefined;
         });
         head.body = encodePlainArtifactStoredContent({ body: '<!doctype html><h1>Saved HTML</h1>' });
         artifacts.replaceStoredRow(head);
         const anchorRef = React.createRef<React.ComponentRef<typeof import('react-native').View>>();
         const hook = await renderHook(() => useArtifactNetworkEditor(row, true, anchorRef));
+        try {
         await act(async () => { await hook.getCurrent().open(); });
         const panel = hook.getCurrent().panel;
         if (!panel) throw new Error('Expected the opened network editor');
@@ -227,11 +250,15 @@ describe('Artifact composed view reads', () => {
         const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
         expect(details).toBeDefined();
         await act(async () => { details?.onPress?.(); });
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.requestId:'));
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('home.database.transaction');
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('approvals.failureTechnicalLabels.effectAttempted: false');
         expect(hook.getCurrent().panel).not.toBeNull();
         refused = false;
         await act(async () => { await expect(panel.props.children.props.onSave(choice)).resolves.toEqual({ ok: true }); });
-        await hook.unmount();
+        } finally {
+            await hook.unmount();
+        }
     });
 
     it('hydrates presented Doc titles only for the current Account scope', async () => {
@@ -779,7 +806,7 @@ describe('Artifact composed view reads', () => {
     it.each([false, true])('names a busy body read and safely retries without an inventory reload (edit=%s)', async edit => {
         let busy = true;
         const { served } = await setup('document', undefined, false, request => request.path === '/v1/artifacts/document' && busy
-            ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined);
+            ? Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 }) : undefined);
         const screen = await renderScreen(<OpenView id="document" edit={edit} />);
         const failedId = edit ? 'artifact-editor:failed' : 'artifact:bodyFailed';
         try {

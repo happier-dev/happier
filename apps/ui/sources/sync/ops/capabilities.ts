@@ -3,6 +3,8 @@
  */
 
 import { isPlainObject } from './_shared';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import {
@@ -118,7 +120,7 @@ export async function machineCapabilitiesDetect(
 export type MachineCapabilitiesInvokeResult =
     | { supported: true; response: CapabilitiesInvokeResponse }
     | { supported: false; reason: 'not-supported' | 'error' | 'outcomeUnknown'; errorCode?: string; retryable?: boolean;
-        failureCause?: CapabilityInvokeFailure['failureCause']; requestDisposition?: RpcRequestDisposition };
+        failureCause?: CapabilityInvokeFailure['failureCause']; actionFailure?: ActionExecuteFailure; requestDisposition?: RpcRequestDisposition };
 
 export async function machineCapabilitiesInvoke(
     machineId: string,
@@ -146,9 +148,13 @@ export async function machineCapabilitiesInvoke(
             ...(preflightOwnsOperation || options?.operationTimeoutMs === null ? { operationTimeoutMs: null } : {}),
         });
 
-        if (isRpcMethodNotFoundResult(result)) return { supported: false, reason: 'not-supported' };
-        if (isPlainObject(result) && typeof result.error === 'string') return {
+        const actionFailure = readActionFailureEnvelope(result);
+        if (isRpcMethodNotFoundResult(result)) return {
+            supported: false, reason: 'not-supported', ...(actionFailure ? { actionFailure } : {}),
+        };
+        if (actionFailure || (isPlainObject(result) && typeof result.error === 'string')) return {
             supported: false, reason: 'error', ...readCapabilityInvokeFailure(result),
+            ...(actionFailure ? { actionFailure } : {}),
         };
 
         const parsed = parseCapabilitiesInvokeResponse(result);
@@ -156,10 +162,14 @@ export async function machineCapabilitiesInvoke(
         return { supported: true, response: parsed };
     } catch (error) {
         if (options?.signal?.aborted) throw error;
-        if (isRpcMethodNotFoundError(error)) return { supported: false, reason: 'not-supported' };
+        const actionFailure = readActionFailureEnvelope(error);
+        if (isRpcMethodNotFoundError(error)) return {
+            supported: false, reason: 'not-supported', ...(actionFailure ? { actionFailure } : {}),
+        };
         const requestDisposition = readRpcRequestDisposition(error);
         return { supported: false, reason: preflightOwnsOperation && requestDisposition === 'outcomeUnknown' ? 'outcomeUnknown' : 'error',
             ...readCapabilityInvokeFailure(error),
+            ...(actionFailure ? { actionFailure } : {}),
             ...(requestDisposition ? { requestDisposition } : {}) };
     }
 }

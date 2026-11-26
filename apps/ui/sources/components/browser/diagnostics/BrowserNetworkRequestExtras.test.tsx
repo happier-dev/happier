@@ -7,13 +7,21 @@ import { standardCleanup } from '@/dev/testkit';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
+import { applyBrowserDiagnosticsSnapshotState, createBrowserDiagnosticsUiStore,
+    selectBrowserDiagnosticsForView, useBrowserDiagnosticsDaemonSnapshot } from '@/sync/domains/browser/diagnostics';
 import type {
     BrowserDiagnosticsRequestDetailClientInput,
     BrowserDiagnosticsRequestDetailClientResult,
 } from '@/sync/domains/browser/diagnostics';
 
+import { BrowserDiagnosticsPanel } from './BrowserDiagnosticsPanel';
 import { BrowserNetworkPanel } from './BrowserNetworkPanel';
 import { BrowserDiagnosticsRequestDetailSourceContext } from './BrowserNetworkRequestExtras';
+
+const daemonRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: daemonRpc,
+}));
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -50,7 +58,7 @@ const request = {
     ] },
 } as const;
 
-async function renderWith(client: (input: BrowserDiagnosticsRequestDetailClientInput) => Promise<BrowserDiagnosticsRequestDetailClientResult>) {
+async function renderWith(client?: (input: BrowserDiagnosticsRequestDetailClientInput) => Promise<BrowserDiagnosticsRequestDetailClientResult>) {
     return renderScreen(
         <BrowserDiagnosticsRequestDetailSourceContext.Provider value={{ view, machineId: 'machine', detailClient: client }}>
             <BrowserNetworkPanel
@@ -90,4 +98,30 @@ it('says why values are unavailable instead of showing empty bodies', async () =
     await act(async () => { await screen.pressByTestIdAsync(row); });
     expect(screen.findHostByTestId(`${row}-detail-extras-req_1-unavailable`)?.props.children)
         .toBe('browserDiagnostics.host.devtools.request.ownerOnly');
+});
+
+it('shows an owner refusal for a selected request without exposing daemon prose', async () => {
+    daemonRpc.mockResolvedValueOnce({ ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Private daemon diagnostic',
+        requestId: 'diagnostics-request', effectAttempted: false, details: { reason: 'permission_denied' },
+        failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 } });
+    const screen = await renderWith();
+    await act(async () => { await screen.pressByTestIdAsync(row); });
+    const text = screen.getTextContent();
+    expect(text).toContain('errors.permissionDenied');
+    expect(text).not.toContain('Private daemon diagnostic');
+});
+
+it('keeps a disconnected diagnostics drawer’s Machine refusal available to the person', async () => {
+    daemonRpc.mockResolvedValueOnce({ ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Private daemon snapshot diagnostic',
+        requestId: 'diagnostics-snapshot', effectAttempted: false, details: { reason: 'permission_denied' },
+        failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 } });
+    function OpenPanel() {
+        const [store, setStore] = React.useState(createBrowserDiagnosticsUiStore);
+        useBrowserDiagnosticsDaemonSnapshot({ view, onEvents: () => {},
+            onSnapshotState: snapshot => setStore(prior => applyBrowserDiagnosticsSnapshotState(prior, snapshot)) });
+        return <BrowserDiagnosticsPanel diagnostics={selectBrowserDiagnosticsForView(store, view)} testID="diag-snapshot" />;
+    }
+    const screen = await renderScreen(<OpenPanel />);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.permissionDenied'));
+    expect(screen.getTextContent()).not.toContain('Private daemon snapshot diagnostic');
 });

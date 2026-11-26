@@ -2,6 +2,7 @@ import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfa
 import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 import { t } from '@/text';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
@@ -922,6 +923,13 @@ function resolveMachineAvailabilityReasonCopy(reason: string | null | undefined)
 export function resolveMachineTargetUnavailableReasonCopy(details: unknown): string | null {
     const diagnostic = MachineAvailabilityDiagnosticV1Schema.safeParse(readRecord(details).diagnostic ?? details).data;
     return resolveMachineAvailabilityReasonCopy(diagnostic?.reason);
+}
+
+/** Home can report Machine custody directly or as the native reason inside a transport refusal. */
+export function resolveMachineCustodyRefusalCopy(code: unknown, cause: ActionFailureCauseV1 | null | undefined): string | null {
+    const nativeReason = cause && 'nativeErrorReason' in cause ? cause.nativeErrorReason : undefined;
+    return code === 'custodian_only' || cause?.errorCode === 'custodian_only' || nativeReason === 'custodian_only'
+        ? t('errors.custodianOnly') : null;
 }
 
 export function resolvePluginEventSourceFailureCopy(failure: Readonly<{

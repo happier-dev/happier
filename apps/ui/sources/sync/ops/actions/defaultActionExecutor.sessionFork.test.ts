@@ -54,7 +54,13 @@ vi.mock('@/modal', async () => {
 });
 
 let daemonAnswer: (request: SocketRpcRequestPayload) => unknown = () => { throw new Error('Unexpected daemon request'); };
-const outgoing = installSessionActionRpcBoundary(request => daemonAnswer(request));
+const targetPreflightAdmissionFailure = { ok: false, error: 'database_transaction_timeout', errorCode: 'database_transaction_timeout',
+  effectAttempted: false, failureCause: { phase: 'rpc.admission', errorClass: 'Error', errorCode: 'database_transaction_timeout', httpStatus: 503 } } as const;
+const outgoing = installSessionActionRpcBoundary(request => daemonAnswer(request), {
+  // The Home refusal is the outer acknowledgement. No target daemon receives the request.
+  transformAcknowledgement: acknowledgement => acknowledgement.result === targetPreflightAdmissionFailure
+    ? targetPreflightAdmissionFailure : acknowledgement,
+});
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 await loadSyncSingletonForTests();
@@ -912,6 +918,24 @@ describe('default Action executor Session lifecycle contracts', () => {
     // A new consequence cannot execute with bypassApprovals and no matching
     // receipt; importantly, the occupied incumbent root was inspected first.
     expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+  });
+
+  it('keeps target preflight refusal evidence from Home before starting a handoff', async () => {
+    installSession();
+    daemonAnswer = request => {
+      if (!request.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`)) {
+        throw new Error('Handoff must await destination preflight');
+      }
+      return targetPreflightAdmissionFailure;
+    };
+    const policy = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const result = await executor().execute('session.handoff', {
+      sessionId: 'sess_parent', targetMachineId: 'machine_2', targetPath: '/target/repo', workspaceAction: {
+        kind: 'create_relationship', mode: 'mirror_exactly',
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) }, flushBeforeCommit: true,
+      },
+    }, { ...context(), actionRequestId: 'preflight-denied-handoff', bypassApprovals: true });
+    expect(result).toMatchObject(targetPreflightAdmissionFailure);
   });
 
   it('sends the exact approved target receipt and Action input through the real handoff adapter', async () => {

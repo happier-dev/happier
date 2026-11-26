@@ -1,5 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { z } from 'zod/mini';
 import {
     DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES} from '@happier-dev/protocol/features/payload/capabilities/deviceCapabilities';
@@ -19,7 +21,7 @@ import {
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DirectRouteGrantScopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
-import { createMachineFixture, flushHookEffects, renderHook } from '@/dev/testkit';
+import { createMachineFixture, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { ServerScopedMachineLiveStreamRelaySocket } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineLiveStreamRelaySocket';
@@ -130,6 +132,57 @@ async function mount(socket?: ServerScopedMachineLiveStreamRelaySocket) {
         ...(socket ? { relay: { socket, createStreamId } } : {}),
     }), { flushOptions: { cycles: 30 } });
 }
+describe('Simulator preview inventory', () => {
+    it.each(['first load', 'after a device is listed'] as const)('exposes the Machine refusal on %s', async phase => {
+        const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Private inventory diagnostic',
+            requestId: 'simulator-inventory', effectAttempted: false,
+            failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+        } as const;
+        let inventoryDenied = phase === 'first load';
+        network.setRpcResponder(async ({ method }) => {
+            expect(method).toBe(RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT);
+            return inventoryDenied ? refusal : { protocolVersion: 1, snapshot: {
+                v: 1, machineId: 'daemon_1', generatedAt: Date.now(), refreshState: 'idle',
+                resources: [availableResource], diagnostics: [],
+            } };
+        });
+        let visible = true;
+        const { useSimulatorPreviewSessionSurfaceRuntime } = await import('@/sync/domains/devices/simulator/useSimulatorPreviewRuntime');
+        const hook = await renderHook(() => useSimulatorPreviewSessionSurfaceRuntime({
+            machineId: 'daemon_1', serverId: home.id, viewerId: 'viewer_1', selectedSimulatorId: 'sim_1', refreshIntervalMs: null,
+        }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={visible}>{children}</PluginSurfaceFocusEligibilityProvider> });
+        try {
+            if (phase === 'after a device is listed') {
+                await vi.waitFor(() => expect(hook.getCurrent().viewModel?.resource).toEqual(availableResource));
+                visible = false;
+                await hook.rerender();
+                inventoryDenied = true;
+                visible = true;
+                await hook.rerender();
+            }
+            await vi.waitFor(() => expect(hook.getCurrent().viewModel?.snapshotRefreshState).toBe('error'));
+            if (phase === 'after a device is listed') expect(hook.getCurrent().viewModel?.resource).toEqual(availableResource);
+            const { viewModel, actions } = hook.getCurrent();
+            expect(viewModel).toMatchObject({ snapshotFailure: refusal });
+            if (!viewModel || !actions) throw new Error('Expected the Simulator viewer after the refused inventory refresh');
+            const { SimulatorPreviewPane } = await import('../SimulatorPreviewPane');
+            const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+            const screen = await renderScreen(<SimulatorPreviewPane viewModel={viewModel} actions={actions} testID="simulator-inventory" />);
+            try {
+                const cardTestID = phase === 'first load' ? 'simulator-inventory-picker-unavailable' : 'simulator-inventory-inventory-error';
+                const card = screen.findAllByType(SurfaceStateCard as never).find(node => node.props.testID === cardTestID);
+                expect(card?.props.diagnosticCode).toBe(refusal.errorCode);
+                expect(card?.props.diagnosticDetail).toContain(refusal.requestId);
+                expect(card?.props.diagnosticDetail).not.toContain(refusal.error);
+            } finally {
+                await screen.unmount();
+            }
+        } finally {
+            await hook.unmount();
+        }
+    });
+});
+
 describe('useSimulatorPreviewLiveSurface', () => {
     it('ingests MJPEG frames and retains the same relay authorization across rerenders and subsequent frames', async () => {
         const fake = createSocket();

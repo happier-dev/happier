@@ -22033,6 +22033,7 @@ const ca = completeWorkspaceSyncTranslation({
         manageRequired: "Això requereix accés de gestió a la màquina de destinació. Demana al propietari accés de gestió.",
         projectWorkspaceChanged: "Aquesta carpeta pertany a un altre projecte. Tria una carpeta nova o fes servir el projecte al qual ja pertany.",
         requesterLinkUnavailable: "Per portar-ne una còpia, primer obre el projecte a la teva pròpia màquina. O fes el traspàs sense còpia.",
+        seedFromSharedMachineRefused: "El servidor ha rebutjat copiar l’espai de treball fent servir la màquina d’una altra persona.",
         dependenciesUnavailable: "No s’ha pogut comprovar a l’altra màquina si hi ha feina que utilitzi aquesta còpia. Torna-ho a provar o pregunta-ho al propietari d’aquella màquina.",
         provenanceConflict: "Aquestes carpetes ja estan sincronitzades amb un altre propòsit. Tria una altra carpeta.",
         notWorkerCopy: "Aquesta carpeta no es va crear com a còpia de treball, així que Happier l’ha deixat on era. No s’ha eliminat res.",

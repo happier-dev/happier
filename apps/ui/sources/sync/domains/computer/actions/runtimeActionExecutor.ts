@@ -1,5 +1,5 @@
 import { readComputerInstallHint } from '../targets';
-import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectMachineActionRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import { COMPUTER_PRESENT_USER_ACTION_IDS } from '@happier-dev/protocol/computer/v1';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
@@ -65,7 +65,7 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
         if (!sessionId && !personId) return refuse('computer_session_required');
         const machineId = readMachineId(args.input);
         if (!machineId) return refuse('invalid_parameters');
-        const result = await executeOnMachine({
+        const machineResult = await executeOnMachine({
             ...(args.context.serverId ? { serverId: args.context.serverId } : {}),
             ...(personId ? { accountId: personId } : {}),
             machineId,
@@ -76,14 +76,14 @@ export function createComputerRuntimeActionExecutor(input: Readonly<{
             input: args.input,
             ...(args.context.signal ? { signal: args.context.signal } : {}),
         });
+        const failure = projectMachineActionRpcFailure(machineResult);
+        const installHint = readComputerInstallHint(machineResult);
+        const result = failure
+            ? { ...failure, ...(installHint ? { details: { installHint } } : {}) } : machineResult;
         if (!input.accountLifetime || input.accountLifetime.isCurrent()) {
             const sourceScope = sessionId ? { sessionId } : { source: { kind: 'machine-person' as const, personId: personId! } };
             publishComputerActionAnswer({ ...sourceScope, machineId, serverId: args.context.serverId ?? null }, args.actionId, result);
         }
-        // Action failure projection preserves details, not native top-level metadata.
-        const installHint = readComputerInstallHint(result);
-        return isActionExecuteFailure(result) && installHint
-            ? { ...result, details: { ...(result.details && typeof result.details === 'object' ? result.details : {}), installHint } }
-            : result;
+        return result;
     };
 }

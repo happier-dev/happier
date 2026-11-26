@@ -6,6 +6,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { homeDomainActionFailureFromDomainFailure } from '@/sync/api/home/homeDomainActions';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
 import { t } from '@/text';
@@ -52,6 +54,13 @@ export const SharedSavedSecretHistory = React.memo(
     const state = activity.state;
     const thisDevice = getDeviceAnalyticsId();
     if (!props.enabled) return null;
+    const unavailable = t('secretsSettings.historyUnavailable');
+    const title = state.status === 'refused'
+      ? state.failure
+        ? presentActionExecutionFailure(homeDomainActionFailureFromDomainFailure(
+            'secrets.shared.disclosures.list', state.failure), unavailable, { closedCodesOnly: true }).reason
+        : unavailable
+      : t('common.loading');
     return (
       <>
         {state.status === 'ready' && state.entries.length === 0 ? (
@@ -63,7 +72,7 @@ export const SharedSavedSecretHistory = React.memo(
               testID={props.testID}
               kind={state.status === 'refused' ? 'warning' : 'loading'}
               size="line"
-              title={state.status === 'refused' ? t('secretsSettings.historyUnavailable') : t('common.loading')}
+              title={title}
               accessibilitySemantics="status"
             />
           </SectionContentRow>

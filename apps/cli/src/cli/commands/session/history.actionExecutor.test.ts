@@ -52,7 +52,7 @@ describe('happier session history (action executor)', () => {
 
       execute.mockResolvedValueOnce(refusal);
       await expect(handleSessionCommand(argv, deps)).rejects.toHaveProperty('message', withDiagnostics
-        ? 'target_unavailable\nPhase: execution_authorization; requestId: refusal-request-1125'
+        ? expect.stringMatching(/target_unavailable.*\n.*execution_authorization.*custodian_only.*refusal-request-1125.*No effect attempted/u)
         : 'target_unavailable');
     } finally {
       output.restore();
@@ -394,7 +394,7 @@ describe('happier session history (action executor)', () => {
       await expect(handleSessionCommand(['history', 'sess-1', '--follow'], {
         readCredentialsFn: async () => ({ token: 'token_test', encryption: null }),
       })).rejects.toHaveProperty('message', withDiagnostics
-        ? 'daemon unavailable\nPhase: execution_authorization; requestId: follow-request-1125'
+        ? expect.stringMatching(/daemon unavailable.*\n.*server_unreachable.*execution_authorization.*custodian_only.*follow-request-1125.*No effect attempted/u)
         : 'daemon unavailable');
     } finally {
       output.restore();

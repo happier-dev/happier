@@ -1,10 +1,11 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { computerTargetKeyV1, resolveComputerAccess, type ComputerAccessV1, type ComputerGrantStatusV1, type ComputerTargetsListResponseV1 } from '@happier-dev/protocol/computer/v1';
 
 export type ComputerTargetEntry = ComputerTargetsListResponseV1['targets'][number];
 export type ComputerTargetPickerState =
     | Readonly<{ kind: 'loading' }>
     | Readonly<{ kind: 'ready'; targets: readonly ComputerTargetEntry[]; grants: ComputerGrantStatusV1; displays?: ComputerTargetsListResponseV1['displays'] }>
-    | Readonly<{ kind: 'failed'; code: string; details?: unknown }>;
+    | Readonly<{ kind: 'failed'; code: string; details?: unknown; actionFailure?: ActionExecuteFailure }>;
 
 /** Hints highlight a listed source; only the producer's key identifies it. */
 export function resolveSuggestedTargetKey(targets: readonly ComputerTargetEntry[], suggestion: string | null | undefined): string | null {
@@ -61,7 +62,7 @@ export function resolveComputerRecovery(state: ComputerTargetPickerState, access
     if (code === 'computer_machine_mismatch') return { cause: 'machine_mismatch', action: null, code };
     if (code === 'computer_display_unavailable') return { cause: 'headless', action: null, code };
     if (code === 'target_unsupported' || code === 'computer_unavailable') return { cause: 'unsupported', action: null, code };
-    const installHint = readComputerInstallHint(state.details);
+    const installHint = readComputerInstallHint(state.actionFailure?.details ?? state.details);
     if (code === 'computer_provider_unavailable' || code === 'driver_unavailable' || code === 'driver_install_failed') return { cause: 'driver_missing', action: installHint ? 'repair_driver' : null, code, installHint };
     if (code === 'driver_result_invalid' || code === 'driver_executable_invalid' || code === 'driver_version_mismatch' || code === 'driver_protocol_error') return { cause: 'driver_invalid', action: installHint ? 'repair_driver' : null, code, installHint };
     if (code === 'stale_capture' || code === 'capture_expired' || code === 'capture_generation_mismatch'

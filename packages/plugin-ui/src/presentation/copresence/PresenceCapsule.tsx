@@ -3,6 +3,7 @@ import { Platform, StyleSheet, View } from 'react-native';
 
 import type { HappierPortableStyle } from '../portableTypes.js';
 import type { HappierCapsuleColors, HappierCapsuleHost } from '../status/capsuleHost.js';
+import type { HappierRowStatusAction } from '../status/RowStatusLine.js';
 import { HAPPIER_BALANCED_TEXT_WRAP } from '../text/balancedTextWrap.js';
 
 /**
@@ -50,9 +51,17 @@ export type HappierPresenceCapsuleCopy = Readonly<{
 export type HappierPresenceCapsulePlacement = 'dock' | 'inline' | 'strip';
 
 /** A takeover command's answer, not a controller fact. Only `presence` confirms human control. */
-export type HappierPresenceTakeControlResult = Readonly<{ status: 'accepted' | 'failed' | 'unknown' }>;
+export type HappierPresenceTakeControlResult = Readonly<{
+  status: 'accepted' | 'failed' | 'unknown';
+  /** Optional host-presented reason and deliberate diagnostic disclosure for this request. */
+  failure?: Readonly<{ reason: string; details?: HappierRowStatusAction }>;
+}>;
 
-type TakeControlRequest = Readonly<{ controlEpoch: number; status: 'pending' | 'failed' | 'unknown' }>;
+type TakeControlRequest = Readonly<{
+  controlEpoch: number;
+  status: 'pending' | 'failed' | 'unknown';
+  failure?: HappierPresenceTakeControlResult['failure'];
+}>;
 
 export type HappierPresenceCapsuleProps = Readonly<{
   presence: HappierPresence;
@@ -276,7 +285,7 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
     const settle = (result: HappierPresenceTakeControlResult) => {
       // A newer press or an authoritative answer wins over a delayed command result.
       if (requestRef.current !== pending || result.status === 'accepted') return;
-      const answered: TakeControlRequest = { controlEpoch: pending.controlEpoch, status: result.status };
+      const answered: TakeControlRequest = { controlEpoch: pending.controlEpoch, status: result.status, failure: result.failure };
       requestRef.current = answered;
       setRequest(answered);
     };
@@ -298,6 +307,7 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
       && request.controlEpoch === presence.controlEpoch);
     const recovery = presence.kind === 'agent' && request !== null
       && request.controlEpoch === presence.controlEpoch && request.status !== 'pending';
+    const failure = recovery ? request.failure : undefined;
     const human = presence.kind === 'human';
     const unconfirmed = presence.kind === 'unconfirmed';
     const strip = props.placement === 'strip';
@@ -305,7 +315,7 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
     const title = human
       ? copy.humanTitle
       : unconfirmed || recovery
-        ? copy.stopUnconfirmed
+        ? failure?.reason ?? copy.stopUnconfirmed
         : stopping
           ? copy.stopping
           : copy.agentTitle;
@@ -331,6 +341,11 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
             iconOnly={narrow} leading={narrow ? host.renderGlyph('pointer', colors.text, LEADING_GLYPH_SIZE) : undefined}
             disabled={Boolean(props.watchDisabledReason)} accessibilityHint={props.watchDisabledReason ?? undefined}
             testID={`${testID}-watch`} />
+        ) : null}
+        {failure?.details ? (
+          <host.Button emphasis="plain" title={failure.details.label} onPress={failure.details.onPress}
+            iconOnly={narrow} leading={narrow ? host.renderGlyph('warning', colors.text, LEADING_GLYPH_SIZE) : undefined}
+            testID={failure.details.testID ?? `${testID}-failure-details`} />
         ) : null}
         {human && !observationRecovery && props.onHandBack ? (
           <host.Button emphasis="primary" title={copy.handBack} onPress={props.onHandBack} testID={`${testID}-hand-back`}

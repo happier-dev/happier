@@ -5,7 +5,7 @@ import { PixelRatio, ScrollView, View, type LayoutChangeEvent } from 'react-nati
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ComputerGrantStatusV1} from '@happier-dev/protocol/computer/v1';
 import { resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
     containRect,
@@ -36,6 +36,7 @@ import type { BrowserCopresence } from '@/sync/domains/browser/automation/copres
 import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 import { t } from '@/text';
 import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 
 import { ComputerPermissionCard, type ComputerOpenSettingsState } from './ComputerPermissionCard';
@@ -146,8 +147,7 @@ export type ComputerScreenViewerProps = Readonly<{
     /** The person's Stop sharing is in flight. */
     stopping?: boolean;
     failure?: string | null;
-    failureCause?: ActionFailureCauseV1;
-    failureDetails?: unknown;
+    actionFailure?: ActionExecuteFailure;
     /** `failure` came from the person's Stop sharing: the share is still on and the press can be retried. */
     stopFailed?: boolean;
     repairingDriver?: boolean;
@@ -178,6 +178,7 @@ export type ComputerScreenViewerProps = Readonly<{
      */
     grants?: ComputerGrantStatusV1 | null;
     openSettings?: ComputerOpenSettingsState;
+    openSettingsFailure?: ActionExecuteFailure;
     onOpenSettings?: (permission: 'capture' | 'input') => void;
     /** Re-read the machine's grants and the selection (the permission card's Check again). */
     onRefresh?: () => void;
@@ -340,8 +341,8 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
     }, []);
     const frameSize = stream.frameSize;
     const failure = props.failure ?? stream.diagnosticCode;
-    const failureCause = props.failure ? props.failureCause : undefined;
-    const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure, details: props.failureDetails }, resolveComputerAccess(props.access)) : null;
+    const actionFailure = props.failure ? props.actionFailure : undefined;
+    const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure, details: actionFailure?.details }, resolveComputerAccess(props.access)) : null;
     const needsCapture = recovery?.action === 'capture';
     const needsDriverRepair = recovery?.action === 'repair_driver';
     // A failed Stop sharing is told as that press, whatever its code: the share is still on.
@@ -380,6 +381,16 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
         : recovery?.cause === 'offline' ? props.offlineReason ?? t('computerUse.presentation.offlineBody')
         : recovery?.cause === 'source_lost' ? t('computerUse.presentation.endedBody', { agent: agentName })
         : recoveryTitle;
+    const failureDetails = React.useMemo(() => {
+        if (!actionFailure) return null;
+        const { technicalDetails } = presentActionExecutionFailure(actionFailure, recoveryReason, { closedCodesOnly: true });
+        const context = technicalDetails.filter(line => line.key !== 'code');
+        return {
+            code: actionFailure.errorCode,
+            context: Object.fromEntries(context.map(line => [line.key, line.value])),
+            inline: context.map(line => `${line.label}: ${line.value}`).join('\n'),
+        };
+    }, [actionFailure, recoveryReason]);
     // "You can still stop {agent} here" only holds while the capsule offers Take control on a shared window.
     const unavailableReason = !props.shared || props.access === 'see' || props.inputDenied ? undefined : props.agentless ? t('computerUse.presentation.unavailableBodyMachine') : t('computerUse.presentation.unavailableBody', { agent: agentName });
     const recoveryPermission = recovery?.permission;
@@ -429,6 +440,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                 machineName={machineWords}
                 grants={props.grants}
                 openSettings={props.openSettings ?? 'idle'}
+                openSettingsFailure={props.openSettingsFailure}
                 onOpenSettings={props.onOpenSettings}
                 onCheckAgain={props.onRefresh ?? props.onCheckAgain}
                 testID={`${testID}-permission-card`}
@@ -452,7 +464,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                     : recoveryTitle !== recoveryReason ? recoveryReason : undefined}
                 // A machine that isn't answering is not a fault: its title says it and the code adds nothing to look up.
                 diagnosticCode={recovery?.cause === 'offline' && !stopFailed ? undefined : failure}
-                diagnosticDetail={failureCause ? JSON.stringify(failureCause) : undefined}
+                diagnosticDetail={failureDetails?.inline}
                 action={recoveryAction}
             />
         </ComputerStateStage>
@@ -617,9 +629,9 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
             {pictureUp && hasRecovery ? (
                 <SurfaceFreshnessLine testID={`${testID}-recovery`} reason={recoveryReason} asOf={stopFailed ? undefined : pausedAtMs}
                     busy={stopFailed ? props.stopping : needsDriverRepair ? props.repairingDriver : props.checking} tone="warning" action={recoveryAction}
-                    actions={failure && failureCause ? [
+                    actions={failureDetails ? [
                         ...(recoveryAction ? [recoveryAction] : []),
-                        { label: t('common.details'), onPress: () => showActionFailureDetails({ code: failure, context: failureCause }) },
+                        { label: t('common.details'), onPress: () => showActionFailureDetails(failureDetails) },
                     ] : undefined} />
             ) : pictureUp && props.stopping ? (
                 // Release waits for the Machine to drain and confirm; until it answers, say the press is under way.

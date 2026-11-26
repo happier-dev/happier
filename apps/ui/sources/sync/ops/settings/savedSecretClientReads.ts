@@ -4,6 +4,7 @@ import {
   SharedSavedSecretRecipientsListInputV1Schema,
 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { SharedSavedSecretClientReadActionIdV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionIdsV1';
+import { homeDomainActionFailureFromDomainFailure } from '@/sync/api/home/homeDomainActions';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readSavedSecretDisclosureHistoryInContext } from '@/sync/ops/settings/savedSecretDisclosure';
 import { readSavedSecretResourceRecipientReadiness } from '@/sync/ops/settings/savedSecretResourceOperations';
@@ -32,7 +33,7 @@ const SAVED_SECRET_CLIENT_READS = {
     );
     return result.ok
       ? result.value
-      : refused(result.failure.code ?? result.failure.kind);
+      : homeDomainActionFailureFromDomainFailure('secrets.shared.disclosures.list', result.failure);
   },
   'secrets.shared.recipients.list': async (account, input) => {
     const { resourceId } =
@@ -45,7 +46,9 @@ const SAVED_SECRET_CLIENT_READS = {
     account.assertCurrent();
     return census.ok
       ? projectSharedSavedSecretRecipientsV1({ resourceId, ...census })
-      : refused(census.code);
+      : 'failure' in census
+        ? homeDomainActionFailureFromDomainFailure('secrets.shared.recipients.list', census.failure)
+        : refused(census.code);
   },
 } as const satisfies Record<SharedSavedSecretClientReadActionIdV1, ClientRead>;
 

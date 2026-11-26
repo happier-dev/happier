@@ -34,6 +34,8 @@ import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncrypt
 import type { ProfileRecordV1, ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { readSafeFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
 import { HappyError } from '@/utils/errors/errors';
@@ -80,7 +82,7 @@ function isHealthySavedSecretResourceMaterialV1(
 export type SavedSecretResourceOperationResult =
     | Readonly<{ ok: true }>
     | Readonly<{ ok: false; reason: 'changed' | 'unavailable' | 'failed' | 'outcome_unknown' | 'recipient_mode_unsupported';
-        failure?: Readonly<{ code: string; context?: ActionFailureContext }> }>;
+        failure?: Readonly<{ code: string; context?: ActionFailureContext; actionFailure?: ActionExecuteFailure }> }>;
 
 export type SavedSecretResourceUpdateResult = SavedSecretResourceOperationResult
     | Readonly<{ ok: false; reason: 'backup_rekey_required'; details: SavedSecretBackupRekeyRequiredV1 }>;
@@ -91,21 +93,31 @@ type SavedSecretUpdateApprovalHandlers = Readonly<{
 }>;
 
 /** Safe diagnostic projection shared by Saved Secret mutation consumers. */
-export function projectSavedSecretResourceOperationFailure(failure: HomeDomainFailure<string>): Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>> {
+export function projectSavedSecretResourceOperationFailure(failure: HomeDomainFailure<string>,
+    actionFailure?: ActionExecuteFailure,
+): Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>> {
+    const code = actionFailure?.errorCode ?? failure.code;
     return { ok: false, reason: operationFailureReason(failure.kind),
-        ...(failure.code ? { failure: { code: failure.code, context: {
+        ...(code ? { failure: { code, ...(actionFailure ? { actionFailure } : {}), context: {
             ...readSafeFailureDetails(failure.details), kind: failure.kind,
             ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
         } } } : {}) };
 }
 
 /** Both private Action and shared Resource updates consume the same Home refusal. */
-export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailure<string>): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
+export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailure<string>,
+    actionFailure?: ActionExecuteFailure,
+): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
     if (failure.code === 'backup_rekey_required') {
         const details = SavedSecretBackupRekeyRequiredV1Schema.safeParse(failure.details);
         if (details.success) return { ok: false, reason: 'backup_rekey_required', details: details.data };
     }
-    return projectSavedSecretResourceOperationFailure(failure);
+    return projectSavedSecretResourceOperationFailure(failure, actionFailure);
+}
+
+export function readSavedSecretResourceApprovalFailure(code: string, failure?: ActionExecuteFailure) {
+    const actionFailure = readActionFailureEnvelope(failure) ?? undefined;
+    return [homeDomainFailureFromActionFailure(actionFailure ?? { errorCode: code }), actionFailure] as const;
 }
 
 function readSavedSecretResourceOperationError(error: unknown): HomeDomainFailure<string> | null {
@@ -233,7 +245,8 @@ export async function captureSavedSecretReferenceStateInContext(context: Profile
 
 export type SavedSecretResourceRecipientReadiness =
     | Readonly<{ ok: true; revision: number; recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[] }>
-    /** `code` is the census owner's answer (its code, else the Home failure kind), or `resource_changed` across pages. */
+    | Readonly<{ ok: false; failure: HomeDomainFailure<string> }>
+    /** Local refusal when the census has no stable revision. */
     | Readonly<{ ok: false; code: string }>;
 
 /**
@@ -264,7 +277,7 @@ export async function readSavedSecretResourceRecipientReadiness(params: Readonly
             schema: SavedSecretResourceEnvelopeCensusResponseV1Schema,
             errorSchema: SavedSecretResourceActionErrorCodeV1Schema,
         });
-        if (!census.ok) return { ok: false, code: census.failure.code ?? census.failure.kind };
+        if (!census.ok) return census;
         // A page from another revision describes a different audience.
         if (revision !== null && census.value.revision !== revision) return { ok: false, code: 'resource_changed' };
         revision = census.value.revision;
@@ -1957,7 +1970,7 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
                 parse: (value) => SharedSavedSecretMutationOutputV1Schema.parse(value),
                 onApprovalSucceeded,
                 ...(params.onApprovalFailed ? { onApprovalFailed: (code, failure) => params.onApprovalFailed?.(
-                    code, projectSavedSecretResourceUpdateFailure(homeDomainFailureFromActionFailure(failure ?? { errorCode: code })),
+                    code, projectSavedSecretResourceUpdateFailure(...readSavedSecretResourceApprovalFailure(code, failure)),
                 ) } : {}),
             });
             context.assertResultCurrent('write');

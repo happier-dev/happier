@@ -41,7 +41,7 @@ describe('happier session run action (action executor)', () => {
 
       execute.mockResolvedValueOnce(refusal);
       await expect(handleSessionCommand(argv, deps)).rejects.toHaveProperty('message', withDiagnostics
-        ? 'target refused\nPhase: execution_authorization; requestId: refusal-request-1125'
+        ? expect.stringMatching(/target refused.*\n.*target_unavailable.*execution_authorization.*custodian_only.*refusal-request-1125.*No effect attempted/u)
         : 'target refused');
     } finally {
       output.restore();

@@ -2,7 +2,8 @@ import { createSessionFilePreviewSource } from '@/sync/domains/sessionFilePrevie
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolveStoredImageReadScope } from '@/sync/domains/session/media/resolveStoredImageReadScope';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectMachineActionRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
+import { type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BrowserAnnotationViewportCaptureResult } from './captureProvider';
 
 import { dispatchBrowserContextActionViaMachineRpc } from './machineRpc';
@@ -61,10 +62,9 @@ export function createManagedChromiumBrowserAnnotationCaptureProvider(input: Rea
                     viewId: request.viewId, navigationGeneration: request.navigationGeneration, contextId: buildContextId(request) } });
             if (!result.ok) return unavailable(result.reason === 'invalid_response'
                 ? 'browser_context_annotation_capture_failed' : 'browser_context_annotation_capture_unavailable',
-                result.errorCode ? { ok: false, errorCode: result.errorCode, error: result.errorCode,
-                    ...(result.failureCause ? { failureCause: result.failureCause } : {}) } : undefined);
+                projectMachineActionRpcFailure(result) ?? undefined);
             const screenshot = result.result;
-            const failure = parseActionExecuteFailure(screenshot);
+            const failure = projectMachineActionRpcFailure(screenshot);
             if (failure) return unavailable('browser_context_annotation_capture_failed', failure);
             if (Array.isArray(screenshot) || !('kind' in screenshot) || screenshot.kind !== 'browserScreenshot') {
                 return unavailable('browser_context_annotation_capture_failed');

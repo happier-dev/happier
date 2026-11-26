@@ -2,6 +2,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 as ids } from '@happier-dev/protocol/actions/actionIds';
 
+import type { ComputerActionExecute } from '@/sync/domains/computer/computerControlClient';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -43,6 +44,27 @@ describe('useSessionComputerRecording', () => {
     it('offers nothing until a window is shared', async () => {
         const hook = await mount(createMachine({ [ids.list]: [] }), null);
         expect(hook.getCurrent()).toBeNull();
+    });
+
+    it('preserves the typed refusal when the Machine declines Stop', async () => {
+        alert.mockClear();
+        const { t } = await import('@/text');
+        const execute: ComputerActionExecute = async actionId => actionId === ids.list
+            ? { ok: true, result: [recording] }
+            : { ok: false, errorCode: 'action_forbidden', error: 'Private Machine detail',
+                requestId: 'computer-stop-refusal', effectAttempted: false };
+        const hook = await renderHook(() => useSessionComputerRecording({
+            sessionId: 'session-1', machineId: 'machine-1', serverId: 'server-1', sourceId: 'computer:1', enabled: true, execute,
+        }));
+        await flushHookEffects();
+        await act(async () => { hook.getCurrent()?.onStop(recording); await flushHookEffects(); });
+        expect(alert.mock.calls[0]?.[1]).toBe(t('errors.permissionDenied'));
+        const details = alert.mock.calls[0]?.[2]?.find((button: { text: string }) => button.text === t('approvals.technicalDetails'));
+        expect(details).toBeDefined();
+        details?.onPress();
+        expect(alert.mock.calls[1]?.[1]).toContain('computer-stop-refusal');
+        expect(alert.mock.calls[1]?.[1]).toContain('false');
+        expect(hook.getCurrent()?.recording?.recordingId).toBe(recording.recordingId);
     });
 
     it('shows a recording that is already running when the viewer opens, so it can be stopped', async () => {

@@ -85,7 +85,9 @@ const host = vi.hoisted(() => ({
     revokeOnRemove: false,
     grants: [] as any[],
     grantStatus: 200,
+    grantFailureMethod: null as string | null,
     grantError: 'not_found',
+    grantErrorBody: null as object | null,
     reviewedMissingAudience: undefined as readonly import('@happier-dev/protocol/teams/principal').PrincipalRefV1[] | undefined,
     rejectedReviewAccountId: null as string | null,
     grantGate: null as Promise<void> | null,
@@ -93,6 +95,7 @@ const host = vi.hoisted(() => ({
     publicShare: null as import('@happier-dev/protocol/sharing/storedContentPublicShareV1').StoredContentPublicShareV1 | null,
     publicRequests: [] as Array<Readonly<{ method: string; body?: unknown }>>,
     publicCreateError: null as string | null,
+    publicCreateErrorBody: null as object | null,
     publicListError: null as string | null,
     publicAuditError: null as string | null,
     networkAtPublicCreate: [] as unknown[],
@@ -239,7 +242,9 @@ async function serveHome(): Promise<void> {
                     } else if (host.document.header.kind === 'widget-definition.v1') {
                         host.networkAtPublicCreate.push(JSON.parse(host.document.body).networkOverride);
                     }
-                    if (host.publicCreateError) return Response.json({ error: host.publicCreateError }, { status: 503 });
+                    if (host.publicCreateError || host.publicCreateErrorBody) {
+                        return Response.json(host.publicCreateErrorBody ?? { error: host.publicCreateError }, { status: 503 });
+                    }
                     const signed = request.path.startsWith('/v1/artifact-signed-in-links');
                     const signedInput = signed ? ArtifactSignedInLinkCreateRequestV1Schema.parse(request.body) : null;
                     const input = StoredContentPublicShareCreateRequestV1Schema.parse(signedInput ? {
@@ -327,7 +332,9 @@ async function serveHome(): Promise<void> {
             }
             const input = request.body as any;
             host.requests.push({ method: request.method, ...(input ? { body: input } : {}) });
-            if (host.grantStatus !== 200) return Response.json({ error: host.grantError }, { status: host.grantStatus });
+            if (host.grantStatus !== 200 && (host.grantFailureMethod === null || request.method === host.grantFailureMethod)) {
+                return Response.json(host.grantErrorBody ?? { error: host.grantError }, { status: host.grantStatus });
+            }
             if (host.access === null) return Response.json({ error: 'not_found' }, { status: 404 });
             if (request.method === 'PUT' && input.principal.kind === 'account' && input.principal.accountId === host.rejectedReviewAccountId) {
                 return Response.json({ error: 'artifact_subject_ineligible' }, { status: 403 });
@@ -474,6 +481,11 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>) {
 function diagnosticCodes(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): unknown[] {
     return [...new Set(screen.findAll(node => node.props.testID === testID && typeof node.props.diagnosticCode === 'string')
         .map(node => node.props.diagnosticCode))];
+}
+
+async function openLinkFailureDetails(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const details = screen.find(node => node.props.accessibilityLabel === t('approvals.technicalDetails') && typeof node.props.onPress === 'function');
+    await act(async () => { details.props.onPress(); });
 }
 
 describe('DocumentShareSheet', () => {
@@ -644,6 +656,97 @@ describe('DocumentShareSheet', () => {
         expect(row()?.operation.kind).toBe('idle');
         await hook.unmount();
     });
+    it('keeps the Home-confirmed rollback on a refused grant mutation', async () => {
+        const execute = createFrontDoorActionExecute();
+        const context = { surface: 'ui', authority: 'present_user', serverId: host.serverId, expectedAccountId: 'owner' } as const;
+        const changeGrant = () => execute.confirmed('artifact.access.grants.set', {
+            artifactId: 'wf-1', principal: { kind: 'account', accountId: 'ana' }, accessLevel: 'view',
+        }, context);
+        await expect(changeGrant()).resolves.toMatchObject({ ok: true });
+        host.grantStatus = 503;
+        host.grantErrorBody = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+        await expect(changeGrant()).resolves.toMatchObject({
+            ok: false, errorCode: 'database_transaction_timeout', effectAttempted: false,
+            failureCause: { phase: 'home.database.transaction', errorCode: 'database_transaction_timeout', httpStatus: 503 },
+        });
+    });
+
+    it('discloses the Home-confirmed rollback on a refused grant roster and retries the load', async () => {
+        host.grantStatus = 503;
+        host.grantErrorBody = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        expect(screen.getTextContent()).toContain(t('approvals.transientFailureTitle'));
+        expect(screen.getTextContent()).not.toContain('home.database.transaction');
+        await screen.pressByTestIdAsync('document-share-roster-failure-details');
+        expect(screen.getTextContent()).toContain('home.database.transaction');
+        expect(screen.getTextContent()).toContain(t('approvals.failureTechnicalLabels.effectAttempted'));
+        host.grantStatus = 200;
+        await screen.pressByTestIdAsync('document-share-editor:list:document-share:option:issue');
+        await settle();
+        expect(screen.findByTestId('document-share-roster-failure-details')).toBeNull();
+        expect(screen.findByTestId('document-share-grant-account:ana')).not.toBeNull();
+        expect(host.requests.map(request => request.method)).toEqual(['GET', 'GET']);
+    });
+
+    it('discloses the Home-confirmed rollback after Add is refused and keeps Add available', async () => {
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await startAdding(screen);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('document-share-add:team:payments')).not.toBeNull());
+        host.grantStatus = 503;
+        host.grantErrorBody = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+        await screen.pressByTestIdAsync('document-share-add:team:payments');
+        await settle();
+        expect(screen.getTextContent()).toContain(t('approvals.transientFailureTitle'));
+        expect(screen.getTextContent()).not.toContain('home.database.transaction');
+        await screen.pressByTestIdAsync('document-share-candidate-failure-details:team:payments');
+        expect(screen.getTextContent()).toContain('home.database.transaction');
+        expect(screen.getTextContent()).toContain(t('approvals.failureTechnicalLabels.effectAttempted'));
+        host.grantStatus = 200;
+        await screen.pressByTestIdAsync('document-share-add:team:payments');
+        await settle();
+        expect(screen.findByTestId('document-share-candidate-failure-details:team:payments')).toBeNull();
+        expect(screen.findByTestId('document-share-grant-team:payments')).not.toBeNull();
+        expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(2);
+    });
+
+    it('discloses the Home-confirmed rollback on a refused grant row and retries the change', async () => {
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-level:account:ana');
+        host.grantStatus = 503;
+        host.grantErrorBody = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+        await screen.pressByTestIdAsync('document-share-level:account:ana:view');
+        await settle();
+        expect(screen.getTextContent()).toContain(t('approvals.transientFailureTitle'));
+        expect(screen.getTextContent()).not.toContain('home.database.transaction');
+        await screen.pressByTestIdAsync('document-share-grant-failure-details:account:ana');
+        expect(screen.getTextContent()).toContain('home.database.transaction');
+        expect(screen.getTextContent()).toContain(t('approvals.failureTechnicalLabels.effectAttempted'));
+        host.grantStatus = 200;
+        await screen.pressByTestIdAsync('document-share-retry:account:ana');
+        await settle();
+        expect(screen.findByTestId('document-share-grant-failure-details:account:ana')).toBeNull();
+        expect(host.grants.find(grant => grant.principal.kind === 'account' && grant.principal.accountId === 'ana')?.accessLevel).toBe('view');
+    });
+
+    it('discloses the Home-confirmed rollback when creating a public link fails', async () => {
+        host.publicCreateErrorBody = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-public-link');
+        await screen.pressByTestIdAsync('session-public-link-create');
+        await screen.pressByTestIdAsync('session-public-link-options-create');
+        await settle();
+        await screen.pressByTestIdAsync('session-public-link-mutation-error-details-toggle');
+        const detail = screen.findByTestId('session-public-link-mutation-error-details-code')?.props.children;
+        expect(detail).toContain(`${t('approvals.failureTechnicalLabels.causePhase')}: home.database.transaction`);
+        expect(detail).toContain(`${t('approvals.failureTechnicalLabels.effectAttempted')}: false`);
+        expect(screen.getTextContent().includes(t('approvals.transientFailureTitle'))).toBe(true);
+        expect(host.publicShare).toBeNull();
+    });
+
     beforeEach(async () => {
         host.requests = [];
         host.access = 'owner';
@@ -652,13 +755,16 @@ describe('DocumentShareSheet', () => {
         host.grantGate = null;
         host.grants = [ana, studio];
         host.grantStatus = 200;
+        host.grantFailureMethod = null;
         host.grantError = 'not_found';
+        host.grantErrorBody = null;
         host.reviewedMissingAudience = undefined;
         host.rejectedReviewAccountId = null;
         host.document = WORKFLOW_DOCUMENT;
         host.publicShare = null;
         host.publicRequests = [];
         host.publicCreateError = null;
+        host.publicCreateErrorBody = null;
         host.publicListError = null;
         host.publicAuditError = null;
         host.networkAtPublicCreate = [];
@@ -801,17 +907,31 @@ describe('DocumentShareSheet', () => {
 
         // The Workflow's own grant owner decides who is still missing; Share grants only them "Can use".
         host.reviewedMissingAudience = [payments];
-        await screen.pressByTestIdAsync(`document-share-linked-workflow-share:${LINKED_WORKFLOW_ID}`);
-        await waitForHomeGovernance(() => expect(host.requests.filter(request => request.method === 'PUT')).toEqual([
+        host.grantStatus = 503;
+        host.grantFailureMethod = 'PUT';
+        host.grantErrorBody = { error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' };
+        const share = `document-share-linked-workflow-share:${LINKED_WORKFLOW_ID}`;
+        const failureDetails = `document-share-linked-workflow-failure-details:${LINKED_WORKFLOW_ID}`;
+        await screen.pressByTestIdAsync(share);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('approvals.transientFailureTitle')));
+        expect(screen.getTextContent()).not.toContain('home.database.transaction');
+        await screen.pressByTestIdAsync(failureDetails);
+        expect(screen.getTextContent()).toContain('home.database.transaction');
+
+        host.grantStatus = 200;
+        await screen.pressByTestIdAsync(share);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(share)).toBeNull());
+        expect(screen.findByTestId(failureDetails)).toBeNull();
+        expect(host.requests.filter(request => request.method === 'PUT')).toEqual([
             { method: 'PUT', body: { artifactId: 'profile-1', principal: payments, accessLevel: 'view' } },
             { method: 'PUT', body: { artifactId: LINKED_WORKFLOW_ID, principal: payments, accessLevel: 'view' } },
-        ]));
-        await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow-share:${LINKED_WORKFLOW_ID}`)).toBeNull());
+            { method: 'PUT', body: { artifactId: LINKED_WORKFLOW_ID, principal: payments, accessLevel: 'view' } },
+        ]);
 
         // Not now withdraws the offer without touching any grant.
         await screen.pressByTestIdAsync('document-share-linked-workflows-dismiss');
         await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).toBeNull());
-        expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(2);
+        expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(3);
         await screen.unmount();
     });
 
@@ -1222,9 +1342,17 @@ describe('DocumentShareSheet', () => {
                 instructions: { markdown: 'Grow herbs' }, skills: [], memoryRules: [],
                 needs: { software: [], connectedAccounts: [], mcpServers: [] } } } };
         host.document = { header: projectBotTemplateArtifactHeaderV1(release), body: JSON.stringify(release) };
+        host.publicListError = 'artifact_access_forbidden';
         const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="bot_template.v1" />);
         await settle();
         await screen.pressByTestIdAsync('document-share-public-link');
+        await settle();
+        await openLinkFailureDetails(screen);
+        expect(screen.getTextContent().includes(`${t('browserDiagnostics.host.devtools.fields.requestId')}: `)).toBe(true);
+        host.publicListError = null;
+        const retry = screen.find(node => node.props.accessibilityLabel === t('common.retry') && typeof node.props.onPress === 'function');
+        await act(async () => { retry.props.onPress(); });
+        await settle();
         const toggle = () => screen.find(node => node.props.testID === 'document-share-signed-in-link' && typeof node.props.onValueChange === 'function');
         await act(async () => { await toggle().props.onValueChange(true); });
         await settle();
@@ -1240,6 +1368,8 @@ describe('DocumentShareSheet', () => {
         expect(host.publicRequests.filter(request => request.method === 'DELETE')).toHaveLength(1);
         await settle();
         expect(screen.getTextContent().includes(t('errors.permissionDenied'))).toBe(true);
+        await openLinkFailureDetails(screen);
+        expect(screen.getTextContent().includes(`${t('browserDiagnostics.host.devtools.fields.requestId')}: `)).toBe(true);
         expect(host.publicShare).not.toBeNull();
         host.publicDeleteError = null;
         await act(async () => { await toggle().props.onValueChange(false); });
@@ -1441,6 +1571,8 @@ describe('DocumentShareSheet', () => {
         await settle();
         expect(screen.getTextContent()).toContain(t('session.collaboration.pane.linkLoadFailed'));
         expect(screen.getTextContent()).not.toContain('public_share_unavailable');
+        await openLinkFailureDetails(screen);
+        expect(screen.getTextContent().includes(`${t('browserDiagnostics.host.devtools.fields.requestId')}: `)).toBe(true);
         expect(host.publicShare?.id).toBe('existing-share');
     });
 
@@ -1484,8 +1616,10 @@ describe('DocumentShareSheet', () => {
         const hook = await renderHook(() => useDocumentPublicLinkController({ artifactId: 'wf-1',
             scope: { serverId: host.serverId, accountId: 'owner' }, enabled: true, canManage: true }));
         await settle();
-        await expect(hook.getCurrent().create({ isConsentRequired: true })).rejects.toMatchObject({
-            code: 'public_share_isolation_unavailable', canTryAgain: false,
+        const failure = await hook.getCurrent().create({ isConsentRequired: true }).catch((error: unknown) => error);
+        expect(failure).toMatchObject({ ok: false, errorCode: 'public_share_isolation_unavailable' });
+        expect(hook.getCurrent().presentFailure(failure)).toMatchObject({
+            code: 'public_share_isolation_unavailable', retryable: false,
         });
         expect(hook.getCurrent().publication).toBeNull();
         expect(hook.getCurrent().shareUrl).toBeNull();
@@ -1514,6 +1648,9 @@ describe('DocumentShareSheet', () => {
         expect(host.publicShare).toBeNull();
         expect(modal.alert).not.toHaveBeenCalled();
         expect(screen.getTextContent()).toContain(t('session.collaboration.pane.linkUnavailable'));
+        await screen.pressByTestIdAsync('session-public-link-mutation-error-details-toggle');
+        const detail = screen.findByTestId('session-public-link-mutation-error-details-code')?.props.children;
+        expect(detail).toContain(`${t('browserDiagnostics.host.devtools.fields.requestId')}: `);
 
         // A fresh open owns no remembered refusal: once the Home is set up, Create works again.
         host.publicCreateError = null;

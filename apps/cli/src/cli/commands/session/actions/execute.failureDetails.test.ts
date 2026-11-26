@@ -44,11 +44,16 @@ it.each([true, false])('preserves refused Action diagnostics when supplied: %s',
         } });
         expect(stderr.text()).toBe('');
         if (!withCause) expect(envelope.error).not.toHaveProperty('failureCause');
-        await expect(cmdSessionActionsExecute(argv, deps)).rejects.toMatchObject({
-          message: withCause
-            ? `target_unavailable\nPhase: execution_authorization; requestId: ${requestId}`
-            : `target_unavailable\nrequestId: ${requestId}`,
-        });
+        const command = cmdSessionActionsExecute(argv, deps);
+        await expect(command).rejects.toHaveProperty('message', expect.stringContaining(requestId));
+        if (withCause) {
+          for (const diagnostic of [failureCause.phase, failureCause.errorCode, 'HTTP 409',
+            failureCause.nativeErrorReason, 'No effect attempted']) {
+            await expect(command).rejects.toHaveProperty('message', expect.stringContaining(diagnostic));
+          }
+        } else {
+          await expect(command).rejects.toHaveProperty('message', `target_unavailable\nrequestId: ${requestId}`);
+        }
       } finally { stderr.restore(); stdout.restore(); }
     });
   } finally {

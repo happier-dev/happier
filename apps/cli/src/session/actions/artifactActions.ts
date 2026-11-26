@@ -1,8 +1,9 @@
-import { ArtifactActionInputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, projectArtifactDocumentV1, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionInputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, ArtifactQuotaExceededV1Schema, projectArtifactDocumentV1, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { artifactActionListSelectionV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { projectMachineActionRpcFailure, readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { PROJECT_SETUP_SET_ACTION_ID_V1, isProjectSetupSetChildActionIdV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import type { ActionExecutorContext, ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
@@ -147,8 +148,27 @@ export function createCliArtifactActions(params: Readonly<{
         case 'artifact.publish_from_file': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const caller = await params.resolvePublishCaller(args.context, input.workspace);
-          if (!caller && input.workspace && params.forwardWorkspacePublication)
-            return await params.forwardWorkspacePublication({ ...input, workspace: input.workspace }, args.context, signal);
+          if (!caller && input.workspace && params.forwardWorkspacePublication) {
+            let result: unknown;
+            try {
+              result = await params.forwardWorkspacePublication({ ...input, workspace: input.workspace }, args.context, signal);
+            } catch (error) {
+              const failure = readActionFailureEnvelope(error);
+              if (!failure) throw error;
+              return projectMachineActionRpcFailure(failure);
+            }
+            const failure = readActionFailureEnvelope(result);
+            if (!failure) return result;
+            // The Artifact owner already declares this closed quota shape; opaque
+            // Machine details have no such declaration and stay off the public Action.
+            const quota = ArtifactQuotaExceededV1Schema.safeParse(failure.errorCode === 'quota_exceeded'
+              && failure.details && typeof failure.details === 'object'
+              ? { ...failure.details, error: failure.errorCode } : null);
+            const projected = projectMachineActionRpcFailure(failure);
+            if (!quota.success) return projected;
+            const { error: _quotaCode, ...details } = quota.data;
+            return { ...projected, details };
+          }
           if (!caller) return { ok: false, errorCode: 'artifact_source_unavailable', error: 'artifact_source_unavailable' };
           return await publishArtifactFromWorkspaceFile({ store: params.store, caller, input, savedBy, ...(signal ? { signal } : {}) });
         }
@@ -173,6 +193,8 @@ export function createCliArtifactActions(params: Readonly<{
       }
     } catch (error) {
       signal?.throwIfAborted();
+      const failure = readActionFailureEnvelope(error);
+      if (failure) return failure;
       const code = error && typeof error === 'object' && typeof Reflect.get(error, 'code') === 'string'
         ? String(Reflect.get(error, 'code')) : 'artifact_action_failed';
       return { ok: false, errorCode: code, error: code,

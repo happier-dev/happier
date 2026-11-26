@@ -12,7 +12,7 @@ import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from 
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getWorkspaceSyncCommittedCopyPreview, listWorkspaceSyncStatuses, type WorkspaceSyncCommittedCopyReviewResult } from '@/sync/ops/workspaceSync';
 import { presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/executor/types';
 
 type CopyFacts = Readonly<{ lastCleanSyncAtMs: number | null; sizeBytes: number | null; review: WorkspaceSyncCommittedCopyReviewResult | null }>;
 export type MachineFreshCopy = MachineFreshCopyRow & CopyFacts & Readonly<{ name: string; sourceRefId: string; sourceMachineId: string }>;
@@ -25,9 +25,7 @@ export type MachineFreshCopyNotice = Readonly<{
   text: string;
   /** Why a refused removal kept the copy, from the Sync owner's sentence for its typed cause. */
   reason?: string;
-  errorCode?: string;
-  details?: unknown;
-  failureCause?: ActionFailureCauseV1;
+  failure?: ActionExecuteFailure;
   /** Machines the retirement could not ask about dependent work; named by the section, never by id. */
   uncheckedMachineIds?: readonly string[];
   /** Typed work the executor reported as still using this copy (in_use, or alongside an unknown result). */
@@ -203,9 +201,9 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
           : null);
       }
     } catch (error) {
-      const code = error instanceof ProjectWorkerActionError ? error.errorCode : '';
-      const details = error instanceof ProjectWorkerActionError ? error.details : undefined;
-      const failureCause = error instanceof ProjectWorkerActionError ? error.failureCause : undefined;
+      const failure = error instanceof ProjectWorkerActionError ? error.failure : undefined;
+      const code = failure?.errorCode ?? '';
+      const details = failure?.details;
       const detailRecord = details !== null && typeof details === 'object' ? details : null;
       const kind = detailRecord && Reflect.get(detailRecord, 'kind') === 'outcomeUnknown'
         || code === 'outcome_unknown' || code === 'outcomeUnknown' ? 'unknown'
@@ -214,10 +212,10 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
       const dependencies = z.array(ProjectWorkerDependencyV1Schema).safeParse(detailRecord ? Reflect.get(detailRecord, 'dependencies') : undefined);
       const filesUnknown = kind === 'unknown' && code === 'workspace_copy_removal_unknown';
       // A refusal reads the Sync owner's sentence for its typed cause; the code stays under Technical details.
-      const refusal = kind === 'failed' && code ? presentWorkspaceSyncFailure({ code, failureCause, details },
+      const refusal = kind === 'failed' && code ? presentWorkspaceSyncFailure(failure,
         undefined, t('projectWorkers.removeFailed')) : null;
-      publishNotice({ relationshipId: copy.relationship.relationshipId, kind, errorCode: code, details,
-        ...(failureCause ? { failureCause } : {}),
+      publishNotice({ relationshipId: copy.relationship.relationshipId, kind,
+        ...(failure ? { failure } : {}),
         ...(refusal && refusal.message !== t('projectWorkers.removeFailed') ? { reason: refusal.message } : {}),
         ...(dependencies.success && dependencies.data.length > 0 ? { dependencies: dependencies.data } : {}),
         ...(filesUnknown ? { filesUnknown } : {}),

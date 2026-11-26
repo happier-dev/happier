@@ -208,9 +208,7 @@ export function createProjectManifestActionClient(
         context,
       );
       if (!result.ok)
-        throw new HappyError(result.error, false, {
-          code: result.errorCode,
-        });
+        throw Object.assign(new HappyError(result.error, false, { code: result.errorCode }), result);
       return ProjectDefinitionInspectOutputSchema.parse(result.result);
     },
     /** Revalidates a held inspection: an unchanged current result comes back without its body. */

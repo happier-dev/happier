@@ -63,6 +63,21 @@ afterEach(() => {
     clearBrowserRuntimeControlRegistryForTests();
 });
 
+it('carries a refused console Action into the person’s eval row', async () => {
+    stubCryptoRandomUuid();
+    const view = createLocalPreviewView({ engineKind: 'nativeWebView', navigationGeneration: 0 });
+    const refusal = { ok: false, errorCode: 'action_forbidden', error: 'Private diagnostic',
+        requestId: 'browser-eval-refused', effectAttempted: false,
+        failureCause: { phase: 'home.action.admission', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+    } as const;
+    const actionExecute: UseBrowserDiagnosticsRuntimeInput['actionExecute'] = async () => refusal;
+    const hook = await renderHook(() => useBrowserDiagnosticsRuntime({ view, enabled: true, actionExecute }));
+    await act(async () => { hook.getCurrent()?.interaction?.onEnableInteraction?.(); });
+    await act(async () => { hook.getCurrent()?.requestEval({ expression: 'document.title' }); });
+    expect(hook.getCurrent()?.interaction?.evalConsole?.entries[0])
+        .toMatchObject({ status: 'blocked', errorCode: refusal.errorCode, actionFailure: refusal });
+});
+
 it('cancels the active console eval invocation and sends an engine cancellation', async () => {
     stubCryptoRandomUuid();
     const view = createLocalPreviewView({ engineKind: 'nativeWebView', navigationGeneration: 0 });
@@ -548,7 +563,7 @@ describe('useBrowserDiagnosticsRuntime', () => {
         expect(hook.getCurrent()?.bridge?.nonce).not.toBe(before.nonce);
     });
 
-    it('fails closed when diagnostics runtime is not explicitly enabled', async () => {
+    it('keeps diagnostics closed while a preview uses the navigation-only bridge', async () => {
         stubCryptoRandomUuid();
         const snapshotClient = vi.fn(async () => ({
             ok: true as const,
@@ -571,7 +586,13 @@ describe('useBrowserDiagnosticsRuntime', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(hook.getCurrent()).toBeNull();
+        const runtime = hook.getCurrent();
+        expect(runtime?.bridge?.navigationOnly).toBe(true);
+        expect(runtime?.requestEval({ expression: 'document.title' })).toBe(false);
+        await act(async () => { runtime?.bridge?.onEvents([createDaemonConsoleEvent()]); });
+        expect(selectBrowserDiagnosticsForView(hook.getCurrent()!.state, {
+            browserSessionId: 'browser_session_1', viewId: 'view_1',
+        }).eventCount).toBe(0);
         expect(snapshotClient).not.toHaveBeenCalled();
     });
 

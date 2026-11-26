@@ -7,6 +7,8 @@ import { HandoffTargetReplacementApprovalV1Schema } from './handoffTargetReplace
 import { MachineInstallationPublicIdentityV1Schema } from '../../../machines/identity/installationKeySchemas.js';
 import { WorkspaceRefV1Schema } from '../../../workspaces/workspaceRefV1.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../../../json/storedReadSchema.js';
+import { ActionFailureCauseV1Schema } from '../../../actions/actionExecutionResult.js';
+import { OpenProjectRefusalV1Schema } from '../../../projects/openProjectRefusalV1.js';
 import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../../../workspaces/manifestSchema.js';
 
 const MAX_RELATIONSHIP_ID_LENGTH = 256;
@@ -1563,6 +1565,8 @@ export const SessionHandoffWorkspaceCaptureResultV3Schema = lazyZodSchema(() => 
     ok: z.literal(false),
     errorCode: z.string().check(z.minLength(1), z.maxLength(MAX_ERROR_CODE_LENGTH)),
     error: z.optional(z.string().check(z.minLength(1), z.maxLength(MAX_PATH_LENGTH))),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
+    details: z.optional(OpenProjectRefusalV1Schema),
   }),
 ]));
 export type SessionHandoffWorkspaceCaptureResultV3 = z.infer<typeof SessionHandoffWorkspaceCaptureResultV3Schema>;

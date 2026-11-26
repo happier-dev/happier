@@ -3785,6 +3785,14 @@ operation read and exact replay. This requires the target-job producer to attach
 the diagnostics to the Action failure. The current result-get carrier supplies
 the native code alone.
 
+In 0.3 development, the Target handoff capture carries private-checkout
+refusals in the existing Project Open shape. Its failure cause retains the
+checkout owner's reason. The direct reply and current operation reads and
+replays preserve the destination review when supplied. Handoff Details
+shows the requester's proposed folder on the selected Home and Machine.
+Reading the extended refusal requires matching 0.3 development daemons.
+Updated Source daemons also accept earlier bare refusal replies.
+
 `SessionHandle.watch` follows committed retained transcript rows through the shared socket source and delivers complete text before advancing its reconnect frontier. Provisional stream deltas do not become retained message events. Cancellation ends the watcher; credential and plugin-occurrence checks prevent further delivery after retirement.
 
 In 0.3 development, bounded server transcript pages, exact-message/action-reference

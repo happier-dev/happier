@@ -15229,6 +15229,7 @@ const enWorkspaceSync = {
     projectWorkspaceChanged:
       "That folder belongs to another Project. Pick a new folder, or use the Project it already belongs to.",
     requesterLinkUnavailable: "To bring a copy along, open the project on your own machine first. Or hand off without a copy.",
+    seedFromSharedMachineRefused: "The server refused to copy the workspace using someone else’s machine.",
     dependenciesUnavailable: "The other machine couldn’t be checked for work that uses this copy. Try again, or ask that machine’s owner.",
     provenanceConflict:
       "These folders are already synced for a different purpose. Pick another folder.",

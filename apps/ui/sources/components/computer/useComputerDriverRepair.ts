@@ -1,13 +1,27 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ComputerRecovery } from '@/sync/domains/computer/targets';
 import { MachineCapabilityInstallOutputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { ComputerScope } from '@/sync/domains/computer/computerControlClient';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+
+function showRepairFailure(failure?: ActionExecuteFailure | null): void {
+    if (!failure) {
+        Modal.alert(t('common.error'), t('deps.installFailed'));
+        return;
+    }
+    const presentation = presentActionExecutionFailure(failure, t('deps.installFailed'), { closedCodesOnly: true });
+    alertActionFailure({ reason: presentation.reason, code: failure.errorCode, requestId: failure.requestId,
+        context: Object.fromEntries(presentation.technicalDetails.filter(line => line.key !== 'code' && line.key !== 'requestId')
+            .map(line => [line.key, line.value])) });
+}
 
 /** Explicit repair uses the existing admitted installer and then re-reads native facts. */
 export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: ServerAccountScopeLifetime | null | undefined, refresh: () => void, recovery: ComputerRecovery | null) {
@@ -29,16 +43,19 @@ export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: S
                 });
                 if (!installation.isCurrent() || !accountLifetime.isCurrent() || current.current !== installation) return;
                 if (!execution.ok) {
-                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(execution, t('deps.installFailed')));
+                    showRepairFailure(execution);
                 } else {
                     const result = MachineCapabilityInstallOutputSchema.safeParse(execution.result);
                     if (!result.success) Modal.alert(t('common.error'), t('deps.installFailed'));
                     else if (!result.data.supported) Modal.alert(t('common.error'), result.data.reason === 'not-supported' ? t('deps.installNotSupported') : t('deps.installFailed'));
-                    else if (!result.data.response.ok) Modal.alert(t('common.error'), result.data.response.error.message);
+                    else if (!result.data.response.ok) {
+                        const failure = result.data.response.error;
+                        showRepairFailure(failure.code ? { ok: false, errorCode: failure.code, error: failure.message } : undefined);
+                    }
                 }
                 refresh();
             } catch (error) {
-                if (installation.isCurrent() && accountLifetime.isCurrent() && current.current === installation) Modal.alert(t('common.error'), error instanceof Error ? error.message : t('deps.installFailed'));
+                if (installation.isCurrent() && accountLifetime.isCurrent() && current.current === installation) showRepairFailure(readActionFailureEnvelope(error));
             } finally {
                 if (current.current === installation) setFlight(null);
             }

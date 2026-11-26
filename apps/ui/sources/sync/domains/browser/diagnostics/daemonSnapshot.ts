@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
@@ -39,7 +41,7 @@ const defaultSnapshotClient: BrowserDiagnosticsSnapshotClient = (input) => (
 );
 
 type RequestDetailState = BrowserDiagnosticsRequestDetailV1 | Readonly<{ status: 'idle' }> | Readonly<{ status: 'loading' }>
-    | Readonly<{ status: 'unavailable'; reason: Extract<BrowserDiagnosticsRequestDetailClientResult, { ok: false }>['reason'] }>;
+    | Readonly<{ status: 'unavailable'; reason: Extract<BrowserDiagnosticsRequestDetailClientResult, { ok: false }>['reason']; actionFailure?: ActionExecuteFailure }>;
 
 /** Mount in the selected row's detail leaf. No selection, hidden presentation or closed drawer
  * produces no read. Values remain local to this leaf and never enter the shared event store.
@@ -67,9 +69,13 @@ export function useBrowserDiagnosticsRequestDetail(input: Readonly<{
             navigationGeneration: input.view.navigationGeneration };
         void client({ machineId, serverId, view, requestId: input.selectedRequestId, signal: controller.signal })
             .then(result => {
-                if (!controller.signal.aborted) setState({ key, value: result.ok ? result.detail : { status: 'unavailable', reason: result.reason } });
-            }, () => {
-                if (!controller.signal.aborted) setState({ key, value: { status: 'unavailable', reason: 'request_failed' } });
+                if (!controller.signal.aborted) setState({ key, value: result.ok ? result.detail : {
+                    status: 'unavailable', reason: result.reason, actionFailure: readActionFailureEnvelope(result) ?? undefined,
+                } });
+            }, error => {
+                if (!controller.signal.aborted) setState({ key, value: {
+                    status: 'unavailable', reason: 'request_failed', actionFailure: readActionFailureEnvelope(error) ?? undefined,
+                } });
             });
         return () => { controller.abort(); setState(null); };
     }, [key, client]);
@@ -142,11 +148,12 @@ export function useBrowserDiagnosticsDaemonSnapshot(
         let abortController: AbortController | null = null;
         let previousState: BrowserDiagnosticsSnapshotState | undefined;
         const publishState = (connection: BrowserDiagnosticsSnapshotState['connection'], reasonCode?: string,
-            evictedEventCount = previousState?.evictedEventCount, omittedEventCount = previousState?.omittedEventCount) => {
+            evictedEventCount = previousState?.evictedEventCount, omittedEventCount = previousState?.omittedEventCount,
+            actionFailure?: ActionExecuteFailure) => {
             if (disposed || previousState?.connection === connection && previousState.reasonCode === reasonCode
-                && previousState.evictedEventCount === evictedEventCount && previousState.omittedEventCount === omittedEventCount) return;
+                && previousState.evictedEventCount === evictedEventCount && previousState.omittedEventCount === omittedEventCount && previousState.actionFailure === actionFailure) return;
             previousState = { browserSessionId: view.browserSessionId, viewId: view.viewId,
-                navigationGeneration: view.navigationGeneration, connection,
+                navigationGeneration: view.navigationGeneration, connection, ...(actionFailure ? { actionFailure } : {}),
                 ...(reasonCode ? { reasonCode } : {}), ...(evictedEventCount === undefined ? {} : { evictedEventCount }),
                 ...(omittedEventCount === undefined ? {} : { omittedEventCount }) };
             onSnapshotStateRef.current?.(previousState);
@@ -179,9 +186,13 @@ export function useBrowserDiagnosticsDaemonSnapshot(
                     if (result.revision === undefined) return;
                     result = await snapshotClientRef.current({ ...request, sinceRevision: result.revision });
                 }
-                if (!disposed && !controller.signal.aborted && !result.ok) publishState('disconnected', result.reason);
-            } catch {
-                if (!disposed && !controller.signal.aborted) publishState('disconnected', 'request_failed');
+                if (!disposed && !controller.signal.aborted && !result.ok) {
+                    publishState('disconnected', result.reason, undefined, undefined, readActionFailureEnvelope(result) ?? undefined);
+                }
+            } catch (error) {
+                if (!disposed && !controller.signal.aborted) {
+                    publishState('disconnected', 'request_failed', undefined, undefined, readActionFailureEnvelope(error) ?? undefined);
+                }
             }
         };
 

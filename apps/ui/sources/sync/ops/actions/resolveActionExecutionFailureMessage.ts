@@ -22,7 +22,7 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
-import { resolveMachineTargetUnavailableReasonCopy, resolvePluginSurfaceStaleReasonMessage, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { resolveMachineCustodyRefusalCopy, resolveMachineTargetUnavailableReasonCopy, resolvePluginSurfaceStaleReasonMessage, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { getUiFeatureDefinition } from '@/sync/domains/features/featureRegistry';
 
@@ -108,7 +108,8 @@ export function readRuntimeActionDisabledReason(value: unknown): Readonly<{ fami
         ? { family: null, reason: record.error } : null;
 }
 
-type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string; closedCodesOnly?: boolean;
+export type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string; closedCodesOnly?: boolean;
+    detailsAudience?: 'recipient';
     serviceCommand?: Readonly<{ service: string; machine: string }> }>;
 
 /** The Machine itself did not answer: its daemon is offline or its socket is gone. */
@@ -143,7 +144,7 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
         errorCode: record.errorCode ?? record.code ?? record.rpcErrorCode,
         // Only the runtime refusal's closed reason is read from it; its text never becomes the sentence here.
         error: record.error,
-        details: record.details,
+        details: options.detailsAudience === 'recipient' ? undefined : record.details,
         failureCause: record.failureCause,
     }, options);
     if (record.type === 'error') {
@@ -191,6 +192,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     // A transport wrapper can say Forbidden while its producer names unavailable
     // infrastructure. Present that validated cause before the wrapper's generic copy.
     const cause = record.failureCause === undefined ? null : readActionFailureCauseV1(record.failureCause);
+    const custodyCopy = resolveMachineCustodyRefusalCopy(code, cause);
+    if (custodyCopy) return custodyCopy;
     if (cause && !('kind' in cause) && cause.errorCode !== null && cause.errorCode !== code) {
         const causeMessage = readFailureFallbackMessage({ code: cause.errorCode }, options);
         if (causeMessage) return causeMessage;
@@ -243,7 +246,6 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'requester_credential_disclosure_required') return t('errors.requesterCredentialDisclosureRequired');
     // A person's Stop holds a Send; it waits in Pending until a person resumes the Session (docs/pending-delivery.md).
     if (code === 'held_by_person') return t('errors.sessionHeldByPerson');
-    if (code === 'custodian_only') return t('errors.custodianOnly');
     if (code === 'sandbox_unavailable') return resolveReasonCopy({ kind: 'browserFrame', reasonCode: code }).body;
     if (code === 'profile_exists') return t('browserShell.profile.management.profileExists');
     if (code === 'profile_not_found') return t('browserShell.profile.management.profileNotFound');
@@ -366,15 +368,21 @@ export function resolveActionExecutionFailureMessage(
 
 /** The existing combined reason/recovery copy, with the disclosure's safe reference fields. */
 export function presentActionExecutionFailure(failure: PluginUiActionFailureV1, fallbackMessage = t('common.requestFailed'), options?: FailurePresentationOptions): PluginUiActionFailurePresentationV1 {
+    // New document and link recipient disclosures use the Action envelope's reference fields.
+    const details = options?.detailsAudience === 'recipient' ? {} : readSafeFailureDetails(failure.details);
     const technicalDetails = [
         { key: 'code', label: t('workflows.run.technical.failureCode'), value: failure.errorCode },
         ...(failure.requestId ? [{ key: 'requestId', label: t('browserDiagnostics.host.devtools.fields.requestId'), value: failure.requestId }] : []),
         ...(failure.effectAttempted === undefined ? [] : [{ key: 'effectAttempted', label: t('approvals.failureTechnicalLabels.effectAttempted'), value: String(failure.effectAttempted) }]),
-        ...Object.entries(readSafeFailureDetails(failure.details)).map(([key, value]) => ({ key, label: key, value: String(value) })),
+        ...Object.entries(details).map(([key, value]) => ({ key, label: key, value: String(value) })),
         ...(failure.failureCause ? [
             { key: 'causePhase', label: t('approvals.failureTechnicalLabels.causePhase'), value: failure.failureCause.phase },
             { key: 'errorClass', label: t('approvals.failureTechnicalLabels.errorClass'), value: failure.failureCause.errorClass },
             ...(failure.failureCause.errorCode ? [{ key: 'causeCode', label: t('approvals.failureTechnicalLabels.causeCode'), value: failure.failureCause.errorCode }] : []),
+            ...('nativeErrorCode' in failure.failureCause && failure.failureCause.nativeErrorCode
+                ? [{ key: 'nativeErrorCode', label: t('approvals.failureTechnicalLabels.causeCode'), value: failure.failureCause.nativeErrorCode }] : []),
+            ...('nativeErrorReason' in failure.failureCause && failure.failureCause.nativeErrorReason
+                ? [{ key: 'nativeErrorReason', label: t('approvals.failureTechnicalLabels.reason'), value: failure.failureCause.nativeErrorReason }] : []),
             ...(failure.failureCause.httpStatus != null ? [{ key: 'httpStatus', label: t('approvals.failureTechnicalLabels.httpStatus'), value: String(failure.failureCause.httpStatus) }] : []),
         ] : []),
     ];

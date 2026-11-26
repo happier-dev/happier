@@ -39,6 +39,7 @@ import tweetnacl from 'tweetnacl';
 import { selectBrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber, type BrowserSidecarCdpControlTransport } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapter';
 import { createBrowserSidecarCdpControlAdapterFactory } from '../../../../../cli/src/daemon/browser/sidecar/controlAdapterFactory';
+import { BrowserSidecarCdpTransportError } from '../../../../../cli/src/daemon/browser/sidecar/cdpTransport';
 import { createBrowserAutomationDaemonService } from '../../../../../cli/src/daemon/browser/automation/service';
 import { createBrowserAutomationCdpAdapter } from '../../../../../cli/src/daemon/browser/automation/adapters/cdp';
 import { createControlAdapterAutomationTransport } from '../../../../../cli/src/daemon/browser/automation/adapters/controlBridge';
@@ -53,7 +54,6 @@ import { createBrowserProfileStore, deriveSessionBrowserProfileId } from '../../
 import { createBrowserStoragePartitionOwner } from '../../../../../cli/src/daemon/browser/storage/partitions';
 import { createBrowserDaemonControlBroker } from '../../../../../cli/src/daemon/browser/control/broker';
 import { createBrowserDaemonViewDiscovery } from '../../../../../cli/src/daemon/browser/control/viewDiscovery';
-import { BrowserSidecarCdpTransportError } from '../../../../../cli/src/daemon/browser/sidecar/cdpTransport';
 import { RuntimeActionIdV1Schema } from '@happier-dev/protocol/actions/actionIds';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createBrowserDaemonRuntimeActionExecutor } from '../../../../../cli/src/daemon/browser/actions/runtimeActionExecutor';
@@ -92,6 +92,7 @@ const boundary = vi.hoisted(() => ({
     diagnosticsSnapshot: null as unknown,
     actionDispatch: null as ((actionId: string, input: unknown) => Promise<unknown>) | null,
     discoveryError: null as string | null,
+    discoveryRefusal: null as unknown,
     /** Holds daemon discovery open until released, to observe the wait before it answers. */
     discoveryGate: null as Promise<void> | null,
     watchViews: null as ((input: { payload?: unknown; signal?: AbortSignal }) => Promise<unknown>) | null,
@@ -112,6 +113,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
             || input.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START) && boundary.startRelay) return boundary.startRelay(input.payload);
         if (input.method === 'daemon.browser.view.watch' && boundary.watchViews) return boundary.watchViews(input);
         if (input.method === 'daemon.browser.view.list' && boundary.discoveryGate) await boundary.discoveryGate;
+        if (input.method === 'daemon.browser.view.list' && boundary.discoveryRefusal) return boundary.discoveryRefusal;
         if (input.method === 'daemon.browser.view.list') return boundary.discoveryError
             ? { error: 'Browser prerequisite', errorCode: boundary.discoveryError }
             : { protocolVersion: 1, views: boundary.views };
@@ -481,6 +483,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         boundary.diagnosticsSnapshot = null;
         boundary.actionDispatch = null;
         boundary.discoveryError = null;
+        boundary.discoveryRefusal = null;
         boundary.discoveryGate = null;
         boundary.watchViews = null;
         boundary.disconnect.mockClear();
@@ -567,6 +570,19 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             await waitForStreamAdmission();
             expect(hook.getCurrent()?.input?.sourceId).toBe(candidate.sourceId);
         } finally { await hook.unmount(); }
+    });
+
+    it('keeps the Machine’s refusal for an existing view’s discovery recovery', async () => {
+        const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Forbidden', requestId: 'browser-discovery-denied',
+            effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 },
+        } as const;
+        boundary.discoveryRefusal = refusal;
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        const hook = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId }));
+        await flushHookEffects({ cycles: 4, turns: 4 });
+        expect(hook.getCurrent()).toMatchObject({ discoveryFailure: { ...refusal, error: refusal.errorCode },
+            connecting: false, playerState: null });
     });
 
     it('retains the managed-browser prerequisite for the surface and clears it after a successful retry', async () => {

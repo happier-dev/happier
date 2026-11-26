@@ -1,5 +1,6 @@
-import { isRpcMethodNotFoundError, isRpcError, readRpcErrorCode, type RpcError } from '@happier-dev/protocol/rpcErrors';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectMachineActionRpcFailure as projectPublicMachineFailure, readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/protocol/account/encryptionMode';
 import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
@@ -20,21 +21,35 @@ export function readMachineEnrollmentRecovery(capabilities: MachineOperationProt
 export type MachineDaemonRpcFailure = Readonly<{
     ok: false;
     reason: 'older_happier' | 'request_failed' | 'invalid_response';
-    errorCode?: string;
-    failureCause?: ActionFailureCauseV1;
-    details?: RpcError['details'];
     recovery?: MachineEnrollmentRecovery;
-}>;
+}> & Partial<Omit<ActionExecuteFailure, 'ok' | 'error'>>;
+
+/** Decode both returned Machine refusals and the RPC transport's thrown carrier. */
+export function readMachineDaemonRpcFailureEnvelope(value: unknown): ActionExecuteFailure | null {
+    if (!value || typeof value !== 'object' || ('ok' in value && value.ok === true)) return null;
+    const returnedFailure = readActionFailureEnvelope(value, { treatReturnedErrorEnvelopeAsFailure: true });
+    if (returnedFailure) return returnedFailure;
+    const errorCode = readRpcErrorCode(value);
+    return errorCode ? readActionFailureEnvelope({
+        ...value, ok: false, errorCode, ...(value instanceof Error ? { message: value.message } : {}),
+    }) : null;
+}
+
+/** One public Machine-to-Action projection; private read surfaces keep their own result. */
+export function projectMachineActionRpcFailure(value: unknown): ActionExecuteFailure | null {
+    const failure = readMachineDaemonRpcFailureEnvelope(value);
+    if (!failure) return null;
+    return projectPublicMachineFailure(failure);
+}
 
 /** Preserve the protocol's safe diagnostics once, for every Machine read surface. */
 export function projectMachineDaemonRpcFailure(error: unknown): MachineDaemonRpcFailure {
-    const errorCode = readRpcErrorCode(error);
-    const failureCause = isRpcError(error) ? error.failureCause : undefined;
-    const details = isRpcError(error) ? error.details : undefined;
-    return { ok: false, reason: isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
-        : errorCode === 'invalid_action_output' ? 'invalid_response' : 'request_failed',
-        ...(errorCode ? { errorCode } : {}), ...(failureCause ? { failureCause } : {}), ...(details ? { details } : {}),
-        ...(errorCode === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED ? { recovery: accountModeRecovery } : {}) };
+    const failure = readMachineDaemonRpcFailureEnvelope(error);
+    // Machine read projections carry diagnostics; transport messages can contain private paths.
+    const { error: _transportMessage, ...diagnostics } = failure ?? { error: undefined };
+    return { ...diagnostics, ok: false, reason: isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
+        : failure?.errorCode === 'invalid_action_output' ? 'invalid_response' : 'request_failed',
+        ...(failure?.errorCode === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED ? { recovery: accountModeRecovery } : {}) };
 }
 
 /** Home or daemon must affirm method absence; routing/discovery unavailability is temporary. */

@@ -12,6 +12,7 @@ import { SessionViewerSourceAccountScopeProvider } from '@/components/sessions/v
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { OpenBrowserTargetScope } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import { useOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/useOpenBrowserTargetInWorkspace';
@@ -362,9 +363,10 @@ describe('useServicesOpenInBrowser', () => {
         // Remove the real registration, rather than substituting an Action or opener implementation.
         clearBrowserRuntimeControlRegistryForTests();
         await screen.pressByTestIdAsync('session-mobile-services-row:inventory:open-feed-open');
+        expect(screen.getTextContent()).not.toContain('runtime_action_disabled');
         await screen.pressByTestIdAsync('session-mobile-services-row:inventory:open-feed-failure.details');
         expect(screen.getTextContent()).toContain('browser_view_unavailable');
-        expect(screen.getTextContent()).not.toContain('runtime_action_disabled');
+        expect(screen.getTextContent()).toContain(`${t('workflows.run.technical.failureCode')}: runtime_action_disabled`);
         expect(screen.tree.findByType('HookProbe' as never).props.detailsTabKinds).toEqual([]);
         expect(onAfterOpen).not.toHaveBeenCalled();
     });

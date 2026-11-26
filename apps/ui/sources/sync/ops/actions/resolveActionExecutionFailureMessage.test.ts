@@ -68,8 +68,19 @@ describe('Action failure presentation', () => {
             error: 'credential_scope_denied', requestId: 'backup-run', details,
         }));
         expect(presentActionExecutionFailure(refusal).reason).toBe(details.remedy);
+        expect(presentActionExecutionFailure(refusal, undefined, { closedCodesOnly: true, detailsAudience: 'recipient' }).reason)
+            .toBe(t('errors.permissionDenied'));
         const bare = projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse({ error: 'credential_scope_denied' }));
         expect(presentActionExecutionFailure(bare).reason).toBe(t('errors.permissionDenied'));
+    });
+
+    it('preserves an existing reason when only recipient Technical details are narrowed', () => {
+        const result = { ok: false as const, errorCode: 'action_failed', error: 'Private transport diagnostic',
+            message: 'Private remedy from the producing Machine' };
+        const fallback = t('common.requestFailed');
+        expect(presentActionExecutionFailure(result, fallback, { detailsAudience: 'recipient' }).reason).toBe(result.message);
+        expect(presentActionExecutionFailure(result, fallback, { closedCodesOnly: true, detailsAudience: 'recipient' }).reason)
+            .toBe(fallback);
     });
 
     it('explains Team creation policy refusals and keeps a bare Team refusal generic', () => {

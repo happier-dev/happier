@@ -1,3 +1,6 @@
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { RecordingSaveFailureV1Schema } from '@happier-dev/protocol/recording/results';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -45,14 +48,17 @@ export function presentRecordingStopOutcome(answer: unknown): void {
             : t('browserRecording.failure.notSavedBody'));
 }
 
-export function presentBrowserRecordingActionFailure(action: 'start' | 'stop' | 'discard'): void {
-    if (action === 'start') {
-        Modal.alert(t('browserRecording.failure.startTitle'), t('browserRecording.failure.startBody'));
+export function presentBrowserRecordingActionFailure(action: 'start' | 'stop' | 'discard', outcome?: unknown): void {
+    const title = t(action === 'start' ? 'browserRecording.failure.startTitle'
+        : action === 'stop' ? 'browserRecording.failure.stopTitle' : 'browserRecording.failure.discardTitle');
+    const refusal = readActionFailureEnvelope(outcome);
+    const fallback = action === 'start' ? describeRecordingStartRefusal(refusal?.errorCode ?? '')
+        : t(action === 'stop' ? 'browserRecording.failure.stopBody' : 'browserRecording.failure.discardBody');
+    if (!refusal) {
+        Modal.alert(title, fallback);
         return;
     }
-    if (action === 'stop') {
-        Modal.alert(t('browserRecording.failure.stopTitle'), t('browserRecording.failure.stopBody'));
-        return;
-    }
-    Modal.alert(t('browserRecording.failure.discardTitle'), t('browserRecording.failure.discardBody'));
+    const presentation = presentActionExecutionFailure(refusal, fallback, { closedCodesOnly: true });
+    alertActionFailure({ title, reason: presentation.reason, code: refusal.errorCode, requestId: refusal.requestId,
+        context: Object.fromEntries(presentation.technicalDetails.filter(line => line.key !== 'code').map(line => [line.key, line.value])) });
 }

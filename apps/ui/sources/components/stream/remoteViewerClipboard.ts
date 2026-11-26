@@ -1,6 +1,10 @@
 import { Platform } from 'react-native';
 import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { beginClipboardWriteFromUi, getClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -37,6 +41,14 @@ export function createRemoteViewerClipboardShortcut(remote: RemoteClipboard, wri
             await transferRemoteViewerClipboard(action, remote, writeClipboard);
             return { ok: true };
         } catch (error) {
+            const failure = readActionFailureEnvelope(error);
+            if (failure) {
+                const presented = presentActionExecutionFailure(failure, t('errors.operationFailed'), { closedCodesOnly: true });
+                alertActionFailure({ reason: presented.reason, code: failure.errorCode, requestId: failure.requestId,
+                    context: Object.fromEntries(presented.technicalDetails.filter(line => line.key !== 'code' && line.key !== 'requestId')
+                        .map(line => [line.key, line.value])) });
+                return { ok: false, reason: failure.errorCode };
+            }
             Modal.alert(t('common.error'), t('errors.operationFailed'));
             return { ok: false, reason: error instanceof Error ? error.message : 'clipboard_unavailable' };
         }

@@ -46,6 +46,28 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>, inp
 }
 
 describe('ShareSheet full presentation', () => {
+    it('keeps private identifiers out of a document recipient’s Technical details', async () => {
+        const code = 'database_transaction_timeout';
+        const recipientAdapter = createDocumentShareAdapter({ artifactId: 'shared-document', kind: 'workflow-definition.v1',
+            grants: [], loading: false, readOnly: true, retryContent: noop, issue: {
+                code, message: t('approvals.transientFailureTitle'), retryable: true,
+                actionFailure: { ok: false, errorCode: code, requestId: 'document-roster-refusal', effectAttempted: false,
+                    failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError', errorCode: code, httpStatus: 503 },
+                    details: { reason: 'private_project_slug', status: 'private_team_slug', kind: 'private_machine_slug' } },
+            } });
+        const screen = await renderScreen(<ShareSheet host={SHARE_SHEET_HOST} model={{ ...model, editable: false }}
+            actions={actions} adapter={recipientAdapter} presentation="full" testID="document-share-editor" />);
+        expect(screen.getTextContent()).not.toContain('document-roster-refusal');
+        await screen.pressByTestIdAsync('document-share-roster-failure-details');
+        const details = screen.getTextContent();
+        expect(details).toContain(code);
+        expect(details).toContain('document-roster-refusal');
+        expect(details).toContain('home.database.transaction');
+        expect(details).toContain('false');
+        expect(details).not.toMatch(/private_(?:project|team|machine)_slug/);
+        await screen.unmount();
+    });
+
     it('keeps cold searched directories loading across sources until their answers settle', async () => {
         vi.useFakeTimers();
         const directory: ShareSheetModel['directory'] = { query: 'Ada', sections: (['account', 'group'] as const).map(kind => ({

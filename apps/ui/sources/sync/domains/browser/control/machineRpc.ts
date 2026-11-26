@@ -1,10 +1,10 @@
 import { DaemonBrowserControlDispatchRequestV1Schema, DaemonBrowserControlDispatchResponseV1Schema, DaemonBrowserViewListRequestV1Schema, DaemonBrowserViewListResponseV1Schema, DaemonBrowserViewWatchRequestV1Schema, type BrowserDaemonViewV1, type BrowserCommandDispatchResultV1, type BrowserCommandV1 } from '@happier-dev/protocol/browser/control/v1';
 import type { BrowserEventV1 } from '@happier-dev/protocol/browser/events/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
+import { projectMachineActionRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import { sessionRpcWithServerScope, sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 
 /**
@@ -32,16 +32,17 @@ export type BrowserDaemonControlDispatchClientResult =
     | BrowserDaemonControlFailure;
 
 type BrowserDaemonControlFailure = Readonly<{ ok: false; reason: BrowserDaemonControlFailureReason }>
-    & Pick<MachineDaemonRpcFailure, 'errorCode' | 'failureCause' | 'details'>;
+    & Omit<MachineDaemonRpcFailure, 'reason'>;
 
 type BrowserDaemonControlFailureReason = 'managed_package_missing' | 'unavailable' | 'invalid_response' | 'request_failed';
 
-function readFailureReason(value: unknown): BrowserDaemonControlFailureReason | null {
-    const code = readRpcErrorCode(value) ?? (value && typeof value === 'object' && 'errorCode' in value
-        ? value.errorCode : undefined);
-    if (code === 'managed_package_missing') return code;
-    if (isRpcMethodNotFoundError(value) || isRpcMethodNotFoundResult(value)) return 'unavailable';
-    return isRpcMethodNotAvailableError({ rpcErrorCode: code }) ? 'request_failed' : null;
+function readControlFailure(value: unknown): BrowserDaemonControlFailure | null {
+    const failure = projectMachineActionRpcFailure(value);
+    if (isRpcMethodNotFoundError(value) || isRpcMethodNotFoundResult(value)) {
+        return { ok: false, ...failure, reason: 'unavailable' };
+    }
+    return failure && { ...failure, reason: failure.errorCode === 'managed_package_missing'
+        ? 'managed_package_missing' : 'request_failed' };
 }
 
 /** The caller supplies its admitted transport scope; a discovered Machine id grants no Machine authority. */
@@ -72,11 +73,11 @@ export async function listBrowserDaemonViewsViaMachineRpc(input: Readonly<{
         const raw = await browserRpc<unknown, typeof payload>({ machineId: input.machineId, sessionId: input.sessionId,
             serverId: input.serverId, accountId: input.accountId, method: RPC_METHODS.DAEMON_BROWSER_VIEW_LIST, payload,
             ...(input.signal ? { signal: input.signal } : {}) });
-        const failureReason = readFailureReason(raw);
-        if (failureReason) return { ok: false, reason: failureReason };
+        const failure = readControlFailure(raw);
+        if (failure) return failure;
         const parsed = DaemonBrowserViewListResponseV1Schema.safeParse(raw);
         return parsed.success ? { ok: true, views: parsed.data.views, ...(parsed.data.machineId ? { machineId: parsed.data.machineId } : {}) } : { ok: false, reason: 'invalid_response' };
-    } catch (error) { return { ...projectMachineDaemonRpcFailure(error), reason: readFailureReason(error) ?? 'request_failed' }; }
+    } catch (error) { return readControlFailure(error) ?? { ok: false, reason: 'request_failed' }; }
 }
 
 /** The broker parks this read until the Session's native view membership changes. */
@@ -91,11 +92,11 @@ export async function watchBrowserDaemonViewsViaMachineRpc(input: Readonly<{
         const raw = await browserRpc<unknown, typeof payload>({ machineId: input.machineId, sessionId: input.sessionId,
             serverId: input.serverId, accountId: input.accountId, method: RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH,
             payload, signal: input.signal, operationTimeoutMs: null });
-        const failureReason = readFailureReason(raw);
-        if (failureReason) return { ok: false, reason: failureReason };
+        const failure = readControlFailure(raw);
+        if (failure) return failure;
         const parsed = DaemonBrowserViewListResponseV1Schema.safeParse(raw);
         return parsed.success ? { ok: true, views: parsed.data.views, ...(parsed.data.machineId ? { machineId: parsed.data.machineId } : {}) } : { ok: false, reason: 'invalid_response' };
-    } catch (error) { return { ...projectMachineDaemonRpcFailure(error), reason: readFailureReason(error) ?? 'request_failed' }; }
+    } catch (error) { return readControlFailure(error) ?? { ok: false, reason: 'request_failed' }; }
 }
 
 export async function dispatchBrowserDaemonControlCommandViaMachineRpc(
@@ -116,14 +117,14 @@ export async function dispatchBrowserDaemonControlCommandViaMachineRpc(
             payload,
             ...(input.signal ? { signal: input.signal } : {}),
         });
-        const failureReason = readFailureReason(raw);
-        if (failureReason) return { ok: false, reason: failureReason };
+        const failure = readControlFailure(raw);
+        if (failure) return failure;
         const parsed = DaemonBrowserControlDispatchResponseV1Schema.safeParse(raw);
         return parsed.success
             ? { ok: true, result: parsed.data.result }
             : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        return { ...projectMachineDaemonRpcFailure(error), reason: readFailureReason(error) ?? 'request_failed' };
+        return readControlFailure(error) ?? { ok: false, reason: 'request_failed' };
     }
 }
 

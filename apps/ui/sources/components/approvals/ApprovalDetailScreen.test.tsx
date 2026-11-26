@@ -1002,7 +1002,7 @@ function exactApprovalMachine(accountId = 'account-1') {
     metadata: createMachineFixture().metadata, daemonState: null });
 }
 
-async function prepareApprovalFixture() {
+async function prepareApprovalFixture(features?: NonNullable<Parameters<typeof account.restore>[0]>['features']) {
   if (prepared) return;
   // A freshly restored receiver has only its declared Home projections, never
   // the source host's Session cache or another test's duplicate-id records.
@@ -1024,7 +1024,7 @@ async function prepareApprovalFixture() {
   await homes.addHome({ name: approvalHomeFixture.profile?.name ?? '', serverUrl: 'https://provider-settings-account.test',
     serverIdentityId: identity, accountId: 'account-1', currentAccount: true });
   await account.restore({ accountId: 'account-1', currentAccount: true, serverIdentityId: identity,
-    features: createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: identity } } }),
+    features: features ?? createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: identity } } }),
     machines: [...Object.values(machineFixtures), ...(includeExactApprovalMachine ? [exactApprovalMachine()] : [])] });
   homeIds = { [selectedKey]: account.serverId, [fixtureKey]: account.serverId };
   const keys = new Set([...Object.keys(sessionFixturesByServerId), ...Object.keys(machineFixturesByServerId)]);
@@ -1443,7 +1443,19 @@ describe('ApprovalDetailScreen', () => {
     const accountId = request.executionOriginV1.accountId;
     if (!machineId || !accountId) throw new Error('Expected the real source Session approval to bind its operation owner');
     currentArtifact = base;
-    await prepareApprovalFixture();
+    await prepareApprovalFixture(createRootLayoutFeaturesResponse({
+      features: { browser: { enabled: true, automation: { enabled: true } } },
+      capabilities: { serverIdentity: { serverIdentityId: approvalHomeFixture.profile!.serverIdentityId } },
+    }));
+    const sandboxPath = '/v1/actions/browser.sandbox.install';
+    const sandboxFailure = { ok: false, errorCode: 'action_forbidden', error: 'Private sandbox install trace',
+      effectAttempted: false, failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+    } as const;
+    homes.answer(account.serverId, sandboxPath, { select: body => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'browser.sandbox.install',
+        requestId: request.requestId, execution: sandboxFailure }) };
+    } });
     const operationServerId = resolveServerProfileScopeIdForIdentifier(account.serverId);
     const operation = (overrides: Record<string, unknown>) => ActionOperationSnapshotV1Schema.parse({
       version: 1, operationId: 'open-1', revision: 1, actionId: 'browser.view.open', state: 'running',
@@ -1477,6 +1489,54 @@ describe('ApprovalDetailScreen', () => {
             error: { code: 'sandbox_unavailable', message: 'Managed Chromium sandbox is unavailable.' } } })] });
       });
       expect(approvalItem(preparing, 'approvals.browser-open-allow-sandbox')?.props.title).toBe('browserPresence.stream.sandboxAllow');
+      const { TechnicalDetailsDisclosure } = await import('@/components/ui/lists/TechnicalDetailsDisclosure');
+
+      const refusal = {
+        errorCode: 'browser_runtime_provisioning_failed', error: 'Private Browser install trace',
+        requestId: 'browser-open-approval-refusal', effectAttempted: false,
+        failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+      };
+      await act(async () => {
+        actionOperationStore.reset();
+        actionOperationStore.mergeSnapshots({ serverId: operationServerId, snapshots: [operation({
+          revision: 5, state: 'failed', settledAt: 6, error: refusal,
+        })] });
+      });
+      const { BrowserOpenApprovalProgress } = await import('./BrowserOpenOperationStatus');
+      const prompt = await renderScreen(
+        <BrowserOpenApprovalProgress request={request} serverId={account.serverId} title="Open browser" chrome="card" />,
+      );
+      try {
+        for (const [surface, testID] of [
+          [preparing, 'approvals.browser-open-technical-details'],
+          [prompt, 'approval-prompt-browser-open-technical-details'],
+        ] as const) {
+          expect.soft(surface.findAllByType(TechnicalDetailsDisclosure as never)
+            .find(node => node.props.testID === testID)?.props.lines).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'requestId', value: refusal.requestId }),
+            expect.objectContaining({ key: 'effectAttempted', value: 'false' }),
+            expect.objectContaining({ key: 'causeCode', value: refusal.failureCause.errorCode }),
+          ]));
+          expect(surface.getTextContent()).not.toContain(refusal.error);
+        }
+      } finally {
+        await prompt.unmount();
+      }
+
+      await act(async () => {
+        actionOperationStore.reset();
+        actionOperationStore.mergeSnapshots({ serverId: operationServerId, snapshots: [operation({ revision: 6, state: 'succeeded', settledAt: 7,
+          result: { v: 1, commandId: 'c1', status: 'failed', adapterKind: 'chromiumSidecar',
+            error: { code: 'sandbox_unavailable', message: 'Managed Chromium sandbox is unavailable.' } } })] });
+      });
+      await preparing.pressByTestIdAsync('approvals.browser-open-allow-sandbox');
+      await vi.waitFor(() => expect(homes.requestsFor(sandboxPath)).toHaveLength(1));
+      await vi.waitFor(() => expect(approvalItem(preparing, 'approvals.browser-open-allow-sandbox')?.props.subtitle)
+        .toBe('errors.permissionDenied'));
+      expect.soft(preparing.findAllByType(TechnicalDetailsDisclosure as never)
+        .find(node => node.props.testID === 'approvals.browser-open-allow-sandbox-technical-details')?.props.lines)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ key: 'code', value: sandboxFailure.errorCode })]));
+      expect(preparing.getTextContent()).not.toContain(sandboxFailure.error);
     } finally {
       actionOperationStore.reset();
     }
@@ -2047,7 +2107,7 @@ describe('ApprovalDetailScreen', () => {
       decision: { kind: 'approve', decidedAtMs: 2 }, execution,
       delivery: { status: 'accepted', localId: 'approval-result:later-delivery' } });
     const delivery = deliveryStatus === 'rejected'
-      ? { status: 'rejected', code: 'session_input_target_unavailable', failureCause: {
+      ? { status: 'rejected', code: 'session_input_target_unavailable', effectAttempted: false, failureCause: {
         phase, errorClass: 'Error', errorCode, httpStatus: null,
       } }
       : { status: 'accepted', localId: 'approval-result:original' };
@@ -2064,6 +2124,8 @@ describe('ApprovalDetailScreen', () => {
       await screen.pressByTestIdAsync('approvals.technical-details.header');
       expect(screen.getTextContent()).toContain(phase);
       expect(screen.getTextContent()).toContain(errorCode);
+      expect(screen.getTextContent()).toContain('approvals.failureTechnicalLabels.effectAttempted');
+      expect(screen.getTextContent()).toContain('false');
       // Delivery retries leave the executed Artifact unchanged. A fresh read of that
       // success must not replace the original result-delivery receipt on this view.
       await act(async () => {
@@ -2100,6 +2162,12 @@ describe('ApprovalDetailScreen', () => {
     // Two facts from two owners: the Action executed; its result's delivery is what the receipt says.
     expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe(detail);
     expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe(subtitle);
+    await screen.pressByTestIdAsync('approvals.technical-details.header');
+    expect(screen.getTextContent()).toContain(delivery.code);
+    if (delivery.status === 'held') {
+      expect(screen.getTextContent()).toContain(delivery.failureCause.phase);
+      expect(screen.getTextContent()).toContain(delivery.failureCause.errorCode);
+    }
     await screen.unmount();
   });
 
@@ -2664,6 +2732,29 @@ describe('ApprovalDetailScreen', () => {
     else expect(Modal.alert).toHaveBeenCalled();
     expect(clientExecutionEffects()).toHaveLength(0);
     expect(artifactWrites()).toHaveLength(0);
+  });
+
+  it('discloses the settled contributed Action refusal from its stored receipt', async () => {
+    const artifact = await createApiTargetActionApprovalArtifact();
+    const request = TargetActionApprovalRequestV1Schema.parse({
+      ...JSON.parse(artifact.body), status: 'failed', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 2, ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable',
+        requestId: 'contributed-effect-receipt', effectAttempted: false,
+        failureCause: { phase: 'approval.origin.decide', errorClass: 'RpcError',
+          errorCode: 'machine_offline', httpStatus: null } },
+    });
+    currentArtifact = { ...artifact, header: buildTargetActionApprovalArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    expect(approvalStatus(screen)).toBe('approvals.status.failed');
+    await screen.pressByTestIdAsync('approvals.technical-details.header');
+    expect(screen.getTextContent()).toContain('contributed-effect-receipt');
+    expect(screen.getTextContent()).toContain('approval.origin.decide');
+    expect(screen.getTextContent()).toContain('machine_offline');
+    expect(screen.getTextContent()).toContain('approvals.failureTechnicalLabels.effectAttempted');
+    expect(screen.getTextContent()).toContain('false');
+    await screen.unmount();
   });
 
   it('refreshes the target approval after exact-daemon replay so the decision UI reflects the durable result', async () => {

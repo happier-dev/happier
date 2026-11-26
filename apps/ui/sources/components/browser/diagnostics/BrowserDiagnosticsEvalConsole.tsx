@@ -14,6 +14,9 @@ import type {
     BrowserDiagnosticsObjectPropertyV1,
     BrowserDiagnosticsRemoteObjectV1,
 } from '@happier-dev/protocol/browser/diagnostics/v1';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
 
 /**
@@ -34,12 +37,14 @@ export type BrowserDiagnosticsEvalConsoleEntry = Readonly<{
     status: 'pending' | BrowserDiagnosticsEvalResultV1['status'];
     result?: BrowserDiagnosticsRemoteObjectV1;
     errorCode?: string;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 export type BrowserDiagnosticsObjectInspectorEntry = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'failed';
     properties: readonly BrowserDiagnosticsObjectPropertyV1[];
     errorCode?: string;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 export type BrowserDiagnosticsEvalConsoleControls = Readonly<{
@@ -263,7 +268,8 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
                     {inspector.status === 'loading' ? (
                         <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.eval.loading')}</Text>
                     ) : inspector.status === 'failed' ? (
-                        <Text style={stylesheet.meta}>{t('browserDiagnostics.host.devtools.eval.propertiesFailed')}</Text>
+                        <EvalErrorLine problem={t('browserDiagnostics.host.devtools.eval.propertiesFailed')}
+                            errorCode={inspector.errorCode} actionFailure={inspector.actionFailure} testID={`${testID}-error`} />
                     ) : inspector.properties.length === 0 ? (
                         <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.eval.noProperties')}</Text>
                     ) : (
@@ -284,17 +290,22 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
     );
 }
 
-function EvalErrorLine(props: Readonly<{ problem: string; errorCode?: string; testID: string }>): React.ReactElement {
+function EvalErrorLine(props: Readonly<{ problem: string; errorCode?: string; actionFailure?: ActionExecuteFailure; testID: string }>): React.ReactElement {
     const { theme } = useUnistyles();
     const binding = useCoreDisclosureToggleBinding();
     const [open, setOpen] = React.useState(false);
+    const presentation = props.actionFailure
+        ? presentActionExecutionFailure(props.actionFailure, props.problem, { closedCodesOnly: true }) : null;
+    const details = presentation && props.errorCode ? formatActionFailureDetails({ code: props.errorCode,
+        context: Object.fromEntries(presentation.technicalDetails.filter(line => line.key !== 'code').map(line => [line.key, line.value])) })
+        : props.errorCode;
     return (
         <View style={stylesheet.line}>
             <View style={stylesheet.promptSlot}>
                 <Icon name="x-circle" size={ICON_SIZE.xs} color={theme.colors.state.danger.foreground} />
             </View>
             <View style={stylesheet.errorBody}>
-                <Text testID={`${props.testID}-problem`} style={stylesheet.error}>{props.problem}</Text>
+                <Text testID={`${props.testID}-problem`} style={stylesheet.error}>{presentation?.reason ?? props.problem}</Text>
                 {props.errorCode ? (
                     <>
                         <HappierDisclosureToggle
@@ -306,7 +317,7 @@ function EvalErrorLine(props: Readonly<{ problem: string; errorCode?: string; te
                             renderLabel={binding.renderLabel}
                             focusColor={binding.focusColor}
                         />
-                        {open ? <DisclosedCodeText testID={`${props.testID}-code`}>{props.errorCode}</DisclosedCodeText> : null}
+                        {open ? <DisclosedCodeText testID={`${props.testID}-code`}>{details}</DisclosedCodeText> : null}
                     </>
                 ) : null}
             </View>
@@ -338,7 +349,7 @@ function BrowserDiagnosticsEvalEntryView(props: Readonly<{
                     <Text style={stylesheet.meta}>{t('browserDiagnostics.host.interaction.eval.statusPending')}</Text>
                 </View>
             ) : null}
-            {problem ? <EvalErrorLine problem={problem} errorCode={entry.errorCode} testID={`${testID}-error-${entryId}`} /> : null}
+            {problem ? <EvalErrorLine problem={problem} errorCode={entry.errorCode} actionFailure={entry.actionFailure} testID={`${testID}-error-${entryId}`} /> : null}
             {entry.result ? (
                 <View style={stylesheet.line}>
                     <Text style={stylesheet.prompt}>{'‹'}</Text>

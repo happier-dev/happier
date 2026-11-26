@@ -11,9 +11,10 @@ import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/work
 import { WorkspaceAddressV2Schema, ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
 import type { WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from './sources/projectSourceV1.js';
-import { ScmRepositoryProvisioningFailureResponseSchema, ScmRepositoryProvisioningRemediationSchema } from '../scm/repositoryProvisioning.js';
 import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
-import { MachineProvisionerNativeCauseV1Schema } from '../machines/managed/providerFactsV1.js';
+import { OpenProjectRefusalV1Schema } from './openProjectRefusalV1.js';
+
+export { OpenProjectRefusalV1Schema } from './openProjectRefusalV1.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PathSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.refine(value => !value.includes('\0'))));
@@ -109,21 +110,6 @@ export function suggestProjectOpenCloneDestinationV1(input: Readonly<{
   }
   return { destinationParentPath, destinationDirectoryName };
 }
-
-export const OpenProjectRefusalV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('refused'), code: IdSchema,
-  effectAttempted: z.optional(z.boolean()),
-  failureCause: z.optional(ActionFailureCauseV1Schema),
-  nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
-  /** Own destination display fact. A later Open receives ordinary admission. */
-  destinationReview: z.optional(z.strictObject({
-    accountId: IdSchema, serverId: IdSchema, machineId: IdSchema,
-    destinationParentPath: ScmRepositoryCloneInputSchema.shape.destinationParentPath,
-    destinationDirectoryName: ScmRepositoryCloneInputSchema.shape.destinationDirectoryName,
-  })),
-  retryNotBeforeMs: ScmRepositoryProvisioningFailureResponseSchema.shape.retryNotBeforeMs,
-  remediation: z.optional((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(ScmRepositoryProvisioningRemediationSchema)),
-}));
 
 export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({

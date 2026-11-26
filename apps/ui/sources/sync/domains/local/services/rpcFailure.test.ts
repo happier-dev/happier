@@ -37,26 +37,27 @@ describe('Services transport failure projection', () => {
     it.each(operations)('retains typed refusal evidence in %s for returned and thrown carriers', async (_name, run) => {
         const failureCause = { phase: 'rpc.discovery', errorClass: 'RpcError',
             errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, httpStatus: null };
-        const returned = { error: 'private request details', errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause };
+        const returned = { error: 'private request details', errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause, requestId: 'service-refusal', effectAttempted: false };
         rpc.mockResolvedValueOnce(returned);
-        await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed',
-            reasonCode: returned.errorCode, failureCause });
-        rpc.mockRejectedValueOnce(markRpcRequestDisposition(new RpcError(returned.error, returned.errorCode, failureCause), 'notSent'));
-        await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed',
-            reasonCode: returned.errorCode, failureCause });
+        await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed', reasonCode: returned.errorCode,
+            failure: { errorCode: returned.errorCode, failureCause, requestId: 'service-refusal', effectAttempted: false } });
+        rpc.mockRejectedValueOnce(markRpcRequestDisposition(Object.assign(new RpcError(returned.error, returned.errorCode, failureCause), { requestId: returned.requestId, effectAttempted: returned.effectAttempted }), 'notSent'));
+        await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed', reasonCode: returned.errorCode,
+            failure: { errorCode: returned.errorCode, failureCause, requestId: 'service-refusal', effectAttempted: false } });
     });
     it.each(operations)('retains an uncoded handler exception phase in %s', async (_name, run) => {
         const failureCause = { phase: 'rpc.handler' };
         rpc.mockResolvedValueOnce({ error: 'private handler details', failureCause });
         await expect(run()).resolves.toMatchObject({ ok: false, reason: 'request_failed',
-            reasonCode: 'action_failed', failureCause });
+            reasonCode: 'action_failed', failure: { errorCode: 'action_failed', failureCause } });
     });
     it('retains a lost launcher acknowledgement as unknown with its transport cause', async () => {
         const failureCause = { phase: 'rpc.dispatch', errorClass: 'RpcError',
             errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, httpStatus: null };
         rpc.mockRejectedValueOnce(new RpcError('private request details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, failureCause));
-        await expect(launcher.startLocalServiceLauncherTargetViaMachineRpc(target)).resolves.toEqual({
-            ok: false, reason: 'outcome_unknown', reasonCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, failureCause,
+        await expect(launcher.startLocalServiceLauncherTargetViaMachineRpc(target)).resolves.toMatchObject({
+            ok: false, reason: 'outcome_unknown', reasonCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+            failure: { errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, failureCause },
         });
     });
     it.each(operations.filter(([name]) => name === 'preview open' || name === 'preview revoke'))(
@@ -66,9 +67,9 @@ describe('Services transport failure projection', () => {
             const errorCode = 'local_service_preview_lifecycle_refused';
             const error = 'local_service_preview_lifecycle_refused:preview_target_unresolved';
             rpc.mockResolvedValueOnce({ error, errorCode, failureCause });
-            await expect(run()).resolves.toMatchObject({ ok: false, reason: 'refused:preview_target_unresolved', failureCause });
+            await expect(run()).resolves.toMatchObject({ ok: false, reason: 'refused:preview_target_unresolved', failure: { errorCode, failureCause } });
             rpc.mockRejectedValueOnce(new RpcError(error, errorCode, failureCause));
-            await expect(run()).resolves.toMatchObject({ ok: false, reason: 'refused:preview_target_unresolved', failureCause });
+            await expect(run()).resolves.toMatchObject({ ok: false, reason: 'refused:preview_target_unresolved', failure: { errorCode, failureCause } });
         },
     );
     it('keeps Action refusal metadata through the existing failure envelope', async () => {

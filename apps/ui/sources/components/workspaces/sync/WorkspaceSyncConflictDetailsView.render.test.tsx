@@ -490,30 +490,30 @@ describe('workspace conflict comparison', () => {
         await vi.waitFor(() => expect(screen.find((node) => node.props.title === 'workspaceSync.review.useNamedVersion').props.disabled).toBe(false));
         confirmResolution.mockResolvedValueOnce(true);
         await pressTestInstanceAsync(screen.find((node) => node.props.title === 'workspaceSync.review.useNamedVersion'), 'submit reviewed version');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.operationFailed'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('common.requestFailed'));
         expect(machineRpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE)).toHaveLength(1);
         expect(screen.findAll((node) => node.props.title === 'workspaceSync.review.useNamedVersion')).toHaveLength(0);
         expect(screen.getTextContent()).toContain('one');
         holdReinspection = true;
         const inspectAgain = screen.find((node) => node.props.title === 'workspaceSync.review.inspectCurrentVersions');
         await pressTestInstanceAsync(inspectAgain, 'inspect current versions');
-        expect(screen.getTextContent()).toContain('errors.operationFailed');
+        expect(screen.getTextContent()).toContain('common.requestFailed');
         expect(screen.findAll((node) => node.props.title === 'workspaceSync.review.useNamedVersion')).toHaveLength(0);
         await act(async () => { reinspectionCompletion.current?.(inspection('first.txt')); });
-        await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('errors.operationFailed'));
+        await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('common.requestFailed'));
         expect(screen.find((node) => node.props.title === 'workspaceSync.review.useNamedVersion').props.disabled).toBe(false);
         expect(machineRpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE)).toHaveLength(1);
         holdReinspection = false;
         confirmResolution.mockResolvedValueOnce(true);
         await pressTestInstanceAsync(screen.find((node) => node.props.title === 'workspaceSync.review.useNamedVersion'), 'submit another reviewed version');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('errors.operationFailed'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('common.requestFailed'));
         expect(machineRpc.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_RESOLVE)).toHaveLength(2);
         await screen.update(<WorkspaceSyncConflictDetailsView resource={{
             kind: 'workspaceSyncConflicts', hubWorkspaceRefId: 'other-hub', workspaceRefId: 'other-ref',
             controllerMachineId: 'machine-z', serverId: workspace.serverId, initialPath: 'first.txt',
         }} />);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('workspaceSync.review.versions'));
-        expect(screen.getTextContent()).not.toContain('errors.operationFailed');
+        expect(screen.getTextContent()).not.toContain('common.requestFailed');
         await screen.unmount();
     });
 });

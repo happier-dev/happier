@@ -32,10 +32,12 @@ import {
   SessionHandoffTargetImportFailureDetailsV1Schema,
 } from '../../../sessions/control/handoff/handoffStatus.js';
 import { SESSION_HANDOFF_ACTION_ID_V1 } from '../../actionIds.js';
+import type { ActionExecuteFailure } from '../../actionExecutionResult.js';
 import { HandoffTargetReplacementApprovalV1Schema } from '../../../sessions/control/handoff/handoffTargetReplacementApprovalV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { SessionContinueWithReplayRpcParamsSchema } from '../../../sessions/continueWithReplay.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../rpc/methods.js';
+import { OpenProjectRefusalV1Schema } from '../../../projects/openProjectRefusalV1.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { readRecord, readNonEmptyString } from '../../../inputs/inputRecords.js';
 import { resolveSessionIdFromInput } from '../../executor/sessionScope.js';
@@ -110,7 +112,7 @@ export const SessionHandoffInputFieldsSchema = lazyZodSchema(() => z.strictObjec
 
 export function projectSessionHandoffFailureDetails(
   actionId: string,
-  failure: Readonly<{ errorCode: string; details?: unknown }>,
+  failure: Pick<ActionExecuteFailure, 'errorCode' | 'details' | 'failureCause' | 'effectAttempted'>,
 ) {
   if (actionId !== SESSION_HANDOFF_ACTION_ID_V1) return undefined;
   switch (failure.errorCode) {
@@ -118,6 +120,22 @@ export function projectSessionHandoffFailureDetails(
       return SessionHandoffSourceExportFailureDetailsV1Schema.safeParse(failure.details).data;
     case SESSION_HANDOFF_TARGET_IDENTITY_CONFLICT_CODE:
       return SessionHandoffTargetImportFailureDetailsV1Schema.safeParse(failure.details).data;
+    case 'workspace_private_checkout_required':
+    case 'workspace_private_checkout_review_required': {
+      const details = readRecord(failure.details);
+      if (details.kind === 'refused') {
+        const projected = OpenProjectRefusalV1Schema.safeParse(details).data;
+        return projected?.code === failure.errorCode ? projected : undefined;
+      }
+      const authored = readRecord(details.details);
+      const cause = failure.failureCause;
+      if (details.name !== 'PluginError' || authored.phase !== 'native_execution_admission'
+        || typeof authored.reason !== 'string' || !cause || 'kind' in cause) return undefined;
+      return OpenProjectRefusalV1Schema.safeParse({ kind: 'refused', code: failure.errorCode,
+        destinationReview: authored.destinationReview, effectAttempted: failure.effectAttempted,
+        failureCause: { ...cause, nativeErrorReason: cause.nativeErrorReason ?? authored.reason },
+      }).data;
+    }
   }
   return undefined;
 }

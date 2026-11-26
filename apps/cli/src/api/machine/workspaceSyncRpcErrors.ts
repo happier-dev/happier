@@ -123,7 +123,12 @@ export function projectWorkspaceSyncRpcError(error: unknown, method: string, req
       return projected;
     }
     if (code !== undefined && error instanceof Error) {
-      return Object.assign(new RpcError(redactBugReportSensitiveText(error.message), code, carried.success ? carried.data : undefined),
+      // The target bootstrap's finite carrier can receive a typed Home refusal before any seed bytes move.
+      const cause = carried.success ? carried.data : method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+        && code === 'peer_unavailable' && 'reasonCode' in error
+        ? ActionFailureCauseV1Schema.safeParse({ phase: 'rpc.handler', errorClass: 'RpcError', errorCode: code,
+          httpStatus: null, nativeErrorReason: error.reasonCode }).data : undefined;
+      return Object.assign(new RpcError(redactBugReportSensitiveText(error.message), code, cause),
         { code, cause: error });
     }
   }

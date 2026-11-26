@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { projectSessionHandoffFailureDetails } from '@happier-dev/protocol/actions/specs/session/lifecycle';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { RuntimeDescriptorV1, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 import {
   registerServerRoutedTransferResponder,
@@ -292,6 +295,12 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         return SessionHandoffWorkspaceCaptureResultV3Schema.parse(await params.captureWorkspace(request.data, capturedContext));
       } catch (error) {
         capturedContext.signal.throwIfAborted();
+        const failure = normalizeActionExecutorThrownError(error, 'session.handoff.workspace_capture');
+        const details = projectSessionHandoffFailureDetails(SESSION_HANDOFF_ACTION_ID_V1, failure);
+        if (details && 'kind' in details) {
+          return { ok: false, errorCode: failure.errorCode, error: failure.error, details,
+            failureCause: details.failureCause ?? failure.failureCause };
+        }
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'workspace_sync_prepare_failed';
         return { ok: false, errorCode: code, error: error instanceof Error && error.message ? error.message : code };
       }

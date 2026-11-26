@@ -1495,6 +1495,45 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       } });
       expect(decodePlainArtifactStoredContent(String(written.provenance))).not.toHaveProperty('provenance.source.sessionId');
   });
+  it.each(['transport refusal', 'returned refusal', 'quota refusal'] as const)(
+    'projects a remote workspace publication %s at the public Agent Action boundary',
+    async kind => {
+      const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+      const host = createCliActionDeps({ token, credentials: { token, encryption: null },
+        sessionId: 'session', mode: 'plain', ctx: null,
+        rawSession: { machineId: 'local-machine', path: join(root, 'workspace') },
+      });
+      http.get.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+      const errorCode = kind === 'quota refusal' ? 'quota_exceeded' : 'custodian_only';
+      const quota = { budget: 'account', limitBytes: 10, usedBytes: 20 };
+      const failureCause = { phase: 'rpc.admission.machine', errorClass: 'UnknownThrownValue', errorCode, httpStatus: 403 };
+      // The exact Machine RPC returns either the owning Action result or its
+      // serialized handler exception. The calling host and Action stay real.
+      machineTransport.exact.mockResolvedValueOnce(kind === 'quota refusal'
+        ? { ok: false, errorCode, error: errorCode, effectAttempted: false, details: quota }
+        : { ...(kind === 'returned refusal' ? { ok: false } : {}),
+          errorCode, error: 'Private Machine refusal text', failureCause, effectAttempted: false,
+          details: { nested: { note: 'Undeclared Machine diagnostic' } } });
+      const requestId = 'remote-artifact-publication';
+      const result = await host.artifactAction!({ actionId: 'artifact.publish_from_file', input: {
+        path: 'result.txt', workspace: { machineId: 'other-machine', rootPath: join(root, 'selected-workspace') },
+      }, context: {
+        surface: 'agent', actionRequestId: requestId, runtimeAccountId: 'owner',
+        actionCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 },
+        defaultSessionId: 'session', presentUserConfirmation: { actionId: 'artifact.publish_from_file' },
+      } });
+      expect(machineTransport.exact, JSON.stringify(result)).toHaveBeenCalledWith(expect.objectContaining({
+        machineId: 'other-machine', method: getActionSpec('artifact.publish_from_file').bindings?.rpcMethod,
+      }));
+      expect(result).toMatchObject({ ok: false, errorCode, error: errorCode, effectAttempted: false });
+      if (kind === 'quota refusal') expect(result).toMatchObject({ details: quota });
+      else {
+        expect(result).toMatchObject({ failureCause });
+        expect(result).not.toHaveProperty('details');
+      }
+    },
+  );
+
   it('refuses a received workspace publication when local Machine authority is unavailable instead of forwarding again', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const invoke = vi.fn();

@@ -5,6 +5,7 @@ import { SharedSavedSecretRevealOutputV1Schema, type SharedSavedSecretRevealInpu
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
+import { homeDomainActionFailureFromDomainFailure } from '@/sync/api/home/homeDomainActions';
 import { openSavedSecretDisclosureInContext, recordSavedSecretDisclosureInContext, isSavedSecretDisclosureStorageCurrentInContext } from '@/sync/ops/settings/savedSecretResourceOperations';
 import { getDeviceAnalyticsId } from '@/track/settingsAnalytics/deviceAnalyticsIdentity';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
@@ -100,8 +101,12 @@ export function useSharedSavedSecretReveal(input: Readonly<{
             const deviceId = getDeviceAnalyticsId();
             if (!deviceId) return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
             const opened = await openSavedSecretDisclosureInContext(account, admitted, deviceId, controller.signal, exact);
-            if (!opened.ok || !exact()) return { ok: false, errorCode: opened.ok ? 'resource_changed' : opened.reason,
-                error: opened.ok ? 'resource_changed' : opened.reason };
+            if (!opened.ok) {
+                return 'reason' in opened
+                    ? { ok: false, errorCode: opened.reason, error: opened.reason }
+                    : homeDomainActionFailureFromDomainFailure('secrets.shared.reveal', opened.failure);
+            }
+            if (!exact()) return { ok: false, errorCode: 'resource_changed', error: 'resource_changed' };
             const retired = account.accountLifetime.onRetire(hide);
             custody.current = { account, controller, scope: selected.scope, ref: admitted.ref, revision: admitted.expectedRevision,
                 accountMode: opened.accountMode, resourceMode: selected.entry.encryptionMode,

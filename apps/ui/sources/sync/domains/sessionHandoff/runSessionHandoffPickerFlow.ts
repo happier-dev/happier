@@ -92,6 +92,7 @@ export async function runSessionHandoffPickerFlow(args: Readonly<{
         serverId: args.serverId,
         accountId,
         workspaceSyncEnabled,
+        ...(selection.targetMachineId ? { targetMachineId: selection.targetMachineId } : {}),
         ...(route ? { route } : {}),
         ...(creationProgress ? { machineCreation: { name: machineName, progress: creationProgress } } : {}),
         onDismiss: () => { progressDismissed = true; if (result?.ok) closePicker(); },

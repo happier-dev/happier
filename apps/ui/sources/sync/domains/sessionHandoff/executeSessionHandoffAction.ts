@@ -2,6 +2,9 @@ import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, typ
 import { SessionHandoffActionResultV1Schema, type SessionHandoffActionResultV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { WorkspaceSyncPrepareBetweenResultV1Schema, type HandoffWorkspaceActionV1, type WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { projectSessionHandoffFailureDetails } from '@happier-dev/protocol/actions/specs/session/lifecycle';
+import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 
 /** The receiving Machine's typed refusal of a bare handoff that its isolation policy would sandbox (CLI `sessionHandoff/handlers.ts`). */
 export const SESSION_HANDOFF_SANDBOX_PRESET_REQUIRED = 'handoff_target_requires_sandbox_preset';
@@ -27,6 +30,7 @@ export type ExecuteSessionHandoffActionResult =
       error: string;
       errorCode?: string;
       failureCause?: ActionFailureCauseV1;
+      details?: Extract<OpenProjectResultV1, { kind: 'refused' }>;
       recovery?: unknown;
       workspacePreparation?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: false }>;
     }>;
@@ -41,7 +45,7 @@ export async function executeSessionHandoffAction(
   args: ExecuteSessionHandoffActionArgs,
 ): Promise<ExecuteSessionHandoffActionResult> {
   const actionResult = await args.execute(
-    'session.handoff',
+    SESSION_HANDOFF_ACTION_ID_V1,
     {
       sessionId: args.sessionId,
       targetMachineId: args.targetMachineId,
@@ -53,6 +57,7 @@ export async function executeSessionHandoffAction(
     args.context,
   );
   if (!actionResult.ok) {
+    const handoffDetails = projectSessionHandoffFailureDetails(SESSION_HANDOFF_ACTION_ID_V1, actionResult);
     const detail = args.workspaceAction?.kind === 'linked_workspace'
       ? WorkspaceSyncPrepareBetweenResultV1Schema.safeParse(actionResult.details)
       : null;
@@ -60,6 +65,7 @@ export async function executeSessionHandoffAction(
       ok: false,
       error: normalizeNonEmptyString(actionResult.error) ?? 'failed_to_start_session_handoff',
       ...(actionResult.failureCause ? { failureCause: actionResult.failureCause } : {}),
+      ...(handoffDetails && 'kind' in handoffDetails ? { details: handoffDetails } : {}),
       ...(normalizeNonEmptyString(actionResult.errorCode) ? { errorCode: actionResult.errorCode } : {}),
       ...(detail?.success && !detail.data.ok ? { workspacePreparation: detail.data } : {}),
     };

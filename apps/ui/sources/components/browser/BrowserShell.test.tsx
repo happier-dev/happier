@@ -1119,7 +1119,7 @@ describe('BrowserShell', () => {
     expect(locator).not.toBeNull();
     testState.routeParams = { ...locator! };
     const admitted = { protocolVersion: 1, status: 'existing', preview, snapshot } satisfies DaemonLocalServicePreviewOpenOrCreateResponseV1;
-    const admit = vi.fn<(_input: unknown) => unknown>().mockReturnValue(admitted);
+    const admit = vi.fn<(_input: unknown, context: Readonly<{ requestId?: string }>) => unknown>().mockReturnValue(admitted);
     previewBoundaries.set(serverUrl, await createExternalActionAccountHttpBoundary({
       serverUrl, serverIdentityId, accountId: 'viewer-account',
       machineId: target.machineId, actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0,
@@ -1139,14 +1139,25 @@ describe('BrowserShell', () => {
     }), expect.anything());
     await landing.unmount();
 
-    admit.mockReturnValueOnce(ActionExecuteFailureSchema.parse({ ok: false,
-      errorCode: 'local_services_preview_refused:service_not_listening',
-      error: 'local_services_preview_refused:service_not_listening' }));
+    let previewRefusalRequestId: string | undefined;
+    admit.mockImplementationOnce((_input, context) => {
+      previewRefusalRequestId = context.requestId;
+      return ActionExecuteFailureSchema.parse({ ok: false,
+        errorCode: 'local_services_preview_refused:service_not_listening',
+        error: 'private preview refusal', requestId: previewRefusalRequestId,
+        effectAttempted: false, failureCause: { phase: 'preview.lifecycle', errorClass: 'Error', errorCode: null, httpStatus: null } });
+    });
     const stopped = await renderScreen(<WorkspaceRouteBody />);
     await vi.waitFor(() =>
       expect(stopped.getTextContent()).toContain('localServices.actions.failure.serviceNotRunning'));
     expect(stopped.findByTestId('private-service-preview')).toBeNull();
     expect(admit).toHaveBeenCalledTimes(2);
+    await stopped.pressByTestIdAsync('private-service-preview-unavailable-details-toggle');
+    expect(previewRefusalRequestId).toBeDefined();
+    expect(stopped.getTextContent()).toContain(previewRefusalRequestId);
+    expect(stopped.getTextContent()).toContain('false');
+    expect(stopped.getTextContent()).toContain('preview.lifecycle');
+    expect(stopped.getTextContent()).not.toContain('private preview refusal');
     await stopped.pressByTestIdAsync('private-service-preview-retry');
     await vi.waitFor(() => expect(stopped.findByType(BrowserViewHost).props.view.target).toEqual(browserTarget));
     expect(admit).toHaveBeenCalledTimes(3);

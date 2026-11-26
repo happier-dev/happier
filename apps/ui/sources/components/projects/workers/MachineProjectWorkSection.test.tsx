@@ -18,8 +18,14 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+
 
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -84,6 +90,7 @@ vi.mock(
     return createServerScopedMachineRpcBoundaryMock(rpc.machine);
   },
 );
+let copyApprovalAccount: Awaited<ReturnType<typeof import('@/sync/ops/actions/actionAccountContext').captureLazyActionAccountContext>> | undefined;
 let fixture:
   | Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>
   | undefined;
@@ -93,6 +100,8 @@ afterEach(async () => {
   machineHttp.gate = null;
   viewport.compact = false;
   rpc.machine.mockReset();
+  copyApprovalAccount?.dispose();
+  copyApprovalAccount = undefined;
   await fixture?.dispose();
   fixture = undefined;
   vi.restoreAllMocks();
@@ -113,6 +122,7 @@ async function setup(
     presenceBeforeDiscovery?: boolean;
     waive?: readonly string[];
     role?: 'use';
+    copyCheck?: boolean;
   }> = {},
 ) {
   rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
@@ -133,23 +143,35 @@ async function setup(
   // Account Action boundary. Keep policy, Account capture and output codecs real.
   // The receiving daemon owns native Ask since b64689faec4. Its Protocol
   // executor builds the carried review; only its final network port is replaced.
-  const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+  const copyRetireDependencies = {
     readActionsSettings: () => storage.getState().settings.actionsSettingsV1,
-    projectWorkerAction: ({ actionId, input }) => rpc.machine({ method: getActionSpec(actionId).bindings!.rpcMethod!, payload: input }),
-  }));
-  const copyActions = await Promise.all((['projects.worker.copy.inspect', 'projects.worker.copy.retire'] as const).map(actionId =>
-    createExternalActionAccountHttpBoundary({ serverUrl: 'https://srv_machine_work',
+    projectWorkerAction: (({ actionId, input }) => rpc.machine({
+      method: getActionSpec(actionId).bindings!.rpcMethod!, payload: input,
+    })) satisfies NonNullable<import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps['projectWorkerAction']>,
+  };
+  let receiver = createActionExecutor(createActionExecutorBoundaryFixture(copyRetireDependencies));
+  const copyActions = await Promise.all((['projects.worker.copy.inspect', 'projects.worker.copy.retire'] as const).map(async actionId => {
+    let boundary: ExternalActionAccountHttpBoundary;
+    boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://srv_machine_work',
       serverIdentityId: 'srv_machine_work', accountId, machineId: 'source-machine', actionId, tokenEpoch: 0, requesterInvocation: 'optional',
       execute: async (input, context) => {
+        const authorization = context.authorization;
         const outcome = await receiver.execute(actionId, input, { surface: 'ui', authority: 'present_user',
           actionCaller: { kind: 'host' }, serverId: 'srv_machine_work', serverIdentityId: 'srv_machine_work',
           runtimeAccountId: 'artifact-account', actionRequestId: context.requestId, externalActionTarget: context.target,
           ...(context.invocation?.presentUserConfirmation ? { presentUserConfirmation: context.invocation.presentUserConfirmation } : {}),
+          ...(options.copyCheck && authorization ? { externalActionExecutionAuthorization: authorization, originalActionEnvelope: context.envelope,
+            signExternalActionApprovalInput: ({ actionId: requestedId, input: reviewedInput, target, requesterConfirmation, sessionTargetsV1 }) =>
+              boundary.signApprovalInput({ authorizationToken: authorization.token, actionId: requestedId, input: reviewedInput, target,
+                ...(requesterConfirmation ? { requesterConfirmation } : {}), ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) }),
+          } : {}),
         });
         return outcome.ok ? outcome.result : outcome;
       },
       failure: result => actionId === 'projects.worker.copy.retire' ? readActionFailureEnvelope(result) : null,
-    })));
+    });
+    return boundary;
+  }));
 
   const ownerMachine = createHydratedPlainMachineFixture({
     id: machineId,
@@ -177,8 +199,20 @@ async function setup(
     await import('@/dev/testkit/harness/syncSingletonLoader');
   await loadSyncSingletonForTests();
   fixture = await createPlainArtifactHomeFixture('https://srv_machine_work', { accountId, currentAccount: true,
+    ...(options.copyCheck ? { serverFeatures: createRootLayoutFeaturesResponse({ features: { workflows: { enabled: true } } }) } : {}),
+
     handleRequest: async (path, init) => {
       if (path === '/v1/account/project-rows/list' && projectRowsRead) return projectRowsRead();
+      if (options.copyCheck && path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [{
+          automationId: 'copy-check', triggerId: 'before-removal', triggerRevision: 1,
+          workflowId: 'copy-workflow', workflowRevision: 1, ownerAccountId: 'another-account',
+          actionIds: ['projects.worker.copy.retire'], phase: 'before', mode: 'wait', onFailure: 'refuse',
+          reachesOthers: true, subjectKind: 'machine', subjectKey: automationSubjectKeyV1({
+            kind: 'machine', serverId: 'srv_machine_work', machineId: 'source-machine',
+          }, 'copy-workflow'),
+        }] }));
+      }
       if (path.startsWith('/v1/actions/') || path === '/v1/machines/source-machine') {
         for (const boundary of copyActions) {
           const response = await boundary.handle(new URL(path, 'https://srv_machine_work'), init);
@@ -196,6 +230,36 @@ async function setup(
       return createMachineReadBatchResponseFixture(init?.body, id => id === machineId ? row : id === 'source-machine' ? copyActions[0]!.machine : null);
     },
   });
+  if (options.copyCheck) {
+    const [{ captureLazyActionAccountContext }, { createUiActionAutomationPortV1 }, approvalArtifacts,
+      { isApprovalExecutionOriginCurrentForAccountContext }] = await Promise.all([
+      import('@/sync/ops/actions/actionAccountContext'), import('@/sync/ops/actions/actionAutomations'),
+      import('@/sync/ops/actions/approvalArtifactWriter'), import('@/sync/ops/actions/defaultActionExecutor'),
+    ]);
+    const account = await captureLazyActionAccountContext(fixture.home.id);
+    const read = (id: string) => account.fetchArtifact(id, { fresh: true });
+    copyApprovalAccount = account;
+    receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+      ...copyRetireDependencies,
+      actionAutomations: createUiActionAutomationPortV1(account),
+      approvalsCreate: ({ request }) => approvalArtifacts.createApprovalArtifact({ request, accountId: account.accountId,
+        read: id => account.readArtifact(id, { fresh: true, ownerOnly: true }),
+        create: async (id, header, body, scope) => (await account.createArtifactDocument({ artifactId: id, header, body, idScope: scope })).artifact,
+      }),
+      approvalsGet: async ({ artifactId }) => {
+        const artifact = await read(artifactId);
+        const match = artifact?.header && approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body);
+        return match?.family === 'built_in' ? match.request : null;
+      },
+      approvalsUpdate: ({ artifactId, request }) => approvalArtifacts.writeApprovalRequestArtifact({
+        artifactId, request, read,
+        write: (basis, header, body) => account.updateArtifact(artifactId, header, body, basis),
+      }),
+      isApprovalExecutionOriginCurrent: async ({ origin }) => isApprovalExecutionOriginCurrentForAccountContext({
+        origin, accountServerId: account.serverId, accountId: account.accountId,
+      }),
+    }));
+  }
   machineHttp.read = () =>
     new Response(
       JSON.stringify({
@@ -270,7 +334,13 @@ async function setup(
       ),
     );
   return { screen, sent, releasePolicyRead, policyReadCount: () => policyReads,
-    discoverMachine: () => storage.getState().applyMachines([machine]) };
+    discoverMachine: () => storage.getState().applyMachines([machine]),
+    decideCopyApproval: (artifactId: string) => receiver.execute('approval.request.decide', {
+      artifactId, decision: 'approve',
+      triggerConsent: { automationId: 'copy-check', triggerId: 'before-removal', decision: 'skip' },
+    }, { authority: 'present_user', surface: 'ui', serverId: fixture!.home.id, serverIdentityId: 'srv_machine_work',
+      runtimeAccountId: accountId, actionCaller: { kind: 'host' } }),
+  };
 }
 
 async function seedWorkerCopy(targetMachineId = 'm1') {
@@ -861,8 +931,9 @@ describe('Machine › Work from your projects through the Machine policy Actions
     rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
       if (method === 'projects.worker.copy.retire') return {
         ok: false, error: 'Worker dependency observation is unavailable', errorCode: 'workspace_sync_dependencies_unavailable',
+        requestId: 'copy-removal-refusal', effectAttempted: false,
         failureCause: { phase: 'workspace_sync.retirement.dependencies', errorClass: 'Error',
-          errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null, nativeErrorCode: 'RPC_FORBIDDEN' },
+          errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null, nativeErrorCode: 'RPC_FORBIDDEN', nativeErrorReason: 'custodian_only' },
       };
       throw new Error(`unexpected_rpc:${method}`);
     });
@@ -887,6 +958,58 @@ describe('Machine › Work from your projects through the Machine policy Actions
     });
     expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync_dependencies_unavailable'));
     expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync.retirement.dependencies'));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.requestId:'));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('RPC_FORBIDDEN'));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('custodian_only'));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.effectAttempted: false'));
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the recorded refusal under Technical details when an approved removal leaves the copy in place', async () => {
+    const { screen, decideCopyApproval } = await setup({ waive: ['projects.worker.copy.retire'], copyCheck: true });
+    const { scope } = await seedWorkerCopy();
+    const retire = vi.fn(async () => ({
+      ok: false, error: 'Worker dependency observation is unavailable', errorCode: 'workspace_sync_dependencies_unavailable',
+      effectAttempted: false,
+      failureCause: { phase: 'workspace_sync.retirement.dependencies', errorClass: 'Error',
+        errorCode: 'workspace_sync_dependencies_unavailable', httpStatus: null, nativeErrorCode: 'RPC_FORBIDDEN', nativeErrorReason: 'custodian_only' },
+    }));
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return await retire();
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () => screen.findAll(node => typeof node.props.onSelect === 'function'
+      && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'files'))[0];
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => { menu()!.props.onSelect('keep'); });
+    const home = fixture!;
+    await vi.waitFor(() => expect(home.boundary.list()).toHaveLength(1));
+    const artifactId = home.boundary.list()[0]!.id;
+    const stored = () => ApprovalRequestV2Schema.parse(JSON.parse(home.boundary.readPlainBody(artifactId) ?? 'null'));
+    const original = stored();
+    expect(original).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent', humanApprovalRequired: false,
+      consents: [{ automationId: 'copy-check', triggerId: 'before-removal', decision: 'pending' }] } });
+    expect(retire).not.toHaveBeenCalled();
+
+    // Spend the decision on the same receiver that issued the approval.
+    // Artifact reads and writes still cross the real Home HTTP client.
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const result = await decideCopyApproval(artifactId);
+    expect(result).toMatchObject({ ok: true, result: { status: 'failed' } });
+    const receipt = stored();
+    expect(receipt).toMatchObject({ status: 'failed', execution: { ok: false,
+      errorCode: 'workspace_sync_dependencies_unavailable', effectAttempted: false,
+      requestId: original.executionOriginV1.requestId, failureCause: { phase: 'workspace_sync.retirement.dependencies' } } });
+    expect(retire).toHaveBeenCalledTimes(1);
+    await act(async () => { publishHomeAccountChange(scope.serverId, [artifactId]); });
+    const notice = () => screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props;
+    await vi.waitFor(() => expect(notice()?.title).toBe('projectWorkers.removeFailed'));
+    expect(notice()?.description).toBe('workspaceSync.error.dependenciesUnavailable');
+    const alert = vi.spyOn(Modal, 'alert');
+    await act(async () => { notice()?.secondaryAction?.onPress(); });
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync.retirement.dependencies'));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining(original.executionOriginV1.requestId));
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.effectAttempted: false'));
     expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
   });
 

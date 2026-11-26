@@ -2,6 +2,7 @@ import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFa
 import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, DaemonLocalServicePreviewRevokeResponseV1Schema, type LocalServicePreviewSnapshotV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress, type LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectMachineActionRpcFailure } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { LocalServiceActionRequestV1Schema, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { fetchLocalServiceInventorySummaryViaMachineRpc } from '../inventory/machineRpc';
@@ -265,9 +266,8 @@ function routeFailureResult(
     reason: LocalServicesRouteFailureReason,
     failure?: LocalServiceRpcFailureMetadata,
 ) {
-    return { ...disabledResult(`local_services_${kind}_${reason}`),
-        ...(failure?.reasonCode ? { details: { reasonCode: failure.reasonCode } } : {}),
-        ...(failure?.failureCause ? { failureCause: failure.failureCause } : {}) };
+    return failure?.failure ? projectMachineActionRpcFailure(failure.failure) : { ...disabledResult(`local_services_${kind}_${reason}`),
+        ...(failure?.reasonCode ? { details: { reasonCode: failure.reasonCode } } : {}) };
 }
 
 export function createLocalServicesRuntimeActionExecutor(
@@ -448,10 +448,15 @@ export function createLocalServicesRuntimeActionExecutor(
                 ...(request.expectedEffectDigest ? { expectedEffectDigest: request.expectedEffectDigest } : {}),
                 ...(args.context.signal ? { signal: args.context.signal } : {}),
             });
-            if (!result.ok) return result.reason === 'outcome_unknown' || result.reason === 'invalid_response'
-                ? { ...projectUnexpectedActionFailureV1(null, args.context.actionRequestId ?? undefined),
-                    ...(result.failureCause ? { failureCause: result.failureCause } : {}) }
-                : routeFailureResult('launcher', result.reason, result);
+            if (!result.ok) {
+                if (result.reason !== 'outcome_unknown' && result.reason !== 'invalid_response') {
+                    return routeFailureResult('launcher', result.reason, result);
+                }
+                // The launcher owns whether its reply proves settlement. Keep the transport evidence alongside that outcome.
+                const requestId = result.failure?.requestId ?? args.context.actionRequestId;
+                return { ...(result.failure ? projectMachineActionRpcFailure(result.failure) : {}), ...projectUnexpectedActionFailureV1(null),
+                    ...(requestId ? { requestId } : {}) };
+            }
             onLauncherSnapshot({ machineId, serverId, sessionId,
                 ...(request.workspace ? { scope: 'workspace' as const, workspaceRoot: request.workspace.rootPath } : {}),
                 snapshot: result.response.snapshot });

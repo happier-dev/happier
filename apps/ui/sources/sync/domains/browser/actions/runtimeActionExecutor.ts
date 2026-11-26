@@ -27,6 +27,7 @@ import {
     type BrowserControlCommandEffect,
     type BrowserControlCommandDispatchOptions,
 } from '../control/commands';
+import { projectMachineActionRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import type { BrowserDaemonControlDispatchClientResult } from '../control/machineRpc';
 import { canOpenDesktopBrowserDevtools } from '../adapters/desktopWebView';
 import { openDesktopBrowserDevtools } from '../adapters/desktopWebViewBridge';
@@ -467,6 +468,8 @@ async function executeBrowserControlAction(
         const dispatched = await control.sendDaemonCommand?.(daemonCommand.command);
         if (!dispatched) return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
         if (dispatched.ok) return dispatched.result;
+        const refusal = projectMachineActionRpcFailure(dispatched);
+        if (refusal) return refusal;
         if (dispatched.reason === 'unavailable') return browserRuntimeActionDisabledResult('browser_control_route_unavailable');
         return { ok: false, errorCode: 'browser_control_unconfirmed', error: 'browser_control_unconfirmed' } satisfies BrowserRuntimeActionFailure;
     }
@@ -611,6 +614,7 @@ export function createBrowserRuntimeActionExecutor(
                 const result = await adapter?.captureSelectedElement?.(parsed.data.pickerResult);
                 if (!result) return browserRuntimeActionDisabledResult('browser_context_unavailable');
                 if (result.status === 'unavailable') {
+                    if (typeof result.reason !== 'string' && result.reason.failure) return result.reason.failure;
                     return browserRuntimeActionDisabledResult(typeof result.reason === 'string' ? result.reason : result.reason.reasonCode);
                 }
                 return result.state.itemsById[result.contextId] ?? browserRuntimeActionDisabledResult('browser_context_item_missing');

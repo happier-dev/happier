@@ -7,7 +7,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Modal } from '@/modal';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import {
   COMPUTER_PROVIDER_DISPLAY_NAMES,
   type ComputerProviderSettingsRow,
@@ -81,7 +82,12 @@ export function MachineComputerUseSection(
   // An install failure stays on its row with a retry; a failed save has no row to stand on, so it is said once.
   React.useEffect(() => {
     if (mutation.phase === 'failed' && !mutation.provider) {
-      Modal.alert(t('computerUse.providers.saveFailed'), mutation.error);
+      const failure = mutation.failure;
+      const title = t('computerUse.providers.saveFailed');
+      const presentation = presentActionExecutionFailure(failure, title, { closedCodesOnly: true });
+      alertActionFailure({ title, reason: presentation.reason, code: failure.errorCode, requestId: failure.requestId,
+        context: Object.fromEntries(presentation.technicalDetails.filter(line => line.key !== 'code' && line.key !== 'requestId')
+          .map(line => [line.key, line.value])) });
     }
   }, [mutation]);
   const { setProviderEnabled, installProvider, setDefaultProvider } = settings;
@@ -183,6 +189,9 @@ export function MachineComputerUseSectionView(
           : lockedReason === 'unavailable' ? statusText('unavailable') : undefined;
         const text = disabledReason ?? statusText(state.status.kind);
         const testID = `machine-computer-use-provider-${row.provider}`;
+        const failure = mutation.phase === 'failed' && mutation.provider === row.provider ? mutation.failure : undefined;
+        const presentation = failure ? presentActionExecutionFailure(failure,
+          t('computerUse.providers.status.failed'), { closedCodesOnly: true }) : null;
         const action = props.canManage !== false && state.action
           ? {
               label: t(ACTION_LABEL_KEYS[state.action]),
@@ -201,7 +210,18 @@ export function MachineComputerUseSectionView(
             subtitle={describeProvider(row.provider)}
             // The status line can end with its own link, so it sits outside the row's switch press.
             bottomElement={
-              text ? (
+              failure && presentation ? (
+                <SurfaceStateCard
+                  testID={`${testID}.status`}
+                  kind="error"
+                  size="line"
+                  title={presentation.reason}
+                  diagnosticCode={failure.errorCode}
+                  diagnosticDetail={presentation.technicalDetails.filter(line => line.key !== 'code')
+                    .map(line => `${line.label}: ${line.value}`).join('\n')}
+                  action={action ?? undefined}
+                />
+              ) : text ? (
                 <RowStatusLine
                   testID={`${testID}.status`}
                   text={text}

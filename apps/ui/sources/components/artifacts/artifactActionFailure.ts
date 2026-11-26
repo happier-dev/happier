@@ -8,7 +8,7 @@ import type { ArtifactActionFailure } from './artifactActionsClient';
 export function presentArtifactActionFailure(failure: ArtifactActionFailure, fallbackMessage: string, options?: Readonly<{ safeToRetry?: boolean }>): Readonly<{
     title: string; reason: string; code: string; context: ActionFailureContext;
 }> {
-    const presentation = presentActionExecutionFailure({ ...failure, ok: false, errorCode: failure.code }, fallbackMessage, options);
+    const presentation = presentActionExecutionFailure({ ...failure, ok: false, errorCode: failure.code }, fallbackMessage, { ...options, detailsAudience: 'recipient' });
     return {
         title: resolveActionExecutionFailureTitle(failure, t('common.error')),
         reason: presentation.reason,

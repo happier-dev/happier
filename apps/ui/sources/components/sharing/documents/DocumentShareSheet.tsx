@@ -51,6 +51,7 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
         kind: props.kind,
         description: props.description,
         grants: controller.grants,
+        grantRows: controller.model.grants,
         privateChoices: controller.privateChoices,
         ...(linkedWorkflows.offer ? { linkedWorkflows: linkedWorkflows.offer } : {}),
         ...(props.linkPath ? { linkPath: props.linkPath } : {}),
@@ -68,7 +69,7 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
             stateLabel: publicLinkState,
             renderContent: (context: Parameters<NonNullable<typeof baseAdapter.sections>>[0]) => audience === 'signed_in'
                 ? publicLink.error ? <SurfaceStateCard kind="error" title={t('session.collaboration.pane.linkLoadFailed')}
-                    reason={publicLink.issue?.message} diagnosticCode={publicLink.issue?.code}
+                    reason={publicLink.issue?.message} diagnosticCode={publicLink.issue?.code} diagnosticDetail={publicLink.issue?.diagnosticDetail}
                     action={{ label: t('common.retry'), onPress: publicLink.reload }} />
                 : publicLink.pendingApproval ? <SurfaceStateCard kind="empty" title={t('approvals.title')}
                     action={{ label: t('common.open'), onPress: publicLink.openPendingApproval }} />

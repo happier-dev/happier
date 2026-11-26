@@ -20,15 +20,21 @@ describe('presentWorkspaceSyncStatusLine', () => {
     it('names why the status is unavailable and offers to ask again', () => {
         const unreachable = Object.assign(new Error('rpc failed'), { code: 'controller_unavailable' });
         expect(present('workspaceSync.state.controllerUnavailable', { readError: unreachable }))
-            .toEqual({ text: t('workspaceSync.error.machineOffline'), tone: 'warn', busy: false, action: 'retry' });
+            .toMatchObject({ text: t('workspaceSync.error.machineOffline'), tone: 'warn', busy: false, action: 'retry' });
         // An unclassified read failure still says what is wrong and keeps the same next step.
         expect(present('workspaceSync.state.controllerUnavailable', { readError: new Error('boom') }))
             .toEqual({ text: t('workspaceSync.state.controllerUnavailable'), tone: 'warn', busy: false, action: 'retry' });
     });
 
     it('carries a custody refusal to the existing failure presenter', () => {
-        expect(present('workspaceSync.state.controllerUnavailable', { readError: { code: 'custodian_only' } }).text)
-            .toBe(t('errors.custodianOnly'));
+        const readError = { code: 'custodian_only', requestId: 'status-request', effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 } };
+        expect(present('workspaceSync.state.controllerUnavailable', { readError }))
+            .toMatchObject({ text: t('errors.custodianOnly'), action: 'retry', technicalDetails: expect.arrayContaining([
+                expect.objectContaining({ key: 'requestId', value: 'status-request' }),
+                expect.objectContaining({ key: 'causePhase', value: 'rpc.admission.machine' }),
+                expect.objectContaining({ key: 'effectAttempted', value: 'false' }),
+            ]) });
     });
 
     it('shows work in progress instead of the state while an action settles', () => {

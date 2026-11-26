@@ -75,23 +75,26 @@ describe('default Action Computer Account publication', () => {
             const scope = { serverId: home.id, machineId,
                 source: { kind: 'machine-person' as const, personId: home.accountId } };
             const client = createComputerControlClient(scope, execute, account.accountLifetime);
-            expect(await client.getTarget()).toMatchObject({ ok: false, code: 'RPC_FORBIDDEN', failureCause });
+            expect(await client.getTarget()).toMatchObject({ ok: false, code: 'RPC_FORBIDDEN',
+                actionFailure: { ok: false, errorCode: 'RPC_FORBIDDEN', failureCause } });
             observingScreen = true;
             const accountLifetime = account.accountLifetime;
             const screen = await renderHook(() => useComputerScreen({ scope, execute, accountLifetime }));
             try {
                 await act(async () => { await visibleRead.promise; });
                 await flushHookEffects();
-                expect(screen.getCurrent()).toMatchObject({ failure: 'RPC_FORBIDDEN', failureCause });
+                expect(screen.getCurrent()).toMatchObject({ failure: 'RPC_FORBIDDEN',
+                    actionFailure: { errorCode: 'RPC_FORBIDDEN', failureCause } });
                 visibleRead = createDeferred<void>();
                 await act(async () => { screen.getCurrent().onRefresh?.(); await visibleRead.promise; });
                 await flushHookEffects();
-                expect(screen.getCurrent()).toMatchObject({ failure: 'RPC_FORBIDDEN', failureCause });
+                expect(screen.getCurrent()).toMatchObject({ failure: 'RPC_FORBIDDEN',
+                    actionFailure: { errorCode: 'RPC_FORBIDDEN', failureCause } });
                 refused = false;
                 visibleRead = createDeferred<void>();
                 await act(async () => { screen.getCurrent().onRefresh?.(); await visibleRead.promise; });
                 await flushHookEffects();
-                expect(screen.getCurrent()).toMatchObject({ failure: null, failureCause: undefined });
+                expect(screen.getCurrent()).toMatchObject({ failure: null, actionFailure: undefined });
             } finally {
                 await screen.unmount();
             }

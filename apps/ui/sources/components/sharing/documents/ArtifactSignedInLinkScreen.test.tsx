@@ -79,6 +79,7 @@ describe('authenticated template link opening', () => {
             await vi.waitFor(() => expect(denied.getTextContent()).toContain(t(message)));
             expect(denied.getTextContent()).not.toContain('Grow herbs');
             expect(denied.findByTestId('bot-template-make-own')).toBeNull();
+            expect(denied.findByTestId('artifact-signed-in-link-refusal-details-toggle')).toBeNull();
             await denied.unmount();
         }
         expect(commits).toHaveLength(2);
@@ -87,6 +88,25 @@ describe('authenticated template link opening', () => {
         expect(JSON.stringify(home.requests)).not.toContain(secret);
         expect(home.boundary.list().map(row => ({ id: row.id, owner: row.ownerAccountId })))
             .toEqual([{ id: 'released-template', owner: 'author' }]);
+    });
+
+    it('keeps the typed temporary refusal and the reopen step for a signed-in recipient', async () => {
+        home = await createPlainArtifactHomeFixture('https://signed-link-temporary.example', { currentAccount: true,
+            handleRequest: async path => path === '/v1/artifact-signed-in-links/temporary/join'
+                ? Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 }) : null });
+        resolveNativeAppLinkHref(`happier://share/artifact/temporary#k=${'e'.repeat(43)}`);
+        const screen = await renderScreen(<ArtifactSignedInLinkScreen lookupId="temporary" serverId={home.home.id} />);
+        await screen.pressByTestIdAsync('artifact-signed-in-link-open');
+        await vi.waitFor(() => expect(screen.findByTestId('artifact-signed-in-link-open')).toBeNull());
+        expect(screen.getTextContent()).toContain(t('approvals.transientFailureTitle'));
+        expect(screen.getTextContent()).toContain(t('botTemplates.reopenLink'));
+        await screen.pressByTestIdAsync('artifact-signed-in-link-refusal-details-toggle');
+        const detail = screen.findByTestId('artifact-signed-in-link-refusal-details-code')?.props.children;
+        expect(detail).toContain('home.database.transaction');
+        expect(detail).toContain(`${t('approvals.failureTechnicalLabels.effectAttempted')}: false`);
+        expect(home.requests.filter(request => request.path === '/v1/artifact-signed-in-links/temporary/join').map(request => request.method))
+            .toEqual(['GET']);
+        await screen.unmount();
     });
 
     it.each([false, true])('shows the encrypted-Account reason to a Plain opener without offering a copy (effect replay: %s)', async replay => {

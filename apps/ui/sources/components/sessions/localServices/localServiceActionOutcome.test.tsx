@@ -48,7 +48,7 @@ describe('readLocalServiceActionOutcome', () => {
         primeServerFeaturesSnapshot({ serverId: 'public-preview-cause', snapshot: { status: 'ready',
             features: createRootLayoutFeaturesResponse({ features: { localServices: { publicPreview: { enabled: true } } } }) } });
         if (carrier === 'uncoded handler') previewRpc.mockResolvedValueOnce({ error: 'private request details', failureCause });
-        else previewRpc.mockRejectedValueOnce(new RpcError('private request details', RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause));
+        else previewRpc.mockRejectedValueOnce(Object.assign(new RpcError('private request details', RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause), { requestId: 'preview-refusal', effectAttempted: false }));
         try {
             const execute = createLocalServicesRuntimeActionExecutor({
                 createPublicPreviewExposure: createLocalServicePublicPreviewExposureViaMachineRpc,
@@ -57,7 +57,7 @@ describe('readLocalServiceActionOutcome', () => {
                 input: { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1',
                     mode: 'secret_link', ttlMs: 600_000, confirmation: { acknowledged: true } },
                 context: { surface: 'ui', serverId: 'public-preview-cause' } });
-            expect(result).toMatchObject({ ok: false, failureCause, details: { reasonCode } });
+            expect(result).toMatchObject({ ok: false, errorCode: reasonCode, failureCause });
             modalSpies.alert.mockClear();
             const { value, Harness } = renderRunner({ presentation });
             await renderScreen(<Harness />);
@@ -74,11 +74,15 @@ describe('readLocalServiceActionOutcome', () => {
                 shownDetails = value.current?.failure?.details.join('\n') ?? '';
                 expect(modalSpies.alert).not.toHaveBeenCalled();
             }
+            if (carrier === 'coded transport') {
+                expect(shownDetails).toContain('preview-refusal');
+                expect(shownDetails).toContain('false');
+            }
             expect(shownDetails).toContain(failureCause.phase);
             expect(shownDetails).toContain(reasonCode);
             expect(shownDetails).not.toContain('private request details');
             const outcome = readLocalServiceActionOutcome(result);
-            expect(outcome).toMatchObject({ kind: 'failed', reasonCode, failureCause });
+            expect(outcome).toMatchObject({ kind: 'failed', reasonCode, failure: { failureCause } });
             if (outcome.kind !== 'failed') throw new Error('Expected transport failure');
             const description = describeLocalServiceActionFailure(outcome);
             expect(description.details).toContain(reasonCode);
@@ -90,11 +94,25 @@ describe('readLocalServiceActionOutcome', () => {
     it('keeps a lost launcher acknowledgement unknown through the real client and Action executor', async () => {
         const failureCause = { phase: 'rpc.dispatch', errorClass: 'RpcError',
             errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, httpStatus: null };
-        previewRpc.mockRejectedValueOnce(new RpcError('private request details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, failureCause));
+        previewRpc.mockRejectedValueOnce(Object.assign(new RpcError('private request details', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, failureCause), {
+            requestId: 'lost-start-reply', effectAttempted: true, details: { status: 'dispatched' },
+        }));
         const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
         const result = await execute({ actionId: 'localServices.launcher.start',
             input: { machineId: 'machine_1', targetId: 'target_1' }, context: { surface: 'ui' } });
         expect(result).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown', failureCause });
+        const { value, Harness } = renderRunner({ presentation: 'inline' });
+        await renderScreen(<Harness />);
+        await act(async () => {
+            expect(await value.current?.run({ id: 'start', failureTitle: 'Could not start', action: async () => result })).toBe(false);
+        });
+        expect(value.current?.failure?.retry).toBeNull();
+        const diagnostics = value.current?.failure?.details.join('\n');
+        expect(diagnostics).toContain('lost-start-reply');
+        expect(diagnostics).toContain('true');
+        expect(diagnostics).toContain('dispatched');
+        expect(diagnostics).toContain('rpc.dispatch');
+        expect(diagnostics).not.toContain('private request details');
         expect(readLocalServiceActionOutcome(result)).toMatchObject({ kind: 'outcome_unknown' });
     });
     it('shows the inventory count transport cause through the real Action executor', async () => {
@@ -104,8 +122,8 @@ describe('readLocalServiceActionOutcome', () => {
         const execute = createLocalServicesRuntimeActionExecutor();
         const result = await execute({ actionId: 'localServices.inventory.list',
             input: { machineId: 'machine_1', projection: 'count' }, context: { surface: 'ui' } });
-        expect(result).toMatchObject({ ok: false, failureCause, details: { reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE } });
-        expect(readLocalServiceActionOutcome(result)).toEqual({ kind: 'failed', reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause });
+        expect(result).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failureCause });
+        expect(readLocalServiceActionOutcome(result)).toMatchObject({ kind: 'failed', reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, failure: { failureCause } });
     });
     it.each(['approval_canceled', 'approval_rejected', 'cancelled'])('classifies the shared policy decline as cancelled (%s)', errorCode => {
         expect(readLocalServiceActionOutcome({ ok: false, errorCode, error: errorCode }))
@@ -116,9 +134,10 @@ describe('readLocalServiceActionOutcome', () => {
             sameProject: true, lastStderrLine: 'Error: listen EADDRINUSE: address already in use :::5173' };
         const result = { status: 'denied', reasonCode: 'plugin_managed_service_establishment_failed', establishmentFailure };
         const outcome = readLocalServiceActionOutcome(result);
-        expect(outcome).toEqual({ kind: 'failed', reasonCode: result.reasonCode, establishmentFailure });
-        expect(readLocalServiceActionOutcome({ ...result, establishmentFailure: { ...establishmentFailure, stdout: 'private' } }))
-            .toEqual({ kind: 'failed', reasonCode: result.reasonCode });
+        expect(outcome).toMatchObject({ kind: 'failed', reasonCode: result.reasonCode, establishmentFailure });
+        const invalid = readLocalServiceActionOutcome({ ...result, establishmentFailure: { ...establishmentFailure, stdout: 'private' } });
+        expect(invalid).toMatchObject({ kind: 'failed', reasonCode: result.reasonCode });
+        expect(invalid).not.toHaveProperty('establishmentFailure');
         if (outcome.kind !== 'failed') throw new Error('Missing failure');
         modalSpies.alert.mockClear();
         presentLocalServiceActionFailure({ title: 'Could not start', ...outcome });
@@ -132,25 +151,26 @@ describe('readLocalServiceActionOutcome', () => {
     it('retains only strict Docker prerequisite details for the failure presenter', () => {
         const prerequisite = LocalServiceNativePrerequisiteV1Schema.parse({ tool: 'docker', machineName: 'nl1', cause: 'permission_denied' });
         expect(readLocalServiceActionOutcome({ status: 'denied', reasonCode: 'native_tool_unavailable', prerequisite }))
-            .toEqual({ kind: 'failed', reasonCode: 'native_tool_unavailable', prerequisite });
-        expect(readLocalServiceActionOutcome({ status: 'denied', reasonCode: 'native_tool_unavailable',
-            prerequisite: { ...prerequisite, stderr: 'private native output' } }))
-            .toEqual({ kind: 'failed', reasonCode: 'native_tool_unavailable' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'native_tool_unavailable', prerequisite });
+        const invalid = readLocalServiceActionOutcome({ status: 'denied', reasonCode: 'native_tool_unavailable',
+            prerequisite: { ...prerequisite, stderr: 'private native output' } });
+        expect(invalid).toMatchObject({ kind: 'failed', reasonCode: 'native_tool_unavailable' });
+        expect(invalid).not.toHaveProperty('prerequisite');
     });
     it('retains the local-services refusal detail instead of its generic Action wrapper', () => {
         expect(readLocalServiceActionOutcome({ ok: false, errorCode: 'runtime_action_disabled',
             error: 'runtime_action_disabled:localServices:local_services_inventory_request_failed' }))
-            .toEqual({ kind: 'failed', reasonCode: 'local_services_inventory_request_failed' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'local_services_inventory_request_failed' });
         expect(readLocalServiceActionOutcome(new RpcError('private transport detail', RPC_ERROR_CODES.FORBIDDEN)))
-            .toEqual({ kind: 'failed', reasonCode: RPC_ERROR_CODES.FORBIDDEN });
+            .toMatchObject({ kind: 'failed', reasonCode: RPC_ERROR_CODES.FORBIDDEN });
     });
     it('retains only a code-shaped Browser refusal detail, never arbitrary transport prose', () => {
         expect(readLocalServiceActionOutcome({ ok: false, errorCode: 'runtime_action_disabled',
             error: 'runtime_action_disabled:browser:browser_adapter_unavailable' }))
-            .toEqual({ kind: 'failed', reasonCode: 'browser_adapter_unavailable' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'browser_adapter_unavailable' });
         expect(readLocalServiceActionOutcome({ ok: false, errorCode: 'runtime_action_disabled',
             error: 'runtime_action_disabled:browser:private transport detail' }))
-            .toEqual({ kind: 'failed', reasonCode: 'runtime_action_disabled' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'runtime_action_disabled' });
     });
     it.each([
         ['localServices', 'local_services_preview_refused:preview_target_unresolved', 'preview_target_unresolved'],
@@ -161,7 +181,7 @@ describe('readLocalServiceActionOutcome', () => {
     ])('keeps the Action-wrapped %s/%s refusal named without changing its diagnostic code', (family, wrappedCode, reasonCode) => {
         const outcome = readLocalServiceActionOutcome({ ok: false, errorCode: 'runtime_action_disabled',
             error: `runtime_action_disabled:${family}:${wrappedCode}` });
-        expect(outcome).toEqual({ kind: 'failed', reasonCode });
+        expect(outcome).toMatchObject({ kind: 'failed', reasonCode });
         if (outcome.kind !== 'failed') throw new Error('Expected a refusal');
         const failure = describeLocalServiceActionFailure({ ...outcome, serviceName: 'Reading desk' });
         expect(failure.details).toContain(reasonCode);
@@ -182,19 +202,19 @@ describe('readLocalServiceActionOutcome', () => {
             artifactId: 'service-approval', actionId: 'localServices.launcher.start' });
         expect(readLocalServiceActionOutcome(receipt)).toEqual({ kind: 'approval_pending',
             artifactId: receipt.artifactId, actionId: receipt.actionId });
-        expect(readLocalServiceActionOutcome(false)).toEqual({ kind: 'failed', reasonCode: null });
+        expect(readLocalServiceActionOutcome(false)).toMatchObject({ kind: 'failed', reasonCode: null });
     });
     it('classifies every failure shape the corridor can actually produce', () => {
         // A guard that never dispatched: no daemon code, still a failure the user must see.
-        expect(readLocalServiceActionOutcome(undefined)).toEqual({ kind: 'failed', reasonCode: null });
+        expect(readLocalServiceActionOutcome(undefined)).toMatchObject({ kind: 'failed', reasonCode: null });
         // The action-executor front door refusing before the daemon saw it.
         expect(readLocalServiceActionOutcome({ ok: false, errorCode: 'permission_denied' }))
-            .toEqual({ kind: 'failed', reasonCode: 'permission_denied' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'permission_denied' });
         // The daemon refusing, or trying and failing.
         expect(readLocalServiceActionOutcome({ status: 'denied', reasonCode: 'policy_forbids_action' }))
-            .toEqual({ kind: 'failed', reasonCode: 'policy_forbids_action' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'policy_forbids_action' });
         expect(readLocalServiceActionOutcome({ status: 'failed', reasonCode: 'executor_failed' }))
-            .toEqual({ kind: 'failed', reasonCode: 'executor_failed' });
+            .toMatchObject({ kind: 'failed', reasonCode: 'executor_failed' });
     });
 
     it('does not mistake a success payload for a failure', () => {
@@ -308,6 +328,26 @@ describe('useLocalServiceActionRunner', () => {
         expect(value.current?.failure?.retry).toBeNull();
     });
 
+    it.each([
+        { errorCode: 'outcome_uncertain', reasonCode: 'outcome_uncertain', unknown: false },
+        { errorCode: 'outcome_unknown', reasonCode: 'outcome_unknown', unknown: false },
+        { errorCode: 'action_outcome_unknown', reasonCode: 'service_not_listening', unknown: false },
+        { errorCode: 'action_outcome_unknown', reasonCode: 'action_outcome_unknown', unknown: true },
+    ])('uses the Service reason $reasonCode to decide whether Start can be retried ($errorCode)', async ({ errorCode, reasonCode, unknown }) => {
+        const { value, Harness } = renderRunner({ presentation: 'inline' });
+        await renderScreen(<Harness />);
+        const action = vi.fn(async () => ActionExecuteFailureSchema.parse({ ok: false, errorCode, error: errorCode,
+            details: { reasonCode } }));
+        await act(async () => {
+            expect(await value.current?.run({ id: 'start', failureTitle: 'Could not start',
+                observeNativeStart: true, action })).toBe(false);
+        });
+        const failure = value.current?.failure;
+        expect(failure?.retry).toEqual(unknown ? null : expect.any(Function));
+        expect(failure?.awaitingNativeStart).toBe(unknown ? true : undefined);
+        expect(failure?.reasonCode).toBe(reasonCode);
+    });
+
     it.each(['approval_canceled', 'approval_rejected', 'cancelled'])('clears pending without success or failure presentation when shared policy is declined (%s)', async errorCode => {
         const { value, Harness } = renderRunner();
         await renderScreen(<Harness />);
@@ -398,7 +438,7 @@ describe('useLocalServiceActionRunner', () => {
         expect(modalSpies.alert).not.toHaveBeenCalled();
     });
 
-    it('shows one actionable failure and resolves false when the action is refused', async () => {
+    it('shows one actionable failure with the Action wrapper, Service reason and RPC cause in Details', async () => {
         const { value, Harness } = renderRunner();
         await renderScreen(<Harness />);
 
@@ -407,7 +447,12 @@ describe('useLocalServiceActionRunner', () => {
             outcome = await value.current?.run({
                 id: 'row-a:inline',
                 failureTitle: 'Could not start Vite',
-                action: async () => ({ status: 'denied', reasonCode: 'policy_forbids_action' }),
+                action: async () => ActionExecuteFailureSchema.parse({
+                    ok: false, errorCode: 'runtime_action_disabled',
+                    error: 'runtime_action_disabled:localServices:policy_forbids_action',
+                    failureCause: { phase: 'rpc.handler', errorClass: 'RpcError',
+                        errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE, httpStatus: null },
+                }),
             });
         });
 
@@ -421,7 +466,11 @@ describe('useLocalServiceActionRunner', () => {
         expect(String(body)).not.toContain('policy_forbids_action');
         const buttons = modalSpies.alert.mock.calls[0]?.[2] as import('@/modal/types').AlertButton[];
         buttons.find(button => button.onPress)?.onPress?.();
-        expect(modalSpies.alert.mock.calls[1]?.[1]).toContain('policy_forbids_action');
+        const details = String(modalSpies.alert.mock.calls[1]?.[1]).split('\n');
+        expect(details).toContain('policy_forbids_action');
+        expect(details).toContain(`${t('workflows.run.technical.failureCode')}: runtime_action_disabled`);
+        expect(details).toContain(`${t('approvals.failureTechnicalLabels.causeCode')}: ${RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE}`);
+        expect(details).toContain(`${t('approvals.failureTechnicalLabels.causePhase')}: rpc.handler`);
         expect(value.current?.pendingId).toBeNull();
     });
 

@@ -8,7 +8,7 @@ import type {
   ProjectServicePlacementGetResultV1,
   ProjectServicePlacementV1,
 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
-import { readLocalServiceActionOutcome, describeLocalServiceActionFailure } from '@/components/sessions/localServices/localServiceActionOutcome';
+import { readLocalServiceActionOutcome, readLocalServiceFailureOutcome, describeLocalServiceActionFailure } from '@/components/sessions/localServices/localServiceActionOutcome';
 import { executeServiceRelocationAction, type ServiceRelocationOutcome } from './serviceRelocationAction';
 import { ProjectServicePlacementObservationProvider, useProjectServicePlacementObservation, useProjectServicePlacementValueObservation } from './projectServicePlacementObservation';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -373,6 +373,7 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
   const pendingMachine = useServerScopedMachine(props.source.serverId, pendingMachineId ?? '');
 
   const operation = observation.operation;
+  const operationError = operation?.snapshot.error;
   const stop = observation.stop;
   const operationState = operation?.snapshot.actionId === 'projects.service.relocate' ? operation.snapshot.state : null;
   const terminal = operationState === 'succeeded' || operationState === 'failed' || operationState === 'cancelled';
@@ -423,7 +424,8 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         && observation.progressText !== t('projectServices.moving', { service: props.serviceName, to: toName })
         && observation.progressText !== t('projectServices.moveUnknown')
         ? observation.progressText ?? undefined : undefined}
-      {...(operation?.snapshot.error ? { details: [operation.snapshot.error.errorCode] } : {})}
+      details={operationError ? describeLocalServiceActionFailure({ reasonCode: operationError.errorCode,
+        failure: { ...operationError, ok: false } }).details : undefined}
       action={{ label: t('projectServices.inspect'), testID: `${testID}.move.inspect`,
         onPress: () => openActionOperationDetail({ serverId: props.source.serverId, operationId: move.operationId }) }}
       secondaryAction={stoppedBeforeStart ? { label: t('common.retry'), testID: `${testID}.move.retry`,
@@ -542,7 +544,10 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         workspace: { serverId: props.source.serverId, machineId: props.source.machineId,
           workspaceId: props.source.refId, rootPath: props.source.rootPath }, expectedAccountId: binding.accountId,
       }).inspect({ kind: 'setup' }) : null;
-      if (inspection && !inspection.setupReview) throw new Error('project_setup_review_unavailable');
+      if (inspection && !inspection.setupReview) {
+        const code = 'project_setup_review_unavailable';
+        throw Object.assign(new Error(code), { code });
+      }
       const setupReview = inspection?.setupReview;
       const [moveRequired, setupRequired] = await Promise.all([
         isActionApprovalRequiredForHome('projects.service.relocate', { surface: 'ui' }, props.source.serverId),
@@ -554,8 +559,10 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
       else await confirmMove(destination, selectedMachineId, setupReview);
     } catch (error) {
       if (!binding?.isCurrent()) return;
-      setMove({ phase: 'refused', text: t('projectServices.moveUnknown'),
-        code: error instanceof Error ? error.message : 'move_failed' });
+      const outcome = readLocalServiceFailureOutcome(error);
+      const failure = outcome.kind !== 'cancelled' && outcome.reasonCode ? describeLocalServiceActionFailure(outcome) : null;
+      setMove({ phase: 'refused', text: failure?.body ?? t('projectServices.moveUnknown'),
+        ...(failure ? { details: failure.details } : { code: 'move_failed' }) });
     }
   }
 
@@ -592,15 +599,17 @@ function ProjectServicePlacementControlsBody(props: React.ComponentProps<typeof 
         return;
       }
       const outcome = readLocalServiceActionOutcome(result);
-      const failure = describeLocalServiceActionFailure(outcome.kind === 'failed' ? outcome : { reasonCode: 'action_outcome_unknown' });
+      const failure = describeLocalServiceActionFailure(outcome.kind === 'failed' || outcome.kind === 'outcome_unknown'
+        ? outcome : { reasonCode: 'action_outcome_unknown' });
       setMove({ phase: 'refused', text: failure.body, details: failure.details,
         ...('reasonCode' in result ? { code: result.reasonCode } : 'errorCode' in result ? { code: result.errorCode } : {}) });
     } catch (error) {
       if (!binding.isCurrent()) return;
-      const outcome = readLocalServiceActionOutcome(error);
-      const failure = describeLocalServiceActionFailure(outcome.kind === 'failed' ? outcome : { reasonCode: 'action_outcome_unknown' });
+      const outcome = readLocalServiceFailureOutcome(error);
+      const failure = describeLocalServiceActionFailure(outcome.kind === 'failed' || outcome.kind === 'outcome_unknown'
+        ? outcome : { reasonCode: 'action_outcome_unknown' });
       setMove({ phase: 'refused', text: failure.body, details: failure.details,
-        ...(outcome.kind === 'failed' && outcome.reasonCode ? { code: outcome.reasonCode } : {}) });
+        ...(outcome.kind !== 'cancelled' && outcome.reasonCode ? { code: outcome.reasonCode } : {}) });
     }
   }
 

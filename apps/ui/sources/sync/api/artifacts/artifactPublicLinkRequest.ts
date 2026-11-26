@@ -1,3 +1,5 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { readArtifactPublicLinkHttpFailureV1, type ArtifactPublicLinkRequestV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -24,7 +26,12 @@ export function createArtifactPublicLinkRequest(account: Readonly<{
             signal?.throwIfAborted();
             // Only closed codes become the cause; the Home's own availability codes keep their retry copy.
             const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
-            const failure = transient ? { code: transient.code } : readArtifactPublicLinkHttpFailureV1({ path, status: response.status, payload });
+            if (transient) {
+                const failure = projectConfirmedActionHttpRefusal(
+                    { ok: false as const, errorCode: transient.code, error: transient.code }, response.status, payload);
+                throw createActionExecuteFailureError(failure);
+            }
+            const failure = readArtifactPublicLinkHttpFailureV1({ path, status: response.status, payload });
             throw Object.assign(new Error(failure.code), failure);
         }
         const result: unknown = await response.json();

@@ -17,7 +17,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
 import type { ActionDefinitionV1, ActionExecuteResult, SignedRootActionId } from '@happier-dev/protocol';
 import { parseActionExecuteFailure, withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
+import { formatCliActionFailureText, normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
 import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
@@ -646,21 +646,15 @@ export async function handleActionsCommand(
       : candidate?.expectedFailure ? { failure: { errorCode: String(candidate.code ?? 'action_failed'), errorMessage: candidate.message,
         ...(Array.isArray(candidate.candidates) ? { candidates: candidate.candidates.filter((value): value is string => typeof value === 'string') } : {}) }, unexpected: false }
       : normalizeCliActionThrownError(error);
-    const structured = projectCliActionFailure(mapped.failure, requestId);
     const exitCode = hasInvokeOption(args, INVOKE_WAIT_FLAG) && supportsFiniteActionOutcome(args[1] ?? '')
       ? finiteActionExitCode(mapped.failure.errorCode, mapped.unexpected) : mapped.unexpected ? 2 : 1;
-    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: structured,
+    if (wantsJson(args)) await printJsonEnvelope({ ok: false, kind: `actions_${args[0] ?? 'help'}`, error: projectCliActionFailure(mapped.failure, requestId),
       ...('automationNotices' in mapped.failure && mapped.failure.automationNotices
         ? { automationNotices: mapped.failure.automationNotices } : {}) }, { exitCode });
     else {
-      console.error(fail(mapped.failure.errorMessage ?? mapped.failure.errorCode));
-      const cause = mapped.failure.failureCause;
-      if (mapped.failure.errorCode === 'project_requester_home_unavailable'
-        && cause && 'nativeErrorReason' in cause && cause.nativeErrorReason) {
-        console.error(`Requester Home: ${cause.nativeErrorReason}${cause.httpStatus === null ? '' : ` (HTTP ${cause.httpStatus})`}`);
-      }
-      if ('candidates' in structured && Array.isArray(structured.candidates)) {
-        console.error(`Candidates: ${structured.candidates.join(', ')}`);
+      console.error(fail(formatCliActionFailureText(undefined, mapped.failure, { requestId, actionId: subcommand === 'invoke' ? args[1] : undefined })));
+      if (mapped.failure.candidates?.length) {
+        console.error(`Candidates: ${mapped.failure.candidates.join(', ')}`);
       }
       if (mapped.failure.errorCode === 'invalid_arguments' || mapped.failure.errorCode === 'unknown_subcommand') showHelp();
       process.exitCode = exitCode;

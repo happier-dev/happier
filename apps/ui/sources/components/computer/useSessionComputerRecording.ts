@@ -107,9 +107,9 @@ export function useSessionComputerRecording(input: Readonly<{
             const refusal = recording ? null : readStartRefusalCode(result);
             if (recording) setOwned({ sourceId, recording });
             else if (refusal) presentRecordingStartRefusal(refusal);
-            else presentBrowserRecordingActionFailure('start');
-        } catch {
-            if (!signal.aborted) presentBrowserRecordingActionFailure('start');
+            else presentBrowserRecordingActionFailure('start', result);
+        } catch (error) {
+            if (!signal.aborted) presentBrowserRecordingActionFailure('start', error);
         } finally {
             startPending.current = false;
         }
@@ -128,10 +128,11 @@ export function useSessionComputerRecording(input: Readonly<{
             if (signal.aborted) return;
             const recording = readRecording(result);
             if (recording) setOwned({ sourceId, recording: isRunning(recording) ? recording : null });
-            if (failure === 'stop') presentRecordingStopOutcome(result.ok ? result.result : null);
+            if (!result.ok) presentBrowserRecordingActionFailure(failure, result);
+            else if (failure === 'stop') presentRecordingStopOutcome(result.result);
             else if (!recording || recording.status === 'failed') presentBrowserRecordingActionFailure(failure);
-        } catch {
-            if (!signal.aborted) presentBrowserRecordingActionFailure(failure);
+        } catch (error) {
+            if (!signal.aborted) presentBrowserRecordingActionFailure(failure, error);
         }
     }, [machineId, sessionId, sourceId]);
 

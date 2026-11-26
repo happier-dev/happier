@@ -17,7 +17,9 @@ import {
     readSavedSecretResourceRecipientReadiness,
     setSavedSecretResourceGrants,
 } from '@/sync/ops/settings/savedSecretResourceOperations';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { homeDomainActionFailureFromDomainFailure } from '@/sync/api/home/homeDomainActions';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import { presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isTeamActionApprovalPendingError, runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -70,7 +72,7 @@ function recipientReadinessLabel(recipient: SavedSecretResourceEnvelopeCensusRec
 type RecipientReadinessState =
     | Readonly<{ status: 'loading' }>
     | Readonly<{ status: 'ready'; revision: number; recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[] }>
-    | Readonly<{ status: 'error' }>;
+    | Readonly<{ status: 'error'; failure?: HomeDomainFailure<string> }>;
 
 /**
  * The owner's per-recipient view of one E2EE secret, read from the Home's
@@ -100,7 +102,7 @@ function useSavedSecretRecipientReadiness(input: Readonly<{
             if (!current) return;
             setState(result.ok
                 ? { status: 'ready', revision: result.revision, recipients: result.recipients }
-                : { status: 'error' });
+                : { status: 'error', ...('failure' in result ? { failure: result.failure } : {}) });
         }, () => {
             if (current) setState({ status: 'error' });
         });
@@ -366,10 +368,15 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
             {readiness.state ? (() => {
                 const state = readiness.state;
                 if (state.status === 'error') {
+                    const unavailable = t('secrets.catalog.recipientReadinessUnavailable');
+                    const message = state.failure
+                        ? presentActionExecutionFailure(homeDomainActionFailureFromDomainFailure(
+                            'secrets.shared.recipients.list', state.failure), unavailable, { closedCodesOnly: true }).reason
+                        : unavailable;
                     return (
                         <View style={styles.row}>
                             <Text style={[styles.notice, styles.grow, { color: theme.colors.text.secondary }]}>
-                                {t('secrets.catalog.recipientReadinessUnavailable')}
+                                {message}
                             </Text>
                             <RoundButton
                                 testID="saved-secret-recipient-readiness-retry"

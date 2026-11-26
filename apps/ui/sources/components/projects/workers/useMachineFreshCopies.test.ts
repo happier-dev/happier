@@ -308,7 +308,7 @@ describe('Machine fresh-copy model', () => {
     rpc.machine.mockClear();
     await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
     expect(hook.getCurrent().copies).toHaveLength(1);
-    expect(hook.getCurrent().notices.get('copy')).toMatchObject({ kind: failure.kind, details: failure.details });
+    expect(hook.getCurrent().notices.get('copy')).toMatchObject({ kind: failure.kind, failure: { details: failure.details } });
     await waitForHomeGovernance(() => expect(rpc.machine.mock.calls.some(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST)).toBe(true));
     expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(1);
     await hook.unmount();

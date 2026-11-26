@@ -32,7 +32,7 @@ import {
 } from '@/sync/ops/settings/savedSecretResourceOperations';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
@@ -41,9 +41,15 @@ import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDra
 function alertSavedSecretOperationFailure(reason: string,
     failure?: Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>['failure']) {
     const code = failure?.code ?? reason;
-    alertActionFailure({ code, context: failure?.context,
-        reason: reason === 'outcome_unknown' ? t('secrets.catalog.outcomeUnknown')
-            : resolveActionExecutionErrorMessage({ code }, t('secrets.catalog.operationFailed')) });
+    const fallback = t('secrets.catalog.operationFailed');
+    const presentation = failure?.actionFailure
+        ? presentActionExecutionFailure(failure.actionFailure, fallback, { closedCodesOnly: true })
+        : null;
+    alertActionFailure({ code, context: {
+        ...failure?.context,
+        ...Object.fromEntries(presentation?.technicalDetails.map(({ key, value }) => [key, value]) ?? []),
+    }, reason: reason === 'outcome_unknown' ? t('secrets.catalog.outcomeUnknown')
+        : presentation?.reason ?? resolveActionExecutionErrorMessage({ code }, fallback) });
 }
 
 /**

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol/computer/v1';
 import { computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
 
@@ -35,8 +36,10 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
     const [access, setAccess] = React.useState<ComputerAccessV1>(input.access ?? 'see');
     const [suggestedKey, setSuggestedKey] = React.useState<string | null>(null);
     const [sharing, setSharing] = React.useState(false);
-    const [noticeCode, setNoticeCode] = React.useState<string | null>(null);
-    const [openSettings, setOpenSettings] = React.useState<'idle' | 'opening' | 'opened' | 'failed'>('idle');
+    const [notice, setNotice] = React.useState<Readonly<{ code: string; actionFailure?: ActionExecuteFailure }> | null>(null);
+    const [settings, setSettings] = React.useState<Readonly<{
+        status: 'idle' | 'opening' | 'opened' | 'failed'; actionFailure?: ActionExecuteFailure;
+    }>>({ status: 'idle' });
     const [attempt, setAttempt] = React.useState(0);
     const refusalCode = input.refusalCode;
     const requestedTarget = input.requestedTarget ?? null;
@@ -50,8 +53,8 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
         setAccess(input.access ?? 'see');
         setSuggestedKey(null);
         setSharing(false);
-        setNoticeCode(null);
-        setOpenSettings('idle');
+        setNotice(null);
+        setSettings({ status: 'idle' });
         setState(refusalCode ? { kind: 'failed', code: refusalCode } : { kind: 'loading' });
         return () => { if (currentClient.current === client) currentClient.current = null; };
         // This state belongs to the Machine scope, not later callback or initial-choice props.
@@ -74,7 +77,7 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
         void client.listTargets().then(result => {
             if (!current || !client.isCurrent()) return;
             setState(result.ok ? { kind: 'ready', targets: result.value.targets, grants: result.value.grants, displays: result.value.displays }
-                : { kind: 'failed', code: result.code, details: result.details });
+                : { kind: 'failed', code: result.code, actionFailure: result.actionFailure });
             if (result.ok) {
                 const suggested = resolveSuggestedTargetKey(result.value.targets, requestedTarget);
                 setSuggestedKey(suggested);
@@ -101,12 +104,12 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
         if (!chosen) return;
         if (onChosen) { onChosen(chosen, shareAccess); onClose(); return; }
         setSharing(true);
-        setNoticeCode(null);
+        setNotice(null);
         void client.selectTarget(chosen.target, shareAccess).then(result => {
             if (currentClient.current !== client || !client.isCurrent()) return;
             setSharing(false);
             if (result.ok) { onSelected(result.value); onClose(); return; }
-            setNoticeCode(result.code);
+            setNotice({ code: result.code, actionFailure: result.actionFailure });
             if (result.code === 'computer_target_not_available') retry();
         });
     }, [access, client, onChosen, onClose, onSelected, retry, selectedKey, state]);
@@ -115,17 +118,22 @@ export function useComputerTargetPicker(input: ComputerTargetPickerInput) {
         void client.stopSharing().then(result => {
             if (currentClient.current !== client || !client.isCurrent()) return;
             if (result.ok && result.value.status === 'dispatched') { onClose(); return; }
-            setNoticeCode(result.ok ? result.value.status === 'failed' ? result.value.code : 'control_not_drained' : result.code);
+            setNotice(result.ok ? { code: result.value.status === 'failed' ? result.value.code : 'control_not_drained' }
+                : { code: result.code, actionFailure: result.actionFailure });
         });
     }, [client, onClose]);
     const requestSettings = React.useCallback((permission: 'capture' | 'input') => {
         if (currentClient.current !== client || !client.isCurrent()) return;
-        setOpenSettings('opening');
+        setSettings({ status: 'opening' });
         void client.openSettings(permission).then(result => {
             if (currentClient.current !== client || !client.isCurrent()) return;
-            setOpenSettings(result.ok && result.value.status === 'dispatched' ? 'opened' : 'failed');
+            setSettings(result.ok ? { status: result.value.status === 'dispatched' ? 'opened' : 'failed' }
+                : { status: 'failed', actionFailure: result.actionFailure });
         });
     }, [client]);
     const recovery = React.useMemo(() => resolveComputerRecovery(state, access), [access, state]);
-    return { state, selectedKey, setSelectedKey, access, setAccess, suggestedKey, sharing, noticeCode, openSettings, retry, share, stopSharing, requestSettings, recovery };
+    return { state, selectedKey, setSelectedKey, access, setAccess, suggestedKey, sharing,
+        noticeCode: notice?.code ?? null, noticeFailure: notice?.actionFailure,
+        openSettings: settings.status, openSettingsFailure: settings.actionFailure,
+        retry, share, stopSharing, requestSettings, recovery };
 }

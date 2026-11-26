@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+import { ItemGroupRowPositionBoundary } from '@/components/ui/lists/ItemGroupRowPosition';
+import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+
 import {
   RowStatusLine,
   type RowStatusTone,
@@ -16,6 +19,7 @@ export type WorkspaceSyncStatusLineModel = Readonly<{
   text: string;
   tone: RowStatusTone;
   busy: boolean;
+  technicalDetails?: readonly TechnicalDetailsLine[];
   /** The one next step the state calls for: review conflicts, or ask the managing machine again. */
   action: 'review' | 'retry' | null;
 }>;
@@ -65,13 +69,16 @@ export function presentWorkspaceSyncStatusLine(
     };
   }
   switch (input.stateKey) {
-    case 'workspaceSync.state.controllerUnavailable':
+    case 'workspaceSync.state.controllerUnavailable': {
+      const failure = presentWorkspaceSyncFailure(input.readError);
       return {
-        text: presentWorkspaceSyncFailure(input.readError)?.message ?? t(input.stateKey),
+        text: failure?.message ?? t(input.stateKey),
         tone: 'warn',
         busy: false,
         action: 'retry',
+        ...(failure ? { technicalDetails: failure.technicalDetails } : {}),
       };
+    }
     case 'workspaceSync.state.engineUnavailable':
       return {
         text: t('workspaceSync.error.componentUnavailable'),
@@ -134,14 +141,25 @@ export const WorkspaceSyncStatusLine = React.memo(
             }
           : null;
     return (
-      <RowStatusLine
-        testID={props.testID}
-        text={model.text}
-        tone={model.tone}
-        busy={model.busy}
-        action={action}
-        numberOfLines={model.tone === 'quiet' ? 1 : 2}
-      />
+      <>
+        <RowStatusLine
+          testID={props.testID}
+          text={model.text}
+          tone={model.tone}
+          busy={model.busy}
+          action={action}
+          numberOfLines={model.tone === 'quiet' ? 1 : 2}
+        />
+        {model.technicalDetails?.length ? (
+          <ItemGroupRowPositionBoundary>
+            <TechnicalDetailsDisclosure
+              testID={props.testID ? `${props.testID}-technical-details` : undefined}
+              title={t('approvals.technicalDetails')}
+              lines={model.technicalDetails}
+            />
+          </ItemGroupRowPositionBoundary>
+        ) : null}
+      </>
     );
   },
 );

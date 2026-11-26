@@ -208,6 +208,17 @@ async function initializeRemovalSettings(scope: ServerAccountScope, waiveApprova
 }
 
 describe('Shared Saved Secret person disclosure controller', () => {
+    it('shows a permission refusal when the Home refuses disclosure history', async () => {
+        const { scope } = await mount(false);
+        const { SharedSavedSecretHistory } = await import('@/components/secrets/SharedSavedSecretHistory');
+        harness.answer(scope.serverId, '/v1/account/saved-secrets/resources/activity/read', { status: 403, body: { error: 'forbidden' } });
+        const history = await renderScreen(<PluginSurfaceFocusEligibilityProvider active={false} presentationActive>
+            <SharedSavedSecretHistory scope={scope} resourceId="secret-a" enabled testID="history-refusal" />
+        </PluginSurfaceFocusEligibilityProvider>);
+        await vi.waitFor(() => expect(history.getTextContent()).toContain('errors.permissionDenied'));
+        await history.unmount();
+    });
+
     it.each([false, true])('reads visible disclosure history and pauses while retained hidden (initially presented: %s)', async initiallyPresented => {
         const { scope } = await mount(false);
         const { useSharedSavedSecretActivity } = await import('@/components/secrets/useSharedSavedSecretActivity');
@@ -451,6 +462,27 @@ describe('Shared Saved Secret person disclosure controller', () => {
         expect(hook.getCurrent().state).toMatchObject({ status: 'refused', reason: 'forbidden' });
         expect(JSON.stringify(hook.getCurrent().state)).not.toContain('test-secret');
         expect(writeClipboard).not.toHaveBeenCalled();
+    });
+
+    it.each(['requested', 'displayed'] as const)('returns a refused %s disclosure receipt to the approved Reveal caller', async refusedOutcome => {
+        const { scope, entries } = await mount(false);
+        const { SharedSavedSecretValueItem } = await import('@/components/secrets/SharedSavedSecretValueItem');
+        const activityPath = '/v1/account/saved-secrets/resources/activity';
+        harness.answer(scope.serverId, activityPath, { select: body =>
+            typeof body === 'object' && body !== null && 'outcome' in body && body.outcome === refusedOutcome
+                ? { status: 403, body: { error: 'forbidden' } }
+                : { body: { historyEntryId: 'disclosure-entry' } },
+        });
+        const entry = entries[0]!;
+        const onSettled = vi.fn();
+        const leaf = await renderScreen(<SharedSavedSecretValueItem active scope={scope} entry={entry} testID="approved-reveal"
+            approvedReveal={{ input: { ref: entry.ref, expectedRevision: 3 }, onSettled }} />);
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledWith({
+            ok: false, errorCode: 'forbidden', error: 'forbidden', details: expect.objectContaining({ httpStatus: 403 }),
+        }));
+        expect(leaf.getTextContent()).not.toContain('test-secret');
+        expect(leaf.findByTestId('approved-reveal-copy')).toBeNull();
+        await leaf.unmount();
     });
 
     it('confirms the Copy record after clipboard focus loss hides the revealed value', async () => {

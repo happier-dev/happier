@@ -10,12 +10,13 @@ import { readSavedSecretCatalogMetadataInContext } from '@/sync/api/account/apiS
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 
 import { admitProfileAccount, withProfileAccount, type ProfileAccountContext } from '@/sync/api/account/apiProfileCatalog';
-import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { applySavedSecretCatalogDeletion, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { isTeamActionApprovalPendingError, runTeamAction, type HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { getSavedSecretCatalogSnapshot } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { captureSavedSecretReferenceStateInContext, projectSavedSecretResourceOperationError, projectSavedSecretResourceOperationFailure,
+    readSavedSecretResourceApprovalFailure,
     type SavedSecretAdmittedMutationExecute, type SavedSecretResourceOperationResult } from './savedSecretResourceOperations';
 import { captureManagedMachinePresetSavedSecretReferencesInContext } from '@/sync/ops/machines/machinePresetCollectionClientImpl';
 
@@ -33,6 +34,7 @@ type SavedSecretResourceDeleteFailure = (
 type SavedSecretDeleteOutput = Readonly<{ resourceId: string }>;
 
 function savedSecretDeleteFailure(failure: HomeDomainFailure<string>,
+    actionFailure?: ActionExecuteFailure,
     references: readonly AccountSettingsSavedSecretReference[] = [],
 ): SavedSecretResourceDeleteFailure {
     if (failure.code === 'managed_resources_review_required') {
@@ -42,9 +44,9 @@ function savedSecretDeleteFailure(failure: HomeDomainFailure<string>,
         }
     }
     if (failure.code === 'resource_in_use') {
-        return { ...projectSavedSecretResourceOperationFailure(failure), reason: 'in_use', references };
+        return { ...projectSavedSecretResourceOperationFailure(failure, actionFailure), reason: 'in_use', references };
     }
-    return projectSavedSecretResourceOperationFailure(failure);
+    return projectSavedSecretResourceOperationFailure(failure, actionFailure);
 }
 
 export async function deleteSavedSecretResource(params: Readonly<{
@@ -115,7 +117,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
                         await params.onApprovalSucceeded?.(receipt);
                     },
                     ...(params.onApprovalFailed ? { onApprovalFailed: (code, failure) => params.onApprovalFailed?.(
-                        code, savedSecretDeleteFailure(homeDomainFailureFromActionFailure(failure ?? { errorCode: code })),
+                        code, savedSecretDeleteFailure(...readSavedSecretResourceApprovalFailure(code, failure)),
                     ) } : {}),
                 });
                 if (outcome.kind === 'succeeded') {
@@ -123,7 +125,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
                         context.accountLifetime.isCurrent());
                     return { ok: true };
                 }
-                const failure = savedSecretDeleteFailure(outcome.failure,
+                const failure = savedSecretDeleteFailure(outcome.failure, undefined,
                     outcome.failure.code === 'resource_in_use' && accountMode === 'plain' ? readReferences() : []);
                 if (failure.reason === 'outcome_unknown') {
                     // A lost reply can follow a committed delete. Only a successful

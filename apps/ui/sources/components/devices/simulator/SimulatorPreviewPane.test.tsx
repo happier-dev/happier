@@ -251,6 +251,40 @@ describe('SimulatorPreviewPane', () => {
         expect(selectDevice).toHaveBeenCalledWith('emulator-5554');
     });
 
+    it('shows a typed screenshot refusal without displaying native diagnostic text', async () => {
+        const { Modal, ModalProvider } = await import('@/modal');
+        const { createActionExecuteFailureError } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+        const { createSimulatorPreviewApi } = await import('@/sync/domains/devices/simulator/api');
+        const { useSimulatorPreview } = await import('@/sync/domains/devices/simulator/useSimulatorPreview');
+        const model = selectedViewModel();
+        const resources = [{ ...model.resource!, supportedDeviceOperations: ['screenshot' as const] }];
+        const api = createSimulatorPreviewApi({ dispatch: async () => {}, executeDeviceOperationAction: async () => {
+            throw createActionExecuteFailureError({
+                ok: false, errorCode: 'action_forbidden', error: 'Private simulator path /private/sim-data',
+                requestId: 'simulator-screenshot-refused', effectAttempted: false,
+                failureCause: { phase: 'home.action.admission', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+            });
+        } });
+        function Probe() {
+            const { actions } = useSimulatorPreview({ resources, viewerId: 'viewer_1', selectedSimulatorId: 'sim_1', api });
+            return <SimulatorPreviewPane viewModel={model} actions={actions} sessionId="session_1" testID="simulator-preview" />;
+        }
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+        try {
+            const screen = await renderScreen(<ModalProvider><Probe /></ModalProvider>);
+            await screen.pressByTestIdAsync('simulator-preview-toolbar-screenshot');
+            expect(alert.mock.calls[0]?.[1]).toBe('errors.permissionDenied');
+            const details = alert.mock.calls[0]?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+            expect(details).toBeDefined();
+            details?.onPress?.();
+            expect(alert.mock.calls[1]?.[1]).toContain('simulator-screenshot-refused');
+            expect(alert.mock.calls[1]?.[1]).toContain('false');
+            expect(alert.mock.calls[1]?.[1]).not.toContain('/private/sim-data');
+        } finally {
+            alert.mockRestore();
+        }
+    });
+
     it('takes a screenshot into the Session from the rail, and offers none without a Session', async () => {
         const runDeviceOperation = vi.fn(async () => ({ ok: true as const }));
         const withSession = await renderPane(selectedViewModel(), { runDeviceOperation }, 'session_1');

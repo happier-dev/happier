@@ -145,6 +145,31 @@ describe('BrowserShellPresence daemon takeover', () => {
         await screen.update(<Surface currentView={{ ...view('human', 5), automationController: undefined }} />);
         expect(screen.findHostByTestId('p-frame')).toBeNull();
     });
+    it('shows the Machine’s typed takeover refusal in the existing recovery row', async () => {
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+        const failure = { ok: false, errorCode: 'action_forbidden', error: 'Private takeover diagnostic',
+            requestId: 'takeover-owner-refusal', effectAttempted: false,
+            failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+        } as const;
+        rpc.mockReset();
+        rpc.mockResolvedValue(failure);
+        const screen = await renderScreen(<Surface currentView={view('agent', 4)} />);
+        try {
+            await screen.pressByTestIdAsync('p-take-control');
+            await flushHookEffects({ cycles: 1, advanceTimersMs: slideTransitionTokens.routine.timed.durationMs.enter });
+            expect(screen.getTextContent()).toContain('errors.permissionDenied');
+            expect(screen.getTextContent()).not.toContain(failure.error);
+            expect(screen.findHostByTestId('p-human')).toBeNull();
+            await screen.pressByTestIdAsync('p-failure-details');
+            expect(alert.mock.calls[0]?.[1]).toContain(failure.requestId);
+            expect(alert.mock.calls[0]?.[1]).not.toContain(failure.error);
+        } finally {
+            await screen.unmount();
+            alert.mockRestore();
+        }
+    });
+
     it('does not take control or hand back when the existing Action policy refuses UI admission', async () => {
         rpc.mockReset();
         const screen = await renderScreen(<Surface currentView={view('agent', 4)} enabled={false} />);

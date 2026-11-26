@@ -577,7 +577,14 @@ describe('Project Add machine modal', () => {
         expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'error', accessibilitySemantics: 'alert' });
     });
 
-    it('retains a recorded approval execution failure through the actual Sync adapter', async () => {
+    it.each([
+        { errorCode: 'credential_scope_denied', causeCode: 'machine_manage_required', nativeErrorReason: undefined,
+            shownCode: 'machine_manage_required', message: 'workspaceSync.error.manageRequired' },
+        { errorCode: 'RPC_FORBIDDEN', causeCode: 'RPC_FORBIDDEN', nativeErrorReason: 'custodian_only',
+            shownCode: 'RPC_FORBIDDEN', message: 'errors.custodianOnly' },
+    ])('presents a recorded approval execution failure of $errorCode through the Sync adapter', async ({
+        errorCode, causeCode, nativeErrorReason, shownCode, message,
+    }) => {
         const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
         const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
@@ -590,9 +597,10 @@ describe('Project Add machine modal', () => {
                 caller: { kind: 'host' }, serverId: workspace.serverId, serverIdentityId: 'srv_workspace_sync',
                 accountId: workspace.accountId, actionId: 'workspace.sync.relationship.create', requestId: 'recorded-sync' },
             decision: { kind: 'approve', decidedAtMs: 2 },
-            execution: { executedAtMs: 3, ok: false, errorCode: 'credential_scope_denied', error: 'private /secret/workspace',
+            execution: { executedAtMs: 3, ok: false, errorCode, error: 'private /secret/workspace',
                 details: { reason: 'target_not_authorized', privatePath: '/secret/workspace' },
-                failureCause: { phase: 'target.preflight', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } } });
+                failureCause: { phase: 'target.preflight', errorClass: 'Error', errorCode: causeCode, httpStatus: null,
+                    ...(nativeErrorReason ? { nativeErrorReason } : {}) } } });
         workspace.home.artifacts(workspace.serverId).replaceStoredRow(createPlainArtifactHttpFixture({
             id: 'failed-sync', isDecrypted: true, title: request.summary, header: buildApprovalRequestArtifactHeaderV1(request),
             body: JSON.stringify(request), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
@@ -600,13 +608,13 @@ describe('Project Add machine modal', () => {
         let failure: unknown;
         try { await approveWorkspaceSyncRelationshipCreate({ artifactId: 'failed-sync', serverId: workspace.serverId }); }
         catch (caught) { failure = caught; }
-        expect(failure).toMatchObject({ code: 'credential_scope_denied' });
+        expect(failure).toMatchObject({ code: errorCode });
         const presented = presentWorkspaceSyncFailure(failure);
-        expect(presented?.code).toBe('machine_manage_required');
-        const message = JSON.stringify(presented);
+        expect(presented).toMatchObject({ code: shownCode, message });
+        if (nativeErrorReason) expect(presented?.technicalDetails).toContainEqual(expect.objectContaining({ value: nativeErrorReason }));
         // Recorded approval reads intentionally omit opaque, non-contract details.
         expect(failure).toMatchObject({ failureCause: request.execution?.failureCause });
-        expect(message).not.toContain('/secret/workspace');
+        expect(JSON.stringify(presented)).not.toContain('/secret/workspace');
     });
 
     it.each(['source attach', 'destination open'])('retains an HTTP Action refusal through %s to the modal', async path => {
@@ -855,6 +863,30 @@ describe('Project Add machine modal', () => {
             await act(async () => { modal.submit().props.onPress(); });
             await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain(key));
             expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'error' });
+            expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+        });
+
+        it.each([
+            { nativeErrorReason: 'custodian_only', title: 'errors.custodianOnly' },
+            { nativeErrorReason: 'target_binding_mismatch', title: 'projects.open.failed' },
+        ])('presents the destination Open refusal with native reason $nativeErrorReason', async ({ nativeErrorReason, title }) => {
+            await answerOpen({ kind: 'refused', code: 'RPC_FORBIDDEN', effectAttempted: false, failureCause: {
+                phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403,
+                nativeErrorReason,
+            } });
+            const modal = await openUseDestination();
+            await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+            await act(async () => { modal.submit().props.onPress(); });
+
+            await vi.waitFor(() => expect(statusLine(modal.screen)?.props).toMatchObject({ kind: 'error', title }));
+            const disclosure = modal.screen.findAllByType(TechnicalDetailsDisclosure)
+                .find(node => node.props.testID === 'workspace-sync-add-machine-technical-details');
+            expect(disclosure?.props.lines).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: 'code', value: 'RPC_FORBIDDEN' }),
+                expect.objectContaining({ key: 'causePhase', value: 'rpc.admission.machine' }),
+                expect.objectContaining({ value: nativeErrorReason }),
+            ]));
+            expect(openRequests()).toHaveLength(1);
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
         });
 

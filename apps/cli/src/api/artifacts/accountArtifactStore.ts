@@ -520,7 +520,10 @@ export function createAccountArtifactStore(params: Readonly<{
       : request.method === 'DELETE' ? await axios.delete(url, config) : await axios.post(url, request.body, config);
     if (response.status < 200 || response.status >= 300) {
       request.signal?.throwIfAborted();
-      const failure = readArtifactPublicLinkHttpFailureV1({ path: request.path, status: response.status, payload: response.data });
+      const refusal = projectConfirmedActionHttpRefusal<ActionExecuteFailure>(
+        { ok: false, errorCode: 'action_failed', error: 'action_failed' }, response.status, response.data);
+      const failure = refusal.failureCause ? { ...refusal, code: refusal.errorCode }
+        : readArtifactPublicLinkHttpFailureV1({ path: request.path, status: response.status, payload: response.data });
       // Each route family keeps its existing error class; only the closed code projection is shared.
       throw request.path.startsWith('/v1/artifact-signed-in-links')
         ? Object.assign(new HttpStatusError(response.status, failure.code), failure, { status: response.status })

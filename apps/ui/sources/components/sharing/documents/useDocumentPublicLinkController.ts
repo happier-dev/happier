@@ -12,7 +12,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
-import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, type FailurePresentationOptions } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { HappyError } from '@/utils/errors/errors';
 import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
@@ -76,13 +76,7 @@ export function useDocumentPublicLinkController(input: Readonly<{
         const result = await (confirmed ? execute.confirmed : execute)(actionId, payload, { surface: 'ui', authority: 'present_user',
             serverId: scope.serverId, expectedAccountId: scope.accountId, actionRequestId: randomUUID() });
         if (!isCurrent()) return null;
-        if (!result.ok) {
-            if (result.errorCode !== 'public_share_isolation_unavailable') {
-                throw createActionExecuteFailureError(result);
-            }
-            const issue = presentSessionAccessFailure(new SessionAccessApiError(result.errorCode));
-            throw new HappyError(issue.message, issue.retryable, { code: issue.code });
-        }
+        if (!result.ok) throw createActionExecuteFailureError(result);
         const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         if (pending.success) {
             approval.requestApproval(createActionApprovalContinuation<unknown, PublicLinkAction>({
@@ -183,13 +177,19 @@ export function useDocumentPublicLinkController(input: Readonly<{
         if (result === null || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
         return ArtifactActionOutputSchemasV1['artifact.public_link.audit'].parse(result);
     }, [artifactId, isCurrent, request]);
-    const presentFailure = React.useCallback((error: unknown) => {
+    const presentFailure = React.useCallback((error: unknown,
+        detailsAudience: FailurePresentationOptions['detailsAudience'] = 'recipient',
+    ): ReturnType<typeof presentSessionAccessFailure> & Readonly<{ diagnosticDetail?: string }> => {
         const failure = parseActionExecuteFailure(error);
         if (!failure) return presentSessionAccessFailure(error);
-        const presentation = presentActionExecutionFailure(failure, t('session.collaboration.pane.linkLoadFailed'));
-        return { code: failure.errorCode, message: presentation.reason, retryable: !isPublicLinkGone(error),
-            diagnosticDetail: presentation.technicalDetails.filter(detail => detail.key !== 'code')
-                .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined };
+        const presentation = presentActionExecutionFailure(failure, t('session.collaboration.pane.linkLoadFailed'),
+            { safeToRetry: failure.effectAttempted === false, ...(detailsAudience ? { detailsAudience } : {}) });
+        const diagnosticDetail = presentation.technicalDetails.filter(detail => detail.key !== 'code')
+            .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined;
+        if (failure.errorCode === 'public_share_isolation_unavailable') {
+            return { ...presentSessionAccessFailure(new SessionAccessApiError(failure.errorCode)), diagnosticDetail };
+        }
+        return { code: failure.errorCode, message: presentation.reason, retryable: !isPublicLinkGone(error), diagnosticDetail };
     }, []);
     return { ...state, publicationGone: gone && isCurrent(), issue: state.error ? presentFailure(state.failure) : null, presentFailure, networkPolicy, scopeKey, configurationScope: scope, shareUrl: canManage && issued.current?.shareId === state.publication?.id ? issued.current?.url ?? null : null,
         readOnly: !canManage, pendingApproval: approval.approvalPending, reload, create, remove, listAccessLog,

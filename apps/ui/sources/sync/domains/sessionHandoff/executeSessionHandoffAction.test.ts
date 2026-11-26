@@ -10,6 +10,18 @@ describe('executeSessionHandoffAction', () => {
     expect(result).toEqual(failure);
   });
 
+  it('retains the reviewed destination from an immediate handoff Action refusal', async () => {
+    const { executeSessionHandoffAction } = await import('./executeSessionHandoffAction');
+    const destinationReview = { accountId: 'member', serverId: 'home', machineId: 'target',
+      destinationParentPath: '/member', destinationDirectoryName: 'project' };
+    const errorCode = 'workspace_private_checkout_review_required';
+    const refusal = { ok: false as const, errorCode, error: errorCode,
+      details: { kind: 'refused', code: errorCode, destinationReview } };
+    const result = await executeSessionHandoffAction({ execute: async () => refusal,
+      sessionId: 'source-session', targetMachineId: 'target', context: { surface: 'ui' } });
+    expect(result).toEqual(refusal);
+  });
+
   it('preserves the explicit no-copy policy through Action admission and missing-state rejection', async () => {
     const { executeSessionHandoffAction } = await import('./executeSessionHandoffAction');
     const execute = vi.fn(async () => ({ ok: false as const, errorCode: 'existing_session_state_unavailable', error: 'Missing native history' }));

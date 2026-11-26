@@ -22076,6 +22076,7 @@ const fr = completeWorkspaceSyncTranslation({
         manageRequired: "Cette action nécessite un accès Gestion à la machine de destination. Demandez-le à son propriétaire.",
         projectWorkspaceChanged: "Ce dossier appartient à un autre projet. Choisissez un nouveau dossier ou utilisez le projet auquel il appartient déjà.",
         requesterLinkUnavailable: "Pour emporter une copie, ouvrez d’abord le projet sur votre propre machine. Ou transférez sans copie.",
+        seedFromSharedMachineRefused: "Le serveur a refusé de copier l’espace de travail en utilisant la machine de quelqu’un d’autre.",
         dependenciesUnavailable: "L’autre machine n’a pas pu être vérifiée pour du travail qui utilise cette copie. Réessayez, ou demandez au propriétaire de cette machine.",
         provenanceConflict: "Ces dossiers sont déjà synchronisés pour un autre usage. Choisissez un autre dossier.",
         notWorkerCopy: "Ce dossier n’a pas été créé comme copie de travail : Happier l’a laissé en place. Rien n’a été supprimé.",

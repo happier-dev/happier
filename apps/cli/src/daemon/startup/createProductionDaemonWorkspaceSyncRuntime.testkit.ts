@@ -224,6 +224,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
   nativeCarrierRefusal?: boolean;
   /** Exercise an actual native error envelope after endpoint/grant admission. */
   nativeCarrierDialFailure?: boolean;
+  useNativeSeedCarrier?: boolean;
   /** Real remote Home HTTP issuance; only the native addon and loopback socket are substituted. */
   nativeCarrierHome?: Pick<Parameters<typeof createWorkspaceMachineCarrierTunnelOpen>[0],
     'resolveTrustRoots' | 'readTargetMachine' | 'mintGrant'> & Readonly<{
@@ -749,7 +750,9 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       async function open(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'file_transfer' }>): Promise<FiniteTransferMachineTunnel>;
       async function open(request: Extract<WorkspaceSyncMachineTunnelOpenInput, { flow: 'workspace_sync' }>): Promise<WorkspaceSyncMachineTunnel>;
       async function open(request: WorkspaceSyncMachineTunnelOpenInput): Promise<FiniteTransferMachineTunnel | WorkspaceSyncMachineTunnel> {
-        if (request.flow === 'file_transfer') return await openSeedTunnel(request);
+        if (request.flow === 'file_transfer') {
+          return await (options.useNativeSeedCarrier && carrier ? carrier(request) : openSeedTunnel(request));
+        }
         if (!carrier) throw new Error('Fixture workspace carrier is unavailable');
         return await carrier(request);
       }

@@ -1,3 +1,4 @@
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ArtifactActionInputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, ArtifactDocumentV1Schema, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { createArtifactPublicLinkActionsV1, createArtifactSignedInLinkJoinActionV1, type ArtifactPublicLinkIssuedV1, type ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
@@ -348,8 +349,9 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 return { ok: false, errorCode: 'quota_exceeded', error: 'quota_exceeded', details: error.quota };
             const code = error instanceof HappyError && error.status === 404 ? 'not_found'
                 : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed';
-            return { ok: false, errorCode: code, error: error instanceof Error ? error.message : code,
-                ...(error instanceof Error && 'reason' in error && typeof error.reason === 'string' ? { details: { reason: error.reason } } : {}) };
+            return readActionFailureEnvelope({ ...(error && typeof error === 'object' ? error : {}),
+                ok: false, errorCode: code, error: error instanceof Error ? error.message : code,
+                ...(error instanceof Error && 'reason' in error && typeof error.reason === 'string' ? { details: { reason: error.reason } } : {}) })!;
         }
     };
 }

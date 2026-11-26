@@ -6,10 +6,12 @@ import { savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/a
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readSavedSecretDisclosureHistoryInContext } from '@/sync/ops/settings/savedSecretDisclosure';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 type Page = ReturnType<typeof SavedSecretDisclosureHistoryV1Schema.parse>;
-type State = Readonly<{ status: 'idle' | 'loading' | 'refused' }>
+type State = Readonly<{ status: 'idle' | 'loading' }>
+    | Readonly<{ status: 'refused'; failure?: HomeDomainFailure<string> }>
     | Readonly<{ status: 'ready'; entries: Page['items']; nextCursor: string | null }>;
 const idle = { status: 'idle' } as const;
 const noOperation = () => {};
@@ -74,7 +76,7 @@ export function useSharedSavedSecretActivity(input: Readonly<{
                         const result = await readSavedSecretDisclosureHistoryInContext(account,
                             { resourceId, ...(nextCursor ? { cursor: nextCursor } : {}) }, controller.signal);
                         if (!exact()) return;
-                        if (!result.ok) { publish({ status: 'refused' }); return; }
+                        if (!result.ok) { publish({ status: 'refused', failure: result.failure }); return; }
                         refreshed.push(...result.value.items);
                         nextCursor = result.value.nextCursor;
                         if (cursor || !oldestConsumedId || result.value.items.some(entry => entry.id === oldestConsumedId)) break;

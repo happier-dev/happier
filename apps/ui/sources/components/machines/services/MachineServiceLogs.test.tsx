@@ -77,6 +77,7 @@ describe('Machine service shared log viewer', () => {
     ])('presents the typed $code refusal without inventing a Machine reachability failure', async failure => {
         const actionId = 'machines.services.logs.read';
         const actionPath = `/v1/actions/${actionId}`;
+        let requestId: string | undefined;
         const row = { ...createPlainMachineRowFixture({ id: 'machine', accountId: 'account' }), installationId: 'installation' };
         homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
             body: await createMachineReadBatchResponseFixture(body, () => row).json(),
@@ -92,8 +93,11 @@ describe('Machine service shared log viewer', () => {
         } });
         homes.answer(serverId, actionPath, { select: body => {
             const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            requestId = authorized.envelope.requestId;
             return { body: { v: 1, actionId, requestId: authorized.envelope.requestId,
-                execution: { ok: false, errorCode: failure.code, error: failure.message, details: failure.details } } };
+                execution: { ok: false, errorCode: failure.code, error: failure.message, details: failure.details,
+                    requestId: authorized.envelope.requestId, effectAttempted: false,
+                    failureCause: { phase: 'machine.services.logs.read', errorClass: 'Error', errorCode: null, httpStatus: null } } } };
         } });
         const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
             lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
@@ -125,6 +129,11 @@ describe('Machine service shared log viewer', () => {
             }
             await screen.pressByTestIdAsync(`${cardId}-details-toggle`);
             expect(screen.getTextContent()).toContain(failure.code);
+            expect(requestId).toBeDefined();
+            expect(screen.getTextContent()).toContain(requestId);
+            expect(screen.getTextContent()).toContain('machine.services.logs.read');
+            expect(screen.getTextContent()).toContain('false');
+            expect(screen.getTextContent()).not.toContain(failure.message);
         } finally { await screen.unmount(); }
     });
 

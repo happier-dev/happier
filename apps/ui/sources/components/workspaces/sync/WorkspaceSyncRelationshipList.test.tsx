@@ -164,18 +164,22 @@ describe('WorkspaceSyncRelationshipRow', () => {
 
     it('shows the Sync owner refusal when the Action envelope has a generic code', async () => {
         const { Modal } = await import('@/modal');
+        const { readActionFailureDetails } = await import('@/dev/testkit/fixtures/actionFailureDetails');
         vi.mocked(Modal.alert).mockClear();
         const screen = await renderScreen(<WorkspaceSyncRelationshipRow summary={createSummary(0)} />);
         const menu = screen.findAllByType('DropdownMenu')[0];
 
         mountedExecuteSpy.mockResolvedValueOnce({ ok: false, errorCode: 'credential_scope_denied', error: 'Request refused',
-            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null, nativeErrorReason: null } });
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } });
         await act(async () => { menu?.props.onSelect('enable'); });
-        const actions = vi.mocked(Modal.alert).mock.lastCall?.[2];
-        const details = actions?.find(action => action.text === 'approvals.technicalDetails');
-        expect(details).toBeDefined();
+        const alert = vi.mocked(Modal.alert);
+        await vi.waitFor(() => expect(alert.mock.lastCall?.[1]).toBe('workspaceSync.error.manageRequired'));
+        const details = alert.mock.lastCall?.[2]?.find(action => action.text === 'approvals.technicalDetails');
+        expect(details?.onPress).toBeTypeOf('function');
         details?.onPress?.();
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'machine_manage_required');
+        expect(readActionFailureDetails(alert.mock.lastCall?.[1])).toMatchObject({
+            code: 'credential_scope_denied', causeCode: 'machine_manage_required',
+        });
     });
 
     it('presents nothing when the row left the list before its own Stop settled', async () => {

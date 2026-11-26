@@ -254,8 +254,12 @@ export function useSessionBrowserRecordingRuntime(
                 externalActionTarget: { kind: 'machine', machineId },
             });
             if (signal.aborted || !isCurrent()) return;
-            const parsed = result.ok ? DaemonBrowserRecordingStartResultV1Schema.safeParse(result.result) : null;
-            if (!parsed?.success) {
+            if (!result.ok) {
+                presentBrowserRecordingActionFailure('start', result);
+                return;
+            }
+            const parsed = DaemonBrowserRecordingStartResultV1Schema.safeParse(result.result);
+            if (!parsed.success) {
                 presentBrowserRecordingActionFailure('start');
                 return;
             }
@@ -267,8 +271,8 @@ export function useSessionBrowserRecordingRuntime(
             if (recording) {
                 setState((current) => applyBrowserRecordingSessionSnapshot(current, recording));
             }
-        } catch {
-            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('start');
+        } catch (error) {
+            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('start', error);
         } finally {
             pending.delete(request.viewId);
         }
@@ -294,14 +298,18 @@ export function useSessionBrowserRecordingRuntime(
                 stoppedAtMs: nowMs(),
             }, { signal, defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId } });
             if (signal.aborted || !isCurrent()) return;
-            const parsed = result.ok ? DaemonBrowserRecordingStopResultV1Schema.safeParse(result.result) : null;
+            if (!result.ok) {
+                presentBrowserRecordingActionFailure('stop', result);
+                return;
+            }
+            const parsed = DaemonBrowserRecordingStopResultV1Schema.safeParse(result.result);
             const updated = parsed?.success ? readRecordingFromDaemonResult(parsed.data) : null;
             if (updated) {
                 setState((current) => applyBrowserRecordingSessionSnapshot(current, updated));
             }
             presentRecordingStopOutcome(parsed?.success ? parsed.data : null);
-        } catch {
-            if (!signal.aborted && isCurrent()) presentRecordingStopOutcome(null);
+        } catch (error) {
+            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('stop', error);
         }
     }, [enabled, execute, isCurrent, machineId, nowMs, sessionId]);
 
@@ -316,7 +324,11 @@ export function useSessionBrowserRecordingRuntime(
                 reason: 'user_canceled',
             }, { signal, defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId } });
             if (signal.aborted || !isCurrent()) return;
-            const parsed = result.ok ? DaemonBrowserRecordingTerminalResultV1Schema.safeParse(result.result) : null;
+            if (!result.ok) {
+                presentBrowserRecordingActionFailure('discard', result);
+                return;
+            }
+            const parsed = DaemonBrowserRecordingTerminalResultV1Schema.safeParse(result.result);
             const updated = parsed?.success ? readRecordingFromDaemonResult(parsed.data) : null;
             if (updated) {
                 setState((current) => applyBrowserRecordingSessionSnapshot(current, updated));
@@ -324,8 +336,8 @@ export function useSessionBrowserRecordingRuntime(
             if (!parsed?.success || parsed.data.status === 'unavailable' || parsed.data.status === 'failed') {
                 presentBrowserRecordingActionFailure('discard');
             }
-        } catch {
-            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('discard');
+        } catch (error) {
+            if (!signal.aborted && isCurrent()) presentBrowserRecordingActionFailure('discard', error);
         }
     }, [enabled, execute, isCurrent, machineId, nowMs, sessionId]);
 

@@ -1,6 +1,10 @@
 import * as React from 'react';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
-import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
+import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+
+import { readBrowserSandboxInstallOutcome, type BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { t } from '@/text';
 
 export type BrowserSandboxAllowance =
@@ -28,8 +32,10 @@ export function useBrowserSandboxAllowance(
         let outcome: BrowserSandboxInstallOutcome | null;
         try {
             outcome = await onAllow();
-        } catch {
-            outcome = { status: 'failed', code: 'request_failed' };
+        } catch (error) {
+            const failure = readActionFailureEnvelope(error);
+            outcome = failure ? readBrowserSandboxInstallOutcome(failure)
+                : { status: 'failed', code: 'request_failed' };
         }
         if (mountedRef.current) setAllowance(outcome ? { kind: 'settled', outcome } : { kind: 'idle' });
     }, [onAllow]);
@@ -40,15 +46,18 @@ export function useBrowserSandboxAllowance(
 export function describeBrowserSandboxAllowance(
     outcome: BrowserSandboxInstallOutcome,
     agentName?: string,
-): Readonly<{ kind: 'success' | 'warning' | 'error'; title: string; reason: string; code: string }> {
+): Readonly<{ kind: 'success' | 'warning' | 'error'; title: string; reason: string; code: string; technicalDetails?: readonly TechnicalDetailsLine[] }> {
     if (outcome.status === 'installed') {
         return { kind: 'success', title: t('browserPresence.stream.sandboxAllowedTitle'),
             reason: agentName ? t('browserPresence.stream.sandboxAllowedBody', { agent: agentName }) : '', code: '' };
     }
     const needsPermission = outcome.code === 'os_authorization_required';
-    return needsPermission
-        ? { kind: 'warning', title: t('browserPresence.stream.sandboxPermissionTitle'),
+    const copy = needsPermission
+        ? { kind: 'warning' as const, title: t('browserPresence.stream.sandboxPermissionTitle'),
             reason: t('browserPresence.stream.sandboxPermissionBody'), code: outcome.code }
-        : { kind: 'error', title: t('browserPresence.stream.installFailedTitle'),
+        : { kind: 'error' as const, title: t('browserPresence.stream.installFailedTitle'),
             reason: t('browserPresence.stream.sandboxFailedBody'), code: outcome.code };
+    if (!outcome.actionFailure) return copy;
+    const presentation = presentActionExecutionFailure(outcome.actionFailure, copy.reason, { closedCodesOnly: true });
+    return { ...copy, reason: presentation.reason, technicalDetails: presentation.technicalDetails };
 }

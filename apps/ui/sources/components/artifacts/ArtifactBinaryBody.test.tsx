@@ -117,6 +117,15 @@ function installDownloadDocument() {
 }
 
 describe('ArtifactBinaryBody', () => {
+    it('keeps undeclared document diagnostics out of the shared Artifact failure presentation', async () => {
+        const { presentArtifactActionFailure } = await import('./artifactActionFailure');
+        const shown = presentArtifactActionFailure({ code: 'custodian_only', error: 'custodian_only',
+            details: { reason: 'private_document_identifier' }, requestId: 'document-request', effectAttempted: false,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 },
+        }, 'Unavailable');
+        expect(JSON.stringify(shown.context)).not.toContain('private_document_identifier');
+        expect(shown.context).toMatchObject({ requestId: 'document-request', effectAttempted: 'false', causeCode: 'custodian_only' });
+    });
     it('presents the authenticated binary read cause without replacing it with a renderer failure', async () => {
         const source = binarySource('denied-preview', 'application/pdf');
         source.request.mockImplementation(async () => Response.json({ error: 'artifact_access_forbidden' }, { status: 403 }));
@@ -255,11 +264,27 @@ describe('ArtifactBinaryBody', () => {
         const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
         expect(details).toBeDefined();
         await act(async () => { details?.onPress?.(); });
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'action_disabled');
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('action_disabled'));
         source.setExportEnabled(true);
         await screen.pressByTestIdAsync('artifact:download');
         await vi.waitFor(() => expect(anchor.click).toHaveBeenCalledOnce());
         expect(screen.findByTestId('artifact:downloadFailed')).toBeNull();
+    });
+    it('keeps the export refusal evidence in the Download details', async () => {
+        const source = binarySource('refused-export', 'application/zip');
+        source.request.mockImplementation(async () => Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 }));
+        const anchor = installDownloadDocument();
+        const screen = await renderScreen(<ArtifactBinaryBody artifactId="refused-export" name="export.zip" {...source} />);
+        await screen.pressByTestIdAsync('artifact:download');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull());
+        expect(anchor.click).not.toHaveBeenCalled();
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        await act(async () => { details?.onPress?.(); });
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.requestId:'));
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('home.database.transaction');
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('approvals.failureTechnicalLabels.effectAttempted: false');
+        await screen.unmount();
     });
     it.each(['image/svg+xml', 'application/pdf'])('materializes %s through the shared bytes owner', async mime => {
         const previous = Platform.OS;

@@ -7,6 +7,12 @@ import { ActionExecuteFailureSchema, readActionFailureCauseV1 } from '../actionE
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 import { readHomeDomainConfirmedRollbackV1 } from '../homeDomainHttpBinding.js';
 
+/** Undeclared Machine transport prose and details never enter a public Action result. */
+export function projectMachineActionRpcFailure(failure: ActionExecuteFailure): ActionExecuteFailure {
+  const { details: _undeclaredDetails, ...diagnostics } = failure;
+  return { ...diagnostics, error: failure.errorCode };
+}
+
 /** A received client refusal proves this write did not admit new work; a lost reply does not. */
 export function isConfirmedActionWriteRefusal(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;

@@ -140,6 +140,7 @@ export function useSimulatorPreview(input: SimulatorPreviewSelectionHookInput & 
         input.resources,
         input.snapshotState?.resources,
         input.snapshotState?.refreshState,
+        input.snapshotState?.snapshotFailure,
         localSelectedSimulatorId,
         input.viewerId,
         input.previewStatesBySimulatorId,

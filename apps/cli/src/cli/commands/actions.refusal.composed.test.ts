@@ -28,6 +28,12 @@ import Fastify from 'fastify';
 import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { handleActionsCommand } from './actions';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE, SessionHandoffSourceExportFailureDetailsV1Schema } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
+import { OpenProjectRefusalV1Schema } from '@happier-dev/protocol/projects/openProjectRefusalV1';
+import { computeWorkspaceSyncPolicyDigest } from '@/workspaces/sync/workspaceSyncTypes';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
@@ -175,7 +181,7 @@ it('prints a failed spawn with its typed Provider refusal through the real CLI A
   });
 });
 
-it.each(['native_refusal', 'raw_rpc', 'requester_home', 'requester_home_text'] as const)('prints %s failureCause and the owning effect fact after real approval settlement and public read', async transport => {
+it.each(['native_refusal', 'raw_rpc', 'raw_rpc_text', 'requester_home', 'requester_home_text'] as const)('prints %s failureCause and the owning effect fact after real approval settlement and public read', async transport => {
   await withConfiguredDaemonTestHome({ prefix: 'cli-refusal-projection-' }, async () => {
   const sockets = await createRequesterCurrentnessSocketHarness();
   sockets.server.on('connection', socket => {
@@ -221,9 +227,10 @@ it.each(['native_refusal', 'raw_rpc', 'requester_home', 'requester_home_text'] a
   } } });
   let executor: ReturnType<typeof createCliActionExecutor> | undefined;
   const requesterHome = transport === 'requester_home' || transport === 'requester_home_text';
-  const json = transport !== 'requester_home_text';
+  const json = transport !== 'requester_home_text' && transport !== 'raw_rpc_text';
+  const requestId = 'cli-refusal-invocation';
   await handleActionsCommand(['invoke', 'account.apiTokens.revoke', '--input-json',
-    JSON.stringify({ tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }), '--yes', ...(json ? ['--json'] : [])], {
+    JSON.stringify({ tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }), '--request-id', requestId, '--yes', ...(json ? ['--json'] : [])], {
     readCredentialsFn: async () => credentials,
     createExecutorFn: params => {
       executor = createCliActionExecutor({ ...params, token: credentials.token, credentials,
@@ -249,7 +256,7 @@ it.each(['native_refusal', 'raw_rpc', 'requester_home', 'requester_home_text'] a
       }
       // Both returned Machine results and thrown RpcErrors preserve the
       // admission owner's explicit no-effect fact through durable settlement.
-      if (transport === 'raw_rpc') throw createRpcCallError(response);
+      if (transport === 'raw_rpc' || transport === 'raw_rpc_text') throw createRpcCallError(response);
       return readMachineActionRpcResult(response);
     },
         },
@@ -271,7 +278,13 @@ it.each(['native_refusal', 'raw_rpc', 'requester_home', 'requester_home_text'] a
     expect(JSON.parse(output), output).toMatchObject({ ok: false,
       error: { code: errorCode, failureCause, ...effect } });
   } else {
-    expect(notices.mock.calls.flat().join(' ')).toContain('timeout');
+    const text = notices.mock.calls.flat().join(' ');
+    expect(text).toContain(errorCode);
+    expect(text).toContain(requesterHome ? 'requester.home_read' : 'rpc.admission.caller_input_authorization');
+    expect(text).toContain(requestId);
+    if (requesterHome) expect(text).toContain('timeout');
+    else expect(text).toContain('No effect attempted');
+    expect(text).not.toContain('never-copy');
   }
   expect(await executor.execute('approval.request.get', { artifactId }, { surface: 'cli', authority: 'present_user', serverId: 'home' }))
     .toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { ok: false, errorCode, failureCause, ...effect } } } });
@@ -279,4 +292,69 @@ it.each(['native_refusal', 'raw_rpc', 'requester_home', 'requester_home_text'] a
   expect(process.exitCode).toBe(1);
   } finally { await sockets.close(); }
   });
+});
+
+it.each(['source export', 'private checkout'] as const)('prints the closed %s refusal from the Session handoff Action', async kind => {
+  const checkout = kind === 'private checkout';
+  const requestId = 'cli-handoff-refusal';
+  const checkoutCode = 'workspace_private_checkout_review_required';
+  const failureCause = {
+    phase: 'session.handoff.workspace_capture',
+    errorClass: 'Error',
+    errorCode: checkoutCode,
+    httpStatus: null,
+    nativeErrorReason: checkoutCode,
+  };
+  const refusal = checkout ? {
+    errorCode: checkoutCode,
+    error: 'The destination needs a private checkout.',
+    failureCause,
+    effectAttempted: false,
+    details: OpenProjectRefusalV1Schema.parse({
+      kind: 'refused', code: checkoutCode, failureCause, effectAttempted: false,
+      destinationReview: { accountId: 'member', serverId: 'home', machineId: 'target-machine',
+        destinationParentPath: '/members/workspaces', destinationDirectoryName: 'copy' },
+    }),
+  } : {
+    errorCode: SESSION_HANDOFF_SOURCE_EXPORT_FAILURE_CODE,
+    error: 'Failed to export Session state',
+    details: SessionHandoffSourceExportFailureDetailsV1Schema.parse({
+      diagnostics: [{ code: 'transcript_missing', details: { pathKind: 'transcript_file' } }],
+    }),
+  };
+  const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+  const workspaceAction = checkout
+    ? { kind: 'copy_once', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } }
+    : { kind: 'none' };
+  const notices = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const sourceReply = vi.fn(async ({ actionRequestId }: { actionRequestId?: string }) => ({
+    ok: false as const,
+    ...refusal,
+    requestId: actionRequestId,
+  }));
+  const executor = createActionExecutor({
+    ...createUnavailableActionTransportDeps(),
+    // Keep the real Action admission; the two remote daemons answer preflight and start.
+    sessionHandoffTargetReplacementApprovalPreflight: async () => ({ type: 'not_required' }),
+    sessionHandoffStart: sourceReply,
+  });
+  await handleActionsCommand(['invoke', SESSION_HANDOFF_ACTION_ID_V1, '--input-json',
+    JSON.stringify({ sessionId: 'source-session', targetMachineId: 'target-machine', workspaceAction }),
+    '--request-id', requestId, '--yes'], {
+    readCredentialsFn: async () => ({ token: 'fixture', encryption: null, credentialProvenance: 'stored_session' }),
+    createExecutorFn: () => ({ ...executor,
+      resolveSessionTarget: async sessionId => ({ ok: true, sessionId }) }),
+  });
+  const terminal = notices.mock.calls.flat().join(' ');
+  expect(sourceReply, terminal).toHaveBeenCalledOnce();
+  expect(terminal).toContain(requestId);
+  if (checkout) {
+    expect(terminal).toContain(checkoutCode);
+    expect(terminal).toContain(failureCause.phase);
+    expect(terminal).toContain('No effect attempted');
+  } else {
+    expect(terminal).toContain('transcript_missing');
+    expect(terminal).toContain('transcript_file');
+  }
+  expect(process.exitCode).toBe(1);
 });

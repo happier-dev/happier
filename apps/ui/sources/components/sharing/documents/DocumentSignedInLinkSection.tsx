@@ -4,6 +4,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Switch } from '@/components/ui/forms/Switch';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -12,7 +13,7 @@ export function DocumentSignedInLinkSection(props: Readonly<{
     value: boolean; onChange(value: boolean): void | Promise<void>; disabled?: boolean; shareUrl: string | null;
     scope: ServerAccountScope; idPrefix: string; onReplace?: () => Promise<void>;
     audience?: 'anonymous' | 'signed_in';
-    presentFailure?: (error: unknown) => Readonly<{ message: string }>;
+    presentFailure?: (error: unknown) => Readonly<{ message: string; code?: string; diagnosticDetail?: string }>;
 }>) {
     const [pending, setPending] = React.useState(false);
     const [failure, setFailure] = React.useState<Readonly<{ error: unknown }> | null>(null);
@@ -25,6 +26,7 @@ export function DocumentSignedInLinkSection(props: Readonly<{
         try { await operation(); } catch (error) { setFailure({ error }); }
         finally { setPending(false); }
     };
+    const issue = failure ? props.presentFailure?.(failure.error) : undefined;
     return <View>
         <Item title={t(signedIn ? 'botTemplates.signedInLink' : 'session.sharing.publicLink')}
             subtitle={t(signedIn ? 'botTemplates.signedInLinkDescription' : 'shareSheet.publicLink.description')}
@@ -43,6 +45,8 @@ export function DocumentSignedInLinkSection(props: Readonly<{
         </> : props.value && props.onReplace ? <RoundButton size="small" display="secondary"
             title={t('session.sharing.regeneratePublicLink')} loading={pending} disabled={props.disabled || pending}
             onPress={() => { void perform(props.onReplace!); }} /> : null}
-        {failure ? <Text variant="meta" accessibilityLiveRegion="polite">{props.presentFailure?.(failure.error).message ?? t('botTemplates.unavailable')}</Text> : null}
+        {issue?.diagnosticDetail ? <SurfaceStateCard size="line" kind="error" title={issue.message}
+            diagnosticCode={issue.code} diagnosticDetail={issue.diagnosticDetail} accessibilitySemantics="status" />
+            : failure ? <Text variant="meta" accessibilityLiveRegion="polite">{issue?.message ?? t('botTemplates.unavailable')}</Text> : null}
     </View>;
 }

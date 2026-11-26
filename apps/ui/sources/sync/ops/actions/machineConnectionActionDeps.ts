@@ -23,6 +23,7 @@ import { createLocalDaemonServiceAction } from './localDaemonServiceAction';
 import { createMachineAddLocalSetupAction, createMachineAddLocalCancelAction } from '@/components/machines/add/machineAddLocalSetupAction';
 import { MachineCapabilityInstallInputSchema, MachineMetadataUpdateInputSchema, MachineReplacementSetInputSchema } from '@happier-dev/protocol/actions/specs/machineConnection';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { projectMachineActionRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import { getMachineCapabilitiesCacheState, prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -95,7 +96,7 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                 const result = item?.action.kind === 'run'
                     ? await observeMachineToolItemUpdate(item.id, scope, request.machineId, invoke)
                     : await invoke();
-                return result;
+                return !result.supported && result.actionFailure ? projectMachineActionRpcFailure(result.actionFailure) : result;
             }
             if (actionId === 'machines.remove') return machineRevokeWithProviderCleanup(input.machineId, scope);
             if (actionId === 'machines.replacement.set' || actionId === 'machines.replacement.clear') {

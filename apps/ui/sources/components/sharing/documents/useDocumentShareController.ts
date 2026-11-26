@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessGrantsListResponseV1Schema, type ArtifactAccessGrantRowV1, type ArtifactAccessGrantsListResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { flattenWidgetLayoutWidgetsV1, getWidgetSharedInputIssuesV1, readWidgetConnectedAccountPurposeV1, readWidgetSurfaceArtifactV1, WidgetInstanceActionOutputSchemasV1,
@@ -35,16 +37,18 @@ import type {
 type Mutation =
     | Readonly<{ actionId: 'artifact.access.grants.set'; principal: PrincipalRefV1; accessLevel: ShareAccessLevel }>
     | Readonly<{ actionId: 'artifact.access.grants.remove'; principal: PrincipalRefV1 }>;
-type GrantMutationResult = Readonly<{ ok: true }> | Readonly<{ ok: false; error: ShareUiError }>;
+export type DocumentShareIssue = ShareUiError & Readonly<{ actionFailure?: ActionExecuteFailure }>;
+
+type GrantMutationResult = Readonly<{ ok: true }> | Readonly<{ ok: false; error: DocumentShareIssue }>;
 export type DocumentAudienceShareResult =
     | Readonly<{ ok: true; shared: readonly PrincipalRefV1[] }>
-    | Readonly<{ ok: false; shared: readonly PrincipalRefV1[]; error: ShareUiError }>;
+    | Readonly<{ ok: false; shared: readonly PrincipalRefV1[]; error: DocumentShareIssue }>;
 
 type State = Readonly<{
     phase: 'initial' | 'ready' | 'error';
     response: ArtifactAccessGrantsListResponseV1 | null;
     reviewedIdentity?: string;
-    issue?: ShareUiError;
+    issue?: DocumentShareIssue;
     operations: Readonly<Record<string, ShareOperationModel>>;
     confirmingRemoval: string | null;
 }>;
@@ -90,6 +94,12 @@ export function presentDocumentShareFailure(code: string, failure?: unknown): Sh
     }
 }
 
+function presentGrantActionFailure(result: unknown): DocumentShareIssue {
+    const issue = presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result);
+    const actionFailure = readActionFailureEnvelope(result);
+    return actionFailure ? { ...issue, actionFailure } : issue;
+}
+
 /**
  * The documents adapter's controller: one Artifact's grants, read and written only through the
  * `artifact.access.grants.*` Actions. The Action host validates the kind and ownership; every
@@ -117,7 +127,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
 }> | null): Readonly<{
     model: ShareSheetModel;
     actions: ShareSheetActions;
-    issue?: ShareUiError;
+    issue?: DocumentShareIssue;
     notice?: ShareUiReason;
     loading: boolean;
     retryContent(): void;
@@ -264,7 +274,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         const available = parsed?.success && (requestedAudience === undefined || parsed.data.missingAudience !== undefined);
         setState((previous) => available && parsed?.success
             ? { ...previous, phase: 'ready', response: parsed.data, reviewedIdentity: identity, issue: undefined }
-            : { ...previous, phase: 'error', issue: presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result) });
+            : { ...previous, phase: 'error', issue: presentGrantActionFailure(result) });
     }, [artifactId, execute, identity, scope?.serverId, scope?.accountId, requestedAudience]);
     React.useEffect(() => { void load(); void loadReview(); }, [load, loadReview]);
 
@@ -282,7 +292,7 @@ export function useDocumentShareController(input: Readonly<{ artifactId: string;
         }).catch(() => null);
         const parsed = result?.ok ? ArtifactAccessGrantMutationResponseV1Schema.safeParse(result.result) : null;
         const issue = parsed?.success ? parsed.data.access === null ? presentDocumentShareFailure('artifact_access_revoked') : null
-            : presentDocumentShareFailure(result ? readFailureCode(result) : 'artifact_access_failed', result);
+            : presentGrantActionFailure(result);
         if (current.current !== identity) return issue ? { ok: false, error: issue } : { ok: true };
         setState((previous) => {
             const { [key]: _settled, ...operations } = previous.operations;

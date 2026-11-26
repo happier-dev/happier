@@ -1,3 +1,4 @@
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
@@ -48,15 +49,15 @@ export function presentApprovalResultDelivery(
   if (options?.sayDelivered && (delivery?.status === 'accepted' || delivery?.status === 'alreadyAccepted')) {
     return { kind: 'sent', detail: t('session.askRecord.sent'), failure: null };
   }
+  const failure = delivery && 'code' in delivery
+    ? presentActionFailureOutcome(readActionFailureEnvelope({
+        ...delivery, ok: false, errorCode: delivery.code,
+      })!)
+    : null;
   if (delivery?.status === 'rejected') {
-    const failure = presentActionFailureOutcome({
-      errorCode: delivery.code,
-      error: delivery.code,
-      failureCause: delivery.failureCause,
-    });
     const cause = delivery.failureCause;
     const causeCode = cause && 'errorCode' in cause ? cause.errorCode : undefined;
-    let subtitle = failure.reason ?? undefined;
+    let subtitle = failure?.reason ?? undefined;
     if (delivery.code === 'session_input_archived') {
       subtitle = t('session.pendingMessages.admissionRejected.archived');
     } else if (delivery.code === 'session_input_target_unavailable') {
@@ -93,7 +94,7 @@ export function presentApprovalResultDelivery(
         heldCause === 'held_by_person'
           ? t('errors.sessionHeldByPerson')
           : undefined,
-      failure: null,
+      failure,
     };
   }
   if (delivery?.status === 'outcomeUnknown') {
@@ -101,7 +102,7 @@ export function presentApprovalResultDelivery(
       kind: 'unsure',
       detail: t('session.askRecord.unsure'),
       subtitle: t('session.askRecord.unsureHint'),
-      failure: null,
+      failure,
     };
   }
   return null;

@@ -1,3 +1,4 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
     BrowserDiagnosticEventKindV1,
     BrowserDiagnosticEventV1,
@@ -119,6 +120,7 @@ export type BrowserDiagnosticsSnapshotState = Readonly<{
     reasonCode?: string;
     evictedEventCount?: number;
     omittedEventCount?: number;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 export type BrowserDiagnosticsViewState = Readonly<{
@@ -149,6 +151,7 @@ export type BrowserViewDiagnosticsProjection = Readonly<{
     reasonCode?: string;
     evictedEventCount?: number;
     omittedEventCount?: number;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 export type BrowserPreviewProxyFlowProjection = Readonly<{

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { SessionInputAdmissionResultV1Schema, type SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
 import { isActionOutcomeUnknownErrorCodeV1, readActionFailureCauseV1, readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -34,6 +35,7 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { presentActionExecutionFailure, readRuntimeActionDisabledReason } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -138,6 +140,12 @@ export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: s
     return presentApprovalFailure(failure, failure.error || failure.errorCode || t('approvals.failureNoReason'), t('approvals.failureNoReason'));
 }
 
+/** The Action refusal stays in the cause when imperative decision callers receive an Error. */
+export function readApprovalDecisionFailure(error: unknown) {
+    return readActionFailureEnvelope(error, { treatReturnedErrorEnvelopeAsFailure: true })
+        ?? (error instanceof Error ? readActionFailureEnvelope(error.cause) : null);
+}
+
 /**
  * The one alert for a decision that failed: the readable reason, and its typed code only behind a
  * deliberate Technical details, including when the approved effect has a recorded failure.
@@ -147,25 +155,27 @@ export function alertApprovalFailure(error: unknown, fallbackMessage = t('approv
     if (error instanceof HappyError && (error.code === 'approval_canceled'
         || error instanceof ApprovalExecutionError && error.code === 'cancelled')) return;
     const { reason, code } = presentApprovalFailure(error, fallbackMessage);
-    const failureCause = typeof error === 'object' && error !== null && 'failureCause' in error && error.failureCause !== undefined
-        ? readActionFailureCauseV1(error.failureCause) : undefined;
-    const details = typeof error === 'object' && error !== null && 'details' in error ? error.details : undefined;
-    alertActionFailure({ reason, code,
-        requestId: typeof error === 'object' && error !== null && 'requestId' in error && typeof error.requestId === 'string'
-            ? error.requestId : undefined,
+    const diagnostic = readApprovalDecisionFailure(error) ?? (error instanceof HappyError ? error : null);
+    alertActionFailure({ reason, code, requestId: diagnostic?.requestId,
         context: {
-        ...readSafeFailureDetails(details),
-        ...failureCause,
-    } });
+            ...readSafeFailureDetails(diagnostic?.details),
+            ...diagnostic?.failureCause,
+            ...(diagnostic?.effectAttempted === undefined ? {} : { effectAttempted: diagnostic.effectAttempted }),
+        },
+    });
 }
 
 /** Distinguishes a settled effect failure from a decision that could not be saved. */
 export class ApprovalExecutionError extends HappyError {
     constructor(execution: ApprovalExecutionV1) {
+        const failure = readActionFailureEnvelope({ ...execution, errorCode: execution.errorCode ?? 'approval_execution_failed' });
         super(execution.error ?? 'approval_execution_failed', false, {
             code: execution.errorCode ?? 'approval_execution_failed',
-            details: execution.details,
-            failureCause: execution.failureCause === undefined ? undefined : readActionFailureCauseV1(execution.failureCause),
+            details: failure?.details,
+            failureCause: failure?.failureCause,
+            requestId: failure?.requestId,
+            effectAttempted: failure?.effectAttempted,
+            cause: failure ?? undefined,
         });
         Object.setPrototypeOf(this, ApprovalExecutionError.prototype);
     }
@@ -175,7 +185,8 @@ export class ApprovalExecutionError extends HappyError {
 export function assertApprovalExecutionSucceeded(execution: ApprovalExecutionV1): void {
     if (execution.ok !== false) return;
     if (isApprovalDecisionStale(execution)) {
-        throw new HappyError(execution.error ?? 'approval_stale', false, { code: 'approval_stale' });
+        const failure = readActionFailureEnvelope(execution);
+        if (failure) requireActionSuccess(failure);
     }
     throw new ApprovalExecutionError(execution);
 }
@@ -373,9 +384,7 @@ export function useApprovalDecisionHandler(
                         && execution?.ok === (status === 'executed')) outcome = { status, execution };
                 }
             }
-            if (!result.ok && outcome === null) throw new HappyError(result.error, false, {
-                code: result.errorCode, details: result.details, failureCause: result.failureCause,
-            });
+            if (!result.ok && outcome === null) requireActionSuccess(result);
             // A decision can be recorded successfully while its execution was refused.
             // Never let a stale receipt become an optimistic "Approved" answer.
             const execution = typeof outcome === 'object' && outcome !== null && 'execution' in outcome

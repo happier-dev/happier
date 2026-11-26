@@ -66,6 +66,9 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { HappyError } from '@/utils/errors/errors';
+import { alertActionFailure, formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { readArtifactActionFailure } from './artifactActionsClient';
+import { presentArtifactActionFailure } from './artifactActionFailure';
 
 import {
   projectArtifactBrowserRows,
@@ -145,10 +148,9 @@ export function useArtifactFolderCommands(): Readonly<{
           ]);
           return false;
         }
-        Modal.alert(
-          t('common.error'),
-          t('artifacts.browser.folders.saveFailed'),
-        );
+        alertActionFailure(presentArtifactActionFailure(
+          readArtifactActionFailure(error), t('artifacts.browser.folders.saveFailed'),
+        ));
         return false;
       }
     },
@@ -731,10 +733,9 @@ function FolderInlineEditor(props: Readonly<{
   onCreated: (edit: FolderEdit, folderId: string) => void;
 }>) {
   const name = props.edit.titles.useTitle();
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<ReturnType<typeof presentArtifactActionFailure> | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [approval, setApproval] = React.useState<ActionApprovalRequestCreatedResult | null>(null);
-  const [errorCode, setErrorCode] = React.useState<string | null>(null);
   const inFlight = React.useRef(false);
   const scope = useAccountSettingsScope();
   const router = useRouter();
@@ -744,7 +745,6 @@ function FolderInlineEditor(props: Readonly<{
     inFlight.current = true;
     setSaving(true);
     setError(null);
-    setErrorCode(null);
     try {
       if (props.edit.kind === 'create') {
         const folderId = await props.commands.create({
@@ -761,9 +761,8 @@ function FolderInlineEditor(props: Readonly<{
       const pending = ActionApprovalRequestCreatedResultSchema.safeParse(failure instanceof HappyError ? failure.details : null);
       if (pending.success) setApproval(pending.data);
       else {
-        const code = failure instanceof HappyError ? failure.code : undefined;
-        setError(refusalMessage(code ?? 'folder-write-failed'));
-        setErrorCode(code ?? 'folder-write-failed');
+        const refusal = readArtifactActionFailure(failure);
+        setError(presentArtifactActionFailure(refusal, refusalMessage(refusal.code)));
       }
     } finally {
       inFlight.current = false;
@@ -817,7 +816,7 @@ function FolderInlineEditor(props: Readonly<{
         <Text style={stylesheet.editorNote}>{t('artifacts.browser.folders.nameHelp')}</Text>
       ) : null}
       {error ? <SurfaceStateCard size="line" kind="error" testID={`${props.testID}:edit:refused`}
-        title={error} diagnosticCode={errorCode ?? undefined} accessibilitySemantics="alert" /> : null}
+        title={error.reason} diagnosticCode={error.code} diagnosticDetail={formatActionFailureDetails(error)} accessibilitySemantics="alert" /> : null}
       {approval ? <SurfaceStateCard size="line" kind="warning" testID={`${props.testID}:edit:approval`}
         title={t('connect.waitingForApproval')} action={{ label: t('common.open'), onPress: () => {
           if (!scope || !sameScope) return;

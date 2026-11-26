@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import type {
@@ -237,7 +238,7 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
             setDaemonState((previous) => (
                 result.ok
                     ? applySimulatorPreviewDaemonSnapshot(previous, result.snapshot)
-                    : applySimulatorPreviewDaemonRefreshFailed(previous, nowMsRef.current())
+                    : applySimulatorPreviewDaemonRefreshFailed(previous, nowMsRef.current(), readActionFailureEnvelope(result) ?? undefined)
             ));
         };
 

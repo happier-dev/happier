@@ -1,9 +1,10 @@
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DaemonBrowserContextDispatchRequestV1Schema, DaemonBrowserContextDispatchResponseV1Schema, type BrowserContextRouteResultV1 } from '@happier-dev/protocol/browser/context/v1';
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
+import { projectMachineDaemonRpcFailure, projectMachineActionRpcFailure, type MachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 export type BrowserContextMachineRpcFailureReason =
     | 'unavailable'
@@ -20,7 +21,7 @@ export type BrowserContextDispatchClientInput = Readonly<{
 
 export type BrowserContextDispatchClientResult =
     | Readonly<{ ok: true; result: BrowserContextRouteResultV1 }>
-    | (Readonly<{ ok: false; reason: BrowserContextMachineRpcFailureReason }> & Pick<MachineDaemonRpcFailure, 'errorCode' | 'failureCause' | 'details'>);
+    | (Readonly<{ ok: false; reason: BrowserContextMachineRpcFailureReason }> & Omit<MachineDaemonRpcFailure, 'reason'>);
 
 export async function dispatchBrowserContextActionViaMachineRpc(
     input: BrowserContextDispatchClientInput,
@@ -41,9 +42,11 @@ export async function dispatchBrowserContextActionViaMachineRpc(
             payload,
             ...(input.signal ? { signal: input.signal } : {}),
         });
+        const failure = projectMachineActionRpcFailure(raw);
         if (isRpcMethodNotFoundResult(raw)) {
-            return { ok: false, reason: 'unavailable' };
+            return { ok: false, ...(isActionExecuteFailure(raw) ? failure : null), reason: 'unavailable' };
         }
+        if (failure) return { ...failure, reason: 'request_failed' };
         const parsed = DaemonBrowserContextDispatchResponseV1Schema.safeParse(raw);
         return parsed.success
             ? { ok: true, result: parsed.data.result }

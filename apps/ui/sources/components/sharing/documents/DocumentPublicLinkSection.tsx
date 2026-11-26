@@ -47,7 +47,7 @@ export function DocumentPublicLinkSection(props: Readonly<{
             if (mounted.current) setAudit(previous => ({ ...previous, loading: false, failed: true, failure }));
         }
     };
-    const auditIssue = audit.failed ? link.presentFailure(audit.failure) : null;
+    const auditIssue = audit.failed ? link.presentFailure(audit.failure, 'recipient') : null;
     return <View testID={`${idPrefix}document-share-public-link-controls`}>
         <SessionPublicLinkCard key={link.scopeKey} testID={`${idPrefix}document-share-public-link-card`}
             presentation="inline"
@@ -67,7 +67,7 @@ export function DocumentPublicLinkSection(props: Readonly<{
                 onPress={() => { void readAudit(); }} />} />
         {link.publication && (audit.failed || audit.rows) ? <View style={styles.audit}>
             {audit.failed ? <SurfaceStateCard size="line" kind="error" title={auditIssue?.message ?? t('session.collaboration.pane.linkLoadFailed')}
-                diagnosticCode={auditIssue?.code}
+                diagnosticCode={auditIssue?.code} diagnosticDetail={auditIssue?.diagnosticDetail}
                 action={auditIssue?.retryable === false ? undefined : { label: t('common.retry'), onPress: readAudit }} /> : null}
             {audit.rows?.length === 0 ? <SurfaceStateCard size="line" kind="empty" title={t('shareSheet.publicLink.auditEmpty')} /> : null}
             {audit.rows?.map(row => <Text key={row.id} testID={`${idPrefix}document-share-public-link-visit:${row.id}`} style={styles.visit}>

@@ -44,6 +44,34 @@ const screenshotResult: SimulatorDeviceOperationResultV1 = {
 };
 
 describe('UI simulator runtime action executor', () => {
+    it("passes the Machine’s typed snapshot refusal through the simulator Action front door", async () => {
+        const { installSessionOpsNetworkBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+        const network = await installSessionOpsNetworkBoundary();
+        try {
+            const { storage } = await import('@/sync/domains/state/storageStore');
+            const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+            const home = await network.addHome('https://simulator-cause-loss.test', 'simulator-account');
+            const machineId = 'simulator-refused-machine';
+            storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain' })], false, { sourceServerId: home.id });
+            const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_MACHINE_PROSE', effectAttempted: false,
+                requestId: 'simulator-boundary-request', details: { reason: 'private_project_name' },
+                failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } } as const;
+            network.setRpcResponder(async () => refusal);
+            const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+            const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+            const { createSimulatorPreviewRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+                runtimeActionExecute: createSimulatorPreviewRuntimeActionExecutor({ resolveMachineId: () => machineId }),
+            }));
+            const result = await executor.execute('devices.simulator.list', { type: 'simulator.devices.list' },
+                { surface: 'ui', serverId: home.id });
+            expect(result).toMatchObject({ ok: false, errorCode: refusal.errorCode, error: refusal.errorCode,
+                requestId: refusal.requestId, effectAttempted: false, failureCause: refusal.failureCause });
+            expect(result).not.toHaveProperty('details');
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_MACHINE_PROSE');
+        } finally { await network.dispose(); }
+    });
+
     it('routes a device screenshot through the captured Machine Action transport with its explicit target and context', async () => {
         const { createSimulatorPreviewRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         const result = screenshotResult;

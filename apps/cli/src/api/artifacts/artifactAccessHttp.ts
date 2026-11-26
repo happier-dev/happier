@@ -1,3 +1,5 @@
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import axios from '@/api/client/credentialAxios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -9,6 +11,11 @@ export const artifactAccessUrl = (artifactId: string, leaf: string): string =>
 
 export function requireArtifactAccessResponse(response: Readonly<{ status: number; data: unknown }>): unknown {
     if (response.status >= 200 && response.status < 300) return response.data;
+    const refusal = projectConfirmedActionHttpRefusal<ActionExecuteFailure>(
+        { ok: false, errorCode: 'action_failed', error: 'action_failed' }, response.status, response.data);
+    if (refusal.failureCause) {
+        throw Object.assign(new HttpStatusError(response.status, refusal.error), refusal, { code: refusal.errorCode, status: response.status });
+    }
     const value = response.data && typeof response.data === 'object' ? response.data as Record<string, unknown> : {};
     const known = ArtifactAccessErrorCodeV1Schema.safeParse(value.error);
     const code = known.success ? known.data

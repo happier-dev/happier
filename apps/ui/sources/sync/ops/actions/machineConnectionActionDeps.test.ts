@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { computeHomeQrBindingProofV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
@@ -483,6 +484,34 @@ describe('UI machine connection Actions', () => {
         });
         boundary.rpc.mockResolvedValueOnce({ ok: true });
         expect(await makeExecutor().execute('machines.terminal.write', input, context)).toEqual({ ok: true, result: { ok: true } });
+    });
+
+    it.each(['returned', 'thrown'] as const)('keeps %s Machine refusal diagnostics private in the capability install Action', async (carrier) => {
+        const serverId = await harness.addHome({ name: 'Install Home', serverUrl: 'https://install.example', accountId: 'alice' });
+        await activateSshAccount(serverId, 'alice');
+        const actionId = 'machines.capabilities.install';
+        const errorCode = 'target_unavailable';
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'RpcError', errorCode, httpStatus: 403 };
+        const refusal = {
+            error: 'private Machine transport diagnostic',
+            errorCode,
+            effectAttempted: false,
+            failureCause,
+            details: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+        };
+        const requestId = 'machine-install-refusal';
+        if (carrier === 'returned') {
+            boundary.rpc.mockResolvedValueOnce({ ok: false, ...refusal, requestId, details: { internal: refusal.error } });
+        } else {
+            boundary.rpc.mockRejectedValueOnce(Object.assign(createRpcCallError(refusal), { requestId }));
+        }
+        const result = await makeExecutor().execute(actionId, { machineId: 'machine', serverId, capabilityId: 'dep.gh', method: 'install' }, {
+            surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'alice',
+            presentUserConfirmation: { actionId },
+        });
+        expect(result).toMatchObject({ ok: false, errorCode, requestId, effectAttempted: false, failureCause });
+        expect(result).toMatchObject({ error: errorCode });
+        expect(result).not.toHaveProperty('details');
     });
 
     it('refreshes Tools through one admitted Action without returning private capability facts or adding idle reads', async () => {

@@ -1,4 +1,6 @@
 import { pick, type ZodMiniType } from 'zod/mini';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { randomUUID } from '@/platform/randomUUID';
 import { ArtifactTemplateAcceptedVersionResponseV1Schema, type ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1, type ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -94,7 +96,12 @@ async function readWriteRefusal(response: Response, fallback: string): Promise<H
     const message = value && typeof value === 'object' && typeof Reflect.get(value, 'error') === 'string' ? String(Reflect.get(value, 'error')) : fallback;
     const sourceError = MemoryDecisionSourceErrorCodeV1Schema.safeParse(message);
     const transient = readTransientAvailabilityFailure(message);
-    const code = sourceError.success ? sourceError.data : transient?.code;
+    if (transient) {
+        const refusal = projectConfirmedActionHttpRefusal(
+            { ok: false as const, errorCode: transient.code, error: transient.code }, response.status, value);
+        return new HappyError(refusal.error, true, { ...refusal, code: refusal.errorCode, status: response.status });
+    }
+    const code = sourceError.success ? sourceError.data : undefined;
     return new HappyError(response.status >= 500 && !code ? fallback : message,
         response.status === 408 || response.status === 429 || response.status >= 500,
         { status: response.status, ...(code ? { code } : {}) });
@@ -216,7 +223,11 @@ function captureArtifactReadBinding(opts: Pick<ArtifactApiOptions, 'request' | '
 async function artifactHttpReadError(response: Response, fallback: string, code?: string): Promise<HappyError> {
     const payload: unknown = await response.json().catch(() => null);
     const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
-    if (transient) return new HappyError(transient.code, true, { status: response.status, code: transient.code });
+    if (transient) {
+        const refusal = projectConfirmedActionHttpRefusal(
+            { ok: false as const, errorCode: transient.code, error: transient.code }, response.status, payload);
+        return new HappyError(refusal.error, true, { ...refusal, code: refusal.errorCode, status: response.status });
+    }
     if (response.status === 403) {
         const refusal = ArtifactAccessErrorCodeV1Schema.safeParse(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
         return new HappyError(refusal.success ? refusal.data : fallback, false,
@@ -468,8 +479,13 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
             if (!response.ok) {
                 const known = ArtifactAccessErrorCodeV1Schema.safeParse(value && typeof value === 'object' ? Reflect.get(value, 'error') : undefined);
                 const transient = readTransientAvailabilityFailure(value && typeof value === 'object' ? Reflect.get(value, 'error') : undefined);
-                const code = transient?.code ?? (known.success ? known.data
-                    : response.status === 404 || response.status === 405 ? 'artifact_access_unavailable' : 'artifact_access_failed');
+                if (transient) {
+                    const failure = projectConfirmedActionHttpRefusal(
+                        { ok: false as const, errorCode: transient.code, error: transient.code }, response.status, value);
+                    throw Object.assign(createActionExecuteFailureError(failure), { status: response.status });
+                }
+                const code = known.success ? known.data
+                    : response.status === 404 || response.status === 405 ? 'artifact_access_unavailable' : 'artifact_access_failed';
                 throw Object.assign(new Error(code), { code, status: response.status });
             }
             return schema.parse(value);

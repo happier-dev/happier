@@ -150,7 +150,7 @@ describe('session browser recording runtime', () => {
                     ...(operation === 'start' ? { input } : input as Record<string, unknown>) });
                 return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId,
                     requestId: envelope.requestId, execution: response?.ok ? { ok: true, result: response.result }
-                        : { ok: false, errorCode: 'rpc_unavailable', error: 'rpc_unavailable' } }) };
+                        : response?.errorCode ? response : { ok: false, errorCode: 'rpc_unavailable', error: 'rpc_unavailable' } }) };
             } });
         }
     });
@@ -900,6 +900,31 @@ describe('session browser recording runtime', () => {
         expect(modalSpies.alert).toHaveBeenCalledTimes(1);
         expect(modalSpies.alert.mock.calls[0]?.[0]).toBe(t('browserRecording.failure.stopTitle'));
         // Nothing changed, so the recording is still the active one.
+        expect(screen.findByTestId('active-recording-id')?.props.children).toBe('recording_1');
+    });
+
+    it.each(['stop', 'cancel'] as const)('preserves the Home’s typed %s refusal in recording Details', async (operation) => {
+        const screen = await renderActiveRecordingProbe();
+        machineRpcMock[operation].mockResolvedValueOnce({
+            ok: false, errorCode: 'action_forbidden', error: 'Private transport detail',
+            effectAttempted: false,
+            failureCause: { phase: 'home.action.admission', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+            details: { reason: 'action_forbidden', path: '/private/recording' },
+        });
+
+        await screen.pressByTestIdAsync(`${operation}-recording`);
+
+        expect(modalSpies.alert.mock.calls[0]?.[1]).toBe(t('errors.permissionDenied'));
+        const details = modalSpies.alert.mock.calls[0]?.[2]?.find(
+            (button: { text: string }) => button.text === t('approvals.technicalDetails'),
+        );
+        expect(details).toBeDefined();
+        details.onPress();
+        const disclosure = String(modalSpies.alert.mock.calls[1]?.[1]);
+        expect(disclosure).toContain('action_forbidden');
+        expect(disclosure).toContain('home.action.admission');
+        expect(disclosure).toContain('false');
+        expect(disclosure).not.toContain('/private/recording');
         expect(screen.findByTestId('active-recording-id')?.props.children).toBe('recording_1');
     });
 

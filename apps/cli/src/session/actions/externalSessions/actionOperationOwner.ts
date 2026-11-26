@@ -3,6 +3,7 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions';
 import { ExternalSessionOperationActionResponseV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import { canCancelExternalSessionOperationV1, isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import type { ExternalSessionOperationRecordV1 } from '@happier-dev/protocol';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { ActionOperationDomainOwner, ActionOperationQueryScope } from '@/daemon/actionOperations/actionOperationTypes';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import {
@@ -118,12 +119,12 @@ export function createExternalSessionActionOperationOwner(deps: Readonly<{
       const result = await deps.execute('sessions.external.operation.cancel', {
         sessionId: record.request.sessionId, operationId, revision: record.revision,
       }, { ...context, ...(admitted.admission ? { externalSessionOperationAdmission: admitted.admission } : {}) });
-      if (!result.ok) throw new Error(`external_session_activity_cancel_failed:${result.errorCode}`);
+      if (!result.ok) throw Object.assign(new RpcError(result.error, result.errorCode), result);
       const response = ExternalSessionOperationActionResponseV1Schema.parse(result.result);
       if (response.ok) return { kind: 'requested' as const };
       if (response.error.code === 'operation_not_found') return null;
       if (response.error.code === 'not_allowed' || response.error.code === 'operation_conflict') return { kind: 'unsupported' as const };
-      throw new Error(`external_session_activity_cancel_failed:${response.error.code}`);
+      throw new RpcError(response.error.message, response.error.code);
     },
     subscribe({ resolveScope, publishSnapshot }) {
       let disposed = false;

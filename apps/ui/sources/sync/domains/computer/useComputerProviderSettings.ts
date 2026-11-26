@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { COMPUTER_PROVIDER_INSTALLABLE_KEYS,
     type ComputerProviderIdV1, type ComputerUseSettingsV1 } from '@happier-dev/protocol/computer/v1';
 import { BUILT_IN_INSTALLABLES_REGISTRY } from '@happier-dev/protocol/installables';
@@ -15,7 +16,7 @@ export type ComputerProviderSettingsMutation =
     | Readonly<{ phase: 'installing'; provider: ComputerProviderIdV1 }>
     | Readonly<{ phase: 'saving' }>
     /** `provider` names the provider whose installation failed; a failed save names none. */
-    | Readonly<{ phase: 'failed'; errorCode: string; error: string; provider?: ComputerProviderIdV1 }>;
+    | Readonly<{ phase: 'failed'; failure: ActionExecuteFailure; provider?: ComputerProviderIdV1 }>;
 
 const request = { requests: Object.values(COMPUTER_PROVIDER_INSTALLABLE_KEYS).map(key => ({
     id: BUILT_IN_INSTALLABLES_REGISTRY.descriptorsByKey[key].descriptor.capabilityId,
@@ -48,17 +49,17 @@ export function useComputerProviderSettings(args: Readonly<{
             installing = value.phase === 'installing' ? value.provider : undefined;
             if (currentTarget.current === target) setMutationState({ target, mutation: value });
         };
-        const failed = (errorCode: string, error: string): ComputerProviderSettingsMutation =>
-            ({ phase: 'failed', errorCode, error, ...(installing ? { provider: installing } : {}) });
+        const failed = (failure: ActionExecuteFailure): ComputerProviderSettingsMutation =>
+            ({ phase: 'failed', failure, ...(installing ? { provider: installing } : {}) });
         try {
             const result = await operation(publish);
-            publish(result.ok ? { phase: 'idle' } : failed(result.errorCode, result.error));
+            publish(result.ok ? { phase: 'idle' } : failed(result));
             if (result.ok && currentTarget.current === target) refresh({ bypassCache: true });
             return result;
         } catch (error) {
-            const result = { ok: false as const, errorCode: 'action_outcome_unknown',
-                error: error instanceof Error ? error.message : 'Computer provider settings could not be changed' };
-            publish(failed(result.errorCode, result.error));
+            const result = readActionFailureEnvelope(error) ?? { ok: false as const, errorCode: 'action_outcome_unknown',
+                error: 'Computer provider settings could not be changed' };
+            publish(failed(result));
             return result;
         }
     }, [refresh, target]);

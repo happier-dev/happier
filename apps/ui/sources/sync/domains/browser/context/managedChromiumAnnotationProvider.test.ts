@@ -62,6 +62,22 @@ describe('managed Chromium browser annotation capture provider', () => {
             expect(revokeObjectURL).toHaveBeenCalledWith('blob:frozen-browser');
         } finally { createObjectURL.mockRestore(); revokeObjectURL.mockRestore(); }
     });
+    it.each(['RPC_FORBIDDEN', 'RPC_METHOD_NOT_FOUND'])('passes on the %s capture refusal with original request and effect', async (errorCode) => {
+        const { createManagedChromiumBrowserAnnotationCaptureProvider } = await import('./managedChromiumAnnotationProvider');
+        const failure = { ok: false, errorCode, error: 'PRIVATE_MACHINE_PROSE', requestId: 'browser-capture-request',
+            effectAttempted: false, failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error',
+                errorCode: 'machine_unavailable', httpStatus: 403 }, details: { reason: 'private_project_slug' } } as const;
+        machineRpc.mockResolvedValueOnce(failure);
+        const provider = createManagedChromiumBrowserAnnotationCaptureProvider({ machineId: 'machine_1', serverId: 'server_1' });
+        const result = await provider.captureViewport!(request);
+        expect(result).toMatchObject({ status: 'unavailable', reason: { failure: {
+            ok: false, errorCode, error: errorCode, requestId: failure.requestId,
+            effectAttempted: false, failureCause: failure.failureCause,
+        } } });
+        if (result.status !== 'unavailable') throw new Error('Expected capture refusal');
+        expect(result.reason.failure).not.toHaveProperty('details');
+        expect(JSON.stringify(result)).not.toContain('PRIVATE_MACHINE_PROSE');
+    });
     it('settles without recapturing when the invoking Session preview workspace is unavailable', async () => {
         const { createManagedChromiumBrowserAnnotationCaptureProvider } = await import('./managedChromiumAnnotationProvider');
         machineRpc.mockClear();

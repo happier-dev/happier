@@ -9,6 +9,7 @@ import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactSt
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { renderScreen, findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { publishActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationRuntime';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -27,6 +28,7 @@ import { createDeferred, createMachineFixture, flushHookEffects } from '@/dev/te
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -140,6 +142,7 @@ async function setup(options: Readonly<{
   onMove?: (input: unknown) => void;
   moveReply?: unknown;
   setupReview?: Readonly<{ reviewedEffect: unknown; reviewedEffectDigest: string }>;
+  setupInspectionRefusal?: ActionExecuteFailure;
 }>) {
   const writes: WorkspaceExecutionSettingsV1[] = [];
   const poolReads: unknown[] = [];
@@ -154,15 +157,16 @@ async function setup(options: Readonly<{
       status,
       headers: { 'Content-Type': 'application/json' },
     });
-  const setupInspection = options.setupReview ? {
+  const setupInspection = options.setupInspectionRefusal ?? (options.setupReview ? {
     definition: { basis: { kind: 'absent' }, document: null },
     detection: { entries: [], diagnostics: [], toolchains: [], devcontainers: [], coverage: 'complete' },
     importCandidates: [], setupReview: options.setupReview,
-  } : null;
+  } : null);
   const inspectionBoundary = setupInspection ? await createExternalActionAccountHttpBoundary({
     serverUrl: 'https://service-placement-ui.test', serverIdentityId: 'srv_service_creation',
     accountId: 'artifact-account', machineId: 'devbox', actionId: 'projects.inspect', tokenEpoch: 0,
     requesterInvocation: 'none', execute: () => setupInspection,
+    failure: () => options.setupInspectionRefusal ?? null,
   }) : null;
   const moveBoundary = options.onMove ? await createExternalActionAccountHttpBoundary({
     serverUrl: 'https://service-placement-ui.test', serverIdentityId: 'srv_service_creation',
@@ -464,7 +468,7 @@ async function setup(options: Readonly<{
         key={options.sharedObservation ? 'list' : detail ? 'detail' : 'list'}
         testID="placement"
         serviceName="server"
-        source={{ serverId, refId, machineId: source.machineId, ...(options.setupReview ? { rootPath: source.rootPath } : {}) }}
+        source={{ serverId, refId, machineId: source.machineId, ...(setupInspection ? { rootPath: source.rootPath } : {}) }}
         declaration={{ portable: options.portable !== false, currentnessKey: declarationBasis }}
         lifecycleKey={lifecycleKey}
         showDivider={options.showDivider}
@@ -563,6 +567,26 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(moves[0]).toMatchObject({ setupReview });
     } finally { await h.screen.unmount(); }
   });
+  it('shows a typed setup inspection refusal before submitting Move', async () => {
+    const moves: unknown[] = [];
+    const h = await setup({ running: true, onMove: input => moves.push(input), setupInspectionRefusal: {
+      ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'private setup inspection failure',
+      effectAttempted: false,
+      failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 },
+    } });
+    try {
+      await h.choose('hz-build-1');
+      await vi.waitFor(() => expect(h.screen.findByTestId('placement.move.refused')).toBeTruthy());
+      await h.screen.pressByTestIdAsync('placement.move.refused.details');
+      const text = h.screen.getTextContent();
+      expect(text).toContain('rpc.admission.machine');
+      expect(text).toContain('false');
+      expect(text).toContain('custodian_only');
+      expect(text).toContain(RPC_ERROR_CODES.FORBIDDEN);
+      expect(text).not.toContain('private setup inspection failure');
+      expect(moves).toEqual([]);
+    } finally { await h.screen.unmount(); }
+  });
   it('SV-C08 presents a relocation refusal through the local service owner', async () => {
     const h = await setup({ running: true, onMove: () => {}, moveReply: { status: 'refused', reasonCode: 'native_check_unavailable' } });
     try {
@@ -574,6 +598,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
   it('SV-C08 presents a thrown typed relocation failure without foreign prose in Details', async () => {
     const addressed = createFrontDoorRuntimeActionExecutor();
     const failure = Object.assign(new Error('foreign relocation diagnostic prose'), { code: 'native_check_unavailable',
+      requestId: 'move-refusal', effectAttempted: false,
       failureCause: { phase: 'relocation.prepare', errorClass: 'Error', errorCode: 'native_check_unavailable', httpStatus: null } });
     // The addressed Action is the boundary; placement observation and failure presentation remain real.
     const execute: ReturnType<typeof createFrontDoorRuntimeActionExecutor> = Object.assign(async (...args: Parameters<typeof addressed>) => {
@@ -586,6 +611,8 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       await vi.waitFor(() => expect(h.screen.getTextContent()).toContain('errors.machineNativeCheckUnavailable'));
       await h.screen.pressByTestIdAsync('placement.move.refused.details');
       expect(h.screen.getTextContent()).toContain('native_check_unavailable');
+      expect(h.screen.getTextContent()).toContain('move-refusal');
+      expect(h.screen.getTextContent()).toContain('false');
       expect(h.screen.getTextContent()).not.toContain('foreign relocation diagnostic prose');
     } finally { await h.screen.unmount(); }
   });
@@ -1840,13 +1867,19 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       domainRef: { kind: 'projectService', purpose: 'relocation', workspace: {
         serverId, machineId: 'devbox', workspaceId: 'checkout', rootPath: '/src/happier' },
       declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'server' } } },
-      progress: { kind: 'phase', phase, label: 'Move phase' }, error: { errorCode: 'move_failed', error: 'Move failed' } };
+      progress: { kind: 'phase', phase, label: 'Move phase' },
+      error: { errorCode: 'move_failed', error: 'private move failure', requestId: 'retained-move-refusal',
+        effectAttempted: true, failureCause: { phase: 'relocation.move', errorClass: 'Error', errorCode: null, httpStatus: null } } };
     await act(async () => {
       publishActionOperationObservation({ serverId, machineId: 'devbox', observation: 'available', snapshots: [operation] });
       attach(operation);
     });
     await vi.waitFor(() => expect(screen.findByTestId('placement.move.inspect')).toBeTruthy());
     expect(screen.getTextContent()).toContain('projectServices.moveUnknown');
+    await screen.pressByTestIdAsync('placement.move.operation.details');
+    expect(screen.getTextContent()).toContain('retained-move-refusal');
+    expect(screen.getTextContent()).toContain('relocation.move');
+    expect(screen.getTextContent()).not.toContain('private move failure');
     expect(screen.findByTestId('placement.move.refused')).toBeNull();
     expect(runsOn().props.disabled).toBe(true);
     await choose('hz-build-1');

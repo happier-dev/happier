@@ -4,7 +4,8 @@ import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approv
 import { describeApprovalRequestFields } from '@happier-dev/protocol/actions';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { presentApprovalFailure, useApprovalDecisionHandler } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentApprovalFailure, readApprovalDecisionFailure, useApprovalDecisionHandler } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
@@ -83,6 +84,11 @@ export function ApprovalInlineDecisionBar(props: Readonly<{
 }>) {
   const { decision } = props;
   const failure = decision.failure ? presentApprovalFailure(decision.failure.cause) : null;
+  const refusal = readApprovalDecisionFailure(decision.failure?.cause);
+  const diagnosticDetail = refusal && failure?.code
+    ? presentActionExecutionFailure(refusal, failure.reason, { closedCodesOnly: true }).technicalDetails
+        .filter(line => line.key !== 'code').map(line => `${line.label}: ${line.value}`).join('\n')
+    : undefined;
   return (
     <>
     <ApprovalDecisionBar
@@ -113,6 +119,7 @@ export function ApprovalInlineDecisionBar(props: Readonly<{
       kind="error"
       title={failure.reason}
       diagnosticCode={failure.code}
+      diagnosticDetail={diagnosticDetail}
       action={{ label: t('common.retry'), onPress: () => { if (decision.failure) void decision.answer(decision.failure.decision); } }}
     /> : null}
     </>

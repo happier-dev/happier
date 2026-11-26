@@ -77,6 +77,23 @@ describe('a bound Browser open operation', () => {
 });
 
 describe('the Session Browser first-use state', () => {
+    it('keeps the Machine’s failed provisioning cause in the mounted Session Browser prerequisite', async () => {
+        const failure = { errorCode: 'browser_runtime_provisioning_failed', error: 'Private installation trace',
+            requestId: 'browser-provisioning-refused', effectAttempted: false,
+            failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+        };
+        const hook = await renderHook(() => useBrowserOpenFirstUse(scope));
+        try {
+            await act(async () => actionOperationStore.mergeSnapshots({ serverId: scope.serverId, snapshots: [open({
+                revision: 2, state: 'failed', settledAt: 3, error: failure,
+            })] }));
+            expect(hook.getCurrent()).toMatchObject({ kind: 'installFailed', actionFailure: { ok: false, ...failure } });
+            expect(rpc.calls).toEqual([]);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('recovers a settled open\'s sandbox result after a reload and never calls get for a live open', async () => {
         actionOperationStore.mergeSnapshots({ serverId: scope.serverId, snapshots: [open()] });
         const live = await renderHook(() => useBrowserOpenFirstUse(scope));

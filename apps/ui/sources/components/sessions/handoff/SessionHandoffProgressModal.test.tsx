@@ -7,7 +7,10 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 
-installSessionHandoffCommonModuleMocks({ storage: async importOriginal => importOriginal() });
+installSessionHandoffCommonModuleMocks({
+    storage: async importOriginal => importOriginal(),
+    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
+});
 vi.doUnmock('@/components/ui/text/Text');
 const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
@@ -69,6 +72,43 @@ describe('SessionHandoffProgressModal', () => {
         expect(details).toBeTruthy();
         expect(screen.getTextContent()).toContain('workspace_sync_requester_link_unavailable');
         expect(screen.getTextContent()).toContain('workspace_sync.relationship_owner.select');
+    });
+
+    it('explains a Home refusal to copy from a shared source without asking to reconnect the destination', async () => {
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
+            requestFailure={{ ok: false, error: 'Peer mediation route grant is unavailable', errorCode: 'peer_unavailable',
+                failureCause: { phase: 'rpc.handler', errorClass: 'RpcError',
+                    errorCode: 'peer_unavailable', httpStatus: null, nativeErrorReason: 'route_unavailable' } }} />);
+        expect(screen.findByTestId('session-handoff-progress-status')?.props.accessibilityLabel)
+            .toContain('workspaceSync.error.seedFromSharedMachineRefused');
+        await expandProgressDetails(screen);
+        expect(screen.getTextContent()).toContain('route_unavailable');
+    });
+
+    it.each([
+        ['target', 'workspaceSync.error.ownFolderOnly', true],
+        ['another-target', 'workspaceSync.error.needsAttention', false],
+    ] as const)('shows the proposed private folder for Machine %s only when the Target authored it there', async (reviewMachineId, statusKey, showDestination) => {
+        const { executeSessionHandoffAction } = await import('@/sync/domains/sessionHandoff/executeSessionHandoffAction');
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const requestFailure = await executeSessionHandoffAction({ sessionId: 'source', targetMachineId: 'target', context: { surface: 'ui' },
+            execute: async () => ({ ok: false, error: 'Private checkout is unavailable', errorCode: 'workspace_private_checkout_review_required',
+                failureCause: { phase: 'session.handoff.workspace_capture', errorClass: 'Error', errorCode: 'workspace_private_checkout_review_required',
+                    httpStatus: null, nativeErrorReason: 'workspace_private_checkout_review_required' },
+                details: { kind: 'refused', code: 'workspace_private_checkout_review_required', destinationReview: {
+                    accountId: 'member', serverId: 'home-1', machineId: reviewMachineId,
+                    destinationParentPath: '/member/workspaces', destinationDirectoryName: 'project',
+                } } }) });
+        if (requestFailure.ok) throw new Error('Expected the Target’s refusal');
+        const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
+            serverId="home-1" targetMachineId="target" requestFailure={requestFailure} />);
+        expect(screen.findByTestId('session-handoff-progress-status')?.props.accessibilityLabel)
+            .toContain(statusKey);
+        await expandProgressDetails(screen);
+        const details = screen.getTextContent();
+        expect(details.includes('workspaceSync.endpoint.destination(label=/member/workspaces/project)')).toBe(showDestination);
+        expect(details).toContain('workspace_private_checkout_review_required');
     });
 
     it('says nothing moved when the new machine was not created, and offers another machine or Retry', async () => {

@@ -21521,6 +21521,7 @@ const de = completeWorkspaceSyncTranslation({
         manageRequired: "Dafür ist Verwaltungszugriff auf die Zielmaschine nötig. Bitte den Eigentümer um Verwaltungszugriff.",
         projectWorkspaceChanged: "Dieser Ordner gehört zu einem anderen Projekt. Wähle einen neuen Ordner oder nutze das Projekt, zu dem er bereits gehört.",
         requesterLinkUnavailable: "Um eine Kopie mitzunehmen, öffne das Projekt zuerst auf deiner eigenen Maschine. Oder übergib ohne Kopie.",
+        seedFromSharedMachineRefused: "Der Server hat es abgelehnt, den Arbeitsbereich mit dem Rechner einer anderen Person zu kopieren.",
         dependenciesUnavailable: "Auf der anderen Maschine konnte nicht geprüft werden, ob Arbeit diese Kopie nutzt. Versuche es erneut oder frage den Eigentümer dieser Maschine.",
         provenanceConflict: "Diese Ordner werden bereits für einen anderen Zweck synchronisiert. Wähle einen anderen Ordner.",
         notWorkerCopy: "Dieser Ordner wurde nicht als Arbeitskopie erstellt, daher hat Happier ihn belassen. Es wurde nichts entfernt.",

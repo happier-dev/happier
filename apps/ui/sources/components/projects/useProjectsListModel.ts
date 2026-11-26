@@ -8,6 +8,7 @@ import { isManagedWorkspaceRefV2, projectWorkspaceRefV1, workspaceAddressFromRef
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { Modal } from '@/modal';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
 import { projectWorkspaceSyncSetAttentionByWorkspaceRefId } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { formatWorkspaceSyncSetAttention, presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
@@ -41,8 +42,8 @@ import { resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDispl
 import { useProjectMachineDisplays } from './useProjectMachineDisplays';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
-import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, type ActionApprovalRequestCreatedResult,
-    type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
+    type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { buildProjectNewSessionOrigin, buildProjectNewSessionSeed } from './detail/projectRouteState';
 import { readManagedLaunchName } from '@/components/approvals/approvalReferenceReading';
@@ -57,6 +58,15 @@ type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean>
  */
 /** A Session folder no checkout covers yet: its Add opens it through Project Open on its Machine. */
 const SESSION_FOLDER_KEY_PREFIX = 'session-folder:';
+
+function alertProjectRemovalFailure(failure: ActionExecuteFailure, fallbackMessage?: string): void {
+    const presentation = presentWorkspaceSyncFailure(failure, undefined, fallbackMessage);
+    alertActionFailure({
+        reason: presentation?.message ?? fallbackMessage ?? t('projects.actions.removeStopSyncingFailed'),
+        code: presentation?.code ?? null,
+        context: Object.fromEntries(presentation?.technicalDetails.map(({ key, value }) => [key, value]) ?? []),
+    });
+}
 
 export function useProjectsListModel() {
     const navigateToOpen = useNavigateToProjectOpen();
@@ -385,8 +395,8 @@ export function useProjectsListModel() {
                 (summary) => blockingRelationshipIds.includes(summary.relationshipId),
             );
             if (blocking.length !== blockingRelationshipIds.length) {
-                Modal.alert(t('common.error'), t('projects.actions.removeStopSyncingFailed'));
-                return;
+                alertProjectRemovalFailure(removal, t('projects.actions.removeStopSyncingFailed'));
+                return removal;
             }
             for (const summary of blocking) {
                 if (!lifetime.isCurrent()) return;
@@ -398,8 +408,7 @@ export function useProjectsListModel() {
                 rememberApproval(stopped);
                 if (stopped.ok && 'kind' in stopped) return stopped;
                 if (!stopped.ok) {
-                    Modal.alert(t('common.error'), presentWorkspaceSyncFailure(createActionExecuteFailureError(stopped))?.message
-                        ?? t('projects.actions.removeStopSyncingFailed'));
+                    alertProjectRemovalFailure(stopped);
                     return stopped;
                 }
             }
@@ -408,8 +417,7 @@ export function useProjectsListModel() {
         }
 
         if (!removal.ok) {
-            Modal.alert(t('common.error'), presentWorkspaceSyncFailure(createActionExecuteFailureError(removal))?.message
-                ?? t('projects.actions.removeStopSyncingFailed'));
+            alertProjectRemovalFailure(removal);
         }
         return removal;
     }, [

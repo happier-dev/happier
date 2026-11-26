@@ -1,3 +1,4 @@
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     DaemonComputerActionExecuteRequestV1Schema,
     DaemonComputerActionExecuteResponseV1Schema,
@@ -8,7 +9,7 @@ import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happi
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { projectMachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
+import { projectMachineActionRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 import type { ComputerMachineRpc } from './runtimeActionExecutor';
 
@@ -49,12 +50,12 @@ export const executeComputerActionViaMachineRpc: ComputerMachineRpc = async (inp
         });
     } catch (error) {
         if (input.signal?.aborted) throw error;
-        const failure = projectMachineDaemonRpcFailure(error);
-        return { ...refuse(failure.errorCode
-            ?? (isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : 'action_failed')),
-            ...(failure.failureCause ? { failureCause: failure.failureCause } : {}) };
+        return projectMachineActionRpcFailure(error)
+            ?? refuse(isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : 'action_failed');
     }
-    if (isRpcMethodNotFoundResult(raw)) return refuse('computer_unavailable');
+    if (isRpcMethodNotFoundResult(raw) && !isActionExecuteFailure(raw)) return refuse('computer_unavailable');
+    const refusal = projectMachineActionRpcFailure(raw);
+    if (refusal) return refusal;
     const parsed = DaemonComputerActionExecuteResponseV1Schema.safeParse(raw);
-    return parsed.success ? parsed.data.result : refuse('invalid_action_output');
+    return parsed.success ? parsed.data.result : projectMachineActionRpcFailure(raw) ?? refuse('invalid_action_output');
 };

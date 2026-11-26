@@ -8,6 +8,7 @@ import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictu
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
@@ -52,6 +53,18 @@ export function SimulatorPreviewPane(props: Readonly<{
     const immersive = stacked && controlsHidden;
     const toolsShown = toolsOpen && !immersive;
     const resource = viewModel.resource;
+    const inventoryFailure = viewModel.snapshotFailure;
+    const inventoryFailurePresentation = React.useMemo(() => {
+        if (!inventoryFailure) return null;
+        const presentation = presentActionExecutionFailure(inventoryFailure,
+            t('simulatorPreview.viewer.inventoryUnavailable'), { closedCodesOnly: true });
+        return {
+            reason: presentation.reason,
+            diagnosticCode: inventoryFailure.errorCode,
+            diagnosticDetail: presentation.technicalDetails.filter(line => line.key !== 'code')
+                .map(line => `${line.label}: ${line.value}`).join('\n'),
+        };
+    }, [inventoryFailure]);
     const toggleTools = React.useCallback(() => setToolsOpen((current) => !current), []);
     const closeTools = React.useCallback(() => setToolsOpen(false), []);
     const retry = actions.openStream ? () => { void actions.openStream?.(); } : undefined;
@@ -81,6 +94,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                         kind="warning"
                         size="line"
                         title={t('simulatorPreview.viewer.inventoryUnavailable')}
+                        {...inventoryFailurePresentation}
                         testID={`${props.testID}-inventory-error`}
                     />
                 ) : null}
@@ -88,6 +102,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                     <SimulatorDevicePicker
                         devices={viewModel.devices}
                         kind={viewModel.kind}
+                        failurePresentation={inventoryFailurePresentation ?? undefined}
                         selectedSimulatorId={viewModel.selectedSimulatorId}
                         onSelectDevice={(simulatorId) => actions.selectDevice?.(simulatorId)}
                         onStartDevice={(simulatorId) => { void startDevice(simulatorId); }}

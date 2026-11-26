@@ -1738,7 +1738,8 @@ describe('finite host operation custody', () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'source', resolveAccountId: async () => 'account',
       generateOperationId: () => 'move', supportsCoreCancellation: actionId => actionId === 'projects.service.relocate' });
     const request = runtime.observeExecution({ actionId: 'projects.service.relocate', input: { requestId: 'move-1' },
-      execute: async ({ signal, operationAcceptance }) => {
+      execute: async ({ signal, operationAcceptance, operationOwnerUpdate }) => {
+        operationOwnerUpdate.update({ progress: { phase: 'starting', label: 'Starting service' } });
         operationAcceptance?.accept({ status: 'accepted', operationId: 'move' });
         await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
         return { ok: false, errorCode: 'outcome_uncertain', error: 'native start is unknown' };

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { resolveArtifactOpenRoute } from '@/components/artifacts/artifactBrowserModel';
@@ -12,6 +13,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureArtifactSignedInLinkSecret, takeNativeArtifactSignedInLinkSecret } from '@/utils/url/artifactSignedInLinkSecret';
 import { describeBotTemplateOpenRefusal, readBotTemplateOpenRefusal, type BotTemplateOpenRefusal } from '@/components/sessions/bots/templates/botTemplateOpenRefusal';
+import { presentActionExecutionFailure, resolveActionExecutionFailureTitle } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 const Recipient = React.lazy(() => import('@/components/sessions/bots/templates/BotTemplateRecipientScreen')
@@ -44,7 +46,7 @@ export function ArtifactSignedInLinkScreen(props: Readonly<{ lookupId: string; s
         binding: ServerCredentialAccountScopeBinding;
     }> | null>(null);
     const [pending, setPending] = React.useState(false);
-    const [failure, setFailure] = React.useState<'reopen' | BotTemplateOpenRefusal | null>(null);
+    const [failure, setFailure] = React.useState<'reopen' | BotTemplateOpenRefusal | ActionExecuteFailure | null>(null);
     const openedCurrent = Boolean(opened && opened.binding === execution.binding && execution.isCurrent());
     React.useEffect(() => {
         if (!opened) return;
@@ -69,7 +71,7 @@ export function ArtifactSignedInLinkScreen(props: Readonly<{ lookupId: string; s
                             sourceServerId: execution.binding.scope.serverId }) as never);
                     } } });
             if (!result.ok && execution.isCurrent()) {
-                setFailure(readBotTemplateOpenRefusal(result) ?? 'reopen');
+                setFailure(readBotTemplateOpenRefusal(result) ?? (resolveActionExecutionFailureTitle(result, '') ? result : 'reopen'));
             }
         } catch { if (execution.isCurrent()) setFailure('reopen'); }
         finally { if (execution.isCurrent()) setPending(false); }
@@ -79,11 +81,19 @@ export function ArtifactSignedInLinkScreen(props: Readonly<{ lookupId: string; s
             serverId={opened.binding.scope.serverId} />
     </React.Suspense>;
     const openingFailure = opened && !openedCurrent ? 'reopen' : failure;
+    const typedFailure = openingFailure && typeof openingFailure === 'object' ? openingFailure : null;
+    const presented = typedFailure ? presentActionExecutionFailure(typedFailure, t('botTemplates.reopenLink'), {
+        closedCodesOnly: true, detailsAudience: 'recipient', safeToRetry: typedFailure.effectAttempted === false,
+    }) : null;
     return <ItemList>
         <SurfaceStateCard kind={openingFailure || !secret ? 'error' : 'empty'} title={t('botTemplates.signedInLink')}
-            reason={openingFailure && openingFailure !== 'reopen' ? describeBotTemplateOpenRefusal(openingFailure)
-                : openingFailure || !secret ? t('botTemplates.reopenLink') : !execution.ready
-                ? t('botTemplates.signInRequired') : t('botTemplates.signedInLinkDescription')} />
+            testID={typedFailure ? 'artifact-signed-in-link-refusal' : undefined}
+            reason={presented?.reason ?? (typeof openingFailure === 'string' && openingFailure !== 'reopen'
+                ? describeBotTemplateOpenRefusal(openingFailure) : openingFailure || !secret ? t('botTemplates.reopenLink')
+                : !execution.ready ? t('botTemplates.signInRequired') : t('botTemplates.signedInLinkDescription'))}
+            detail={presented ? t('botTemplates.reopenLink') : undefined}
+            diagnosticCode={typedFailure?.errorCode}
+            diagnosticDetail={presented?.technicalDetails.filter(line => line.key !== 'code').map(line => `${line.label}: ${line.value}`).join('\n')} />
         {secret && !openingFailure ? <RoundButton testID="artifact-signed-in-link-open" title={t('common.open')}
             loading={pending} disabled={!execution.ready || pending} onPress={() => { void open(); }} /> : null}
     </ItemList>;

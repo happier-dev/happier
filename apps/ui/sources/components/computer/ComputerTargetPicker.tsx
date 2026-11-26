@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { computerTargetKeyV1, type ComputerAccessV1 } from '@happier-dev/protocol/computer/v1';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
 
@@ -21,6 +22,7 @@ import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { groupComputerTargets, resolveComputerRecovery, type ComputerTargetEntry } from '@/sync/domains/computer/targets';
 export { resolveSuggestedTargetKey, type ComputerTargetEntry, type ComputerTargetPickerState } from '@/sync/domains/computer/targets';
@@ -348,6 +350,7 @@ export function ComputerTargetPicker(props: Readonly<{
     sharing: boolean;
     /** The machine's refusal of the last share, if any. */
     noticeCode: string | null;
+    noticeFailure?: ActionExecuteFailure;
     /** A target is already shared: offer to stop sharing it. */
     canStopSharing: boolean;
     /** Share the pending choice, or exactly `choice` when the leaf decided it at the press. */
@@ -359,6 +362,7 @@ export function ComputerTargetPicker(props: Readonly<{
     repairingDriver?: boolean;
     onOpenSettings: (permission: 'capture' | 'input') => void;
     openSettings: ComputerOpenSettingsState;
+    openSettingsFailure?: ActionExecuteFailure;
     /** The agent's name, for what it may do and the ask-first line. */
     agentName: string;
     /** No agent resolves: the sentences speak of agents instead of putting a fallback name mid-sentence. */
@@ -390,6 +394,10 @@ export function ComputerTargetPicker(props: Readonly<{
     const testID = props.testID ?? 'computer-target-picker';
     const { state, machineName } = props;
     const recovery = resolveComputerRecovery(state, props.access);
+    const failure = state.kind === 'failed' ? state.actionFailure : undefined;
+    const presentation = failure ? presentActionExecutionFailure(failure, t('computerUse.picker.failedBody'), { closedCodesOnly: true }) : null;
+    const diagnosticDetail = presentation?.technicalDetails.filter(line => line.key !== 'code')
+        .map(line => `${line.label}: ${line.value}`).join('\n');
     const switcher = props.density === 'switcher';
     // A switcher is anchored to the viewer's source switch and sizes to its row; the dialog form reserves its answer.
     const reserve = switcher ? null : stylesheet.stateReserve;
@@ -417,6 +425,7 @@ export function ComputerTargetPicker(props: Readonly<{
                     reason={t(identity ? 'computerUse.picker.ownDesktopIdentityBody' : 'computerUse.picker.ownDesktopUnavailableBody',
                         { machine: keepHyphenatedNameTogether(machineName) })}
                     diagnosticCode={state.code}
+                    diagnosticDetail={diagnosticDetail}
                     action={identity ? { label: t('computerUse.picker.tryAgain'), onPress: props.onRetry } : undefined}
                 />
             </View>
@@ -435,6 +444,7 @@ export function ComputerTargetPicker(props: Readonly<{
                         title={t('computerUse.picker.otherMachineTitle', { machine: machineName })}
                         reason={t('computerUse.picker.otherMachineBody')}
                         diagnosticCode={state.code}
+                        diagnosticDetail={diagnosticDetail}
                     />
                 </View>
             );
@@ -454,8 +464,9 @@ export function ComputerTargetPicker(props: Readonly<{
                             : t('computerUse.picker.failedTitle', { machine: machineName })}
                     reason={repairDriver ? t('computerUse.presentation.driverRepairBody', { machine: keepHyphenatedNameTogether(machineName) }) : noScreen
                         ? t('computerUse.picker.noScreenBody')
-                        : unsupported ? t('computerUse.picker.unsupportedBody') : t('computerUse.picker.failedBody')}
+                        : unsupported ? t('computerUse.picker.unsupportedBody') : presentation?.reason ?? t('computerUse.picker.failedBody')}
                     diagnosticCode={state.code}
+                    diagnosticDetail={diagnosticDetail}
                     action={noScreen || unsupported ? undefined : repairDriver
                         ? props.onRepairDriver ? { label: t('computerUse.presentation.repairDriver'), onPress: props.onRepairDriver, busy: props.repairingDriver, disabled: props.repairingDriver } : undefined
                         : { label: t('computerUse.picker.tryAgain'), onPress: props.onRetry }}
@@ -499,6 +510,7 @@ export function ComputerTargetPicker(props: Readonly<{
                         machineName={machineName}
                         grants={state.grants}
                         openSettings={props.openSettings}
+                        openSettingsFailure={props.openSettingsFailure}
                         onOpenSettings={props.onOpenSettings}
                         onCheckAgain={props.onRetry}
                     />
@@ -533,7 +545,16 @@ export function ComputerTargetPicker(props: Readonly<{
     const consentDisplay = consentKey
         ? screens.find(({ entry }) => computerTargetKey(entry.target) === consentKey) ?? null
         : null;
-    const notice = noticeKey ? (
+    const noticeFailure = props.noticeFailure;
+    const noticePresentation = noticeFailure && noticeKey
+        ? presentActionExecutionFailure(noticeFailure, t(noticeKey), { closedCodesOnly: true }) : null;
+    const notice = noticeFailure && noticePresentation ? (
+        <SurfaceStateCard kind="error" size="line" title={noticePresentation.reason}
+            diagnosticCode={noticeFailure.errorCode}
+            diagnosticDetail={noticePresentation.technicalDetails.filter(line => line.key !== 'code')
+                .map(line => `${line.label}: ${line.value}`).join('\n')}
+            testID={`${testID}-notice`} />
+    ) : noticeKey ? (
         <View style={stylesheet.notice} accessibilityLiveRegion="polite" testID={`${testID}-notice`}>
             <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />
             <Text style={stylesheet.noticeText}>{t(noticeKey)}</Text>

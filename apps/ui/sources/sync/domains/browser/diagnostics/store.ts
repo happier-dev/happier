@@ -564,6 +564,7 @@ export function selectBrowserDiagnosticsForView(
         }),
         events: events.map(projectEvent),
         ...(view.snapshotState ? { connection: view.snapshotState.connection, reasonCode: view.snapshotState.reasonCode,
+            ...(view.snapshotState.actionFailure ? { actionFailure: view.snapshotState.actionFailure } : {}),
             evictedEventCount: view.snapshotState.evictedEventCount ?? 0,
             omittedEventCount: view.snapshotState.omittedEventCount ?? 0 } : {}),
     };

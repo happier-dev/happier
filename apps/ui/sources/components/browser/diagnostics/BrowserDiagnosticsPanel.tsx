@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { Text } from '@/components/ui/text/Text';
 import type {
     BrowserDiagnosticEventProjection,
@@ -202,9 +204,16 @@ function BrowserHostDiagnosticsPanel(props: Readonly<{
     interactionSurface?: BrowserDiagnosticsInteractionSurface;
     testID: string;
 }>): React.ReactElement {
+    const failure = props.diagnostics.actionFailure;
+    const presentation = failure ? presentActionExecutionFailure(failure,
+        t('browserDiagnostics.host.devtools.unavailable.reason'), { closedCodesOnly: true }) : null;
+    const refusal = failure && presentation ? <SurfaceStateCard kind="unavailable" size="line" title={presentation.reason}
+        diagnosticCode={failure.errorCode} diagnosticDetail={presentation.technicalDetails.filter(line => line.key !== 'code')
+            .map(line => `${line.label}: ${line.value}`).join('\n')} testID={`${props.testID}-owner-refusal`} /> : null;
     // A page that has reported nothing is one fact with one reason. Its tools, per-family sections,
     // badges, counts and tamper notice would each restate a capture that is not happening.
     if (props.diagnostics.status === 'unavailable') {
+        if (refusal) return refusal;
         return (
             <View style={stylesheet.header}>
                 <Text testID={`${props.testID}-status`} style={stylesheet.title}>
@@ -237,6 +246,7 @@ function BrowserHostDiagnosticsPanel(props: Readonly<{
                 </View>
             ) : null}
 
+            {refusal}
             {props.interaction ? (
                 <BrowserDiagnosticsInteractionPanel
                     controls={props.interaction}

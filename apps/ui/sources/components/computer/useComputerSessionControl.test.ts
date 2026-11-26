@@ -112,6 +112,58 @@ async function renderControl(machine: ComputerMachineRpc) {
 }
 
 describe('useComputerSessionControl', () => {
+    it('keeps the open system settings refusal in the mounted screen permission state', async () => {
+        const { useComputerScreen } = await import('./useComputerScreen');
+        const base = createMachine();
+        const refusal = { ok: false, errorCode: 'action_forbidden', error: 'Private OS diagnostic',
+            requestId: 'computer-settings-refusal', effectAttempted: false,
+            failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+        } as const;
+        const executor = executorWith(request => request.actionId === 'computer.permissions.openSettings'
+            ? Promise.resolve(refusal) : base.machine(request));
+        const hook = await renderHook(() => useComputerScreen({
+            scope: { sessionId: 'session_1', machineId: 'machine_1' }, execute: executor.execute,
+        }));
+        try {
+            await act(async () => { hook.getCurrent().onOpenSettings?.('capture'); });
+            expect(hook.getCurrent()).toMatchObject({ openSettings: 'failed',
+                openSettingsFailure: { ...refusal, error: refusal.errorCode } });
+        } finally {
+            await hook.unmount();
+        }
+    });
+
+    it('shows the Machine’s typed clipboard refusal without replacing the local clipboard', async () => {
+        const { Modal } = await import('@/modal');
+        const { t } = await import('@/text');
+        const { useComputerScreen } = await import('./useComputerScreen');
+        const base = createMachine();
+        const refusal = { ok: false, errorCode: 'action_forbidden', error: 'Private clipboard diagnostic',
+            requestId: 'computer-clipboard-refusal', effectAttempted: false,
+            failureCause: { phase: 'action.owner', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+        } as const;
+        const executor = executorWith(request => request.actionId === 'computer.clipboard.read'
+            ? Promise.resolve(refusal) : base.machine(request));
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+        const hook = await renderHook(() => useComputerScreen({
+            scope: { sessionId: 'session_1', machineId: 'machine_1' }, execute: executor.execute,
+        }));
+        try {
+            expect(await hook.getCurrent().streamInput?.clipboardShortcut?.('copy'))
+                .toEqual({ ok: false, reason: refusal.errorCode });
+            expect(alert.mock.calls[0]?.[1]).toBe(t('errors.permissionDenied'));
+            const details = alert.mock.calls[0]?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+            expect(details).toBeDefined();
+            details?.onPress?.();
+            expect(alert.mock.calls[1]?.[1]).toContain(refusal.requestId);
+            expect(alert.mock.calls[1]?.[1]).not.toContain(refusal.error);
+        } finally {
+            await hook.unmount();
+            alert.mockRestore();
+        }
+    });
+
+
     it.each(['computer.target.get', 'computer.control.status'] as const)(
         'keeps a known share available for release after a failed %s read', async failedAction => {
             let failing = false;

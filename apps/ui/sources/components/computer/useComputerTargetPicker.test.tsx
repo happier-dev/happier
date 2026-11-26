@@ -35,6 +35,43 @@ describe('useComputerTargetPicker initial access', () => {
     });
 });
 
+it('retains the Machine’s typed list refusal for picker recovery', async () => {
+    const refusal = { ok: false, errorCode: 'action_forbidden', error: 'Private Machine diagnostic',
+        requestId: 'computer-picker-list', effectAttempted: false,
+        failureCause: { phase: 'home.action.admission', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+    } as const;
+    const hook = await renderHook(useComputerTargetPicker, { initialProps: pickerInput({ execute: async () => refusal }) });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().state).toMatchObject({
+            kind: 'failed', code: 'action_forbidden', actionFailure: refusal,
+        }));
+    } finally { await hook.unmount(); }
+});
+
+it.each(['share', 'stopSharing', 'requestSettings'] as const)('keeps the %s refusal in the picker recovery', async operation => {
+    const refusal = { ok: false, errorCode: 'action_forbidden', error: 'Private Machine diagnostic',
+        requestId: 'computer-picker-operation', effectAttempted: false,
+        failureCause: { phase: 'home.action.admission', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 },
+    } as const;
+    let answerTypedRefusal = false;
+    const window = { target: { kind: 'window', displayId: 'screen', pid: 4, windowId: 2 }, title: 'Editor' };
+    const boundary: ComputerTargetPickerInput['execute'] = async () => answerTypedRefusal ? refusal : {
+        ok: true, result: { targets: [window], grants: { capture: operation === 'requestSettings' ? 'denied' : 'granted', input: 'granted' } },
+    };
+    const hook = await renderHook(useComputerTargetPicker, { initialProps: pickerInput({ execute: boundary }) });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().state.kind).toBe('ready'));
+        answerTypedRefusal = true;
+        if (operation === 'requestSettings') {
+            hook.getCurrent().requestSettings('capture');
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ openSettings: 'failed', openSettingsFailure: refusal }));
+        } else {
+            hook.getCurrent()[operation]();
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ noticeCode: 'action_forbidden', noticeFailure: refusal }));
+        }
+    } finally { await hook.unmount(); }
+});
+
 describe('useComputerTargetPicker initial choice', () => {
     it('preselects the only choice the Machine offers, so Share is one press', async () => {
         const display = { target: { kind: 'display', displayId: 'display-1' }, title: 'Built-in display' };

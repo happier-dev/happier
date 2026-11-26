@@ -1,3 +1,4 @@
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/localServices';
 import { LocalServiceInventoryCountResponseV1Schema, LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema,
@@ -42,7 +43,12 @@ export const LOCAL_SERVICES_PRESENTATION: ActionCliPresentation = {
     const schema = LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS[actionId as keyof typeof LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS];
     const result = schema.parse(payload);
     if ('status' in result && (result.status === 'denied' || result.status === 'failed' || result.status === 'unavailable')) {
-      return { errorCode: 'reasonCode' in result && result.reasonCode ? result.reasonCode : 'local_service_unavailable', details: result };
+      return readActionFailureEnvelope({
+        ...result,
+        ok: false,
+        errorCode: 'reasonCode' in result && result.reasonCode ? result.reasonCode : 'local_service_unavailable',
+        details: result,
+      });
     }
     return null;
   },

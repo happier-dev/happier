@@ -9,6 +9,8 @@ import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { useSession } from '@/sync/domains/state/storage';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { readBrowserAgentPoint, selectBrowserAgentPoint, selectBrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
 import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
@@ -152,7 +154,20 @@ export function BrowserShellPresence(props: Readonly<{
     const takeControl = React.useCallback(async (): Promise<HappierPresenceTakeControlResult> => {
         const result = await props.onCommand?.({ kind: 'takeControl', commandId: `take-control:${view.viewId}:${nowMs?.() ?? Date.now()}`, ...viewKey });
         if (!result) return { status: 'failed' };
-        if (!result.ok) return { status: result.errorCode === 'browser_control_unconfirmed' ? 'unknown' : 'failed' };
+        if (!result.ok) {
+            const presentation = presentActionExecutionFailure(result, t('browserPresence.stopUnconfirmed'), { closedCodesOnly: true });
+            return {
+                status: result.errorCode === 'browser_control_unconfirmed' ? 'unknown' : 'failed',
+                failure: {
+                    reason: presentation.reason,
+                    details: { label: t('approvals.technicalDetails'), onPress: () => showActionFailureDetails({
+                        code: result.errorCode,
+                        context: Object.fromEntries(presentation.technicalDetails.filter(line => line.key !== 'code')
+                            .map(line => [line.key, line.value])),
+                    }) },
+                },
+            };
+        }
         const dispatched = BrowserCommandDispatchResultV1Schema.safeParse(result.result);
         return { status: dispatched.success && dispatched.data.status === 'dispatched' ? 'accepted' : 'failed' };
     }, [nowMs, props.onCommand, view.viewId, viewKey]);

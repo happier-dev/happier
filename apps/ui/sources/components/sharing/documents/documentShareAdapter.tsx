@@ -5,12 +5,15 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { classifyArtifactBrowserKind } from '@/components/artifacts/artifactBrowserModel';
 import { Text } from '@/components/ui/text/Text';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SelectionListOption } from '@/components/ui/selectionList';
 import { t } from '@/text';
-import type { ShareAccessLevel, ShareLevelPresentation, ShareSheetAdapter, ShareUiError, ShareUiReason } from '../shareSheetTypes';
+import type { ShareAccessLevel, ShareGrantRowModel, ShareLevelPresentation, ShareSheetAdapter, ShareUiError, ShareUiReason } from '../shareSheetTypes';
 import { ShareRowAction } from '@happier-dev/plugin-ui/components';
 import { sharePrincipalKey } from '../sharePrincipalPresentation';
 import type { DocumentLinkedWorkflowOffer } from './useLinkedWorkflowShareOffer';
+import type { DocumentShareIssue } from './useDocumentShareController';
 
 const styles = StyleSheet.create((theme) => ({
     versionReports: { color: theme.colors.text.secondary },
@@ -84,6 +87,12 @@ function documentShareNotes(kind: DocumentShareKind, grants: readonly ArtifactAc
     }
 }
 
+function renderDocumentShareFailureDetails(issue: DocumentShareIssue, testID: string) {
+    return issue.actionFailure ? <TechnicalDetailsDisclosure testID={testID}
+        title={t('approvals.technicalDetails')}
+        lines={presentActionExecutionFailure(issue.actionFailure, undefined, { detailsAudience: 'recipient' }).technicalDetails} /> : null;
+}
+
 /**
  * The documents meaning of the one share sheet, over the Artifact grants of every ordinary kind:
  * "Can read" (documents, boards) or "Can use" (everything that runs) / "Can edit" / "Admin", the
@@ -94,13 +103,14 @@ export function createDocumentShareAdapter(input: Readonly<{
     kind: DocumentShareKind;
     description?: string;
     grants: readonly ArtifactAccessGrantRowV1[];
+    grantRows?: readonly ShareGrantRowModel[];
     privateChoices?: readonly DocumentPrivateChoice[];
     /** A shared profile's own linked Workflows, offered to its newly added recipients. */
     linkedWorkflows?: DocumentLinkedWorkflowOffer;
     linkPath?: string;
     sendCopy?: () => void;
     loading: boolean;
-    issue?: ShareUiError;
+    issue?: DocumentShareIssue;
     notice?: ShareUiReason;
     readOnly: boolean;
     retryContent(): void;
@@ -111,6 +121,8 @@ export function createDocumentShareAdapter(input: Readonly<{
             : grant.acceptedVersions.length === 0 ? [t('botTemplates.noVersionReported')]
                 : grant.acceptedVersions.map(report => t('botTemplates.acceptedVersionReport', report))]))
         : null;
+    const hasGrantDetails = versionReports !== null || input.grantRows?.some(row =>
+        row.operation.kind === 'error' && row.operation.error.actionFailure !== undefined);
     return {
         namespace: 'document-share',
         title: t('shareSheet.documents.title'),
@@ -123,11 +135,24 @@ export function createDocumentShareAdapter(input: Readonly<{
         notes: documentShareNotes(input.kind, input.grants),
         ...(versionReports ? {
             principalTags: (principal, row) => row ? versionReports.get(principal.key) ?? [] : [],
-            renderGrantDetails: (row, context) => <Text variant="meta" style={styles.versionReports}
-                testID={`${context.idPrefix}document-share-version-reports:${row.principal.key}`}>
-                {versionReports.get(row.principal.key)?.join('\n')}
-            </Text>,
         } satisfies Partial<ShareSheetAdapter> : {}),
+        ...(hasGrantDetails ? {
+            renderGrantDetails: (row, context) => {
+                const details = row.operation.kind === 'error' ? renderDocumentShareFailureDetails(row.operation.error,
+                    context.idPrefix + 'document-share-grant-failure-details:' + row.principal.key) : null;
+                if (!versionReports) return details;
+                return <>
+                    <Text variant="meta" style={styles.versionReports}
+                        testID={context.idPrefix + 'document-share-version-reports:' + row.principal.key}>
+                        {versionReports.get(row.principal.key)?.join('\n')}
+                    </Text>
+                    {details}
+                </>;
+            },
+        } satisfies Partial<ShareSheetAdapter> : {}),
+        renderCandidateDetails: (row, context) => row.operation.kind === 'error'
+            ? renderDocumentShareFailureDetails(row.operation.error, context.idPrefix + 'document-share-candidate-failure-details:' + row.principal.key)
+            : null,
         ...(input.linkPath && input.kind !== 'widget-area-layout.v1' ? { linkPath: input.linkPath } : {}),
         ...(input.sendCopy ? { sendCopy: input.sendCopy } : {}),
         sections: (context) => {
@@ -137,17 +162,22 @@ export function createDocumentShareAdapter(input: Readonly<{
                 rightAccessory: <ShareRowAction useHost={useShareGrantRowPresentation} label={t('shareSheet.documents.linkedWorkflows.notNow')}
                     testID={`${context.idPrefix}document-share-linked-workflows-dismiss`} endsRow onPress={linked.dismiss} />,
                 options: [
-                    ...linked.choices.map((choice): SelectionListOption => ({ id: `linked-workflow:${choice.ref}`,
-                        testID: `${context.idPrefix}document-share-linked-workflow:${choice.ref}`, label: choice.title,
-                        ...(choice.issue ? { subtitle: choice.issue.message } : {}),
-                        ...(choice.sharing ? { loading: true } : {}),
-                        ...(choice.share ? { onSelect: choice.share } : {}),
-                        rightAccessoryOutsidePressable: true,
-                        rightAccessory: () => choice.shared
-                            ? <Text variant="meta" style={styles.versionReports}>{t('shareSheet.documents.linkedWorkflows.shared')}</Text>
-                            : <ShareRowAction useHost={useShareGrantRowPresentation} label={t(choice.issue ? 'common.retry' : 'common.share')}
-                                testID={`${context.idPrefix}document-share-linked-workflow-share:${choice.ref}`} endsRow
-                                disabled={!choice.share} onPress={() => choice.share?.()} /> })),
+                    ...linked.choices.map((choice): SelectionListOption => {
+                        const details = choice.issue && renderDocumentShareFailureDetails(choice.issue,
+                            `${context.idPrefix}document-share-linked-workflow-failure-details:${choice.ref}`);
+                        return { id: `linked-workflow:${choice.ref}`,
+                            testID: `${context.idPrefix}document-share-linked-workflow:${choice.ref}`, label: choice.title,
+                            ...(choice.issue ? { subtitle: choice.issue.message } : {}),
+                            ...(details ? { expandedContent: details, expandedContentVisibility: 'always', expandedContentInset: 'text' } : {}),
+                            ...(choice.sharing ? { loading: true } : {}),
+                            ...(choice.share ? { onSelect: choice.share } : {}),
+                            rightAccessoryOutsidePressable: true,
+                            rightAccessory: () => choice.shared
+                                ? <Text variant="meta" style={styles.versionReports}>{t('shareSheet.documents.linkedWorkflows.shared')}</Text>
+                                : <ShareRowAction useHost={useShareGrantRowPresentation} label={t(choice.issue ? 'common.retry' : 'common.share')}
+                                    testID={`${context.idPrefix}document-share-linked-workflow-share:${choice.ref}`} endsRow
+                                    disabled={!choice.share} onPress={() => choice.share?.()} /> };
+                    }),
                     ...(linked.failed ? [{ id: 'linked-workflows-failed', label: t('shareSheet.documents.linkedWorkflows.loadFailed'),
                         rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction useHost={useShareGrantRowPresentation}
                             label={t('common.retry')} testID={`${context.idPrefix}document-share-linked-workflows-retry`} endsRow
@@ -180,7 +210,9 @@ export function createDocumentShareAdapter(input: Readonly<{
             if (input.loading) notices.push({ id: 'loading', label: t('common.loading'), loading: true, disabled: true });
             const issue = input.issue;
             if (issue) notices.push({ id: 'issue', label: issue.message, onSelect: issue.retryable ? input.retryContent : undefined,
-                ...(issue.retryable ? { subtitle: t('common.retry') } : {}) });
+                ...(issue.retryable ? { subtitle: t('common.retry') } : {}),
+                ...(issue.actionFailure ? { expandedContent: () => renderDocumentShareFailureDetails(issue,
+                    context.idPrefix + 'document-share-roster-failure-details'), expandedContentVisibility: 'always', expandedContentInset: 'text' } : {}) });
             if (input.notice) notices.push({ id: 'notice', label: input.notice.message, disabled: true });
             if (input.readOnly) notices.push({ id: 'read-only', label: t('shareSheet.documents.errors.ownerOnly'), disabled: true });
             return { ...(leading.length ? { leading } : {}),

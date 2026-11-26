@@ -11,6 +11,7 @@ import { SessionHandoffCapabilityV3Schema } from '@happier-dev/protocol/sessions
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { SessionHandoffWorkspaceCaptureResultV3Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -438,7 +439,10 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
           accountServerId: workspaceAccountServerId, sourceRootPath: sourceWorkspaceRootPath, targetPath, workspaceAction },
         ...(hostInput.context ? { context: hostInput.context } : {}), signal: hostInput.signal }));
       if (!captured.success) return { ok: false, errorCode: 'workspace_sync_prepare_failed', error: 'The target workspace capture was invalid' };
-      if (!captured.data.ok) return { ok: false, errorCode: captured.data.errorCode, error: captured.data.error ?? captured.data.errorCode };
+      if (!captured.data.ok) return { ...captured.data, error: captured.data.error ?? captured.data.errorCode,
+        ...(captured.data.failureCause || captured.data.errorCode === 'target_unavailable' ? {
+          failureCause: projectActionFailureCauseV1(captured.data, 'session.handoff.workspace_capture'),
+        } : {}) };
       // The member capture's root is the requested path itself (any other path is refused).
       if (captured.data.capture === 'member') memberCapture = captured.data;
     }

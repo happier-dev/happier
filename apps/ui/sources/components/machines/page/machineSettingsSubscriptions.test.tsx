@@ -69,6 +69,27 @@ describe('Machine settings subscriptions', () => {
         } finally { await screen.unmount(); }
     });
 
+    it('explains the Account’s Computer default-provider refusal without changing the setting', async () => {
+        const machine = createMachineFixture({ id: 'computer-preferences', isShared: false, active: true });
+        const preferences = { enabledProviders: ['cua', 'agent-desktop'] as const, defaultProvider: 'cua' as const };
+        await account.restore({ currentAccount: true, machines: [machine], settings: {
+            actionsSettingsV1: { v: 1, actions: { 'settings.set': { enabled: false } } },
+            computerUseByMachineId: { [machine.id]: { ...preferences, enabledProviders: [...preferences.enabledProviders] } },
+        } });
+        const screen = await renderScreen(<MachineComputerUseSection serverId={account.serverId}
+            machineId={machine.id} machineName="Computer Preferences" online={false} />);
+        try {
+            await act(async () => { await resolveServerCredentialAccountScope(account.serverId); });
+            vi.mocked(Modal.alert).mockClear();
+            await screen.pressByTestIdAsync('machine-computer-use-provider-agent-desktop.makeDefault');
+            await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(t('computerUse.providers.saveFailed'),
+                t('actionConfirmations.turnedOffUnnamedMessage'), expect.arrayContaining([
+                    expect.objectContaining({ text: t('approvals.technicalDetails') }),
+                ])));
+            expect(storage.getState().settings.computerUseByMachineId[machine.id]?.defaultProvider).toBe('cua');
+        } finally { await screen.unmount(); }
+    });
+
     it.each([
         { intent: 'auto-install policy', actionId: 'settings.set' },
         { intent: 'check again', actionId: 'machines.capabilities.detect' },

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { SelectionListSectionDescriptor } from './shareSelectionListTypes.js';
-import type { ShareAccessLevel, ShareGrantRowModel, ShareLevelPresentation, SharePrincipalPresentation, ShareSheetSectionContext } from './shareGrantModels.js';
+import type { ShareAccessLevel, ShareCandidateRowModel, ShareGrantRowModel, ShareLevelPresentation, SharePrincipalPresentation, ShareSheetSectionContext } from './shareGrantModels.js';
 
 export type ShareSheetAdapterSections<TInvocation = unknown> = Readonly<{
     /** Above "Who has access" (for example the viewer's own access). */
@@ -48,6 +48,8 @@ export type ShareSheetAdapter<TRow extends ShareGrantRowModel = ShareGrantRowMod
     showsLevelLock?: (row: TRow) => boolean;
     /** Domain controls inside an expanded grant row. */
     renderGrantDetails?: (row: TRow, context: ShareSheetSectionContext) => ReactNode;
+    /** Domain details beneath a candidate whose Add failed. The candidate keeps its recovery control. */
+    renderCandidateDetails?: (row: ShareCandidateRowModel, context: ShareSheetSectionContext) => ReactNode;
     /** Domain words for the same two-step row removal (for example leaving one's own share). */
     removalLabels?: (row: TRow) => Readonly<{ request: string; confirm: string }> | undefined;
     sections?: (context: ShareSheetSectionContext) => ShareSheetAdapterSections<TInvocation>;

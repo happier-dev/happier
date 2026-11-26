@@ -1,5 +1,7 @@
 import { SessionHandoffPrepareTargetResponseSchema, SessionHandoffPrepareTargetResultGetSuccessResponseSchema, SessionHandoffAbortResponseSchema, SessionHandoffCommitResponseSchema, SessionHandoffStartResponseSchema, SessionHandoffExistingStateCheckResponseV3Schema, type SessionHandoffExistingStateCheckRequestV3 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
 import { SessionHandoffStatusSchema } from '@happier-dev/protocol/sessions/control/handoff/handoffStatus';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { HandoffWorkspaceOutcomeV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ActionExecuteResult, HandoffWorkspaceOutcomeV1, WorkspaceSyncCleanupWarningV1, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode, HandoffWorkspaceActionV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 
@@ -98,23 +100,25 @@ function readFailure(value: unknown, fallback: string): Failure | null {
 }
 
 function readThrownFailure(error: unknown, fallback: string): Failure {
+  const failure = readActionFailureEnvelope(error);
+  const errorCode = failure?.errorCode ?? readActionErrorCodeV1(error) ?? fallback;
+  // The preparation owner can throw the same refusal after cleanup, keeping the typed RPC reply in Error.cause.
+  const cause = !failure && error instanceof Error ? readActionFailureEnvelope(error.cause) : null;
+  const carried = failure ?? (cause?.errorCode === errorCode ? cause : null);
+  const phase = `session.handoff.${fallback}`;
+  if (carried) {
+    return carried.failureCause !== undefined || carried.errorCode !== 'target_unavailable' ? carried
+      : { ...carried, failureCause: projectActionFailureCauseV1(error, phase) };
+  }
   const record = asRecord(error);
-  const errorCode = typeof record?.code === 'string' && record.code.trim()
-    ? record.code.trim()
-    : typeof record?.errorCode === 'string' && record.errorCode.trim()
-      ? record.errorCode.trim()
-      : fallback;
   const message = error instanceof Error && error.message.trim()
     ? error.message.trim()
     : typeof record?.error === 'string' && record.error.trim()
       ? record.error.trim()
       : errorCode;
-  return {
-    ok: false,
-    errorCode,
-    error: message,
-    ...(record?.details === undefined ? {} : { details: record.details }),
-  };
+  return readActionFailureEnvelope({ ...record, ok: false, errorCode, error: message,
+    ...(record?.failureCause !== undefined || errorCode === 'target_unavailable'
+      ? { failureCause: projectActionFailureCauseV1(error, phase) } : {}) })!;
 }
 
 function cleanupFailureMessage(error: unknown): string {

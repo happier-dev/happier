@@ -370,7 +370,7 @@ describe('Artifact History continuity', () => {
             ? Response.json({ error: 'artifact_access_forbidden' }, { status: 403 }) : undefined);
         expect(screen.findByTestId('artifact-history:failed-details-code')).toBeNull();
         await screen.pressByTestIdAsync('artifact-history:failed-details-toggle');
-        expect(screen.findByTestId('artifact-history:failed-details-code')?.props.children).toBe('artifact_content_unavailable');
+        expect(screen.findByTestId('artifact-history:failed-details-code')?.props.children).toBe('artifact_access_forbidden');
         await screen.unmount();
     });
 
@@ -391,14 +391,17 @@ describe('Artifact History continuity', () => {
         await flushHookEffects();
         expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
         expect(screen.findByTestId('artifact-history:refreshing')).not.toBeNull();
-        refresh.resolve(Response.json({ error: 'database_transaction_timeout' }, { status: 503 }));
+        refresh.resolve(Response.json({ error: 'database_transaction_timeout', statusCode: 503, transactionOutcome: 'rolled_back' }, { status: 503 }));
         await flushHookEffects();
         expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Notes 1');
         expect(screen.findByTestId('artifact-history:stale')).not.toBeNull();
         expect(screen.getTextContent()).toContain('approvals.transientFailureTitle');
         await screen.pressByTestIdAsync('artifact-history:stale-action-1');
-        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('database_transaction_timeout'));
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.effectAttempted: false'));
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('home.database.transaction'));
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.requestId:'));
         response = Promise.resolve(Response.json(revisions));
         await screen.pressByTestIdAsync('artifact-history:stale-action');
         await flushHookEffects();

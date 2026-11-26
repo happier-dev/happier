@@ -9,6 +9,7 @@ import { readMissingActionSecretInputPaths } from '@happier-dev/protocol/actions
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { executeSessionMcpAction, hasSessionMcpContext } from '@/cli/commands/toolsSessionMcp';
 import {
+  formatCliActionFailureText,
   normalizeActionExecuteResult,
   normalizeCliActionThrownError,
   projectCliActionFailure,
@@ -204,10 +205,7 @@ async function reportFailure(params: Readonly<{
     );
     return;
   }
-  const message = [params.failure.errorMessage ?? params.failure.errorCode, params.humanSuffix]
-    .filter((part): part is string => Boolean(part))
-    .join(' ');
-  console.error(chalk.red('Error:'), message);
+  console.error(chalk.red('Error:'), formatCliActionFailureText(undefined, params.failure, { suffix: params.humanSuffix }));
   if (params.failure.candidates?.length) {
     console.error(`Candidates: ${params.failure.candidates.join(', ')}`);
   }

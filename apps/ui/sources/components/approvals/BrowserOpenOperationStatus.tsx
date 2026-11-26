@@ -6,6 +6,7 @@ import { describeBrowserSandboxAllowance, useBrowserSandboxAllowance } from '@/c
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { ApprovalPromptChrome } from '@/components/tools/shell/approvals/ApprovalPromptChrome';
 import { Item } from '@/components/ui/lists/Item';
+import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { allowBrowserSandbox, readBrowserOpenAcceptance, type BrowserOpenFirstUseScope, type BrowserOpenOperationState } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -15,17 +16,26 @@ import { ActionOperationGetV1RequestSchema } from '@happier-dev/protocol/actions
 import { presentFailure as presentActionOperationFailure } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
-/** What each state of the open reads as: the same words the Session Browser uses for the same state. */
-export function describeBrowserOpenOperation(state: BrowserOpenOperationState): Readonly<{ text: string; active: boolean }> {
+/** The shared content of the approval status row and the transcript card. */
+export function describeBrowserOpenOperation(state: BrowserOpenOperationState): Readonly<{
+    text: string; active: boolean; technicalDetails?: readonly TechnicalDetailsLine[];
+}> {
     switch (state.kind) {
         case 'preparing': return { text: t('browserPresence.stream.preparingTitle'), active: true };
         case 'connecting': return { text: t('browserPresence.stream.openingPage'), active: true };
         case 'opened': return { text: t('browserPresence.stream.pageOpened'), active: false };
-        case 'installFailed': return { text: resolveReasonCopy({ reasonCode: 'browser_runtime_provisioning_failed', kind: 'browserLaunchpad' }).body, active: false };
         case 'sandboxUnavailable': return { text: resolveReasonCopy({ reasonCode: 'sandbox_unavailable', kind: 'browserLaunchpad' }).body, active: false };
-        case 'failed': return { text: resolveReasonCopy({ reasonCode: state.code, kind: 'browserLaunchpad' }).body, active: false };
+        case 'installFailed':
+        case 'failed': {
+            const reasonCode = state.kind === 'installFailed' ? 'browser_runtime_provisioning_failed' : state.code;
+            const fallback = resolveReasonCopy({ reasonCode, kind: 'browserLaunchpad' }).body;
+            if (!state.actionFailure) return { text: fallback, active: false };
+            const failure = presentActionExecutionFailure(state.actionFailure, fallback, { closedCodesOnly: true });
+            return { text: failure.reason, active: false, technicalDetails: failure.technicalDetails };
+        }
     }
 }
 
@@ -69,14 +79,18 @@ function BrowserSandboxAllowRow(props: Readonly<{ scope: BrowserOpenFirstUseScop
     if (!allow) return null;
     const settled = allowance.kind === 'settled' ? describeBrowserSandboxAllowance(allowance.outcome) : null;
     return (
-        <Item
-            testID={props.testID}
-            title={t('browserPresence.stream.sandboxAllow')}
-            subtitle={settled?.reason}
-            subtitleLines={0}
-            loading={allowance.kind === 'working'}
-            onPress={allow}
-        />
+        <>
+            <Item
+                testID={props.testID}
+                title={t('browserPresence.stream.sandboxAllow')}
+                subtitle={settled?.reason}
+                subtitleLines={0}
+                loading={allowance.kind === 'working'}
+                onPress={allow}
+            />
+            {settled?.technicalDetails?.length ? <TechnicalDetailsDisclosure testID={`${props.testID}-technical-details`}
+                title={t('approvals.technicalDetails')} lines={settled.technicalDetails} /> : null}
+        </>
     );
 }
 
@@ -93,7 +107,7 @@ export function BrowserOpenOperationStatusRow(props: Readonly<{
 }>): React.ReactElement | null {
     const { state, scope } = useBrowserOpenOperationOfRequest(props.request, props.serverId);
     if (!state) return null;
-    const { text, active } = describeBrowserOpenOperation(state);
+    const { text, active, technicalDetails } = describeBrowserOpenOperation(state);
     return (
         <>
             <Item
@@ -106,6 +120,8 @@ export function BrowserOpenOperationStatusRow(props: Readonly<{
                 showChevron={false}
                 rightElement={active ? <ActivitySpinner size="small" /> : undefined}
             />
+            {technicalDetails?.length ? <TechnicalDetailsDisclosure testID={`${props.testID}-technical-details`}
+                title={t('approvals.technicalDetails')} lines={technicalDetails} /> : null}
             {state.kind === 'sandboxUnavailable' ? <BrowserSandboxAllowRow scope={scope} testID={`${props.testID}-allow-sandbox`} /> : null}
         </>
     );
@@ -176,16 +192,20 @@ export function BrowserOpenApprovalProgress(props: Readonly<{
 }>): React.ReactElement | null {
     const { state } = useBrowserOpenOperationOfRequest(props.request, props.serverId);
     if (!state || state.kind === 'opened') return null;
+    const { text, technicalDetails } = describeBrowserOpenOperation(state);
     return (
         <ApprovalPromptChrome
             testID="approval-prompt-browser-open"
             chrome={props.chrome}
             icon="browsers"
             title={props.title}
-            subtitle={describeBrowserOpenOperation(state).text}
+            subtitle={text}
             titleNumberOfLines={1}
             subtitleNumberOfLines={3}
             headerAccessory={props.headerAccessory}
-        />
+        >
+            {technicalDetails?.length ? <TechnicalDetailsDisclosure testID="approval-prompt-browser-open-technical-details"
+                title={t('approvals.technicalDetails')} lines={technicalDetails} /> : null}
+        </ApprovalPromptChrome>
     );
 }

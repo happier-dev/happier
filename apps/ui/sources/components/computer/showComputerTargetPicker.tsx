@@ -133,6 +133,7 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
             onAccessChange={picker.setAccess}
             sharing={picker.sharing}
             noticeCode={picker.noticeCode}
+            noticeFailure={picker.noticeFailure}
             canStopSharing={props.currentTargetKey !== null}
             onShare={picker.share}
             onStopSharing={picker.stopSharing}
@@ -142,6 +143,7 @@ export function ComputerTargetPickerModal(props: PickerModalProps): React.ReactE
             repairingDriver={driverRepair.repairing}
             onOpenSettings={picker.requestSettings}
             openSettings={picker.openSettings}
+            openSettingsFailure={picker.openSettingsFailure}
             agentName={props.agentName}
             agentless={props.agentless}
             policy={policy}

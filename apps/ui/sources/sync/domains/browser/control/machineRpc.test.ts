@@ -82,7 +82,25 @@ describe('dispatchBrowserDaemonControlCommandViaMachineRpc', () => {
             command: RELOAD_COMMAND,
         });
 
-        expect(result).toEqual({ ok: false, reason: 'unavailable' });
+        expect(result).toMatchObject({ ok: false, reason: 'unavailable', errorCode: 'RPC_METHOD_NOT_FOUND' });
+    });
+
+    it.each(['return', 'throw'] as const)('carries the same owner refusal through command and view discovery (%s)', async (carrier) => {
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 };
+        const details = { reason: 'private_project_slug' };
+        const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_MACHINE_PROSE', requestId: 'browser-rpc-request',
+            effectAttempted: false, failureCause, details } as const;
+        if (carrier === 'return') machineRpcWithServerScopeMock.mockResolvedValue(refusal);
+        else machineRpcWithServerScopeMock.mockRejectedValue(Object.assign(new RpcError('Forbidden', refusal.errorCode, failureCause), refusal));
+        const scope = { machineId: MACHINE_ID, serverId: SERVER_ID };
+        const expected = { ok: false, errorCode: refusal.errorCode, error: refusal.errorCode,
+            requestId: refusal.requestId, effectAttempted: false, failureCause, reason: 'request_failed' };
+        for (const result of [await dispatchBrowserDaemonControlCommandViaMachineRpc({ ...scope, command: RELOAD_COMMAND }),
+            await listBrowserDaemonViewsViaMachineRpc({ ...scope, browserSessionId: RELOAD_COMMAND.browserSessionId })]) {
+            expect(result).toMatchObject(expected);
+            expect(result).not.toHaveProperty('details');
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_MACHINE_PROSE');
+        }
     });
 
     it('maps a malformed response to invalid_response', async () => {
@@ -137,7 +155,7 @@ describe('createBrowserDaemonControlCommandSender', () => {
     ] as const)('returns the terminal transport outcome to the caller instead of swallowing it', async (response, reason) => {
         machineRpcWithServerScopeMock.mockResolvedValue(response);
         const send = createBrowserDaemonControlCommandSender({ machineId: MACHINE_ID, serverId: SERVER_ID });
-        expect(await send(RELOAD_COMMAND)).toEqual({ ok: false, reason });
+        expect(await send(RELOAD_COMMAND)).toMatchObject({ ok: false, reason });
     });
 
     it('returns unknown delivery after the connection fails', async () => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { randomUUID } from '@/platform/randomUUID';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { createRemoteViewerClipboardShortcut } from '@/components/stream/remoteViewerClipboard';
@@ -63,7 +64,7 @@ type Discovery =
     | Readonly<{ status: 'idle' }>
     | Readonly<{ status: 'discovering' }>
     | Readonly<{ status: 'ready'; view: BrowserDaemonViewV1 | null; closedAfterRestart?: BrowserDaemonViewV1['closedAfterRestart']; machineId: string; scope: string }>
-    | Readonly<{ status: 'failed'; reason: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }>['reason'] }>;
+    | Readonly<{ status: 'failed'; result: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }> }>;
 
 /**
  * The live picture of the agent's browser for one daemon-owned view.
@@ -154,7 +155,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             if (result.ok) {
                 views = result.views.filter(candidate => candidate.browserSessionId === browserSessionId);
                 reconcileDiscoveredViews(views, result.machineId);
-            } else setDiscovery({ status: 'failed', reason: result.reason });
+            } else setDiscovery({ status: 'failed', result });
             // The broker is observable before Chromium is installed. Approval replay can
             // open its first view without publishing an operation into this client's store.
             while (!abort.signal.aborted) {
@@ -350,10 +351,13 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         retry();
     });
     const machineName = input.machineName ?? null;
-    const unavailableReason = discovery.status === 'failed' ? discovery.reason : undefined;
+    const discoveryStatus = discovery.status;
+    const failedDiscovery = discovery.status === 'failed' ? discovery.result : null;
+    const unavailableReason = failedDiscovery?.reason;
     // An open that went through has its page discovered next: that wait is still Connecting, and it
     // ends as soon as discovery settles, whether or not it found the page.
     const firstUseKind = input.firstUse?.kind;
+    const firstUseFailure = input.firstUse?.actionFailure;
     // An open still in flight past provisioning is Connecting for as long as its operation runs.
     const firstUse = firstUseKind === 'dispatched'
         ? (discovery.status === 'discovering' || discovery.status === 'idle' ? 'opening' as const : undefined)
@@ -367,15 +371,18 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         if (closedAfterRestart) return { machineName, playerState: null, closedAfterRestart, onReopen: reopen };
         if (!view) return firstUse || unavailableReason === 'managed_package_missing'
             ? { machineName, playerState: null, ...(unavailableReason === 'managed_package_missing' ? { unavailableReason } : {}),
-                ...(firstUse ? { firstUse } : {}), ...(firstUseTargetUrl ? { firstUseTargetUrl } : {}), onRetry: retry }
+                ...(firstUse ? { firstUse } : {}), ...(firstUseTargetUrl ? { firstUseTargetUrl } : {}),
+                ...(firstUseFailure ? { firstUseFailure } : {}), onRetry: retry }
             : null;
-        const connecting = discovery.status === 'discovering'
+        const discoveryFailure = readActionFailureEnvelope(failedDiscovery);
+        const connecting = discoveryStatus === 'discovering'
             || (Boolean(sourceId) && (!socket || !playerState));
         return {
             machineName,
             connecting,
             terminal: view.adapterRefreshStatus === 'error',
             ...(unavailableReason ? { unavailableReason } : {}),
+            ...(discoveryFailure ? { discoveryFailure } : {}),
             ...(view.loadingState === 'failed' && view.lastError ? { diagnosticCode: view.lastError } : {}),
             playerState,
             onRetry: retry,
@@ -384,5 +391,5 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                     saveDownload, clipboardShortcut }
                 : null,
         };
-    }, [closedAfterRestart, reopen, clipboardShortcut, discovery.status, firstUse, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
+    }, [closedAfterRestart, reopen, clipboardShortcut, discoveryStatus, failedDiscovery, firstUse, firstUseFailure, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
 }

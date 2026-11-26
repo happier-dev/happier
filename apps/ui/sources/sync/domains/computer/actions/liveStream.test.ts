@@ -35,6 +35,34 @@ describe('Computer viewer source admission through the existing stream mint', ()
         })).toEqual(selection);
     });
 
+    it.each(['reply', 'ack', 'method-refusal'] as const)('carries an owner refusal to the Computer selection projection (%s)', async carrier => {
+        const home = await network.addHome(`https://computer-action-refusal-${carrier}.test`, `computer-refused-${carrier}`);
+        const machineId = `refused-computer-${carrier}`;
+        storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain' })], false, { sourceServerId: home.id });
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 };
+        const refusal = { ok: false, errorCode: carrier === 'method-refusal' ? 'RPC_METHOD_NOT_FOUND' : 'RPC_FORBIDDEN',
+            error: carrier === 'method-refusal' ? 'Method not found' : 'Forbidden', effectAttempted: false, failureCause } as const;
+        const expected = carrier === 'ack' ? refusal : { ...refusal, requestId: 'computer-selection-request' };
+        if (carrier === 'reply') network.setRpcResponder(async () => ({ protocolVersion: 1, result: expected }));
+        else if (carrier === 'method-refusal') network.setRpcResponder(async () => expected);
+        else network.setRpcAckResponder(async () => refusal);
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { createUnavailableRuntimeActionExecutor } = await import('@happier-dev/protocol/actions/executor/dispatch');
+        const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+        const { createComputerRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const { getComputerSessionProjection } = await import('../computerControlClient');
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            runtimeActionExecute: createComputerRuntimeActionExecutor({ fallback: createUnavailableRuntimeActionExecutor() }),
+        }));
+        const scope = { machineId, serverId: home.id, source: { kind: 'machine-person' as const, personId: home.accountId } };
+        const projection = getComputerSessionProjection(scope, executor.execute);
+        const unsubscribe = projection.subscribe(() => {});
+        try {
+            await projection.refresh();
+            expect(projection.getSnapshot().actionFailure).toMatchObject(expected);
+        } finally { unsubscribe(); }
+    });
+
     it.each(['use', 'manage', 'owner'] as const)('admits the exact selected source for shared %s routing', async role => {
         const home = await network.addHome(`https://computer-stream-${role}.test`, `stream-${role}-account`);
         const machineId = `stream-${role}-machine`;

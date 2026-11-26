@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import type {
@@ -509,25 +511,27 @@ export function useBrowserDiagnosticsRuntime(
             }]);
             if ('pickerRequestId' in request && request.action === 'start') setPickerActive(true);
         }
-        const showRefusal = (errorCode: string) => {
+        const showRefusal = (refusal: string | ActionExecuteFailure) => {
+            const actionFailure = typeof refusal === 'string' ? undefined : refusal;
+            const errorCode = typeof refusal === 'string' ? refusal : refusal.errorCode;
             if (request.tier === 'cdp') settleResult(requestId, unavailable);
             if (!currentRef.current.interactionEnabled || currentRef.current.input.isCurrent?.() === false
                 || runtimeViewKey(currentRef.current.input.view) !== runtimeViewKey(view)) return;
             if ('evalRequestId' in request) setEvalEntries(entries => {
                 const entry = { evalRequestId: request.evalRequestId, expression: request.expression,
-                    objectGroupId: request.objectGroupId, status: 'blocked' as const, errorCode };
+                    objectGroupId: request.objectGroupId, status: 'blocked' as const, errorCode, actionFailure };
                 return entries.some(current => current.evalRequestId === request.evalRequestId)
                     ? entries.map(current => current.evalRequestId === request.evalRequestId ? entry : current)
                     : [...entries, entry];
             });
             if ('propertyRequestId' in request) setObjectProperties(entries => ({ ...entries,
-                [request.objectId]: { status: 'failed', properties: [], errorCode } }));
+                [request.objectId]: { status: 'failed', properties: [], errorCode, actionFailure } }));
             if ('pickerRequestId' in request) setPickerActive(false);
         };
         void actionExecute(actionId, { ...request, browserSessionId: view.browserSessionId }, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, ...input.actionContext,
         }).then(result => {
-            if (!result.ok) showRefusal(result.errorCode);
+            if (!result.ok) showRefusal(result);
             else if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) showRefusal('approval_request_created');
             else if (request.tier === 'cdp') {
                 if ('evalRequestId' in request) {
@@ -544,7 +548,7 @@ export function useBrowserDiagnosticsRuntime(
                     if (parsed.success) handleElementPickerResult(parsed.data); else showRefusal('browser_diagnostics_unavailable');
                 }
             }
-        }, () => showRefusal('action_failed'));
+        }, error => showRefusal(readActionFailureEnvelope(error) ?? 'action_failed'));
     }, [actionExecute, input.actionContext, input.view, settleResult, unavailable,
         handleEvalResult, handlePropertiesResult, handleReleaseObjectGroupResult, handleElementPickerResult]);
 

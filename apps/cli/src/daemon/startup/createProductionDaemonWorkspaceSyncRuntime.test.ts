@@ -22,6 +22,8 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
   WorkspaceSyncSourceWriterTargetRoutingV1Schema, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { ApiClient } from '@/api/api';
+import { createTrackedSessionHandoffCoordinator } from '@/daemon/actionOperations/createTrackedSessionHandoffCoordinator';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { registerMachineWorkspaceSyncRpcHandlers } from '@/api/machine/rpcHandlers.workspaceSync';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
@@ -40,7 +42,7 @@ import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerA
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { createProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { configuration } from '@/configuration';
 
 const socketIo = vi.hoisted(() => vi.fn());
@@ -2055,6 +2057,90 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     await expect(fixture.parent.handoffAdapter.finalize({ operationId: request.operationId, prepared, signal })).resolves.toMatchObject({
       kind: 'copy_once', operationId: request.operationId });
     expect(await readFile(join(fixture.sourcePath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  });
+
+  it.each(['Home carrier refusal', 'Target admission refusal'] as const)('carries the %s when handoff bootstrap requests Git seed bytes from a shared Machine', async refusal => {
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const targetCredentials = { token: [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub: 'target-owner' })).toString('base64url'), 'fixture-signature'].join('.'), encryption: null };
+    const targetApi = await ApiClient.create(targetCredentials);
+    const nativeDial = vi.fn(async () => { throw new Error('Home refused the carrier before a native dial'); });
+    let targetRpc: RpcHandlerManager | undefined;
+    const grantScopes: unknown[] = [];
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
+      separateTargetParent: true, gitWorktreeSeed: true, targetCredentials, useNativeSeedCarrier: true,
+      nativeCarrierHome: {
+        resolveTrustRoots: () => [],
+        readTargetMachine: async id => ({ id, operationProtocolCapabilitiesRevision: 1,
+          operationProtocolCapabilities: { irohMachineEndpoint: { protocolVersions: [1],
+            endpointId: 'a'.repeat(64), directAddresses: ['127.0.0.1:7777'] } } }),
+        mintGrant: async (request, signal) => await targetApi.mintPeerMediationRouteGrant(request, { signal }),
+        admitNativeTunnel: nativeDial,
+      },
+      readAdditionalHttpPostResponse: async (url, body) => {
+        if (url.endsWith('/v1/machines/peer/mediation/route-grants')) {
+          grantScopes.push(body && typeof body === 'object' && 'scope' in body ? body.scope : undefined);
+          return { status: 200, data: { ok: false, reasonCode: 'route_unavailable', receipt: 'peer.route_grant.rejected' } };
+        }
+        return url.includes('/v1/account/project-rows/') ? await http(url, body) : undefined;
+      },
+      handleAdditionalSocketAck: async payload => {
+        if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string'
+          || !payload.method.endsWith(`:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`)
+          || !('params' in payload) || !targetRpc) return undefined;
+        const content = { mode: 'plain' as const };
+        const decoded = await socketRpcCodec.decodeRequestParams(content, payload.params, payload.method);
+        const result = await targetRpc.handleRequest({ method: payload.method, params: decoded.params,
+          callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'target-owner', custodianAccountId: 'target-owner',
+            machineId: fixture.targetRef.machineId, installationId: 'target-parent-installation', role: 'manage', encryptionMode: 'plain' } });
+        return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+      },
+    });
+    if (!fixture.targetParent) throw new Error('TARGET runtime is unavailable');
+    targetRpc = new RpcHandlerManager({ scopePrefix: fixture.targetRef.machineId, localMachineId: fixture.targetRef.machineId,
+      encryptionMode: 'plain', logger: () => {}, authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, {
+        machineId: fixture.targetRef.machineId, resolveInstallationId: () => 'target-parent-installation',
+        resolveCustodianAccountId: async () => 'target-owner', resolveHomeServerIdentityId: async () => fixture.serverId,
+        verifyMachineAdmission: async () => refusal === 'Home carrier refusal',
+      }) });
+    registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: targetRpc, service: fixture.targetParent.workspaceSync });
+    rows.push(createPlainProjectAccountRefRow(fixture.sourceRef, 0));
+    const start = vi.fn(async () => { throw new Error('The SOURCE must stay running when the seed is refused'); });
+    const coordinate = createTrackedSessionHandoffCoordinator({ expectedAccountServerId: fixture.serverId,
+      readCredentials: async () => fixture.credentials,
+      resolveSource: async () => ({ ok: true, sourceMachineId: fixture.sourceRef.machineId, sourceRootPath: fixture.sourcePath,
+        sessionStorageMode: 'persisted' }),
+      callMachine: async input => {
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return { protocolVersion: 3,
+          atomicTargetResume: false, targetCleanup: false };
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) return { ok: true, capture: 'not_required' };
+        throw new Error('A settled bootstrap refusal must not dispatch Session transfer');
+      },
+      workspaceSyncAdapter: fixture.parent.handoffAdapter,
+    });
+    const policy = { ...contentPolicyInput, selection: 'git_worktree' as const };
+    const result = await runWithServerHttpBaseUrl('https://bind-child-home.invalid', async () => {
+      await readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' });
+      await fixture.settleProjects();
+      return await coordinate({ operationId: 'seed-carrier-refusal', actionInput: { sessionId: 'moving-session',
+        targetMachineId: fixture.targetRef.machineId, targetPath: fixture.targetPath, accountServerId: fixture.serverId,
+        workspaceAction: { kind: 'create_relationship', mode: 'keep_synced', flushBeforeCommit: true,
+          contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } } },
+        start, signal: new AbortController().signal, publishOwnerUpdate: () => {} });
+    });
+    expect(grantScopes).toEqual(refusal === 'Home carrier refusal' ? [{ kind: 'bounded_transfer', mode: 'carrier' }] : []);
+    expect(nativeDial).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    if (refusal === 'Home carrier refusal') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'peer_unavailable', failureCause: {
+        phase: 'rpc.handler', errorClass: 'RpcError', errorCode: 'peer_unavailable',
+        httpStatus: null, nativeErrorReason: 'route_unavailable',
+      } });
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN', effectAttempted: false });
+    }
   });
 
   it('composes one daemon-owned runtime and keeps it available after a transient engine start failure', async () => {

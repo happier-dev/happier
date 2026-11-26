@@ -17,6 +17,8 @@ import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { TextInput } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import type { BrowserDaemonControlDispatchClientResult } from '@/sync/domains/browser/control/machineRpc';
 
@@ -81,6 +83,7 @@ export type BrowserStreamedSurfaceRuntime = Readonly<{
     connecting?: boolean;
     /** The discovery owner's typed prerequisite/failure, distinct from a stream failure. */
     unavailableReason?: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }>['reason'];
+    discoveryFailure?: ActionExecuteFailure;
     /** The lifecycle owner's terminal cause survives retirement of the capture stream. */
     diagnosticCode?: string;
     /** The lifecycle reducer reports a crashed view or unavailable adapter. */
@@ -95,6 +98,7 @@ export type BrowserStreamedSurfaceRuntime = Readonly<{
     firstUse?: 'preparing' | 'opening' | 'installFailed' | 'sandboxUnavailable';
     /** The page the agent asked for while its browser is preparing or opening: the chrome's address shows it. */
     firstUseTargetUrl?: string;
+    firstUseFailure?: ActionExecuteFailure;
     /**
      * Viewer input back to the registered source: tap, scroll and typing reach the page, and the
      * daemon turns them into a human takeover. Absent when the source accepts no input.
@@ -461,14 +465,21 @@ export function BrowserStreamedTarget(props: Readonly<{
     }
     if (surfaceState === 'unavailable' || !playerState) {
         const onRetry = props.runtime?.onRetry;
+        const fallback = props.runtime?.terminal ? t('browserPresence.stream.endedBody')
+            : props.agentless ? t('browserPresence.stream.unavailableBodyAgentless')
+            : t('browserPresence.stream.unavailableBody', { agent: props.agentName });
+        const failure = props.runtime?.diagnosticCode ? undefined : props.runtime?.discoveryFailure;
+        const presented = failure ? presentActionExecutionFailure(failure, fallback, { closedCodesOnly: true }) : null;
         return (
             <View testID={`${props.testID}-unavailable`} style={stylesheet.root}>
                 <SurfaceStateCard
                     kind="unavailable"
                     iconName="eye-slash"
                     title={props.runtime?.terminal ? t('browserPresence.stream.stoppedTitle') : props.agentless ? t('browserPresence.stream.unavailableTitleAgentless') : t('browserPresence.stream.unavailableTitle', { agent: props.agentName })}
-                    reason={props.runtime?.terminal ? t('browserPresence.stream.endedBody') : props.agentless ? t('browserPresence.stream.unavailableBodyAgentless') : t('browserPresence.stream.unavailableBody', { agent: props.agentName })}
-                    diagnosticCode={props.runtime?.diagnosticCode ?? playerState?.diagnostic?.reasonCode}
+                    reason={presented?.reason ?? fallback}
+                    diagnosticCode={props.runtime?.diagnosticCode ?? failure?.errorCode ?? playerState?.diagnostic?.reasonCode}
+                    diagnosticDetail={presented?.technicalDetails.filter(line => line.key !== 'code')
+                        .map(line => `${line.label}: ${line.value}`).join('\n')}
                     action={onRetry ? { label: t('browserPresence.stream.tryAgain'), onPress: onRetry } : undefined}
                 />
             </View>

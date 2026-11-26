@@ -4292,12 +4292,15 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(JSON.stringify(recipients)).not.toContain(fingerprint);
         expect(account.censusReads).toHaveLength(1);
         expect(account.writes).toEqual([]);
-        // The Home's owner-only refusal reaches the caller as its typed code.
+        // The Home's owner-only refusal retains the actual HTTP status in each Action answer.
         refusal = 'forbidden';
-        expect(await executor.execute('secrets.shared.recipients.list', { resourceId: 'resource-a' }, { ...agent, actionRequestId: 'recipients-2' }))
-            .toMatchObject({ ok: false, errorCode: 'forbidden' });
-        expect(await executor.execute('secrets.shared.disclosures.list', { resourceId: 'resource-a' }, { ...agent, actionRequestId: 'history-2' }))
-            .toMatchObject({ ok: false, errorCode: 'forbidden' });
+        const recipientsRefusal = await executor.execute('secrets.shared.recipients.list', { resourceId: 'resource-a' },
+            { ...agent, actionRequestId: 'recipients-2' });
+        const historyRefusal = await executor.execute('secrets.shared.disclosures.list', { resourceId: 'resource-a' },
+            { ...agent, actionRequestId: 'history-2' });
+        for (const result of [recipientsRefusal, historyRefusal]) {
+            expect.soft(result).toMatchObject({ ok: false, errorCode: 'forbidden', details: { httpStatus: 403 } });
+        }
     });
 
     // Opening Saved Secrets used to read one census per owned E2EE resource. The sweep asks once for everything owed,
@@ -4338,24 +4341,26 @@ describe('Saved Secret operations through their real Account and Action owners',
         }
     });
 
-    it('settles an Inbox-refused update with its retained typed cause', async () => {
-        const account = await openAccount('plain', { askAgentUpdate: true });
+    it.each(['update', 'delete'] as const)('settles an Inbox-refused %s with its retained typed cause', async operation => {
+        const account = await openAccount('plain', { ask: true });
         account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
         account.setEffect(() => Response.json({ error: 'forbidden' }, { status: 403 }));
         const failed = vi.fn();
-        const pending = await updateSavedSecretResource({ scope: account.scope, resourceId: 'resource-a', expectedRevision: 3,
-            nextName: 'Renamed', decryptDataKeyEnvelope: async () => null, onApprovalFailed: failed,
-            executeAdmittedMutation: mutation => runTeamAction({ ...mutation, actionContext: {
+        const parameters = { scope: account.scope, resourceId: 'resource-a', expectedRevision: 3, onApprovalFailed: failed,
+            executeAdmittedMutation: ((mutation) => runTeamAction({ ...mutation, actionContext: {
                 surface: 'agent', authority: 'account_automation',
                 actionCaller: { kind: 'host' },
-            } }),
-        }).catch((error: unknown) => error);
-        if (!(pending instanceof TeamActionApprovalPendingError) || typeof pending.registration === 'string') throw new Error('Expected result-bearing update approval');
+            } })) satisfies typeof runTeamAction,
+        };
+        const pending = await (operation === 'update'
+            ? updateSavedSecretResource({ ...parameters, nextName: 'Renamed', decryptDataKeyEnvelope: async () => null })
+            : deleteSavedSecretResource({ ...parameters, expectedSettingsVersion: 7 })).catch((error: unknown) => error);
+        if (!(pending instanceof TeamActionApprovalPendingError) || typeof pending.registration === 'string') throw new Error('Expected result-bearing approval');
         expect(account.writes).toEqual([]);
         const artifactId = pending.registration.artifactId;
         await decideApprovalAsInbox(account.scope.serverId, artifactId, 'approve');
         const artifact = account.artifacts.find(candidate => candidate.id === artifactId);
-        if (!artifact?.body) throw new Error('Expected stored update settlement');
+        if (!artifact?.body) throw new Error('Expected stored settlement');
         const body = decodePlainArtifactStoredContent(artifact.body);
         if (!body || typeof body !== 'object' || typeof Reflect.get(body, 'body') !== 'string') throw new Error('Expected Plain settlement');
         const settled = ApprovalRequestV2Schema.parse(JSON.parse(Reflect.get(body, 'body')));
@@ -4365,8 +4370,12 @@ describe('Saved Secret operations through their real Account and Action owners',
             body: JSON.stringify(settled), headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
             seq: artifact.seq, createdAt: artifact.createdAt, updatedAt: artifact.updatedAt, isDecrypted: true };
         pending.registration.onTerminal?.('failed', observation);
-        expect(failed).toHaveBeenCalledWith('forbidden', { ok: false, reason: 'failed',
-            failure: { code: 'forbidden', context: { kind: 'forbidden' } } });
+        const { readApprovalExecutionFailure } = await import('@happier-dev/protocol/approvals/approvalExecutionFailure');
+        const refusal = readApprovalExecutionFailure(settled);
+        expect(refusal?.requestId).toEqual(expect.any(String));
+        expect(failed).toHaveBeenCalledWith('forbidden', expect.objectContaining({ ok: false, reason: 'failed',
+            failure: expect.objectContaining({ actionFailure: expect.objectContaining(refusal!) }),
+        }));
         expect(account.writes).toHaveLength(1);
         expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
     });

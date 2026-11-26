@@ -1,6 +1,7 @@
 import { ComputerActionResultV1Schema, ComputerCaptureResponseV1Schema, ComputerControlStatusResponseV1Schema, ComputerOpenSettingsResponseV1Schema, ComputerSelectedTargetResponseV1Schema, ComputerTargetsListResponseV1Schema, type ComputerActionResultV1, type ComputerAccessV1, type ComputerCaptureResponseV1, type ComputerControlStatusResponseV1, type ComputerSelectedTargetResponseV1, type ComputerTargetsListResponseV1, type ComputerTargetV1 } from '@happier-dev/protocol/computer/v1';
-import type { ActionExecuteResult, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { computerSourceIdentityKeyV1, resolveComputerAccess, type ComputerSourceIdentityV1 } from '@happier-dev/protocol/computer/v1';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -37,7 +38,7 @@ function sourceIdentity(scope: ComputerScope): ComputerSourceIdentityV1 {
 
 export type ComputerActionExecute = (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 
-export type ComputerOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; code: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>;
+export type ComputerOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; code: string; actionFailure?: ActionExecuteFailure }>;
 
 /**
  * The person's computer controls through the one Action front door (Actions settings and the
@@ -64,8 +65,8 @@ export function createComputerControlClient(scope: ComputerScope, execute: Compu
         let result: ActionExecuteResult;
         try {
             result = await execute(actionId, input, context);
-        } catch {
-            return { ok: false, code: 'machine_unreachable' };
+        } catch (error) {
+            result = { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
         }
         const effectClass = getActionSpec(actionId).sideEffectClass;
         // Reads may not disclose a retired Account's answer. An already-issued
@@ -73,8 +74,7 @@ export function createComputerControlClient(scope: ComputerScope, execute: Compu
         if (!isCurrent() && (effectClass === 'none' || effectClass === 'read')) {
             return { ok: false, code: 'action_account_scope_changed' };
         }
-        if (!result.ok) return { ok: false, code: result.errorCode, details: result.details,
-            ...(result.failureCause ? { failureCause: result.failureCause } : {}) };
+        if (!result.ok) return { ok: false, code: result.errorCode, actionFailure: result };
         const parsed = schema.safeParse(result.result);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, code: 'invalid_action_output' };
     }
@@ -110,8 +110,7 @@ type ComputerProjectionSnapshot = Readonly<{
     status: ComputerControlStatusResponseV1 | null;
     grants: ComputerTargetsListResponseV1['grants'] | null;
     failure: string | null;
-    details?: unknown;
-    failureCause?: ActionFailureCauseV1;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 const EMPTY_PROJECTION: ComputerProjectionSnapshot = { selection: null, status: null, grants: null, failure: null };
@@ -151,7 +150,7 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
         // Only the owner's selection answer can remove its release affordance.
         const retainFailure = !invalidate && selection.sourceId === snapshot.selection?.sourceId && captureRequired();
         publish({ ...snapshot, selection, status: selection.sourceId === snapshot.status?.sourceId ? snapshot.status : null,
-            failure: retainFailure ? snapshot.failure : null, details: retainFailure ? snapshot.details : undefined, failureCause: retainFailure ? snapshot.failureCause : undefined });
+            failure: retainFailure ? snapshot.failure : null, actionFailure: retainFailure ? snapshot.actionFailure : undefined });
     }
     function applyClosedSource(sourceId: string): void {
         const selection = snapshot.selection;
@@ -159,20 +158,20 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
         if (flight) invalidated = true;
         publish({ ...snapshot, selection: { consentGranted: false, approvalDisplay: {
             machineDisplayName: selection.approvalDisplay.machineDisplayName, requiresTargetSelection: true,
-        } }, status: null, failure: null, details: undefined, failureCause: undefined });
+        } }, status: null, failure: null, actionFailure: undefined });
     }
     function captureRequired(): boolean {
         return snapshot.failure !== null && resolveComputerRecovery({ kind: 'failed', code: snapshot.failure }, 'use')?.action === 'capture';
     }
     function applySourceFailure(sourceId: string, code: string): void {
         if (!client.isCurrent() || sourceId !== snapshot.selection?.sourceId) return;
-        publish({ ...snapshot, failure: code, details: undefined, failureCause: undefined });
+        publish({ ...snapshot, failure: code, actionFailure: undefined });
     }
     function confirmCapture(sourceId: string): void {
         if (!client.isCurrent() || sourceId !== snapshot.selection?.sourceId) return;
-        publish({ ...snapshot, failure: null, details: undefined, failureCause: undefined });
+        publish({ ...snapshot, failure: null, actionFailure: undefined });
     }
-    function applyFailure(code: string, failureCause?: ActionFailureCauseV1, details?: unknown): void {
+    function applyFailure(code: string, actionFailure?: ActionExecuteFailure): void {
         if (!client.isCurrent()) return;
         const recovery = resolveComputerRecovery({ kind: 'failed', code }, 'use');
         const cause = recovery?.cause;
@@ -183,21 +182,21 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
             ? { capture: 'unknown' as const, input: 'unknown' as const, ...snapshot.grants,
                 [recovery.permission]: cause === 'permission_denied' ? 'denied' as const : 'unknown' as const }
             : snapshot.grants;
-        publish({ ...snapshot, selection, grants, status: null, failure: code, failureCause, details });
+        publish({ ...snapshot, selection, grants, status: null, failure: code, actionFailure });
     }
-    function applySelectionFailure(code: string, failureCause?: ActionFailureCauseV1, details?: unknown): void {
+    function applySelectionFailure(code: string, actionFailure?: ActionExecuteFailure): void {
         if (!client.isCurrent()) return;
         // Unlike a capture/status refusal, this selection-read refusal proves
         // the daemon has no selected source and no default display connection.
         if (code === 'computer_display_unavailable') {
-            publish({ ...snapshot, selection: null, status: null, failure: code, failureCause, details });
-        } else applyFailure(code, failureCause, details);
+            publish({ ...snapshot, selection: null, status: null, failure: code, actionFailure });
+        } else applyFailure(code, actionFailure);
     }
     function readinessPatch(grants: ComputerTargetsListResponseV1['grants']) {
-        return { grants, details: undefined, failure: grants.capture !== 'granted'
+        return { grants, failure: grants.capture !== 'granted'
             ? grants.capture === 'denied' ? 'capture_permission_denied' : 'capture_permission_unknown'
             : captureRequired() ? snapshot.failure : null,
-            failureCause: grants.capture === 'granted' && captureRequired() ? snapshot.failureCause : undefined };
+            actionFailure: grants.capture === 'granted' && captureRequired() ? snapshot.actionFailure : undefined };
     }
     function applyReadiness(targets: ComputerTargetsListResponseV1): void {
         if (!client.isCurrent()) return;
@@ -223,7 +222,7 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
                 const selection = await client.getTarget();
                 if (!hasDemand()) break;
                 if (invalidated) continue;
-                if (!selection.ok) { applySelectionFailure(selection.code, selection.failureCause, selection.details); continue; }
+                if (!selection.ok) { applySelectionFailure(selection.code, selection.actionFailure); continue; }
                 const previousStatus = selection.value.sourceId === snapshot.selection?.sourceId ? snapshot.status : null;
                 // Retain the release affordance while status is pending. The retained
                 // source reads grants directly; refreshing never needs picker thumbnails.
@@ -235,7 +234,7 @@ function createComputerSessionProjection(scope: ComputerScope, execute: Computer
                 // A stream transition delivered during the read is fresher than that read's answer.
                 if (snapshot.status !== previousStatus) continue;
                 if (status.ok) applyStatus(status.value);
-                else applyFailure(status.code, status.failureCause, status.details);
+                else applyFailure(status.code, status.actionFailure);
             } while (invalidated);
         })().finally(() => { flight = null; });
         return flight;

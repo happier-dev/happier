@@ -85,12 +85,12 @@ function PrivatePreviewLanding({ locator }: Readonly<{ locator: LocalServiceDecl
         />;
     }
     const outcome = readLocalServiceActionOutcome(result);
-    const failure = describeLocalServiceActionFailure(outcome.kind === 'failed' ? outcome : {
-        reasonCode: outcome.kind === 'outcome_unknown' ? outcome.reasonCode : 'preview_target_unresolved',
-    });
+    const refused = outcome.kind === 'failed' || outcome.kind === 'outcome_unknown' ? outcome : null;
+    const failure = describeLocalServiceActionFailure(refused ?? { reasonCode: 'preview_target_unresolved' });
     return <SurfaceStateCard testID={`${testID}-unavailable`} kind={failure.refusal ? 'denied' : 'unavailable'}
         title={failure.title} reason={failure.body}
-        diagnosticCode={outcome.kind === 'failed' ? outcome.reasonCode : null}
+        diagnosticCode={refused?.reasonCode}
+        diagnosticDetail={failure.details.filter(line => line !== refused?.reasonCode).join('\n')}
         action={{ label: t('common.retry'), testID: `${testID}-retry`, onPress: () => setAttempt(value => value + 1) }}
         secondaryAction={{ label: t('projects.identity.backToProjects'), onPress: () => router.push('/projects') }} />;
 }

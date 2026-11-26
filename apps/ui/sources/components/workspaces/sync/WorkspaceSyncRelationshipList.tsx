@@ -113,9 +113,12 @@ export const WorkspaceSyncRelationshipRow = React.memo(function WorkspaceSyncRel
             // mounted Action interest mid-flight; that cancelled settle is not a failed Action.
             if (!actionExecution.isCurrent()) return;
             setWorkspaceSyncStatusError(scope, caught);
-            // The shared failure alert: the sentence, with the code one tap away under Technical details.
             const failure = presentWorkspaceSyncFailure(caught);
-            alertActionFailure({ reason: failure?.message ?? t('errors.operationFailed'), code: failure?.code ?? null });
+            alertActionFailure({
+                reason: failure?.message ?? t('errors.operationFailed'),
+                code: failure?.code ?? null,
+                context: Object.fromEntries(failure?.technicalDetails.map(({ key, value }) => [key, value]) ?? []),
+            });
         } finally {
             setPendingAction(null);
         }

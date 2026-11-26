@@ -125,8 +125,8 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             const outcome = await actions?.exportArtifact({ artifactId: props.artifactId, destination: 'client',
                 reference, fileName: props.name }, { signal: controller.signal });
             if (outcome && 'approvalId' in outcome) return;
-            if (outcome && !outcome.ok) throw createActionExecuteFailureError({ ok: false, errorCode: outcome.failure.code,
-                error: outcome.failure.code, failureCause: outcome.failure.failureCause });
+            if (outcome && !outcome.ok) throw createActionExecuteFailureError({ ...outcome.failure, ok: false, errorCode: outcome.failure.code,
+                error: outcome.failure.error ?? outcome.failure.code });
             if (!outcome?.ok || !('status' in outcome.value)) throw new Error('artifact_export_failed');
         } catch (error) {
             if (!controller.signal.aborted) {

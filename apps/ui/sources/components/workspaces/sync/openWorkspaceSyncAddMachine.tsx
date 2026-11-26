@@ -1,10 +1,11 @@
 import * as React from 'react';
 import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
-import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, projectOpenProjectRefusalV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionApprovalDeclinedErrorCode, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 import { projectOpenRefusalPresentation } from '@/components/projects/activation/projectOpenRefusalPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -39,6 +40,7 @@ import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolve
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { createWorkspaceSyncRelationship, approveWorkspaceSyncRelationshipCreate, resolveWorkspaceSyncDestinationPlacement, workspaceSyncActionError } from '@/sync/ops/workspaceSyncRelationshipCreate';
 import { useWorkspaceSyncTargetFolderState } from './useWorkspaceSyncTargetFolderState';
 import { useWorkspaceSyncRequesterAvailability } from '@/hooks/machine/useWorkspaceSyncRequesterAvailability';
@@ -100,7 +102,9 @@ function readWorkerCopyEndpoint(machine: Machine | undefined) {
  */
 function readAddMachineFailure(caught: unknown, placement?: Parameters<typeof presentWorkspaceSyncFailure>[1]): AddMachineFailure {
     const refusal = OpenProjectRefusalV1Schema.safeParse(caught && typeof caught === 'object' ? Reflect.get(caught, 'details') : undefined);
-    if (refusal.success && !resolveWorkspaceSyncErrorTranslationKey(refusal.data.code)) return readProjectOpenRefusal(refusal.data);
+    if (refusal.success && !resolveWorkspaceSyncErrorTranslationKey(refusal.data.code)) {
+        return readProjectOpenRefusal(refusal.data, readActionFailureEnvelope(caught));
+    }
     return presentWorkspaceSyncFailure(caught, placement)
         ?? { message: caught instanceof Error ? caught.message : t('errors.operationFailed') };
 }
@@ -109,11 +113,11 @@ function readAddMachineFailure(caught: unknown, placement?: Parameters<typeof pr
  * A refused source attach in the Project Open owner's words, whether the refusal came back as the Open
  * result or as the failed Action it is projected into; its codes stay under Technical details.
  */
-function readProjectOpenRefusal(refusal: Extract<OpenProjectResultV1, { kind: 'refused' }>): AddMachineFailure {
-    const presented = projectOpenRefusalPresentation(refusal.code, null, refusal.remediation, null, refusal.failureCause);
-    return { message: presented.title, technicalDetails: presented.details.map((value, index) => index === 0
-        ? { key: 'code', label: t('workflows.run.technical.failureCode'), value }
-        : { key: 'causeCode', label: t('approvals.failureTechnicalLabels.causeCode'), value }) };
+function readProjectOpenRefusal(refusal: Extract<OpenProjectResultV1, { kind: 'refused' }>, failure?: ActionExecuteFailure | null): AddMachineFailure {
+    const envelope = { ...projectOpenProjectRefusalV1(refusal), ...failure };
+    const { title } = projectOpenRefusalPresentation(refusal.code, null, refusal.remediation, null, envelope.failureCause);
+    const { technicalDetails } = presentActionExecutionFailure(envelope, title, { closedCodesOnly: true });
+    return { message: title, technicalDetails };
 }
 
 function resolveStatusLine(input: Readonly<{
@@ -363,7 +367,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 // The Open refusal arrives as the result or inside the failed Action; one presenter says it.
                 const refused = OpenProjectRefusalV1Schema.safeParse(opened.ok ? opened.result : opened.details);
                 if (refused.success) {
-                    setError(readProjectOpenRefusal(refused.data));
+                    setError(readProjectOpenRefusal(refused.data, opened.ok ? undefined : opened));
                     setPhase('idle');
                     return;
                 }

@@ -512,6 +512,41 @@ describe('browser runtime action executor', () => {
         } }))).toMatchObject({ ok: false, errorCode: 'browser_control_unconfirmed' });
     });
 
+    it.each(['returned', 'transport'] as const)('returns the daemon refusal through the browser control Action front door (%s)', async kind => {
+        const { installSessionOpsNetworkBoundary } = await import('@/dev/testkit/harness/sessionOpsNetworkBoundary');
+        const network = await installSessionOpsNetworkBoundary();
+        try {
+            const { storage } = await import('@/sync/domains/state/storageStore');
+            const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+            const home = await network.addHome('https://browser-cause-loss.test', 'browser-account');
+            const machineId = 'browser-refused-machine';
+            storage.getState().applyMachines([createMachineFixture({ id: machineId, storageMode: 'plain' })], false, { sourceServerId: home.id });
+            const failure = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_MACHINE_PROSE', effectAttempted: false,
+                requestId: 'browser-boundary-request', details: { undeclared: { privateMachineValue: 'PRIVATE_MACHINE_DETAILS' } },
+                failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } } as const;
+            if (kind === 'returned') network.setRpcResponder(async () => failure);
+            else network.setRpcAckResponder(async () => failure);
+            const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+            const { createBrowserDaemonControlCommandSender } = await import('../control/machineRpc');
+            const state = openViewState({ adapterKind: 'chromiumSidecar', engineKind: 'desktopWebView',
+                target: externalTarget, capabilities: sidecarCapabilities, currentUrl: externalTarget.url });
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+                runtimeActionExecute: createBrowserRuntimeActionExecutor({ control: {
+                    readState: () => state, applyDispatchResult: () => {},
+                    sendDaemonCommand: createBrowserDaemonControlCommandSender({ machineId, serverId: home.id }),
+                } }),
+            }));
+            const result = await executor.execute('browser.control.takeControl', {
+                kind: 'takeControl', commandId: 'take-refused', browserSessionId: 'browser_session_1', viewId: 'view_1',
+            }, { surface: 'ui', serverId: home.id });
+            expect(result).toMatchObject({ ok: false, errorCode: failure.errorCode, error: failure.errorCode,
+                ...(kind === 'returned' ? { requestId: failure.requestId } : {}),
+                effectAttempted: false, failureCause: failure.failureCause });
+            expect(result).not.toHaveProperty('details');
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_MACHINE_');
+        } finally { await network.dispose(); }
+    });
+
     it('does not report an OS handoff as dispatched when the platform refuses it', async () => {
         const { createBrowserRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         vi.mocked(openExternalUrl).mockResolvedValueOnce(false);

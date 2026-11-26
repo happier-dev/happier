@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { ManagedServiceNativeLogResultV1Schema, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol/local/services/nativeLogsV1';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-type ReadError = Readonly<{ code: string; message: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>;
+type ReadError = Omit<ActionExecuteFailure, 'ok' | 'errorCode' | 'error'> & Readonly<{ code: string; message: string }>;
 export type MachineServiceFirstLogRead =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'reading' }>
@@ -14,8 +14,9 @@ export type MachineServiceFirstLogRead =
   | Readonly<{ kind: 'failed'; error: ReadError }>;
 
 const execute = createFrontDoorActionExecute();
-function failure(result: Extract<ActionExecuteResult, { ok: false }>): ReadError {
-  return { code: result.errorCode, message: result.error, details: result.details, failureCause: result.failureCause };
+function failure(result: ActionExecuteFailure): ReadError {
+  const { ok: _ok, errorCode: code, error: message, ...metadata } = result;
+  return { ...metadata, code, message };
 }
 
 /** The original logs Action acquires the first page for this retained native generation. */

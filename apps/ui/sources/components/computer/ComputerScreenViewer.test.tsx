@@ -162,9 +162,11 @@ describe('ComputerScreenViewer', () => {
       const { ModalProvider } = await import('@/modal');
       const onRefresh = vi.fn();
       const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error',
-        errorCode: 'machine_unavailable', httpStatus: 403 } satisfies NonNullable<ComputerScreenViewerProps['failureCause']>;
+        errorCode: 'machine_unavailable', httpStatus: 403 } as const;
+      const actionFailure = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Forbidden', failureCause, requestId: 'screen-request',
+        effectAttempted: false, details: { reason: 'machine_offline', privatePath: '/private/test-data' } } as const;
       screen = await renderScreen(<ModalProvider><ComputerScreenViewer {...props({
-        failure: 'RPC_FORBIDDEN', failureCause, onRefresh,
+        failure: actionFailure.errorCode, actionFailure, onRefresh,
         stream: { machineName: 'machine', playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
           lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } },
       })} /></ModalProvider>);
@@ -177,6 +179,10 @@ describe('ComputerScreenViewer', () => {
       expect(revealed).toContain('RPC_FORBIDDEN');
       expect(revealed).toContain('rpc.admission.machine');
       expect(revealed).toContain('machine_unavailable');
+      expect(revealed).toContain('screen-request');
+      expect(revealed).toContain('machine_offline');
+      expect(revealed).toContain('false');
+      expect(revealed).not.toContain('/private/test-data');
       expect(screen.findHostByTestId('v-picture')).not.toBeNull();
     } finally {
       await screen?.unmount();
@@ -363,7 +369,9 @@ describe('ComputerScreenViewer', () => {
         <ComputerScreenViewer
           {...props({ shared: false })}
           failure={failure}
-          failureDetails={{ installHint: { actionId: 'machines.capabilities.install', capabilityId: 'dep.computer-agent-desktop' } }}
+          actionFailure={{ ok: false, errorCode: failure, error: failure, details: {
+            installHint: { actionId: 'machines.capabilities.install', capabilityId: 'dep.computer-agent-desktop' },
+          } }}
           onRepairDriver={onRepairDriver}
         />,
       );

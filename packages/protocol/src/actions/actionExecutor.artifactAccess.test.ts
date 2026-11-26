@@ -60,7 +60,8 @@ describe('Artifact access Action family', () => {
     failRead(Object.assign(new Error('unexpected_storage_failure'), { code: 'unexpected_storage_failure' }));
     await expect(executor.execute('artifact.access.grants.list', input, context)).resolves.toEqual({
       ok: false, errorCode: 'action_failed', error: 'unexpected_storage_failure',
-      failureCause: { errorClass: 'Error', errorCode: 'unexpected_storage_failure', httpStatus: null, phase: 'dispatch' },
+      // A raw Error code is diagnostic only until a producer declares it public.
+      failureCause: { errorClass: 'Error', errorCode: null, httpStatus: null, phase: 'dispatch' },
     });
   });
   it('persists and lists semantic grants through the canonical Action and kind owners', async () => {

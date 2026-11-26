@@ -1,5 +1,5 @@
 import { t } from '@/text';
-import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -56,6 +56,7 @@ export type WorkspaceSyncErrorTranslationKey =
     | 'workspaceSync.error.workspaceUnavailable'
     | 'workspaceSync.error.reviewedFolderChanged'
     | 'workspaceSync.error.requesterLinkUnavailable'
+    | 'workspaceSync.error.seedFromSharedMachineRefused'
     | 'workspaceSync.error.dependenciesUnavailable'
     | 'sessionHandoff.failure.partialLinked'
     | 'workspaceSync.error.needsAttention';
@@ -66,6 +67,8 @@ export type WorkspaceSyncErrorTranslationKey =
  * read the same field rather than parsing messages.
  */
 export function readWorkspaceSyncErrorCode(error: unknown): string | null {
+    const failure = readActionFailureEnvelope(error);
+    if (failure) return failure.errorCode;
     const rpcCode = readRpcErrorCode(error);
     if (rpcCode) return rpcCode;
     if (!error || typeof error !== 'object') return null;
@@ -90,26 +93,32 @@ export type WorkspaceSyncFailurePresentation = Readonly<{
 export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement,
     /** The surface's own sentence when no owner knows the code (otherwise the generic request failure). */
     fallbackMessage?: string): WorkspaceSyncFailurePresentation | null {
-    const code = readWorkspaceSyncErrorCode(error);
+    const received = readActionFailureEnvelope(error);
+    const code = received?.errorCode ?? readWorkspaceSyncErrorCode(error);
     if (!code) return null;
     const record = error as Readonly<Record<string, unknown>>;
-    const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
+    const failure = received ?? readActionFailureEnvelope({ ...record, ok: false, errorCode: code })!;
+    const failureCause = failure.failureCause;
+    const presentation = presentActionExecutionFailure(failure, fallbackMessage, { closedCodesOnly: true });
     // Home's Manage refusal arrives as credential_scope_denied with the typed machine_manage_required cause.
     const causeKey = failureCause?.errorCode ? resolveWorkspaceSyncErrorTranslationKey(failureCause.errorCode) : null;
     const shownCode = causeKey && failureCause?.errorCode ? failureCause.errorCode : code;
     let key = causeKey ?? resolveWorkspaceSyncErrorTranslationKey(code);
+    if (failureCause?.phase === 'rpc.handler' && failureCause.errorCode === 'peer_unavailable'
+        && !('kind' in failureCause) && failureCause.nativeErrorReason === 'route_unavailable') {
+        key = 'workspaceSync.error.seedFromSharedMachineRefused';
+    }
     // A reviewed target that no longer matches what the person reviewed names why in its native reason; the
     // reason stays on the carried error, and reviewing again is what fixes it.
     if (!key && code === 'approval_stale' && failureCause && !('kind' in failureCause) && failureCause.nativeErrorReason) {
         key = 'workspaceSync.error.reviewedFolderChanged';
     }
     if (key === 'workspaceSync.error.ownFolderOnly' && placement !== 'destination_open') key = 'workspaceSync.error.needsAttention';
-    const message = key ? t(key) : presentActionExecutionFailure({ ok: false, errorCode: code, details: record.details,
-        ...(failureCause ? { failureCause } : {}) }, fallbackMessage).reason;
-    const reason = failureCause?.phase === 'dispatch' && typeof record.error === 'string'
+    const message = key ? t(key) : presentation.reason;
+    const reason = (failureCause?.phase === 'dispatch' || failureCause?.phase === 'session_handoff.source_export') && typeof record.error === 'string'
         ? redactBugReportSensitiveText(record.error).trim() : '';
     return { message, code: shownCode,
-        technicalDetails: [{ key: 'code', label: t('workflows.run.technical.failureCode'), value: shownCode },
+        technicalDetails: [...presentation.technicalDetails,
             ...(reason && reason !== shownCode ? [{ key: 'reason', label: t('approvals.failureTechnicalLabels.reason'), value: reason }] : [])] };
 }
 
