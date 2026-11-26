@@ -2016,7 +2016,8 @@ async function executeActionBlock(
     const validation = validateExecutionRunProfileResult(input, { kind: 'json', schema });
     if (!validation.ok) {
       await context.deps.store.commitFact({ key: row.key, lifecycle: 'failed', reason: 'invalid_input',
-        ...('issues' in validation && validation.issues ? { validationIssues: [...validation.issues] } : {}) });
+        ...('issues' in validation && validation.issues
+          ? { validationIssues: validation.issues.map(({ pointer, message }) => ({ pointer, message })) } : {}) });
       throw new WorkflowLeafFailure('failed', 'invalid_input', true);
     }
     const actionWorkspace = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);

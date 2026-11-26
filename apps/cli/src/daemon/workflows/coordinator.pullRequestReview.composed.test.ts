@@ -6,10 +6,13 @@ import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDe
 import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
-import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { materializeWorkflowAcceptedSnapshotV1, type WorkflowMaterializationAdmissionV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { createPullRequestReviewWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/pullRequestReview';
 import { reviewReviewerIdsForStartV1, ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { SCM_HOSTING_PULL_REQUEST_LIFECYCLE_ACTIONS_V1 } from '@happier-dev/protocol/scm/pullRequestLifecycleActionsV1';
+import { createWorkflowAccountRunActionOwner, sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
+  serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol';
+import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createCommittedContributedActionSchemaReader } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/triage/src/manifest';
@@ -20,6 +23,8 @@ import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from '../../../../../packages/plugi
 import { createWorkflowCoordinator, WORKFLOW_CANCEL_REQUESTED_ABORT_REASON } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import { buildWorkflowActionContext } from './workflowActionContext';
+import { createProductionWorkflowRunCoordinator } from './production';
+import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 
 const event = { pluginId: 'example.forge', localId: 'pull-request' };
 const workspace = { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' };
@@ -43,6 +48,8 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
     listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
     invokeContributedAction: async request => ({ ok: true,
       result: await source.invoke(request.action.localId, projectNativeJsonValueForTransport(request.input)) }) });
+  const action = { executor, buildContext: async (params: Parameters<typeof buildWorkflowActionContext>[0]) => buildWorkflowActionContext(params),
+    observeRun: async () => { throw new Error('Triage returns the admitted Review'); } };
   let workspaceReads = 0;
   const newRun = () => {
     // Production binds a coordinator store and its frontier to one Workflow Run.
@@ -50,8 +57,7 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
     const coordinator = createWorkflowCoordinator({ store,
       executeStep: async () => { throw new Error('Review engines belong to the Review Action'); },
       resolveWorkspace: async () => { workspaceReads++; return { ok: true, workspace }; },
-      action: { executor, buildContext: async params => buildWorkflowActionContext(params),
-        observeRun: async () => { throw new Error('Triage returns the admitted Review'); } } });
+      action });
     return { store, coordinator };
   };
   const definition = createPullRequestReviewWorkflowV1(event);
@@ -62,6 +68,19 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
     quickReview: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Quick composition' },
     standardReview: options?.standardReview ?? { reviewers: [{ kind: 'engine', engineId: 'engine-a' }, { kind: 'engine', engineId: 'engine-b' }], instructions: 'Standard composition' },
   }).map(([key, value]) => [key, projectNativeJsonValueForTransport(value)]));
+  const materialize = async (runId: string, admission: WorkflowMaterializationAdmissionV1, workflow = definition) => {
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: workflow,
+      context: { source: { kind: 'inline' }, inputs, machineId: workspace.machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: workspace }, origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+      admission,
+      effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => {
+          const action = definitions.find(item => item.id === id);
+          return action ? freezeWorkflowActionContractV1(action) : null;
+        } } });
+    if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+    return { ...accepted.snapshot, runId };
+  };
   const admitted = async (runId: string, authorAssociation: string, headSha = TESTKIT_OBSERVED_REVISION.headSha, number = 17,
     action: typeof SCM_HOSTING_PULL_REQUEST_LIFECYCLE_ACTIONS_V1[number] = 'opened') => {
     // The provider HTTP boundary supplies native facts. Keep its real classifier
@@ -80,26 +99,76 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
       v: 1, repositoryId: '77', owner: 'acme', name: 'widgets', nameWithOwner: 'acme/widgets',
     }, GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle).observation;
     if (!normalized || !('pullRequest' in normalized.payload)) throw new Error('Provider emitted no PR lifecycle occurrence');
-    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
-      context: { source: { kind: 'inline' }, inputs, machineId: workspace.machineId, executionTarget: { kind: 'session' },
-        workspaceTarget: { project: workspace }, authorization: { principal: { kind: 'host' } } },
-      admission: { kind: 'trigger', workDepth: 0, admitLeaf: async () => { throw new Error('No native leaf admission'); },
-        eventOccurrence: { event, payload: { pullRequest: projectNativeJsonValueForTransport(normalized.payload.pullRequest), reviewTarget: {
-          ...reviewTarget, entryRef: { ...reviewTarget.entryRef, entryId: String(number) },
-          comparisonSource: { ...reviewTarget.comparisonSource, locator: { ...reviewTarget.comparisonSource.locator, number, headOid: headSha } },
-        } } } },
-      effects: { resolveTargetAvailability: async () => true,
-        readActionContract: async id => {
-          const action = definitions.find(item => item.id === id);
-          return action ? freezeWorkflowActionContractV1(action) : null;
-        } } });
-    if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
-    return { ...accepted.snapshot, runId };
+    return materialize(runId, { kind: 'trigger', workDepth: 0, admitLeaf: async () => { throw new Error('No native leaf admission'); },
+      eventOccurrence: { event, payload: { pullRequest: projectNativeJsonValueForTransport(normalized.payload.pullRequest), reviewTarget: {
+        ...reviewTarget, entryRef: { ...reviewTarget.entryRef, entryId: String(number) },
+        comparisonSource: { ...reviewTarget.comparisonSource, locator: { ...reviewTarget.comparisonSource.locator, number, headOid: headSha } },
+      } } } });
   };
-  return { source, reviews, ...newRun(), newRun, admitted, inputs, workspaceReads: () => workspaceReads };
+  const manualPreparation = (runId: string) => {
+    const [lifecycle] = definition.blocks;
+    const author = lifecycle?.kind === 'if' ? lifecycle.then[0] : undefined;
+    const prepare = author?.kind === 'if' ? author.then[0] : undefined;
+    if (prepare?.kind !== 'action') throw new Error('Missing PR preparation Action');
+    return materialize(runId, { kind: 'user' }, { ...definition, blocks: [prepare] });
+  };
+  return { source, reviews, action, ...newRun(), newRun, admitted, inputs, manualPreparation,
+    workspaceReads: () => workspaceReads };
 }
 
 describe('PR review automation through the workflow coordinator', () => {
+  it('settles invalid preparation input with the typed issues readable from the exact Run', async () => {
+    const h = await createPrWorkflow();
+    const { runId, ...acceptedSnapshot } = await h.manualPreparation('11111111-1111-4111-8111-111111111111');
+    const accountId = 'account-1';
+    const accountCurrentness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: null };
+    const resolveEncryption = async () => ({ kind: 'available' as const, witness: accountCurrentness });
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot,
+    }));
+    const storage = createWorkflowRunStorageTestkit({ runId, accountId, machineId: workspace.machineId,
+      origin: { kind: 'direct' }, acceptedEnvelope, state: 'claimed' });
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: workspace.machineId, storage,
+      resolveAccountEncryption: resolveEncryption, isAcceptedAuthorizationCurrent: async () => true,
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+      onCommittedTransition: async () => {}, onReviewEntered: async () => {},
+      execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
+        machineAdmissionTransport: async () => { throw new Error('Invalid input must not dispatch'); },
+        resolveExistingSessionConversation: async () => null,
+        action: h.action,
+        detachedRun: { actionExecutor: h.action.executor,
+          buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) },
+      },
+    });
+    expect(await coordinate({ runId, attempt: 0, expectedRevision: storage.run().revision, acceptedEnvelope, accountCurrentness }))
+      .toMatchObject({ state: 'failed', reason: 'invalid_input' });
+    const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId, resolveEncryption, storage,
+      normalizeAbsolutePath: path => path, randomBytes: () => { throw new Error('Plain Account requires no keys'); },
+      definitions: { get: async () => { throw new Error('The accepted snapshot owns the Run definition'); } },
+    });
+    const run = WorkflowActionOutputSchemasV1['workflow.run.get'].parse(await reader.execute({
+      actionId: 'workflow.run.get', input: { runId }, context: {},
+    }));
+    expect(run.run).toMatchObject({ id: runId, state: 'failed' });
+    expect(storage.calls).toContainEqual(expect.objectContaining({ operation: 'transition', state: 'failed', errorCode: 'invalid_input' }));
+    const page = WorkflowActionOutputSchemasV1['workflow.run.invocations.list'].parse(await reader.execute({
+      actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context: {},
+    }));
+    expect(page.invocationDetails?.some(row => row.progress.invocationPath.blockId === 'approve-pr-setup')).toBe(false);
+    const preparation = page.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'quick-prepare');
+    if (!preparation) throw new Error('Missing PR preparation invocation');
+    const detail = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].parse(await reader.execute({
+      actionId: 'workflow.run.invocations.get', input: { runId, invocationId: preparation.index.id }, context: {},
+    }));
+    expect(detail.invocation.index.lifecycle).toBe('failed');
+    expect(detail.invocation.progress).toMatchObject({ reason: { code: 'invalid_input' }, validationIssues: expect.arrayContaining([
+      { pointer: '/reviewTarget', message: expect.any(String) },
+      { pointer: '/expectedHeadSha', message: expect.any(String) },
+    ]) });
+    expect(h.source.events).toEqual([]);
+    expect(h.reviews).toEqual([]);
+  });
+
   it('reads optional rules at the PR base commit and skips a nonmatching base before starting reviewers', async () => {
     const h = await createPrWorkflow({ baseRules: { baseRefs: ['release/*'] } });
     const run = await h.admitted('skip-other-base', 'internal');
