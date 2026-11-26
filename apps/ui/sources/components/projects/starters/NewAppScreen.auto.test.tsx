@@ -121,7 +121,7 @@ const terminal = (output: unknown) => ({
   latestToolResult: output,
 });
 
-type Ports = Parameters<typeof createActionExecutorBoundaryFixture>[0];
+type Ports = NonNullable<Parameters<typeof createActionExecutorBoundaryFixture>[0]>;
 /** The catalog's owners (starters, Machines, targets) as the Home reports them, plus the Agent and run boundary. */
 function suggestionBoundary(overrides: Ports) {
   const executor = createActionExecutor(
@@ -215,6 +215,58 @@ async function openDescribe(
 
 const calls = (actionId: string) =>
   execute.mock.calls.filter((row) => row[0] === actionId);
+
+// The cold app captures its packaged declaration inventory on the first Account publication.
+it('loads platform plans only when the checked cards are shown', async () => {
+  const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const platformPlansPluginId = 'com.example.auto-plans';
+  const { createDeploymentTargetsTestPlugin } = await import('../deployments/deploymentPlatformTargetPlugin.testFixture');
+  const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+  const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+  const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const { resolvePluginLocalizedStringV2Text } = await import('@happier-dev/protocol/plugins/contributions/public-types');
+  const manifest = PluginPortableReleaseManifestV1Schema.parse(
+    createDeploymentTargetsTestPlugin(platformPlansPluginId, undefined, { plans: true }).manifest,
+  );
+  const declaration = { pluginId: platformPlansPluginId, pluginVersion: manifest.version, packageName: '@fixture/auto-plans',
+    displayName: resolvePluginLocalizedStringV2Text(manifest.displayName), normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
+  const loadPlatformPlanDeclaration = vi.fn(async () => declaration);
+  const restore = installBundledPluginUiDeclarationsForTests([{
+    pluginId: platformPlansPluginId, pluginVersion: declaration.pluginVersion, packageName: declaration.packageName, displayName: declaration.displayName,
+    entriesById: {}, presentationManifest: { ...manifest, contributes: { ...manifest.contributes, deploymentTargets: [] } },
+    hasDeploymentTargets: true, loadDeclaration: loadPlatformPlanDeclaration,
+  }]);
+  const targetId = `${platformPlansPluginId}/alpha`;
+  const platform = { ...targets[0]!, id: targetId, targetClass: 'platform' as const };
+  const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
+  suggestionBoundary({
+    deploymentSuggestionTargets: async () => ({ targets: [platform], stores: [] }),
+    executionRunWait: async () => ({ ok: true, status: 'succeeded',
+      result: terminal({ recommendations: [{ ...recommendation, targetId }], questions }) }),
+  });
+  const { fixture, screen } = await openDescribe('auto-platform-plans-demand');
+  try {
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Expected admitted Home Account');
+    await act(async () => replacePluginAccountAvailabilityProjection({ scope,
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } }));
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('app-shell-question-purpose-text')).toBeTruthy());
+    expect(loadPlatformPlanDeclaration).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('newApp.auto.skipQuestions');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    await waitForHomeGovernance(() => expect(loadPlatformPlanDeclaration).toHaveBeenCalledTimes(1));
+  } finally {
+    restore();
+    await screen.unmount();
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
 
 it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine, then cards; a starter card continues to the review (journey-deploy F1/F4)', async () => {
   suggestionBoundary({
@@ -1019,56 +1071,6 @@ it('a result with cards and a question asks the question first; Skip shows those
   }
 });
 
-it('loads platform plans only when the checked cards are shown', async () => {
-  const { createDeploymentTargetsTestPlugin } = await import('../deployments/deploymentPlatformTargetPlugin.testFixture');
-  const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
-  const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
-  const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
-  const { storage } = await import('@/sync/domains/state/storageStore');
-  const pluginId = 'com.example.auto-plans';
-  const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
-  const manifest = PluginPortableReleaseManifestV1Schema.parse(
-    createDeploymentTargetsTestPlugin(pluginId, undefined, { plans: true }).manifest,
-  );
-  const declaration = { pluginId, pluginVersion: manifest.version, packageName: '@fixture/auto-plans',
-    displayName: manifest.displayName, normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
-  const loadDeclaration = vi.fn(async () => declaration);
-  const restore = installBundledPluginUiDeclarationsForTests([{
-    pluginId, pluginVersion: declaration.pluginVersion, packageName: declaration.packageName, displayName: declaration.displayName,
-    entriesById: {}, presentationManifest: { ...manifest, contributes: { ...manifest.contributes, deploymentTargets: [] } },
-    hasDeploymentTargets: true, loadDeclaration,
-  }]);
-  const targetId = `${pluginId}/alpha`;
-  const platform = { ...targets[0]!, id: targetId, targetClass: 'platform' as const };
-  const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
-  suggestionBoundary({
-    deploymentSuggestionTargets: async () => ({ targets: [platform], stores: [] }),
-    executionRunWait: async () => ({ ok: true, status: 'succeeded',
-      result: terminal({ recommendations: [{ ...recommendation, targetId }], questions }) }),
-  });
-  const { fixture, screen } = await openDescribe('auto-platform-plans-demand');
-  try {
-    const scope = storage.getState().settingsScope;
-    if (!scope) throw new Error('Expected admitted Home Account');
-    await act(async () => replacePluginAccountAvailabilityProjection({ scope,
-      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } }));
-    await screen.pressByTestIdAsync('newApp.describeApp');
-    await screen.pressByTestIdAsync('newApp.continue');
-    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
-    await screen.pressByTestIdAsync('newApp.auto.suggest');
-    await waitForHomeGovernance(() => expect(screen.findByTestId('app-shell-question-purpose-text')).toBeTruthy());
-    expect(loadDeclaration).not.toHaveBeenCalled();
-    await screen.pressByTestIdAsync('newApp.auto.skipQuestions');
-    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
-    await waitForHomeGovernance(() => expect(loadDeclaration).toHaveBeenCalledTimes(1));
-  } finally {
-    restore();
-    await screen.unmount();
-    await standardCleanup();
-    await fixture.dispose();
-  }
-});
-
 it('Adjust changes one fact through the validator and asks again with a note, from the same snapshot (journey-deploy autoAdjust)', async () => {
   suggestionBoundary({ deploymentSuggestionTargets: async () => ({ targets, stores: [{ id: 'db', engine: 'postgres' }] }),
     executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }) });
@@ -1353,13 +1355,6 @@ it('a Session suggestion without the person\u2019s words opens with the descript
 it.each(['dialog', 'page'] as const)('opens the created Project with the build composer from a %s', async (host) => {
   suggestionBoundary({ registryActionExecute: async () => ({ pages: [] }),
     sessionAuthoringOpen: async () => ({ kind: 'opened', draftId: 'draft', destination: 'newSession' }) });
-  // The create Action's own effects (clone, publish, Source, Project) are its tests'; here it answers with its published result.
-  const delegate = execute.getMockImplementation()!;
-  execute.mockImplementation(async (actionId: string, input: unknown, context: unknown) => actionId === 'projects.starters.create'
-    ? { ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', repositoryUrl: 'https://github.example.test/alice/bakery',
-        workspace: { serverId: scope.serverId, machineId: 'devbox', workspaceId: 'workspace', rootPath: '/home/alice/src/bakery' },
-        sessionHandoff: { machineId: 'devbox', directory: '/home/alice/src/bakery', initialMessage: (input as { description: string }).description } } }
-    : delegate(actionId as never, input as never, context as never));
   const { storage } = await import('@/sync/domains/state/storageStore');
   const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
   const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
@@ -1380,6 +1375,13 @@ it.each(['dialog', 'page'] as const)('opens the created Project with the build c
     { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } }, 'updated', { handleRequest: async () => null });
   const scope = storage.getState().settingsScope;
   if (!scope) throw new Error('Expected admitted Home Account');
+  // The create Action's own effects (clone, publish, Source, Project) are its tests'; here it answers with its published result.
+  const delegate = execute.getMockImplementation()!;
+  execute.mockImplementation(async (actionId: string, input: unknown, context: unknown) => actionId === 'projects.starters.create'
+    ? { ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', repositoryUrl: 'https://github.example.test/alice/bakery',
+        workspace: { serverId: scope.serverId, machineId: 'devbox', workspaceId: 'workspace', rootPath: '/home/alice/src/bakery' },
+        sessionHandoff: { machineId: 'devbox', directory: '/home/alice/src/bakery', initialMessage: (input as { description: string }).description } } }
+    : delegate(actionId as never, input as never, context as never));
   await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
   storage.getState().activateProjectAccountRowsScope(scope);
   storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
@@ -1396,8 +1398,10 @@ it.each(['dialog', 'page'] as const)('opens the created Project with the build c
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
     await act(async () => screen.changeTextByTestId('newApp.nameField', 'Bakery'));
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.create')?.props.disabled).toBe(false));
+    execute.mockClear();
     await screen.pressByTestIdAsync('newApp.create');
     await waitForHomeGovernance(() => expect(calls('session.authoring.open')).toHaveLength(1));
+    expect(calls('projects.starters.create')).toHaveLength(1);
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining('/projects/workspace'));
     if (host === 'dialog') {
       await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledOnce());
