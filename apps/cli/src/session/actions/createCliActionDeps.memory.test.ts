@@ -29,7 +29,8 @@ const { callMachineRpc, callExactMachineRpc, fetchSessionById, patchSessionMetad
   patchSessionMetadataEnvelopeTuple: vi.fn(),
 }));
 
-vi.mock('@/session/transport/rpc/machineRpc', () => ({
+vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
+  ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(),
   callMachineRpc,
   callExactMachineRpc,
 }));
@@ -44,6 +45,7 @@ import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { MemorySettingsV1Schema } from '@happier-dev/protocol/memory/memorySettings';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 
 describe('createCliActionDeps memory bindings', () => {
   it.each(['memory', 'context', 'instructions', 'voice'] as const)('rejects a stale %s caller before the first metadata write', async field => {
@@ -201,11 +203,16 @@ describe('createCliActionDeps memory bindings', () => {
       throw new Error('unexpected_method');
     });
     const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials,
-      sessionId: 'cli-global', serverId: 'search-home', serverHttpBaseUrl: 'https://search-home.test', mode: 'plain', ctx: null });
+      sessionId: 'cli-global', serverId: 'search-home', serverHttpBaseUrl: 'https://search-home.test', mode: 'plain', ctx: null }, {
+      actionAutomations: createActionAutomationPortV1({ accountId: 'search-account',
+        seed: async () => ({ v: 1, rows: [] }), settle: async () => {},
+      }),
+    });
     const context = { surface: 'cli', authority: 'present_user', serverId: 'search-home',
       actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'memory.clear_index': ['cli'] } }),
     } as const;
-    expect(await executor.execute('search.settings.get', { machineId: 'search-machine' }, context)).toMatchObject({
+    const readSettings = await executor.execute('search.settings.get', { machineId: 'search-machine' }, context);
+    expect(readSettings, JSON.stringify(readSettings)).toMatchObject({
       ok: true, result: { conversationSearch: { standardSearch: { enabled: true } } },
     });
     const settings = MemorySettingsV1Schema.parse({ v: 1, conversationSearch: { standardSearch: { enabled: false } } });
@@ -310,8 +317,9 @@ describe('createCliActionDeps memory bindings', () => {
     ]) {
       projection = role;
       reads.length = 0;
-      expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => executor.execute('memory.remember', { sessionRef: { serverId, sessionId },
-        expectedMetadataRevision: 3, text }, { surface: 'cli', authority: 'present_user', serverId })))
+      const denied = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => executor.execute('memory.remember', { sessionRef: { serverId, sessionId },
+        expectedMetadataRevision: 3, text }, { surface: 'cli', authority: 'present_user', serverId }));
+      expect(denied, JSON.stringify({ denied, role }))
         .toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
       expect(reads).toContain(`/v2/sessions/${sessionId}`);
       expect(reads.filter(path => path !== `/v2/sessions/${sessionId}` && path !== '/v1/account/encryption/currentness')).toEqual([]);
@@ -421,7 +429,7 @@ describe('createCliActionDeps memory bindings', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
     await expect(createActionExecutor(deps).execute('memory.read', {
       ref: { kind: 'doc', artifactId: 'foreign', serverId: 'srv_foreign_home' },
-    }, { surface: 'cli', serverId: 'memory-profile' })).resolves.toMatchObject({ ok: false, errorCode: 'action_failed', error: 'server_target_mismatch' });
+    }, { surface: 'cli', serverId: 'memory-profile' })).resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' });
     await expect(deps.sessionStateFieldSet!({ actionId: 'session.instructions.set',
       context: { surface: 'cli' }, sessionId: 'cmemorysession000000000001', serverId: 'srv_foreign_home',
       fieldId: 'intent.context', expectedMetadataRevision: 3,
