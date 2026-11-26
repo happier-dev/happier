@@ -20,6 +20,7 @@ import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/pr
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isMachineAgentInventoryReadActionIdV1, isWorkspaceSyncRelationshipWriteActionId, readMachineAgentSignInOperationV1, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
+import { MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1 } from '../../../../actions/actionIds.js';
 import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '../../../../connect/configurationActionIdsV1.js';
@@ -1272,7 +1273,8 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       ? binding.actionId : null;
   }
   if (method === RPC_METHODS.BASH || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
-    || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL
+    || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST
+    || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL
     || method === RPC_METHODS.CAPABILITIES_INVOKE && (binding?.actionId === 'machines.capabilities.install'
       || binding?.actionId === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1)) {
     // These shared transports spend the original Action, never a method-wide
@@ -1281,6 +1283,7 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
         ? binding?.actionId === 'machines.agents.install' || binding?.actionId === 'machines.agents.uninstall'
         : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ ? binding?.actionId === 'machines.agents.install.status'
+        : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST ? binding?.actionId === MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1
         : method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL ? binding?.actionId === 'machines.agents.install.cancel'
         : binding?.actionId === 'machines.capabilities.install' || binding?.actionId === ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1;
     return matchingAction && binding && binding.target.kind === 'machine'

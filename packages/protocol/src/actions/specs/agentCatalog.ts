@@ -1,6 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
+import { MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../scm/diffSummary.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { readRegistryAgentCliLocatorV1 } from './registries.js';
@@ -10,6 +11,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { AGENT_SIGN_IN_STATUS_RPC_METHOD, MachinesAgentsSignInStartInputSchema, MachinesAgentsSignInStartOutputSchema, MachinesAgentsSignInStatusInputSchema, AgentSignInStatusResponseSchema, MachinesAgentsSignInCancelInputSchema, MachinesAgentsSignInCancelOutputSchema } from '../../daemon/agentSignIn.js';
 import { MachinesAgentsListInputSchema, MachinesAgentsListOutputSchema } from '../../capabilities/machineAgentInventory.js';
 import { AgentAcquireJobIntentSchema, MachinesAgentsInstallInputSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallCancelResponseSchema } from '../../daemon/agentInstallJobs.js';
+import { DaemonAgentInstallListResponseSchema } from '../../daemon/agentInstallJobs.js';
 import { AcpBackendApprovalInputSchema, projectAcpBackendApprovalInput } from './acpBackendApproval.js';
 import { AgentsBackendsListOutputSchema } from '../agentBackendInventory.js';
 import { BackendTargetKeySchema } from '../../backends/targets/backendTargetRef.js';
@@ -333,6 +335,19 @@ function createAgentCatalogActionSpecs() {
       { path: 'agentId', title: 'Agent', widget: 'text', required: true },
       { path: 'definitionId', title: 'Custom agent', widget: 'text' },
     ] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1,
+    title: 'List agent install jobs',
+    description: 'Find the requesting Account’s agent install jobs on the selected machine, including job IDs, progress, and outcomes.',
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', placements: [],
+    approval: { result: 'required' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'machines_agents_install_list', rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST },
+    inputSchema: lazyZodSchema(() => z.strictObject({ machineId: NonBlankOpaqueIdentifierSchema })),
+    outputSchema: DaemonAgentInstallListResponseSchema,
+    cli: { acceptsServerId: true, commands: [{ path: ['agents', 'install', 'list'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'machineId', title: 'Machine id', widget: 'text', required: true }] },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.agents.install.status', executionPlacement: 'machine', approval: {result: 'required'},

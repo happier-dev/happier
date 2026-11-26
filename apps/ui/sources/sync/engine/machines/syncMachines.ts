@@ -497,6 +497,8 @@ export async function fetchAndApplyMachines(params: {
     credentials: AuthCredentials;
     /** A named push refreshes these rows through the existing captured exact reader. */
     machineIds?: readonly string[];
+    /** An exact consumer requires the selected rows, including an empty selection after refusal. */
+    exactSelection?: true;
     /** Persisted custodian Account mode for owner rows without an access projection. */
     expectedAccountMode?: 'plain' | 'e2ee';
     readAccountMode?: () => Promise<'plain' | 'e2ee'>;
@@ -563,9 +565,10 @@ export async function fetchAndApplyMachines(params: {
         // New/unknown discovery still uses the persistent-only census. Exact
         // selection also admits Session runners and must not broaden discovery.
         const knownSelection = params.machineIds?.every(id => requestMachineSnapshot?.[id] ?? params.getExistingMachine?.(id));
-        const selected = knownSelection && params.machineIds && params.readTransport ? await readMachineRows({
-            machineIds: params.machineIds, readTransport: params.readTransport, signal: params.signal,
-        }) : undefined;
+        const selectionSource = params.readTransport ? { readTransport: params.readTransport }
+            : params.request ? { request: params.request } : undefined;
+        const selected = (params.exactSelection || knownSelection && params.readTransport) && params.machineIds && selectionSource
+            ? await readMachineRows({ ...selectionSource, machineIds: params.machineIds, signal: params.signal }) : undefined;
         // The exact wire also serves key-preparation readers with sparse rows.
         // Inventory publication needs the complete liveness/identity carriers.
         const selectedRows = selected && [...selected.values()].flatMap(row => row
@@ -575,13 +578,13 @@ export async function fetchAndApplyMachines(params: {
             : []);
         // Only a complete current census owns withdrawal by omission. Keep that
         // recovery for an absent/inaccessible row; ordinary named changes patch.
-        completeCensus = !selectedRows || selectedRows.length !== selected!.size;
+        completeCensus = !params.exactSelection && (!selectedRows || selectedRows.length !== selected!.size);
         machines = completeCensus ? await fetchMachineRows({
             credentials,
             ...(params.request ? { request: params.request } : {}),
             readTransport: params.readTransport,
             signal: params.signal,
-        }) : selectedRows!;
+        }) : selectedRows ?? [];
         if (expectedAccountMode === undefined && params.readAccountMode && machines.some((machine) => machine.access === undefined)) {
             if (!shouldContinue()) return;
             expectedAccountMode = await params.readAccountMode();

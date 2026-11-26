@@ -1,4 +1,6 @@
 import { isModelRefGrantedByConstraintsV1 } from '../auth/apiTokenGrant.js';
+import { MACHINE_DETAIL_ACTION_ID_V1 } from './actionIds.js';
+import { MachineDetailInputSchema } from './specs/machine/discovery.js';
 import { createAutomaticApprovalContinuation, createApprovalAutomaticChecksV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1, canAuthorApprovalAutomaticConsentV1, hasApprovalAutomaticConsentPersonAuthorityV1, readApprovalAutomaticActionIdV1 } from './executor/automaticApprovalContinuation.js';
 import { ApprovalRequestDecideInputSchema } from './specs/approvals.js';
 import type { StoredApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
@@ -7290,6 +7292,15 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
           return completeActionResult(res);
+        }
+
+        if (actionId === MACHINE_DETAIL_ACTION_ID_V1) {
+          if (!deps.machineDetail) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const input = MachineDetailInputSchema.parse(data);
+          if (input.serverId && ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) {
+            return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+          }
+          return completeActionResult(await deps.machineDetail(input, ctx), { treatReturnedErrorEnvelopeAsFailure: true });
         }
 
         if (actionId === 'machines.list') {

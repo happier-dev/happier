@@ -11,6 +11,8 @@ import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/ex
 import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema, DaemonAgentInstallCancelResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DaemonAgentInstallListResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -35,7 +37,7 @@ export function createCliMachineActionDeps(
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string,
       request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>>;
   }>,
-): Pick<ActionExecutorDeps, 'machineCommandRun' | 'machineWorkSummaryGet' | 'actionOperationAction' | 'machinePageAction' | 'machineTerminalAction' | 'machineAgentInstallStart' | 'machineAgentInstallRead' | 'machineAgentInstallCancel' | 'machineSetupPlan' | 'machineSetupApply' | 'machineSetupRemove' | 'machineSetupUpdatesApply'> {
+): Pick<ActionExecutorDeps, 'machineCommandRun' | 'machineWorkSummaryGet' | 'actionOperationAction' | 'machinePageAction' | 'machineTerminalAction' | 'machineAgentInstallStart' | 'machineAgentInstallRead' | 'machineAgentInstallList' | 'machineAgentInstallCancel' | 'machineSetupPlan' | 'machineSetupApply' | 'machineSetupRemove' | 'machineSetupUpdatesApply'> {
   return {
     machineCommandRun: async (input, context) => {
       context.signal?.throwIfAborted();
@@ -311,6 +313,16 @@ export function createCliMachineActionDeps(
         context, effectActionId, authority: context?.authority,
         ...(request.waitForTerminal ? { timeoutMs: null } : {}),
         ...(signal ? { signal } : {}),
+      }));
+    },
+    machineAgentInstallList: async ({ machineId }, context) => {
+      if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
+        return { ok: false, errorCode: 'install_unavailable', error: 'An authenticated machine transport is required.' };
+      }
+      return DaemonAgentInstallListResponseSchema.parse(await callMachineAction({
+        machineId, serverId: context.serverId ?? undefined, method: RPC_METHODS.DAEMON_AGENTS_INSTALL_LIST, request: {},
+        context, effectActionId: MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1, authority: context.authority, exactMachine: true,
+        ...(context.signal ? { signal: context.signal } : {}),
       }));
     },
     machineAgentInstallCancel: async ({ machineId, signal, serverId, context, effectActionId, ...request }) => {

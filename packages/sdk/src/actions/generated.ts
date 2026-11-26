@@ -2104,6 +2104,7 @@ export type GeneratedActions = Readonly<{
     readonly agents: Readonly<{
       readonly install: Readonly<{
         readonly cancel: (input: PublicActionInputById["machines.agents.install.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.install.cancel">>;
+        readonly list: (input: PublicActionInputById["machines.agents.install.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.install.list">>;
         readonly start: (input: PublicActionInputById["machines.agents.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.install">>;
         readonly status: (input: PublicActionInputById["machines.agents.install.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.agents.install.status">>;
       }> ;
@@ -2129,6 +2130,7 @@ export type GeneratedActions = Readonly<{
     readonly daemon: Readonly<{
       readonly stop: (input: PublicActionInputById["machines.daemon.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.daemon.stop">>;
     }> ;
+    readonly detail: (input: PublicActionInputById["machines.detail"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.detail">>;
     readonly guard: Readonly<{
       readonly activity: Readonly<{
         readonly list: (input: PublicActionInputById["machines.guard.activity.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.guard.activity.list">>;
@@ -5173,6 +5175,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       agents: {
         install: {
           cancel: (input: PublicActionInputById["machines.agents.install.cancel"], options?: ActionExecutionOptions) => execute("machines.agents.install.cancel", input, options),
+          list: (input: PublicActionInputById["machines.agents.install.list"], options?: ActionExecutionOptions) => execute("machines.agents.install.list", input, options),
           start: (input: PublicActionInputById["machines.agents.install"], options?: ActionExecutionOptions) => execute("machines.agents.install", input, options),
           status: (input: PublicActionInputById["machines.agents.install.status"], options?: ActionExecutionOptions) => execute("machines.agents.install.status", input, options),
         },
@@ -5198,6 +5201,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       daemon: {
         stop: (input: PublicActionInputById["machines.daemon.stop"], options?: ActionExecutionOptions) => execute("machines.daemon.stop", input, options),
       },
+      detail: (input: PublicActionInputById["machines.detail"], options?: ActionExecutionOptions) => execute("machines.detail", input, options),
       guard: {
         activity: {
           list: (input: PublicActionInputById["machines.guard.activity.list"], options?: ActionExecutionOptions) => execute("machines.guard.activity.list", input, options),

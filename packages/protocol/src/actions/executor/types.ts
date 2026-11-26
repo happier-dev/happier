@@ -106,6 +106,7 @@ import type { HomeConnectInputSchema, HomeConnectOutputSchema, HomeReconnectInpu
 import type {
   DaemonAgentInstallStartRequest, DaemonAgentInstallStartResponse,
   DaemonAgentInstallReadRequest, DaemonAgentInstallReadResponse,
+  DaemonAgentInstallListResponse,
   DaemonAgentInstallCancelRequest, DaemonAgentInstallCancelResponse,
 } from '../../daemon/agentInstallJobs.js';
 import type { RoleActionIdV1 } from '../../prompts/roles/roleActionIdsV1.js';
@@ -2485,6 +2486,8 @@ export type ActionExecutorDeps = Readonly<{
   promptInvocationsList?: (args: Readonly<{ limit?: number; signal?: AbortSignal }>) => Promise<unknown>;
   promptInvocationResolve?: (args: Readonly<{ invocationId: string; argsText?: string; sessionId?: string | null; signal?: AbortSignal }>) => Promise<unknown>;
   machinesList?: (args: Readonly<{ serverId?: string; sharedWithTeamId?: string; limit?: number; refresh?: boolean; purpose?: 'input' }>, context?: ActionExecutorContext) => Promise<unknown>;
+  machineDetail?: (input: z.infer<typeof import('../specs/machine/discovery.js').MachineDetailInputSchema>,
+    context: ActionExecutorContext) => Promise<z.infer<typeof import('../specs/machine/discovery.js').MachineDetailResultSchema> | ActionExecuteFailure>;
   /** Inert declarations or the exact target's cold recipe family; neither grants installation authority. */
   machineRecipesRead?: (args: Readonly<({ offerings: true; homeId?: never; machineId?: never }
     | { offerings?: never; homeId: string; machineId: string }) & {
@@ -2561,6 +2564,7 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     effectActionId?: 'machines.agents.install.status';
   }) => Promise<DaemonAgentInstallReadResponse | ActionExecuteFailure>;
+  machineAgentInstallList?: (args: Readonly<{ machineId: string }>, context: ActionExecutorContext) => Promise<DaemonAgentInstallListResponse | ActionExecuteFailure>;
   machineAgentInstallCancel?: (args: DaemonAgentInstallCancelRequest & {
     machineId: string; serverId?: string; signal?: AbortSignal;
     context?: ActionExecutorContext;

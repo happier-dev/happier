@@ -374,6 +374,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   ActionExecutorDeps,
   | 'pathsListRecent'
   | 'machinesList'
+  | 'machineDetail'
   | 'deploymentSuggestionTargets'
   | 'deploymentSuggestionForges'
   | 'machineRecipesRead'
@@ -581,6 +582,28 @@ export function createCliActionInventoryDeps(params: Readonly<{
       return {
         items: limitItems(items, args.limit),
       };
+    },
+    machineDetail: async ({ machineId }, context) => {
+      return runWithServerHttpBaseUrl(params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), async () => {
+        const { ApiClient } = await import('@/api/api');
+        const { MachineContentKeyUnavailableError } = await import('@/api/machine/machineDataEncryptionKey');
+        const { projectMachineDetail } = await import('@happier-dev/protocol/actions/specs/machine/discovery');
+        const authorization = context.externalActionExecutionAuthorization;
+        const credentials = params.credentials;
+        if (!authorization && !credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+        const options = { signal: context.signal };
+        try {
+          const machine = authorization
+            ? await ApiClient.getRequesterMachine(machineId, { ...options, authorization })
+            : credentials ? await (await ApiClient.create(credentials)).getMachine(machineId, options) : null;
+          context.signal?.throwIfAborted();
+          if (!machine) return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
+          return projectMachineDetail(machine);
+        } catch (error) {
+          if (!(error instanceof MachineContentKeyUnavailableError)) throw error;
+          return { ok: false, errorCode: error.code, error: error.code };
+        }
+      });
     },
     machinesList: async (args, context) => {
       const [{ configuration }, { listCurrentAccountMachines }] = await Promise.all([import("@/configuration"), import("@/api/machine/resolveCurrentAccountMachineTarget")]);

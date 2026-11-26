@@ -3815,6 +3815,28 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     spawnProfilesList: async (args) => listSpawnProfilesForActions(args, accountContext
       ? readUiProfileCatalogSnapshot(await readProfileCatalogProjectionInContext(accountContext)) : undefined),
+    machineDetail: async ({ machineId }, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      const { fetchAndApplyMachines } = await import('@/sync/engine/machines/syncMachines');
+      const { projectMachineDetail } = await import('@happier-dev/protocol/actions/specs/machine/discovery');
+      return withActionAccountRequestSignal(accountContext, context.signal, async signal => {
+        const { accountMode, encryption } = await accountContext.resolveAccountEncryption(signal);
+        let selected: Machine | undefined;
+        await fetchAndApplyMachines({
+          credentials: accountContext.credentials, encryption, expectedAccountMode: accountMode,
+          machineDataKeys: new Map(), machineIds: [machineId], exactSelection: true,
+          sourceServerId: accountContext.serverIdentityId ?? accountContext.serverId,
+          request: accountContext.request, readTransport: accountContext.readTransport, signal, throwOnError: true,
+          shouldContinue: () => accountContext.accountLifetime.isCurrent() && !signal?.aborted,
+          applyMachines: ([machine]) => { selected = machine; },
+        });
+        accountContext.assertCurrent();
+        throwIfAborted(signal);
+        if (!selected) return { ok: false, errorCode: 'machine_not_found', error: 'machine_not_found' };
+        if (selected.availability?.kind === 'locked') return { ok: false, errorCode: 'machine_content_key_unavailable', error: 'machine_content_key_unavailable' };
+        return projectMachineDetail(selected);
+      });
+    },
     machinesList: async args => {
       accountContext?.assertCurrent();
       const result = await listMachinesForVoiceTool(args);
@@ -4251,6 +4273,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const result = await executeMachineOwnedAction({ actionId: 'machines.agents.install.status', context,
         input: { machineId, jobId, cursor, ...(waitForTerminal === undefined ? {} : { waitForTerminal }) } });
       return readActionFailureEnvelope(result) ?? DaemonAgentInstallReadResponseSchema.parse(result);
+    },
+    machineAgentInstallList: async ({ machineId }, context) => {
+      if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+      accountContext.assertCurrent();
+      const { listAgentInstallJobsRpc } = await import('@/agents/machineAgents/installJobs/api');
+      const result = await listAgentInstallJobsRpc({ ...accountContext.accountLifetime.scope, machineId, signal: context.signal });
+      accountContext.assertCurrent();
+      return result;
     },
     machineAgentInstallCancel: async ({ machineId, jobId, context }) => {
       if (!context) throw new Error('not_authenticated');

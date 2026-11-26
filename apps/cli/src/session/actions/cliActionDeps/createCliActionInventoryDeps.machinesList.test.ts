@@ -6,12 +6,41 @@ import tweetnacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 const http = vi.hoisted(() => ({ get: vi.fn() }));
 // HTTP is the boundary; bootstrap parsing, inventory and Action projection stay real.
-vi.mock('axios', () => ({ default: { defaults: {}, get: http.get } }));
+vi.mock('axios', () => ({ default: { defaults: {}, get: http.get,
+  isAxiosError: (error: unknown) => Boolean(error && typeof error === 'object' && 'isAxiosError' in error) } }));
 
 describe('machines.list installation discovery', () => {
+  it('reads exact Machine Details as an Agent only for a Machine visible to the requesting Account', async () => {
+    const token = 'machine-details-requester';
+    const machine = { id: 'owned', kind: 'persistent', active: false, activeAt: 123, revokedAt: null,
+      replacedByMachineId: null, storageMode: 'plain', metadataVersion: 7, daemonState: null, daemonStateVersion: 0,
+      metadata: encodePlainMachineStoredContent({ host: 'workstation', username: 'operator', platform: 'linux',
+        arch: 'x64', homeDir: '/home/operator', happyHomeDir: '/home/operator/.happier', happyCliVersion: '0.3.0' }),
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
+    http.get.mockReset();
+    http.get.mockImplementation(async (url, options) => {
+      expect(options.headers.Authorization).toBe(`Bearer ${token}`);
+      if (url === 'https://machines.example.test/v1/account/encryption') return { status: 200, data: { mode: 'plain' } };
+      if (url === 'https://machines.example.test/v1/machines/owned') return { status: 200, data: { machine } };
+      if (url === 'https://machines.example.test/v1/machines/other') throw { isAxiosError: true, response: { status: 404 } };
+      throw new Error(`Unexpected Details read: ${url}`);
+    });
+    const inventory = createCliActionInventoryDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain',
+      ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://machines.example.test' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...inventory });
+    const context = { surface: 'agent', authority: 'account_automation', serverId: 'home' } as const;
+    await expect(executor.execute('machines.detail', { machineId: 'owned' }, context)).resolves.toEqual({ ok: true, result: {
+      status: 'ready', machineId: 'owned', host: 'workstation', username: 'operator', platform: 'linux', arch: 'x64',
+      homeDir: '/home/operator', metadataVersion: 7, lastSeenAt: 123,
+    } });
+    await expect(executor.execute('machines.detail', { machineId: 'other' }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'machine_not_found' });
+  });
+
   it.each(['manage', 'use'] as const)('retains the visible %s target identity without disclosing stored content', async role => {
     const access = { custodian: { accountId: 'other-owner', displayName: 'Owner' }, role,
       resourceMode: 'e2ee', accessState: 'key_pending' };

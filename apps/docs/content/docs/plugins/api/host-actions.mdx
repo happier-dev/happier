@@ -10654,6 +10654,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text): Machine
 - `jobId` (text): Install job
 
+## `machines.agents.install.list`
+
+**List agent install jobs** — Find the requesting Account’s agent install jobs on the selected machine, including job IDs, progress, and outcomes.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine id
+
 ## `machines.agents.install.status`
 
 **Read an agent install job** — Read the daemon-owned current steps, byte progress, and outcome alongside events after the cursor. Omitting the cursor reads events from the start.
@@ -10837,6 +10851,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 **Stop machine daemon** — Stop the daemon on this machine through its existing stop RPC.
 
 - Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text): Home ID
+- `machineId` (text, required): Machine ID
+
+## `machines.detail`
+
+**Read Machine details** — Read the published details of one exact Machine visible to the current Account.
+
+- Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.

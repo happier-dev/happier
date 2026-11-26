@@ -560,6 +560,34 @@ describe('UI machine Agent inventory Action transport', () => {
         } finally { unregister(); }
     });
 
+    it('reads the exact enrolled Machine details for UI and Agent through the Account reader', async () => {
+        const serverId = await addHome({ name: 'Machine Details Home', serverUrl: 'https://machine-details.test',
+            serverIdentityId: 'srv_machine_details', accountId: 'alice', currentAccount: true });
+        const machine = createMachineFixture({ id: 'studio', activeAt: 123 });
+        const metadata = { ...machine.metadata!, host: 'studio-host', username: 'operator', homeDir: '/home/operator',
+            platform: 'linux', arch: 'x64' };
+        const row = createPlainMachineRowFixture({ id: machine.id, accountId: 'alice', machine: { ...machine, metadata } });
+        network.setHttpResponder(async (request, init) => {
+            const path = new URL(String(request)).pathname;
+            if (path === '/v1/machines/read-batch') {
+                const { machineIds } = JSON.parse(String(init?.body)) as { machineIds: string[] };
+                return Response.json({ results: machineIds.map(machineId => machineId === row.id
+                    ? { machineId, status: 'found', machine: row } : { machineId, status: 'not_found' }) });
+            }
+            return harness.request(request, init);
+        });
+        const executor = createDefaultActionExecutor();
+        const context = { serverId, expectedAccountId: 'alice' };
+        const ui = await executor.execute('machines.detail', { machineId: machine.id }, { ...context, surface: 'ui' });
+        expect(ui).toEqual({ ok: true, result: { status: 'ready', machineId: machine.id, host: metadata.host,
+            username: metadata.username, homeDir: metadata.homeDir, platform: metadata.platform, arch: metadata.arch,
+            lastSeenAt: 123, metadataVersion: machine.metadataVersion } });
+        const agent = { ...context, surface: 'agent', authority: 'account_automation' } as const;
+        await expect(executor.execute('machines.detail', { machineId: machine.id }, agent)).resolves.toEqual(ui);
+        await expect(executor.execute('machines.detail', { machineId: 'hidden' }, agent))
+            .resolves.toMatchObject({ ok: false, errorCode: 'machine_not_found' });
+    });
+
     it.each(['install', 'update'] as const)('starts a %s job on the captured Home with explicit vendor consent', async (intent) => {
         const serverId = await addHome({ name: 'Setup Home', serverUrl: 'https://setup.test', accountId: 'alice',
             serverIdentityId: 'srv_install_observation', currentAccount: true });

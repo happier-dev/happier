@@ -413,6 +413,7 @@ type MachineCommon = {
   /** Home-published installation key (standard base64); a private content pin decides whether to trust it. */
   installationPublicKey?: string | null,
   active?: boolean,
+  activeAt?: number | null,
   revokedAt?: number | null,
   replacedByMachineId?: string | null,
   dataEncryptionKey?: string | null,

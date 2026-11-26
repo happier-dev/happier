@@ -165,6 +165,10 @@ it('replays local configured-Agent install, status, cancellation and removal thr
     if (!started.ok) throw new Error('Install job missing');
     const { jobId } = started;
     await vi.waitFor(() => expect(owner.read({ jobId, cursor: 0 }, 'alice')).toMatchObject({ done: true, outcome: { kind: 'succeeded', version: '2.2.2' } }));
+    const discoveryContext = { ...context, surface: 'agent' as const, authority: undefined };
+    const jobs = await executor.execute('machines.agents.install.list', { machineId: 'selected' }, discoveryContext);
+    expect(jobs).toMatchObject({ ok: true, result: { ok: true, jobs: [{ jobId, definitionId: definition.id }] } });
+    expect(owner.list('alice')).toEqual(jobs.ok ? jobs.result : null);
     const status = await executor.execute('machines.agents.install.status', { machineId: 'selected', jobId }, context);
     expect(status, JSON.stringify(status)).toMatchObject({ ok: true, result: { done: true, outcome: { kind: 'succeeded' } } });
     if (status.ok) assertActionOutputContract('machines.agents.install.status', status.result);
@@ -173,6 +177,8 @@ it('replays local configured-Agent install, status, cancellation and removal thr
     expect(cancelled).toMatchObject({ ok: true });
     if (cancelled.ok) assertActionOutputContract('machines.agents.install.cancel', cancelled.result);
     current = false;
+    await expect(executor.execute('machines.agents.install.list', { machineId: 'selected' }, discoveryContext))
+      .resolves.toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     await expect(executor.execute('machines.agents.install.status', { machineId: 'selected', jobId }, context))
       .resolves.toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     current = true;

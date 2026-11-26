@@ -2,9 +2,9 @@ import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
-import type { PreNormalizedActionSpec } from '../definition.js';
+import { actionInputServerId, type PreNormalizedActionSpec } from '../definition.js';
 import { MachinePresenceReadInputV1Schema, MachinePresenceReadResultV1Schema } from '../../../machines/machineAccessV1.js';
-import { MACHINE_LIST_ACTION_ID_V1 } from '../../actionIds.js';
+import { MACHINE_DETAIL_ACTION_ID_V1, MACHINE_LIST_ACTION_ID_V1 } from '../../actionIds.js';
 
 
 export const MachinesListInputSchema = lazyZodSchema(() => z.strictObject({
@@ -14,8 +14,54 @@ export const MachinesListInputSchema = lazyZodSchema(() => z.strictObject({
   refresh: z.optional(z.boolean()),
 }));
 
+export const MachineDetailInputSchema = lazyZodSchema(() => z.strictObject({
+  serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  machineId: z.string().check(z.trim(), z.minLength(1)),
+}));
+
+export const MachineDetailResultSchema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('ready'),
+  machineId: z.string(),
+  host: z.optional(z.string()),
+  username: z.optional(z.string()),
+  homeDir: z.optional(z.string()),
+  platform: z.optional(z.string()),
+  arch: z.optional(z.string()),
+  lastSeenAt: z.nullable(z.number()),
+  metadataVersion: z.number(),
+}));
+
+export function projectMachineDetail(machine: Readonly<{
+  id: string;
+  activeAt?: number | null;
+  metadataVersion: number;
+  metadata: Readonly<{ host?: string; username?: string; homeDir?: string; platform?: string; arch?: string }> | null;
+}>): z.infer<typeof MachineDetailResultSchema> {
+  const { host, username, homeDir, platform, arch } = machine.metadata ?? {};
+  return {
+    status: 'ready', machineId: machine.id, lastSeenAt: machine.activeAt ?? null, metadataVersion: machine.metadataVersion,
+    ...(host ? { host } : {}),
+    ...(username ? { username } : {}),
+    ...(homeDir ? { homeDir } : {}),
+    ...(platform ? { platform } : {}),
+    ...(arch ? { arch } : {}),
+  };
+}
+
 function createMachineDiscoveryActionSpecs() {
   return Object.freeze([
+  {
+    id: MACHINE_DETAIL_ACTION_ID_V1, executionPlacement: 'account', approval: { result: 'required' },
+    title: 'Read Machine details', description: 'Read the published details of one exact Machine visible to the current Account.',
+    safety: 'safe', sideEffectClass: 'read', placements: [],
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
+    bindings: { mcpToolName: 'machines_detail' },
+    inputSchema: MachineDetailInputSchema, outputSchema: MachineDetailResultSchema,
+    invocationServerIdForInput: actionInputServerId(MachineDetailInputSchema, input => input.serverId),
+    cli: { acceptsServerId: true, commands: [{ path: ['machines', 'detail'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text' },
+      { path: 'machineId', title: 'Machine ID', widget: 'text', required: true }] },
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'machines.presence.read', executionPlacement: 'account', approval: { result: 'required' },
     title: 'Read Machine presence transitions', description: 'Read the latest committed offline and online occurrences through current Machine access.',

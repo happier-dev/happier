@@ -1081,6 +1081,7 @@ export class ApiClient {
         installationId: raw.installationId,
         ...(raw.installationPublicKey ? { installationPublicKey: raw.installationPublicKey } : {}),
         active: raw.active,
+        activeAt: raw.activeAt,
         revokedAt: raw.revokedAt,
         replacedByMachineId: raw.replacedByMachineId,
         dataEncryptionKey: raw.dataEncryptionKey ?? null,

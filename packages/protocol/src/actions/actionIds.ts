@@ -62,6 +62,7 @@ export function isReviewAgentRunActionIdV1(actionId: string): boolean {
 export function isMachineAgentInventoryReadActionIdV1(actionId: string): boolean {
   return actionId === 'machines.agents.list' || actionId === 'review.engines.list';
 }
+export const MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1 = 'machines.agents.install.list' as const;
 const LIVE_AGENT_INVENTORY_ACTION_IDS_V1 = ['agents.models.list', 'agents.config_options.list'] as const;
 export function isLiveAgentInventoryActionIdV1(actionId: string): boolean {
   return LIVE_AGENT_INVENTORY_ACTION_IDS_V1.some(id => id === actionId);
@@ -124,6 +125,7 @@ export function isPluginRetainedInputActionIdV1(actionId: string): boolean {
 
 export const MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 = 'machines.add.local.cancel' as const;
 export const MACHINE_LIST_ACTION_ID_V1 = 'machines.list' as const;
+export const MACHINE_DETAIL_ACTION_ID_V1 = 'machines.detail' as const;
 export const SESSION_SPAWN_NEW_ACTION_ID_V1 = 'session.spawn_new' as const;
 /** A verified new-Session invocation is accepted input before the Session exists. */
 export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeof SESSION_SPAWN_NEW_ACTION_ID_V1 {
@@ -499,6 +501,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'machines.agents.install',
     'machines.agents.uninstall',
     'machines.agents.install.status',
+    MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1,
     'machines.agents.install.cancel',
   ],
   machine_agent_sign_in: ['machines.agents.signIn.start', 'machines.agents.signIn.status', 'machines.agents.signIn.cancel', 'machines.agents.signIn.restart'],
@@ -579,6 +582,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'prompts.invocations.list',
     'prompts.invocation.resolve',
     MACHINE_LIST_ACTION_ID_V1,
+    MACHINE_DETAIL_ACTION_ID_V1,
   'machines.presence.read',
     'servers.list',
     'review.engines.list',

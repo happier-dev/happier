@@ -1156,6 +1156,10 @@ export type InventoryActionInputById = {
         subdir?: string | undefined;
         cloneSource?: true | undefined;
     };
+    readonly "machines.detail": {
+        machineId: string;
+        serverId?: string | undefined;
+    };
     readonly "machines.presence.read": {
         serverId: string;
         machineId: string;
@@ -4969,6 +4973,17 @@ export type InventoryActionResultById = {
             action?: string | undefined;
             url?: string | undefined;
         };
+    };
+    readonly "machines.detail": {
+        status: 'ready';
+        machineId: string;
+        lastSeenAt: null | number;
+        metadataVersion: number;
+        host?: string | undefined;
+        username?: string | undefined;
+        homeDir?: string | undefined;
+        platform?: string | undefined;
+        arch?: string | undefined;
     };
     readonly "machines.presence.read": {
         kind: 'present';

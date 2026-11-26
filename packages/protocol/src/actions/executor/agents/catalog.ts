@@ -1,4 +1,5 @@
 import { completeActionResult } from '../resultProjection.js';
+import { MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1 } from '../../actionIds.js';
 import { listAgentBackendsWithReadinessV1 } from './agentBackendReadiness.js';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallCancelRequestSchema } from '../../../daemon/agentInstallJobs.js';
 import { ScmDiffSummaryModelSelectorSchema } from '../../../scm/diffSummary.js';
@@ -67,6 +68,11 @@ export async function dispatchAgentsCatalog(inv: Pick<CoreInvocation, 'actionId'
             ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           }), { treatReturnedErrorEnvelopeAsFailure: true });
+        }
+        if (actionId === MACHINE_AGENT_INSTALL_LIST_ACTION_ID_V1) {
+          if (!deps.machineAgentInstallList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+          return completeActionResult(await deps.machineAgentInstallList({ machineId: String(data.machineId) }, ctx),
+            { treatReturnedErrorEnvelopeAsFailure: true });
         }
         if (actionId === 'machines.agents.install.status') {
           if (!deps.machineAgentInstallRead) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
