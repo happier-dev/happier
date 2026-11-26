@@ -13,7 +13,7 @@ import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/s
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { removeWitnessedContainers, resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
-import { readNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { readNativeComposeDeploymentImageReferences, removeNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { removeUnusedNativeComposeNetworks } from '@/daemon/local/services/launch/nativeComposeNetworks';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createDeploymentTeardownExecutor, DeploymentTeardownObservationSchema, selectDeploymentTeardownStepResources, type DeploymentTeardownBoundary } from '../../actions/teardown';
@@ -148,18 +148,19 @@ export function createOwnServerTeardownForHost(host: Host) {
         const runtime = await host.runtime.acquireTeardown!({ request, ...member }, async () => {});
         try {
             const run = nativeRunner(runtime, request.context);
-            const removeImages = request.input.removeEnvironment === true;
+            type BoundaryRequest = Parameters<DeploymentTeardownBoundary['observe']>[0];
+            const removesImages = (operation: BoundaryRequest) => request.input.removeEnvironment === true && operation.step === 'removeTarget';
             const readImages = () => readNativeComposeDeploymentImageReferences(identity.environmentInstanceId, run);
-            const boundary: DeploymentTeardownBoundary = {
-                async observe(operation) {
-                    if (!operation.resources.length) return { kind: 'proved', resources: [] };
-                    const proved = async () => {
+            const observe: (operation: BoundaryRequest, imageCleanup?: { reason?: string }) => ReturnType<DeploymentTeardownBoundary['observe']>
+                = async (operation, imageCleanup) => {
+                    if (!operation.resources.length && !removesImages(operation)) return { kind: 'proved', resources: [] };
+                    const proved = async (reason?: string) => {
                         // This boundary is reached only by accepted teardown, including
                         // remote already-absent observation; preview has its own reader.
                         if (operation.step === 'removeTarget') await runtime.retireEnvironmentObservers({
                             homeServerIdentityId: identity.homeServerIdentityId, environmentId: operation.environmentId,
                         });
-                        return { kind: 'proved' as const, resources: operation.resources.map(resource => ({
+                        return { kind: 'proved' as const, ...(reason ? { reason } : {}), resources: operation.resources.map(resource => ({
                             resourceId: resource.id, disposition: resource.disposition === 'retain' ? 'retained' as const : 'absent' as const,
                         })) };
                     };
@@ -189,13 +190,15 @@ export function createOwnServerTeardownForHost(host: Host) {
                         if (network === 'needed') return { kind: 'needed' };
                     }
                     if (await observeOwnServerTeardownVolumes({ resources: operation.resources, run }) === 'needed') return { kind: 'needed' };
-                    if (removeImages) {
+                    if (removesImages(operation) && imageCleanup === undefined) {
                         const references = await readImages();
-                        if (references === null) return { kind: 'unknown', reason: 'image_observation_unavailable' };
+                        if (references === null) return proved('image_observation_unavailable');
                         if (references.length) return { kind: 'needed' };
                     }
-                    return proved();
-                },
+                    return proved(imageCleanup?.reason);
+                };
+            const boundary: DeploymentTeardownBoundary = {
+                observe,
                 async execute(operation) {
                     const tool = await runtime.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-teardown', cwd: runtime.deploymentRoot });
                     const launch = await authorizePluginExecLaunchForHost(runtime.exec, { executable: tool.executable, args: [], cwd: runtime.deploymentRoot }, { agentIsolation: null });
@@ -224,17 +227,11 @@ export function createOwnServerTeardownForHost(host: Host) {
                             reason: networkFailure };
                         const volumeFailure = await settleOwnServerTeardownVolumes({ resources: operation.resources, run });
                         if (volumeFailure) return volumeFailure;
-                        if (removeImages) {
-                            const references = await readImages();
-                            if (references === null) return { kind: 'unknown' as const, reason: 'image_observation_unavailable' };
-                            for (const reference of references) {
-                                // Delete the admitted tag by name and preserve parent layers and other aliases.
-                                if ((await run(['image', 'rm', '--no-prune', reference])).exitCode !== 0) {
-                                    return { kind: 'failed' as const, reason: 'image_removal_failed' };
-                                }
-                            }
-                        }
-                        return boundary.observe(operation);
+                        if (!removesImages(operation)) return observe(operation);
+                        const references = await readImages();
+                        const reason = references === null ? 'image_observation_unavailable'
+                            : await removeNativeComposeDeploymentImageReferences(references, run);
+                        return observe(operation, reason ? { reason } : {});
                     });
                 },
             };

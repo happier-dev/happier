@@ -215,7 +215,7 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-primary', 'remote-caddy-primary-reconcile', 'remote-caddy-after-tunnel-retirement', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-image-in-use', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-primary', 'remote-caddy-primary-reconcile', 'remote-caddy-after-tunnel-retirement', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
@@ -229,8 +229,9 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
         const afterTunnelRetirement = scenario === 'remote-caddy-after-tunnel-retirement';
         const caddyPrimary = scenario === 'remote-caddy-primary' || scenario === 'remote-caddy-primary-reconcile' || afterTunnelRetirement;
         const reconcile = scenario === 'remote-reconcile' || scenario === 'remote-caddy-primary-reconcile';
-        const removesEnvironment = scenario === 'local-remove-environment' || caddyPrimary;
-        const auditsImages = scenario === 'local-remove-environment' || scenario === 'local-native';
+        const imageInUse = scenario === 'local-image-in-use';
+        const removesEnvironment = scenario === 'local-remove-environment' || imageInUse || caddyPrimary;
+        const auditsImages = scenario === 'local-remove-environment' || imageInUse || scenario === 'local-native';
         if (remote) environment.environment.controllerMachineId = 'controller-machine';
         link.machines = ['machine-a'];
         link.members = [{ machineId: 'machine-a', installationId: 'installation-a', state: 'active' }];
@@ -398,8 +399,9 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                         deploymentId, image });
                     foreignEnvironmentTag = resolveNativeComposeDeploymentImageReferences({ environmentInstanceId: 'another-environment',
                         deploymentId, image }).ownedTag;
-                    await docker.setImagePruneState(image.configDigest, { repoTags: [retainedImages.ownedTag,
+                    const imageId = await docker.setImagePruneState(image.configDigest, { repoTags: [retainedImages.ownedTag,
                         retainedImages.activationRef, foreignEnvironmentTag, 'nginx:alpine'], repoDigests: [] });
+                    if (imageInUse) await docker.setImageContainerReference(imageId, 'running');
                 }
                 if (scenario !== 'remote-already-absent' && scenario !== 'remote-fleet-absent' && !reconcile && !afterTunnelRetirement) {
                     await docker.seedComposeGeneration(identity.projectName);
@@ -506,7 +508,8 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                         resources: [{ resourceId: environment.environment.id, disposition: 'absent' }] })));
                 if (scenario === 'remote-retry' || reconcile) expect(receipt.content.failure).toBeUndefined();
                 expect(receipt.content.teardown?.proofs.find(proof => proof.step === 'removeTarget'))
-                    .toMatchObject({ state: 'succeeded', resources: [{ resourceId: environment.environment.id, disposition: 'absent' },
+                    .toMatchObject({ state: 'succeeded', ...(imageInUse ? { reason: 'image_removal_failed' } : {}),
+                        resources: [{ resourceId: environment.environment.id, disposition: 'absent' },
                         ...(scenario === 'remote-native' ? [{ resourceId: 'app_data', disposition: 'absent' },
                             { resourceId: 'app_logs', disposition: 'retained' }] : [])] });
             } else {
@@ -532,7 +535,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 if (retainedImages && foreignEnvironmentTag) {
                     for (const reference of Object.values(retainedImages)) {
                         const stored = await docker.readPruneReference(reference);
-                        if (removesEnvironment) expect(stored).toBeNull();
+                        if (removesEnvironment && !imageInUse) expect(stored).toBeNull();
                         else expect(stored).toMatch(/^sha256:/);
                     }
                     expect(await docker.readPruneReference(foreignEnvironmentTag)).toMatch(/^sha256:/);

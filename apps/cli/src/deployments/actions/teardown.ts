@@ -24,7 +24,8 @@ export type DeploymentTeardownBoundaryRequest = Readonly<{
     context: ActionExecutorContext;
 }>;
 export const DeploymentTeardownObservationSchema = z.union([
-    z.strictObject({ kind: z.literal('proved'), resources: DeploymentTeardownStepProofV1Schema.shape.resources }),
+    z.strictObject({ kind: z.literal('proved'), resources: DeploymentTeardownStepProofV1Schema.shape.resources,
+        reason: DeploymentTeardownStepProofV1Schema.shape.reason }),
     z.strictObject({ kind: z.literal('needed') }),
     z.strictObject({ kind: z.enum(['unknown', 'failed']), reason: z.string().check(z.minLength(1)) }),
 ]);
@@ -206,7 +207,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     if (!complete(observed.resources)) observed = { kind: 'unknown', reason: 'resource_proof_incomplete' };
                 }
                 if (observed.kind === 'proved') {
-                    const saved = await write('running', { step, ...member, state: 'succeeded', resources: observed.resources });
+                    const saved = await write('running', { step, ...member, state: 'succeeded', resources: observed.resources,
+                        ...(observed.reason ? { reason: observed.reason } : {}) });
                     if (saved) return saved;
                 } else {
                     const state = observed.kind === 'failed' ? 'failed' : 'outcome_unknown';
