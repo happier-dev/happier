@@ -3,6 +3,7 @@ import { DeploymentAppEnrollmentAdmissionInputV1Schema, DeploymentAppEnrollmentA
 import { DeploymentActionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { admitDeploymentAppEnrollmentInTx } from '@/app/deployments/deploymentAppEnrollment';
 import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from '@/app/plugins/installations/publisherProof';
+import { deploymentFailure } from '@/app/deployments/deploymentAdmission';
 import { lockDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { inTx } from '@/storage/inTx';
 import type { Fastify } from '../../types';
@@ -22,7 +23,11 @@ export function registerDeploymentAppEnrollmentRoute(app: Fastify): void {
             publisher = await verifyPluginInstallationPublisherHeader({ accountId: request.userId,
                 request, path: request.url, required: true });
         } catch (error) {
-            if (error instanceof PluginInstallationPublisherProofError) return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
+            if (error instanceof PluginInstallationPublisherProofError) {
+                return reply.code(403).send(deploymentFailure('deployment_access_denied', {
+                    phase: `deployment.publisher_proof.${error.code}`, causeKind: 'access_denied',
+                }));
+            }
             throw error;
         }
         if (!publisher) return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });

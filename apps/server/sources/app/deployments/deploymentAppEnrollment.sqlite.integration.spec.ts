@@ -1,5 +1,6 @@
 import { randomUUID, createHash, randomBytes } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import * as logging from '@/utils/logging/log';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
@@ -126,7 +127,28 @@ describe('deployment App enrollment through ordinary registration', () => {
             const accepted = await admit();
             expect(accepted.statusCode, accepted.body).toBe(200);
             expect(accepted.json()).toMatchObject({ ok: true, enrollment, enrollmentAccountId: requester.id });
-            expect((await admit(enrollment, false)).statusCode).toBe(403);
+            const observe = vi.spyOn(logging, 'log');
+            try {
+                const denied = { ok: false, error: 'deployment_access_denied' };
+                const unsigned = await admit(enrollment, false);
+                expect(unsigned.statusCode).toBe(403);
+                expect(unsigned.json()).toEqual(denied);
+                const telemetry = await app.inject({ method: 'POST',
+                    url: `/v1/deployments/machines/${controller.id}/telemetry-assignments`, payload: {},
+                    headers: { authorization: `Bearer ${bearer}`,
+                        [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: 'malformed-synthetic-proof' } });
+                expect(telemetry.statusCode).toBe(403);
+                expect(telemetry.json()).toEqual(denied);
+                const diagnostics = observe.mock.calls.map(([entry]) => entry)
+                    .filter(entry => typeof entry === 'object' && entry !== null && 'module' in entry && entry.module === 'deployments');
+                expect(diagnostics).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ errorCode: 'deployment_access_denied',
+                        diagnostic: expect.objectContaining({ phase: 'deployment.publisher_proof.required', causeKind: 'access_denied' }) }),
+                    expect.objectContaining({ errorCode: 'deployment_access_denied',
+                        diagnostic: expect.objectContaining({ phase: 'deployment.publisher_proof.invalid', causeKind: 'access_denied' }) }),
+                ]));
+                expect(JSON.stringify(diagnostics)).not.toContain('malformed-synthetic-proof');
+            } finally { observe.mockRestore(); }
             const pairing = nacl.box.keyPair(), pairingPublicKey = privacyKit.encodeBase64(pairing.publicKey);
             const claimSecret = randomBytes(32).toString('base64url');
             expect((await app.inject({ method: 'POST', url: '/v1/auth/request', payload: { publicKey: pairingPublicKey,

@@ -48,6 +48,7 @@ import { deploymentNewWorkFeatureGate } from './deploymentFeatureGate';
 import { PresentUserRequiredResponseSchema } from '../../utils/requirePresentUser';
 import { deploymentLinkValidationFailure } from './deploymentValidation';
 import { PluginInstallationPublisherProofError, verifyPluginInstallationPublisherHeader } from '@/app/plugins/installations/publisherProof';
+import { deploymentFailure } from '@/app/deployments/deploymentAdmission';
 
 const environmentParams = z.strictObject({ environmentId: z.string().check(z.minLength(1)) });
 const receiptParams = z.extend(environmentParams, { deploymentId: z.string().check(z.minLength(1)) });
@@ -90,7 +91,11 @@ export function registerDeploymentRoutes(app: Fastify): void {
                 request, path: request.url, required: true });
             if (!publisher || publisher.machineId !== request.params.machineId) return reply.code(403).send(denied);
         } catch (error) {
-            if (error instanceof PluginInstallationPublisherProofError) return reply.code(403).send(denied);
+            if (error instanceof PluginInstallationPublisherProofError) {
+                return reply.code(403).send(deploymentFailure('deployment_access_denied', {
+                    phase: `deployment.publisher_proof.${error.code}`, causeKind: 'access_denied',
+                }));
+            }
             throw error;
         }
         const rows = await inReadSnapshot(tx => tx.deploymentEnvironment.findMany({
