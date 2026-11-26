@@ -58,11 +58,7 @@ const NO_GROUPS: readonly QualifiedConnectedAccountGroupV4[] = [];
  * belong to the displayed Usage Resource; no mounted body creates another quota demand.
  * Nothing here ranks or weights accounts.
  */
-export function useUsagePlans(
-  slice: UsageQueryResultSlice,
-  refresh: UsageWidgetBodyModel['refresh'],
-  observationNowMs?: number,
-): Readonly<{
+export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidgetBodyModel['refresh']): Readonly<{
   projection: UsagePlansProjection;
   selectionPools: UsagePlansProjection['pools'];
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
@@ -70,15 +66,16 @@ export function useUsagePlans(
   refresh: UsageWidgetBodyModel['refresh'];
   nowMs: number;
 }> {
-  const nowMs = observationNowMs ?? Date.now();
+  const nowMs = Date.now();
   const quota = slice.quota;
-  // Projections wakes at the exact observation deadline. Other readers keep minute precision on render.
-  const projectionNowMs = observationNowMs ?? Math.floor(nowMs / 60_000) * 60_000;
+  // A fresh `now` per render would rebuild the projection on every parent render; minute precision
+  // is what the reset/stale wording shows.
+  const minute = Math.floor(nowMs / 60_000);
   const accountIdentities = useConnectedServiceAccountIdentities();
   const registry = useProjectedConnectedServicesRegistry();
   const baseProjection = React.useMemo(
-    () => projectUsagePlans(quota, projectionNowMs, slice.pools, slice.sources),
-    [quota, projectionNowMs, slice.pools, slice.sources],
+    () => projectUsagePlans(quota, minute * 60_000, slice.pools, slice.sources),
+    [quota, minute, slice.pools, slice.sources],
   );
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const scope = useActiveServerAccountScope();

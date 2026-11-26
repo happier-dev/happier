@@ -21,10 +21,6 @@ import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/pr
 
 type QuotaRead = ConnectedServiceQuotaGetResultV1;
 type Snapshot = NonNullable<QuotaRead['current']>;
-
-export function readUsagePlanQuotaExpiry(snapshot: QuotaRead['current']): number | null {
-  return snapshot?.state === 'loaded_data' ? snapshot.observedAtMs + snapshot.staleAfterMs : null;
-}
 type UnavailableReason = Extract<
   ProviderAccountUsagePaceV1,
   { status: 'unavailable' }
@@ -239,8 +235,7 @@ export function projectUsagePlans(
       source.bindingKind === 'group_member' ? source.groupId : null;
     if (accounts.some((account) => account.key === key)) continue;
     const snapshot = read?.current;
-    const expiry = readUsagePlanQuotaExpiry(snapshot);
-    const expired = expiry !== null && nowMs >= expiry;
+    const expired = snapshot?.state === 'loaded_data' && nowMs >= snapshot.observedAtMs + snapshot.staleAfterMs;
     const paceByMeter = expired ? null : new Map(
       (read?.pace ?? []).map((entry) => [entry.meterId, entry.value]),
     );

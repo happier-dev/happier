@@ -31,8 +31,6 @@ import { Text } from '@/components/ui/text/Text';
 import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
-import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
-import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useUsageChartDetails } from './usageMountedControls';
 import { usageSignatureAccent } from '../usageAccent';
@@ -47,7 +45,6 @@ import {
 import {
   projectUsageEarlierCurves,
   projectUsagePastCycles,
-  readUsagePlanQuotaExpiry,
   selectUsagePacedWindows,
   type UsagePlanAccount,
   type UsagePlanPastCycle,
@@ -169,18 +166,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   // band its burn-up, quota history and past cycles ran ~880 px of near-empty charts (acceptance 11-13 #1), and its
   // focus headline disagreed with Limits; a view of its own (Large, Tall) keeps the chart.
   const list = presentation?.size === 'medium' || presentation?.size === 'wide' || presentation?.size === 'full';
-  const quota = props.slice.quota;
-  const activelyViewed = useHostActivelyViewed();
-  const readNextExpiry = React.useCallback((nowMs: number) => {
-    let next: number | null = null;
-    for (const reading of quota ?? []) {
-      const expiry = readUsagePlanQuotaExpiry(reading.current);
-      if (expiry !== null && expiry > nowMs && (next === null || expiry < next)) next = expiry;
-    }
-    return next;
-  }, [quota]);
-  const observationNowMs = useSessionListRuntimeDeadlineNowMs(readNextExpiry, activelyViewed && !!quota?.length);
-  const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh, observationNowMs);
+  const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   useWidgetFrameBodyCaption(t('usage.board.plans.projectionsCaption'));
   // Settled once every first read has answered; a re-read keeps the last reading (and its pace) in place, so a refresh
   // never swaps a drawn chart for "no pace yet" and back (R6 #4: 534 → 184 → 590 on a cold Overview).
@@ -352,7 +338,6 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
               <ProjectionRow
                 key={row.window.key}
                 name={row.name}
-                read={row.account.read}
                 window={row.window}
                 observedAtMs={row.account.observedAtMs}
                 nowMs={nowMs}
@@ -517,7 +502,6 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
             <ProjectionRow
               key={row.window.key}
               name={row.name}
-              read={row.account.read}
               window={row.window}
               observedAtMs={row.account.observedAtMs}
               nowMs={nowMs}
@@ -532,7 +516,7 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
       {unreported.length ? <UsagePlanDisclosure testID={`${props.testID}.unreported`}
         title={t('usage.board.plans.unreportedWindows', { count: unreported.length })}>
         <UsageMeterStack testID={`${props.testID}.unreported.windows`}>
-          {unreported.map(row => <ProjectionRow key={row.window.key} name={row.name} read={row.account.read}
+          {unreported.map(row => <ProjectionRow key={row.window.key} name={row.name}
             window={row.window} observedAtMs={row.account.observedAtMs} nowMs={nowMs} stacked={rowsStacked}
             statement={planWindowStatement(row.window, nowMs)}
             testID={`${props.testID}.window.${row.account.accountId}.${row.window.meterId}`} />)}
@@ -755,10 +739,9 @@ function PastCycleRow(props: Readonly<{ cycle: UsagePlanPastCycle; nowMs: number
     ? <ChartDatum testID={`${props.testID}.detail`} datum={{ keyboard: false, label: ended, value: exact, subtitle: detail }}>{visual}</ChartDatum> : visual;
 }
 
-const ProjectionRow = React.memo(function ProjectionRow(
+function ProjectionRow(
   props: Readonly<{
     name: UsagePlanAccountName;
-    read: UsagePlanAccount['read'];
     window: UsagePlanWindow;
     observedAtMs: number | null;
     nowMs: number;
@@ -835,19 +818,7 @@ const ProjectionRow = React.memo(function ProjectionRow(
         : caption ? <Text testID={`${props.testID}.caption`} style={[styles.quiet, text.detail]} numberOfLines={1}>{caption}</Text> : null}
     </View>
   </View>;
-}, (previous, next) =>
-  // The same admitted read has the same meter and pace inputs. A deadline for another reading does not update this row.
-  previous.read === next.read
-  && previous.window.key === next.window.key
-  && previous.window.paceUnavailable === next.window.paceUnavailable
-  && previous.name.title === next.name.title
-  && previous.observedAtMs === next.observedAtMs
-  && previous.stacked === next.stacked
-  && previous.statement.kind === next.statement.kind
-  && previous.statement.text === next.statement.text
-  && previous.resetOnly === next.resetOnly
-  && previous.testID === next.testID,
-);
+}
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
