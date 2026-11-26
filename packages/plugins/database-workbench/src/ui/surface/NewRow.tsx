@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DatabaseColumnV1, DatabaseEditV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
-import { Button, Popover, Row, Select, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Button, Field, Popover, Row, Select, Stack, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { readConsoleParameter } from '../consoleParameters.js';
 import { useWorkbenchInstance } from '../hooks.js';
 
@@ -45,12 +45,16 @@ function NewRowFields(props: Readonly<{
         const field = fields.get(column.name) ?? EMPTY_FIELD;
         const options = column.nullable ? nullableModes : modes;
         return (
-          <Stack key={column.name} gap="xsmall">
+          // The column names its field and its type says what it takes (TRACKING 1360); the value and its mode share the row.
+          <Field key={column.name} label={column.name} description={column.nativeType}
+            {...(invalid.has(column.name) ? { issue: translate(
+              'plugins.database.row.invalidValue', 'Enter a valid {type} value', { type: column.nativeType },
+            ) } : {})}>
             <Row gap="small" align="flex-end" wrap>
               <TextField
                 label={column.name}
                 value={field.mode === 'value' ? field.text : ''}
-                placeholder={column.semanticType === 'binary' ? translate('plugins.database.row.base64', 'Base64') : column.nativeType}
+                {...(column.semanticType === 'binary' ? { placeholder: translate('plugins.database.row.base64', 'Base64') } : {})}
                 disabled={field.mode === 'null'}
                 autoCorrect={false}
                 autoCapitalize="none"
@@ -68,10 +72,7 @@ function NewRowFields(props: Readonly<{
                 }}
               />
             </Row>
-            {invalid.has(column.name) ? <Text variant="meta" tone="danger" value={translate(
-              'plugins.database.row.invalidValue', 'Enter a valid {type} value', { type: column.nativeType },
-            )} /> : null}
-          </Stack>
+          </Field>
         );
       })}
       <Button size="small" title={translate('plugins.database.row.stage', 'Stage row')} disabled={invalid.size > 0} onPress={stage} />

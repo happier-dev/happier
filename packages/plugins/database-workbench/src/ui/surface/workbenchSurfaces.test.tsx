@@ -1201,6 +1201,8 @@ describe('Database workbench surfaces', () => {
     try {
       await settle(20);
       await fixture.press(await fixture.getByRole('button', { name: 'New row' }));
+      // Each field shows the column it fills (TRACKING 1360), not only its type.
+      expect(await fixture.getByText('number')).toBeDefined();
       await fixture.press(await fixture.getByRole('button', { name: 'Stage row' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       expect(control.presentation('Apply 1 change')?.variant).toBe('primary');
