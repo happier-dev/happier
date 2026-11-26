@@ -2803,11 +2803,17 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // A phone viewer docked or expanded in Chat holds its frame above the composer: the attention band
     // takes its share of what is left, so it never covers the dock nor squeezes Expanded below it.
     const viewerComposerReserve = useSessionViewerComposerReserve();
+    // On a phone the band keeps a third of the room and long facts scroll. On a wide layout a pending decision may
+    // take up to half of it, so an opened request's facts read without scrolling for them while the transcript keeps
+    // the other half (K05, cut 52: 129 px of facts at 1440 x 844 left only the middle of Technical details legible).
+    // Cards take only what their facts need, so a short request stays short.
+    const permissionRequestsCompact = isMobileLayoutWidth(screenWidth);
     const permissionRequestsMaxHeightPx = React.useMemo(() => {
         const available = Math.max(1, (props.maxPanelHeight ?? screenHeight) - viewerComposerReserve);
+        if (!permissionRequestsCompact) return clampNumber(Math.round(available * 0.5), Math.min(160, available), available);
         const desired = Math.round(available * 0.34);
         return clampNumber(desired, 160, Math.min(320, available));
-    }, [props.maxPanelHeight, screenHeight, viewerComposerReserve]);
+    }, [permissionRequestsCompact, props.maxPanelHeight, screenHeight, viewerComposerReserve]);
     // What the rest of the composer (input, actions, status row) leaves of the same budget, measured: the tray may
     // grow into it so a long request's decision stays whole above the input (R144-A). Null until measured.
     const permissionRequestsMaxHeightCeilingPx = React.useMemo(() => {

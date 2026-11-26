@@ -135,6 +135,38 @@ describe('HappierApprovalPromptChrome', () => {
     expect(resolveHappierApprovalFactsEdges({ viewport: 120, content: 126, offset: 0, threshold: 8 })).toEqual({ top: false, bottom: false });
   });
 
+  it('shows a fade only on the side where the facts continue, following the scroll, never a whole line deep', async () => {
+    const edges: Array<Readonly<{ top: boolean; bottom: boolean }>> = [];
+    let depth = 0;
+    const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} testID="card" maxHeight={240}
+      renderFactsEdgeFade={(value, _fill, size) => { edges.push(value); depth = size; return null; }} footer={<View testID="decision" />}>
+      <View testID="facts" />
+    </HappierApprovalPromptChrome>);
+    try {
+      const scroller = view.container.querySelector('[data-testid="card-facts"]') as HTMLElement & { __reactLayoutHandler?: (event: unknown) => void };
+      act(() => { scroller.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 600, height: 120 } } }); });
+      Object.defineProperty(scroller, 'scrollHeight', { value: 300, configurable: true });
+      const content = scroller.firstElementChild as HTMLElement & { __reactLayoutHandler?: (event: unknown) => void };
+      act(() => { content.__reactLayoutHandler?.({ nativeEvent: { layout: { x: 0, y: 0, width: 600, height: 300 } } }); });
+      // The host reports where a scroll comes to rest once it settles.
+      const scrollTo = async (top: number) => act(async () => {
+        Object.defineProperty(scroller, 'scrollTop', { value: top, configurable: true });
+        scroller.dispatchEvent(new Event('scroll'));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      });
+      expect(edges.at(-1)).toEqual({ top: false, bottom: true });
+      await scrollTo(90);
+      expect(edges.at(-1)).toEqual({ top: true, bottom: true });
+      await scrollTo(180);
+      expect(edges.at(-1)).toEqual({ top: true, bottom: false });
+      await scrollTo(0);
+      expect(edges.at(-1)).toEqual({ top: false, bottom: true });
+      // A fact line is at least a body line tall; the fade only says "more this way" and never washes out a whole one.
+      expect(depth).toBeGreaterThan(0);
+      expect(depth).toBeLessThanOrEqual(base.spacing.medium);
+    } finally { view.unmount(); }
+  });
+
   it('draws the host fade over the scrolling facts of a pinned card, in place of the hairline', () => {
     const edges: unknown[] = [];
     const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} testID="card" maxHeight={240}
@@ -184,12 +216,14 @@ describe('HappierApprovalPromptChrome', () => {
   it('brings an opened Technical details body into view instead of leaving it under the decision', async () => {
     // Design review R4 (1440 tray): the opened body sat under the fade with only its first label legible.
     const Open = createContext(false);
+    let depth = 0;
     const Fold = (props: Readonly<{ title: string; testID?: string; children: ReactNode }>) => (
       <View testID={props.testID}>{useContext(Open) ? props.children : null}</View>
     );
     const card = (open: boolean) => (
       <Open.Provider value={open}>
-        <HappierApprovalPromptChrome {...base} testID="card" maxHeight={200} footer={<View testID="decision" />}>
+        <HappierApprovalPromptChrome {...base} testID="card" maxHeight={200} footer={<View testID="decision" />}
+          renderFactsEdgeFade={(_edges, _fill, value) => { depth = value; return null; }}>
           <View testID="facts" />
           <HappierTechnicalDetailsDisclosure testID="technical" title="Technical details" Disclosure={Fold}
             lines={[{ key: 'code', label: 'Code', value: 'workspace_sync_relationship_in_use' }]} />
@@ -209,20 +243,25 @@ describe('HappierApprovalPromptChrome', () => {
       await view.render(card(true));
       const body = view.container.querySelector('[data-testid="technical.body"]') as HTMLElement;
       expect(body).not.toBeNull();
-      // The body opens 180px down the facts and is 60px tall: its end must reach the 100px window's bottom.
+      // The body opens 180px down the facts and is 60px tall: its end must reach the 100px window's bottom, and rest
+      // clear of the bottom fade (K05, cut 52: the revealed lines sat under a fade a whole row deep).
       Object.defineProperty(body, 'offsetTop', { value: 180 });
       Object.defineProperty(body, 'offsetHeight', { value: 60 });
       fire(body, 60);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
-      expect(scrolls.at(-1)?.top).toBe(140);
+      expect(depth).toBeGreaterThan(0);
+      const offset = scrolls.at(-1)?.top ?? 0;
+      expect(180 + 60).toBeLessThanOrEqual(offset + 100 - depth);
+      expect(180).toBeGreaterThanOrEqual(offset + depth);
     } finally { view.unmount(); }
   });
 
   it('reveals the least it must: never past the opened body\'s own start, and not at all when it is in view', () => {
-    expect(resolveHappierFactsRevealOffset({ top: 180, height: 60, viewport: 100, offset: 0 })).toBe(140);
-    // Taller than the window: it reads from its first line.
-    expect(resolveHappierFactsRevealOffset({ top: 180, height: 300, viewport: 100, offset: 0 })).toBe(180);
-    expect(resolveHappierFactsRevealOffset({ top: 20, height: 40, viewport: 100, offset: 0 })).toBeNull();
+    // It leaves the edge fade's depth clear, so the line it brings into view never rests under a fade.
+    expect(resolveHappierFactsRevealOffset({ top: 180, height: 60, viewport: 100, offset: 0, clearance: 12 })).toBe(152);
+    // Taller than the window: it reads from its first line, clear of the top fade.
+    expect(resolveHappierFactsRevealOffset({ top: 180, height: 300, viewport: 100, offset: 0, clearance: 12 })).toBe(168);
+    expect(resolveHappierFactsRevealOffset({ top: 20, height: 40, viewport: 100, offset: 0, clearance: 12 })).toBeNull();
   });
 
   it('lets an unbounded card grow with its facts', () => {

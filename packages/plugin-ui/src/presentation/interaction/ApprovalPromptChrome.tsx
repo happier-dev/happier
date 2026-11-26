@@ -75,9 +75,10 @@ export type HappierApprovalPromptChromeProps = Readonly<{
    * Bounded facts that do not fit fade at the edge that hides more (the host's own scroll-edge fade), drawn over
    * the facts, instead of the hard cut a hairline over the decision marks. Omitted, the hairline stays. `fill` is
    * the card's own fill (its tone wash included) so the fade melts into the card in every theme; `null` for an
-   * inline or compact prompt, whose fill is its host's.
+   * inline or compact prompt, whose fill is its host's. `depth` is how deep the fade reaches: the card's inset,
+   * less than a fact line, so it softens the cut line and says "more this way" without washing out a line.
    */
-  renderFactsEdgeFade?: (edges: HappierApprovalFactsEdges, fill: string | null) => ReactNode;
+  renderFactsEdgeFade?: (edges: HappierApprovalFactsEdges, fill: string | null, depth: number) => ReactNode;
 }>;
 
 export type HappierApprovalFactsEdges = Readonly<{ top: boolean; bottom: boolean }>;
@@ -132,18 +133,22 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   // against are read when it asks, so they live in refs rather than re-rendering the card on every scroll.
   const factsScrollRef = useRef<ScrollView>(null);
   const factsWindow = useRef({ viewport: 0, offset: 0 });
+  const renderFade = props.renderFactsEdgeFade;
+  // The fade reaches the card's inset into the facts: never a whole fact line (K05, cut 52: a row-deep fade washed
+  // out the first and last lines at rest). A revealed body rests clear of it.
+  const fadeDepth = inset;
+  const revealClearance = renderFade ? fadeDepth : 0;
   const revealFact = useCallback((target: HappierFactsRevealTarget | null) => {
     const scroll = factsScrollRef.current;
     const content = scroll?.getInnerViewNode?.();
     if (!scroll || !content || !target?.measureLayout) return;
     target.measureLayout(content, (_x, top, _width, height) => {
-      const next = resolveHappierFactsRevealOffset({ top, height, ...factsWindow.current });
+      const next = resolveHappierFactsRevealOffset({ top, height, ...factsWindow.current, clearance: revealClearance });
       if (next !== null) scroll.scrollTo({ y: next, animated: true });
     }, () => {});
-  }, []);
+  }, [revealClearance]);
   // Only real facts count as hidden; a few pixels of the body's own bottom inset do not.
   const factsClipped = pinned && factsContent - factsViewport > step;
-  const renderFade = props.renderFactsEdgeFade;
   // With a fade the hidden facts say so themselves; the hairline marks the cut only when there is none.
   const factsRuled = factsClipped && !renderFade;
   // A bounded card never gets shorter than its head and its decision: when the bound is tighter (several
@@ -221,7 +226,7 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
           </ScrollView>
           {renderFade ? renderFade(factsClipped ? resolveHappierApprovalFactsEdges({ viewport: factsViewport,
             content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES,
-            inline || compact ? null : toneSurface?.backgroundColor ?? props.colors.surface) : null}
+            inline || compact ? null : toneSurface?.backgroundColor ?? props.colors.surface, fadeDepth) : null}
         </View>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
       {/* A card's decisions span it from its edge (lab mb B): a phone's stacked choices are full width. An inline

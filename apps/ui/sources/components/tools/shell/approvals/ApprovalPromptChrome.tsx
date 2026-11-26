@@ -110,13 +110,11 @@ export const ApprovalPromptChrome = React.memo(function ApprovalPromptChrome(
   const onMeasure = React.useCallback((heights: ApprovalPromptCardHeights) => report?.(cardId, heights), [cardId, report]);
   React.useEffect(() => () => report?.(cardId, null), [cardId, report]);
   const cardSurface = theme.colors.surface.elevated;
-  const fadeSize = theme.space.s40;
   // Facts hidden by the card's bound fade into the card's own fill (an inline prompt's host is the composer tray,
-  // drawn on the same surface), never a hard cut. The fade is a fact row deep, so it always lies over the last
-  // visible words, wherever the bound cuts, and reads as "more below" in light and dark alike.
-  const renderFactsEdgeFade = React.useCallback((edges: Readonly<{ top: boolean; bottom: boolean }>, fill: string | null) => (
-    <ScrollEdgeFades color={fill ?? cardSurface} size={fadeSize} edges={edges} />
-  ), [cardSurface, fadeSize]);
+  // drawn on the same surface), never a hard cut, as deep as the shared chrome says: less than a line.
+  const renderFactsEdgeFade = React.useCallback((edges: Readonly<{ top: boolean; bottom: boolean }>, fill: string | null, depth: number) => (
+    <ScrollEdgeFades color={fill ?? cardSurface} size={depth} edges={edges} />
+  ), [cardSurface]);
   return (
     <HappierApprovalPromptChrome
       {...props}
