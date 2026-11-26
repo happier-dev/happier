@@ -1250,6 +1250,39 @@ describe('mounted managed configurator', () => {
       } finally { await screen.unmount(); }
     },
   );
+  it.each(['public-release', 'home-payload'] as const)('prompts to connect Agent37 before Create on a %s Home', async source => {
+    runtimeHost.current = 'native';
+    const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/machine-agent37/src/manifest');
+    const { ACCOUNT_ID } = await import('../../../../../../../packages/plugins/machine-agent37/src/account');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
+    const homeId = `srv_agent37_create_${source}`;
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: `https://agent37-create-${source}.example.test`,
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse({ capabilities: {
+      serverIdentity: { serverIdentityId: homeId },
+      guestCli: { source, line: '0.3', channel: 'stable' },
+    } });
+    harness.answer(serverId, '/v1/features', { body: features });
+    harness.answer(serverId, '/v1/features/authenticated', { body: features });
+    harness.answer(serverId, '/v4/connect/qualified/accounts', {
+      body: { service: { pluginId: manifest.id, localId: ACCOUNT_ID }, accounts: [] },
+    });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    await publishPresetEditorDeclaration(serverId, manifest);
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { MachineConfigurationReceipt } = await import('./MachineConfigurationReceipt');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: 'agent37' })} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.connect:cloud-api')).not.toBeNull());
+      const primary = screen.tree.findAllByType(MachineConfigurationReceipt)
+        .map(node => node.props.model.primary).find(action => action?.testID === 'managed-config.create');
+      expect(primary).toMatchObject({ disabled: true, footnote: t('managedMachines.credential.required') });
+    } finally { await screen.unmount(); }
+  });
+
   it('retains the selected controller for browser-blocked Account options after the runtime host settles', async () => {
     const host = createDeferred<'browser' | 'native'>();
     runtimeHost.current = host.promise;
@@ -1368,7 +1401,7 @@ describe('mounted managed configurator', () => {
         const { t } = await import('@/text');
         await waitForHomeGovernance(() => expect(screen.findByTestId(presetOnly ? 'managed-config.create' : 'managed-config.use')?.props.disabled).toBe(true));
         expect(screen.findByTestId('managed-config.controller-target:pool')).toBeNull();
-        if (!presetOnly) expect(screen.getTextContent()).toContain(t('managedMachines.credential.choose'));
+        if (!presetOnly) expect(screen.getTextContent()).toContain(t('managedMachines.credential.required'));
         expect(onUse).not.toHaveBeenCalled();
         expect(nativeBoundary.rpc).not.toHaveBeenCalled();
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);

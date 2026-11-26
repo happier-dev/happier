@@ -145,6 +145,10 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
     /** A host that embeds new-preset authoring (Machine Isolation's add flow) keeps the saved preset instead of opening its page. */
     onPresetSaved?: (preset: Readonly<{ serverId: string; id: string; name: string }>) => void;
 }>;
+function blockedCreation<Reason extends string>(reason: Reason, message: string) {
+    return { kind: 'disabled', reason, message } as const;
+}
+
 const NO_SERVERS: readonly string[] = [];
 const NO_PRESETS: readonly OpenedManagedMachinePresetV1[] = [];
 
@@ -374,6 +378,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const credentialsCurrent = pluginJsonValuesEqual(requiredCredentials, requiredCredentialSelections);
     const credentialsReady = delegatedPreset || requiredCredentialPurposes !== undefined
         && requiredCredentialSelections.length === requiredCredentialPurposes.length && credentialsCurrent;
+    const credentialStep = credentialsReady ? null
+        : requiredCredentialPurposes?.some(({ options }) => options.length === 0) ? 'connectAccount' : 'chooseAccount';
+    const credentialReasonKey = credentialStep === 'connectAccount' ? 'managedMachines.credential.required' : 'managedMachines.credential.choose';
     const credentialInput = React.useMemo(() => Object.fromEntries((credentialPurposes ?? []).map(({ purpose }, index) => {
         const selected = credentialSelections.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose));
         return [String(index), selected ? readManagedCredentialSelectionValueV1(selected) : undefined];
@@ -724,36 +731,47 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const missingLaunchField = launchFields.find(field => (field.required || requiredLaunchPaths.has(field.path))
         && isBlankInput(readInputPath(fieldInput, field.path)));
     const missingDimension = draft ? managedConfiguratorMissingDimension(draft, projection) : undefined;
-    // One decision owns both admission of the Create control and the reason beside it.
-    const creationUnavailableReason = busy ? t('common.loading')
-        : !activeBinding?.isCurrent() ? t('common.unavailable')
+    // Account roles can require a managing Machine for delivery. Their Account input comes first.
+    const accountCredentialFirst = declaredAcquireTarget === 'account' && !creationPreset && !props.presetOnly
+        && requiredCredentialPurposes && requiredCredentialPurposes.length > 0;
+    const creationReadiness = busy ? blockedCreation('busy', t('common.loading'))
+        : !activeBinding?.isCurrent() ? blockedCreation('homeUnavailable', t('common.unavailable'))
         // Delegated review consumes its saved facts; authoring consumes the current options scope.
-        : (!delegatedPreset && !catalogCurrent) || !catalogProvisioner ? t('managedMachines.providers.unavailable')
-        : needsApp ? t('managedMachines.add.status.needsApp')
-        : requiresControllerSelection ? t('managedMachines.add.chooseController')
-        : accountHostUnreadable ? t('common.unavailable')
-        : accountHostPending ? t('managedMachines.options.loading', { provider: title })
-        : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedPreset ? t('managedMachines.controller.requiredUnnamed')
-        : poolUnavailableAtReview ? t('machinePresets.poolNoMachine')
-        : !credentialsReady ? t('managedMachines.credential.choose')
-        : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false ? t('managedMachines.creation.disabledTitle')
-        : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true ? t(accountSettings.error ? 'common.unavailable' : 'common.loading')
-        : draft?.check?.available === false ? draft.check.status
-            ? localized(catalogProvisioner.contribution.pluginId, draft.check.status) : t('managedMachines.providers.unavailable')
-        : draft?.check?.available !== true ? t('managedMachines.options.loading', { provider: title })
-        : launchRefusal ? localized(catalogProvisioner.contribution.pluginId, launchRefusal.status)
-        : error?.during === 'read' && error.reason ? error.reason
-        : !facts ? missingLaunchField ? t('session.actionsDraft.validation.requiredField', { field: missingLaunchField.title })
-            : missingDimension ? t('session.actionsDraft.validation.requiredField', {
+        : (!delegatedPreset && !catalogCurrent) || !catalogProvisioner ? blockedCreation('provisionerUnavailable', t('managedMachines.providers.unavailable'))
+        : accountCredentialFirst && credentialStep ? blockedCreation(credentialStep, t(credentialReasonKey))
+        : needsApp ? blockedCreation('needsApp', t('managedMachines.add.status.needsApp'))
+        : requiresControllerSelection ? blockedCreation('chooseController', t('managedMachines.add.chooseController'))
+        : accountHostUnreadable ? blockedCreation('hostUnavailable', t('common.unavailable'))
+        : accountHostPending ? blockedCreation('hostPending', t('managedMachines.options.loading', { provider: title }))
+        : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedPreset
+            ? blockedCreation('controllerUnavailable', t('managedMachines.controller.requiredUnnamed'))
+        : poolUnavailableAtReview ? blockedCreation('poolUnavailable', t('machinePresets.poolNoMachine'))
+        : credentialStep ? blockedCreation(credentialStep, t(credentialReasonKey))
+        : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false
+            ? blockedCreation('creationDisabled', t('managedMachines.creation.disabledTitle'))
+        : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true
+            ? blockedCreation('settingsUnavailable', t(accountSettings.error ? 'common.unavailable' : 'common.loading'))
+        : draft?.check?.available === false ? blockedCreation('checkRefused', draft.check.status
+            ? localized(catalogProvisioner.contribution.pluginId, draft.check.status) : t('managedMachines.providers.unavailable'))
+        : draft?.check?.available !== true ? blockedCreation('checkPending', t('managedMachines.options.loading', { provider: title }))
+        : launchRefusal ? blockedCreation('launchRefused', localized(catalogProvisioner.contribution.pluginId, launchRefusal.status))
+        : error?.during === 'read' && error.reason ? blockedCreation('readFailed', error.reason)
+        : !facts ? missingLaunchField ? blockedCreation('launchFieldRequired', t('session.actionsDraft.validation.requiredField', { field: missingLaunchField.title }))
+            : missingDimension ? blockedCreation('dimensionRequired', t('session.actionsDraft.validation.requiredField', {
                 field: missingDimension === 'duration' ? t('managedRetention.ends') : t(`managedMachines.config.${missingDimension}`),
-            })
-            : draft?.optionStatus === 'loading' || launchPresentationPending ? t('managedMachines.options.loading', { provider: title })
-                : t('managedMachines.options.unavailable')
-        : facts.optionStatus !== 'current' ? t(facts.optionStatus === 'loading' ? 'common.loading' : 'managedMachines.options.unavailable')
-        : !isManagedEnrollmentIdentityReviewed(draft?.enrollmentIdentity) ? t('managedMachines.identity.administratorInvalid')
-        : preset?.archivedAt !== undefined ? t('machinePresets.archived')
-        : !setupInputsValid ? t('managedMachines.creationReview.inputsHelp') : null;
-    const mayCreate = creationUnavailableReason === null;
+            }))
+            : draft?.optionStatus === 'loading' || launchPresentationPending
+                ? blockedCreation('optionsPending', t('managedMachines.options.loading', { provider: title }))
+                : blockedCreation('optionsUnavailable', t('managedMachines.options.unavailable'))
+        : facts.optionStatus !== 'current'
+            ? blockedCreation('optionsNotCurrent', t(facts.optionStatus === 'loading' ? 'common.loading' : 'managedMachines.options.unavailable'))
+        : !isManagedEnrollmentIdentityReviewed(draft?.enrollmentIdentity)
+            ? blockedCreation('enrollmentIdentityRequired', t('managedMachines.identity.administratorInvalid'))
+        : preset?.archivedAt !== undefined ? blockedCreation('presetArchived', t('machinePresets.archived'))
+        : !setupInputsValid ? blockedCreation('setupInputsRequired', t('managedMachines.creationReview.inputsHelp'))
+        : { kind: 'enabled' } as const;
+    const mayCreate = creationReadiness.kind === 'enabled';
+    const creationUnavailableReason = mayCreate ? null : creationReadiness.message;
     // A retained launch can still be saved, but explicit field edits must satisfy the declared input schema.
     const saveLaunch = props.presetOnly ? presetLaunch : facts?.launch;
     const saveTargetAvailable = pooledDraft ? !!draft?.controllerPoolId
@@ -1335,7 +1353,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             selectedId={props.presetId ?? null} disabled={busy} onChange={props.startFrom.onChange} /> : null}
         {draft && credentialPurposes?.length ? <ItemGroup title={t('managedMachines.receipt.account')}
             description={!requiredCredentialPurposes?.length ? t('common.optional') : credentialsReady ? undefined
-                : t(requiredCredentialPurposes.some(({ options }) => options.length === 0) ? 'managedMachines.credential.required' : 'managedMachines.credential.choose')}>
+                : t(credentialReasonKey)}>
             {/* At the rows' inset, as the launch fields are: a field flush with the sheet's edge reads as outside it. */}
             {credentialFields.length ? <SectionContentRow><ActionInputFields fields={credentialFields} input={credentialInput}
                 editable={!!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true)} busy={busy}
