@@ -71,6 +71,9 @@ describe('managed acquire review', () => {
       // The fact line names the kind; the provider id stays in Details, never as its own field row.
       expect(projection.rows.find(row => row.path === 'provider')).toEqual(expect.objectContaining({
         value: 'happier.machine.lima', technical: true }));
+      // The Ask's title already names the machine; its name is a Details fact, not a second row.
+      expect(projection.rows.find(row => row.path === 'name')).toEqual(expect.objectContaining({
+        value: 'Build machine', technical: true }));
     }
     expect(spec.approvalPresentation?.summary(input)).toContain('No bill');
     expect(spec.approvalPresentation?.summary(input)).toContain('1 h');

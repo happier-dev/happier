@@ -130,7 +130,8 @@ export const managedAcquireApprovalPresentation = {
     { path: 'setup', title: 'Machine setup', widget: 'json' },
     { path: 'agentStart', title: 'Agent startup', widget: 'json' },
   ] },
-  // The fact line names who makes the machine in words; the provider value stays in Details, never a second row.
-  technicalInputPaths: ['homeId', 'provider'],
+  // The fact line names who makes the machine in words and the title names the machine: both values stay in Details,
+  // never a second row.
+  technicalInputPaths: ['homeId', 'provider', 'name'],
   summary: (input: unknown) => formatManagedAcquireReviewLine(projectReview(input)),
 } satisfies NonNullable<PreNormalizedActionSpec['approvalPresentation']>;
