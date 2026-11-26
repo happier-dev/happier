@@ -1,6 +1,6 @@
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { HAPPIER_CLOCK_TIME_FORMAT, resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_CLOCK_TIME_FORMAT, parseHappierLocalDateTime, resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
 
 /** The editor retains a saved instant exactly; editing its fields releases that retained value. */
 export type OnceScheduleDraft = HappierLocalDateTimeDraft & Readonly<{ relative: string; scheduledAt?: number }>;
@@ -61,6 +61,16 @@ export function readOnceScheduleState(trigger: OnceScheduleSource, lastRunState?
 export function formatOnceScheduleStateLabel(state: ReturnType<typeof readOnceScheduleState>): string | null {
     return state === 'done' ? t('workflows.runState.succeeded')
         : state === 'missed' ? t('workflows.runState.missed') : null;
+}
+
+/**
+ * The instant a one-time schedule's date and time must come after, for the At field's own message. While
+ * "Or after" has text it decides the time, so the At beside it is moot and bound to nothing; a saved
+ * occurrence may already be past, so only an edited date and time must choose a future instant.
+ */
+export function readOnceDateTimeBound(draft: OnceScheduleDraft, nowMs = Date.now()): number | undefined {
+    if (draft.relative.trim().length > 0) return undefined;
+    return draft.scheduledAt === undefined ? nowMs : (parseHappierLocalDateTime(draft) ?? draft.scheduledAt) - 1;
 }
 
 /** Resolve relative text only at the trigger editor's confirmation boundary, never on a timer. */

@@ -77,9 +77,8 @@ import {
     type TriggerWhenValue,
 } from './sessionTriggerForm';
 import { createWorkflowTriggerStartWhen, readWorkflowTriggerStartId } from './workflowTriggerStarts';
-import { buildSimpleScheduleCron, formatScheduleTimeInput, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
+import { buildSimpleScheduleCron, formatScheduleTimeInput, readOnceDateTimeBound, resolveOnceSchedule, SIMPLE_SCHEDULE_REPEATS as REPEATS } from './triggerSchedule';
 import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
-import { parseHappierLocalDateTime } from '@happier-dev/plugin-ui/presentation';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import { useProposedScheduleOccurrence } from './useProposedScheduleOccurrence';
 import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition, type SendToOption } from './useTriggerThenOptions';
@@ -880,8 +879,7 @@ export function ScheduleRows(props: Readonly<{
             {repeatRow}
             <Item title={t('workflows.triggers.popover.at')} subtitle={when.timezone ?? undefined}
                 accessoryLayout="stacked" showChevron={false}
-                rightElement={<LocalDateTimeEditor nowMs={when.once.scheduledAt === undefined ? Date.now()
-                    : (parseHappierLocalDateTime(when.once) ?? when.once.scheduledAt) - 1}
+                rightElement={<LocalDateTimeEditor nowMs={readOnceDateTimeBound(when.once)}
                     value={when.once} onChange={commands.changeOnceDateTime} testIDPrefix={`${props.testID}-once`}
                     labels={{ date: t('sessionsList.reminders.dateLabel'), time: t('sessionsList.reminders.timeLabel'),
                         pastInstant: t('sessionsList.reminders.futureTimeRequired') }} />} />

@@ -11,7 +11,6 @@ import {
   joinHappierFacts,
   HappierFieldBoxTrigger,
   HappierPressable,
-  parseHappierLocalDateTime,
   resolveHappierFieldBoxLabel,
   useHappierFieldValueDraft,
 } from '@happier-dev/plugin-ui/presentation';
@@ -76,6 +75,7 @@ import { TriggerEventStepContext, TriggerPluginEventRows, type TriggerEventStep 
 import { useSessionPullRequestChoices } from './SessionTriggerPullRequestPicker';
 import {
   formatScheduleTimeInput,
+  readOnceDateTimeBound,
   resolveOnceSchedule,
   SIMPLE_SCHEDULE_REPEATS,
   type SpentOnceSchedulePresentation,
@@ -859,12 +859,7 @@ function ScheduleTrackRows(
             trackKey={`${props.testID}-at`}
           >
             <LocalDateTimeEditor
-              nowMs={
-                when.once.scheduledAt === undefined
-                  ? Date.now()
-                  : (parseHappierLocalDateTime(when.once) ??
-                      when.once.scheduledAt) - 1
-              }
+              nowMs={readOnceDateTimeBound(when.once)}
               value={when.once}
               onChange={commands.changeOnceDateTime}
               testIDPrefix={`${props.testID}-once`}

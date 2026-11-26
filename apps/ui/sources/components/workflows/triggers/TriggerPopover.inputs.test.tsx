@@ -187,6 +187,23 @@ describe('Run a workflow trigger inputs', () => {
         await reopened.pressByTestIdAsync('saved-once-submit');
         expect(submit.mock.calls[3]?.[1].trigger).toEqual(definition);
     });
+    it('reports no past At once "Or after" decides a spent one-time trigger’s new time (R13 M12)', async () => {
+        const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+        const { readScheduleWhen } = await import('./sessionTriggerForm');
+        const spentAt = Date.now() - 86_400_000;
+        const screen = await renderScreen(<TriggerPopover testID="spent-once" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null} showThen={false}
+            initial={{ when: readScheduleWhen({ kind: 'once', scheduledAt: spentAt }), enabled: true,
+                then: { kind: 'runWorkflow', ref: null, inputs: {} } }} workflowOptions={[]} onSubmit={vi.fn()} />);
+        // The saved occurrence is past and untouched: no error at rest.
+        expect(screen.findByTestId('spent-once-once-past-instant')).toBeNull();
+        await act(async () => {
+            screen.findAllByType(FieldValueItem).find(row => row.props.testID === 'spent-once-relative')!.props.onCommit('in 2 h');
+        });
+        // "Or after" now decides the time; the At the person left alone is moot, not wrong.
+        expect(screen.findByTestId('spent-once-once-past-instant')).toBeNull();
+        await screen.unmount();
+    });
     it('edits and submits the same schedule through mounted agent commands and UI, retaining it after a failed save', async () => {
         const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
         const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
