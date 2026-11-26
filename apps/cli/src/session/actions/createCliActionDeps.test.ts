@@ -33,7 +33,7 @@ import { configuration } from '@/configuration';
 import { createMutagenChangeWaitBoundary } from '@/workspaces/sync/transport/workspaceSyncBrokerClient.testkit';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
@@ -47,12 +47,20 @@ import { join } from 'node:path';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
-import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import * as sessionSocketTransport from '@/session/transport/socket/sessionSocketAgentState';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createEmptyActionAutomationPort } from '@/testkit/actionTransportDeps';
 
 const {
   createSpawnedSession,
@@ -78,7 +86,6 @@ const {
   createPluginPermissionGrantActionExecutor,
   createCliReviewCommentActionExecutorFromCredentials,
   readAgentCatalogSnapshot,
-  readMachineOperationProtocolCapabilitiesV1,
   resolveReplaySeedDraft,
   fetchSessionByIdCompat,
   listSessions,
@@ -112,7 +119,6 @@ const {
   createPluginPermissionGrantActionExecutor: vi.fn(),
   createCliReviewCommentActionExecutorFromCredentials: vi.fn(),
   readAgentCatalogSnapshot: vi.fn(),
-  readMachineOperationProtocolCapabilitiesV1: vi.fn(),
   hostSubagentStore: {
     list: vi.fn(),
     get: vi.fn(),
@@ -161,9 +167,52 @@ function mockProjectRowReads(workspaceRefs: readonly WorkspaceRefV1[], relations
   });
 }
 
+let machineOperationProtocolCapabilities: {
+  capabilities: ReturnType<typeof MachineOperationProtocolCapabilitiesV1Schema.parse>; revision: number;
+};
+
 // Every Action composition consumes the real Artifact/organization factory.
 // Individual tests replace its HTTP boundary or explicitly observe its ports.
 beforeEach(async () => {
+  readSettings.mockReset();
+  readSettings.mockResolvedValue({ servers: {} });
+  machineOperationProtocolCapabilities = {
+    capabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ sessionSpawn: { protocolVersions: [1] } }), revision: 1,
+  };
+  callExactMachineRpc.mockReset();
+  callExactMachineRpc.mockImplementation(async ({ method, request }) => {
+    if (method !== RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+      && method !== RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE) return readyMachineRpc({ method });
+    return SessionCreationTargetPreparationResultV1Schema.parse({
+      ok: true, directory: request.directory.path, directoryKind: 'path', directoryCreationRequired: false, checkout: null,
+    });
+  });
+  callMachineRpc.mockReset();
+  callMachineRpc.mockImplementation(readyMachineRpc);
+  // The remote Machine publishes plain metadata before creation selects defaults.
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    if (path.startsWith('/v1/machines/')) return { status: 200, data: { machine: MachinePublishedRowV1Schema.parse({
+      id: decodeURIComponent(path.slice('/v1/machines/'.length)), managedMachineRef: null,
+      metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({
+        host: 'machine.test', platform: 'linux', happyCliVersion: '0.3.0',
+        homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
+      })), metadataVersion: 1,
+      daemonState: null, daemonStateVersion: 0, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      storageMode: 'plain', revokedAt: null, replacedByMachineId: null,
+      operationProtocolCapabilities: machineOperationProtocolCapabilities.capabilities,
+      operationProtocolCapabilitiesRevision: machineOperationProtocolCapabilities.revision,
+    }) } };
+    throw new Error(`Unexpected Action GET ${path}`);
+  });
+  // Session creation reads managed Home defaults through this HTTP boundary.
+  vi.spyOn(axios, 'request').mockImplementation(async request => {
+    if (new URL(String(request.url)).pathname !== '/v1/home/governance/get') {
+      throw new Error(`Unexpected Home Action ${request.url}`);
+    }
+    return { status: 200, data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
+  });
   const actual = await vi.importActual<typeof import('./approvals/artifactStore')>('./approvals/artifactStore');
   createCliApprovalsArtifactStore.mockImplementation(actual.createCliApprovalsArtifactStore);
 });
@@ -283,6 +332,10 @@ describe('workspace sync read Action transport', () => {
 describe('workspace sync resolution Action transport', () => {
   const accountSettings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {
     'workspace.sync.conflict.resolve': { approvalRequiredSurfaces: ['agent'] },
+  }, approvalWaivedSurfaces: {
+    'workspace.sync.relationships.list': ['agent'],
+    'workspace.sync.conflicts.list': ['agent'],
+    'workspace.sync.conflict.inspect': ['agent'],
   } } });
   beforeEach(() => {
     callMachineRpc.mockReset();
@@ -405,7 +458,6 @@ describe('workspace sync resolution Action transport', () => {
         rawSession: { machineId: 'machine-a', path: '/c', metadata: {} },
         actionsSettingsProvider: createActionSettingsProvider({ accountSettings }),
       }, {
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"workspace.sync.relationships.list": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflicts.list": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflict.inspect": Object.keys(ActionSurfaceSchema.shape), "workspace.sync.conflict.resolve": Object.keys(ActionSurfaceSchema.shape), "approval.request.decide": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
         approvalsCreate: async ({ request }) => {
           approvals.set('approval-controller', request as unknown as Record<string, unknown>);
           return { artifactId: 'approval-controller' };
@@ -418,9 +470,10 @@ describe('workspace sync resolution Action transport', () => {
         isApprovalExecutionOriginCurrent: async () => true,
       });
       const agent = createActionToolExecutorBridge({ surface: 'agent', executor, defaultSessionMachineId: 'machine-a' });
-      await expect(agent.executeActionByToolName('action_execute', {
+      const relationshipRead = await agent.executeActionByToolName('action_execute', {
         actionId: 'workspace.sync.relationships.list', input: { workspaceRefId: 'workspace-c' },
-      }, 'session-c')).resolves.toMatchObject({ ok: true, result: { controllerMachineId: 'machine-a', membership: { found: true } } });
+      }, 'session-c');
+      expect(relationshipRead, JSON.stringify(relationshipRead)).toMatchObject({ ok: true, result: { controllerMachineId: 'machine-a', membership: { found: true } } });
       await expect(agent.executeActionByToolName('action_execute', {
         actionId: 'workspace.sync.conflicts.list', input: { relationshipId: 'rel-ab', controllerMachineId: 'machine-a', limit: 50 },
       }, 'session-c')).resolves.toMatchObject({ ok: true, result: { status: 'page', relationshipId: 'rel-ab' } });
@@ -437,9 +490,10 @@ describe('workspace sync resolution Action transport', () => {
         ],
         relationshipIds: ['rel-ab', 'rel-ac'], strategy: 'use_source' as const,
       };
-      await expect(agent.executeActionByToolName('action_execute', {
+      const pending = await agent.executeActionByToolName('action_execute', {
         actionId: 'workspace.sync.conflict.resolve', input,
-      }, 'session-c', { actionRequestId: 'agent-controller-request' })).resolves.toMatchObject({
+      }, 'session-c', { actionRequestId: 'agent-controller-request' });
+      expect(pending, JSON.stringify(pending)).toMatchObject({
         ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-controller' },
       });
       expect(approvals.get('approval-controller')).toMatchObject({
@@ -588,7 +642,7 @@ describe('workspace sync resolution Action transport', () => {
     const pending = await agent.executeActionByToolName('action_execute', {
       actionId: 'workspace.sync.conflict.resolve', input,
     }, 'session-c', { actionRequestId: 'agent-request-1' });
-    expect(pending).toMatchObject({
+    expect(pending, JSON.stringify(pending)).toMatchObject({
       ok: true, result: { kind: 'approval_request_created', artifactId: 'approval-spoke' },
     });
     expect(callMachineRpc).not.toHaveBeenCalled();
@@ -714,12 +768,8 @@ vi.mock('@/agent/catalog/snapshot', async (importOriginal) => ({
   readAgentCatalogSnapshot,
 }));
 
-vi.mock('@/api/machine/machineOperationProtocolCapabilities', () => ({
-  readMachineOperationProtocolCapabilitiesV1,
-}));
-
 import {
-  createCliActionDeps,
+  createCliActionDeps as createProductionCliActionDeps,
   projectSessionInitialAccessEnvelopeHostErrorResult,
 } from './createCliActionDeps';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
@@ -730,6 +780,66 @@ import {
 } from '@/session/presentation/currentSessionUiBindings';
 import { createHostSubagentStore } from '@/session/subagents/hostSubagentStore';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+
+// These composition tests start after the host has admitted Account custody.
+// Keep its real invocation holder and catalog readers, with schema-built input;
+// No test here selects a Connected Purpose; Account acquisition has its own suites.
+function createCliActionDeps(params: Parameters<typeof createProductionCliActionDeps>[0]) {
+  if (!params.credentials || params.savedSecretOperationContext) return withReadinessActions(createProductionCliActionDeps(params));
+  const active = getActiveAccountSettingsSnapshot();
+  const scopeKey = resolveAccountSettingsScopeKey(params.credentials);
+  const retained = active?.scopeKey === scopeKey ? active : null;
+  return withReadinessActions(createProductionCliActionDeps({
+    ...params,
+    savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({
+      credentials: params.credentials,
+      serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+      isCurrent: async () => true,
+      snapshot: {
+        source: 'network', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+        ...retained,
+        settings: params.actionsSettingsProvider?.getAccountSettings?.() ?? retained?.settings ?? AccountSettingsSchema.parse({}),
+        scopeKey,
+        connectedPurposeCatalog: retained?.connectedPurposeCatalog ?? {
+          status: 'ready', revision: 1,
+          record: { key: 'purposes', value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) },
+        },
+      },
+    }),
+  }));
+}
+
+// These Machines report runnable Codex and Claude CLIs over the network boundary. The
+// inventory projection, readiness decision and Action execution stay real.
+async function readyMachineRpc({ method }: Readonly<{ method: string }>) {
+  if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+    return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+      v: 2, generation: 1, familiesById: {}, agentsById: Object.fromEntries(['codex', 'claude'].map(agentId => [agentId, { id: agentId, title: agentId, capabilities: {
+        sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+      } }])),
+    } });
+  }
+  if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: Object.fromEntries(['codex', 'claude'].map(agentId => [`cli.${agentId}`, { ok: true, checkedAt: 1, data: {
+    installed: true, version: '1.2.3', latestVersion: null, update: { supported: false, command: null },
+    signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+    install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+  } }])) };
+  throw new Error(`Unexpected Machine RPC ${method}`);
+}
+
+function mockPreparedMachineRpc(value: unknown) {
+  const prepared = SessionCreationTargetPreparationResultV1Schema.parse(value);
+  callExactMachineRpc.mockImplementation(async request =>
+    request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+      || request.method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE ? prepared : readyMachineRpc(request));
+}
+
+function withReadinessActions(deps: ReturnType<typeof createProductionCliActionDeps>) {
+  const executor = createActionExecutor(deps);
+  return { ...deps, sessionSpawnNew: (input: Parameters<typeof deps.sessionSpawnNew>[0], continuation?: Parameters<typeof deps.sessionSpawnNew>[1]) =>
+    deps.sessionSpawnNew({ ...input, invokeAgentReadinessAction: input.invokeAgentReadinessAction
+      ?? ((actionId, actionInput) => executor.execute(actionId, actionInput, { surface: 'cli' })) }, continuation) };
+}
 
 type MediatedPermissionResponse = Awaited<ReturnType<
   NonNullable<CurrentSessionCapabilityBinding['permissionHandler']>['respondToMediatedPendingPermission']
@@ -813,7 +923,7 @@ describe('createCliActionDeps hook dispatch', () => {
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
       // Receiving daemon process is the boundary; non-Undo Actions must not enter its private Undo port.
       machineGuardAction: async () => { throw new Error('Only Undo may enter the target-local restoration port'); } });
-    const executor = createActionExecutor(deps);
+    const executor = createActionExecutor({ ...deps, actionAutomations: createEmptyActionAutomationPort() });
     callExactMachineRpc.mockResolvedValue({ status: 'not_pending' });
     expect(await executor.execute('machines.guard.idleStop.keepRunning', { machineId: 'machine-1', sessionId: 'session-1' },
       { surface: 'cli', serverId: 'home-a' })).toEqual({ ok: true, result: { status: 'not_pending' } });
@@ -861,7 +971,8 @@ describe('createCliActionDeps hook dispatch', () => {
       serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
     });
     const executor = createActionExecutor({
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.permission.respond": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
+    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"execution.run.permission.respond": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps,
+      actionAutomations: createEmptyActionAutomationPort() });
     const signal = new AbortController().signal;
     const request = { runId: 'run-1', requestId: 'request-1', approved: false };
     callExactMachineRpc.mockResolvedValue({ ok: false, errorCode: 'permission_request_not_found', error: 'Not found' });
@@ -898,17 +1009,21 @@ describe('createCliActionDeps hook dispatch', () => {
       { actionId: 'session.roles.apply_to_reports' as const, input: { sessionId: 'lead' } },
     ]) {
       await expect(deps.roleActionExecute!({ ...request, context: { authority: 'account_automation', surface: 'agent' } }))
-        .rejects.toMatchObject({ code: 'role_rpc_origin_unavailable' });
+        .rejects.toMatchObject({ rpcErrorCode: 'role_rpc_origin_unavailable' });
     }
   });
 
   it('refuses role forwarding when captured led-session membership cannot be revalidated', async () => {
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       sessionId: 'lead', mode: 'plain', ctx: null,
+      getCurrentSessionMetadata: () => ({ machineId: 'machine-1', path: '/repo' }),
     });
     const executor = createActionExecutor(deps);
     const context: ActionExecutorContext = {
       authority: 'account_automation', surface: 'agent', defaultSessionId: 'lead', workspaceWrites: 'allow',
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+        'session.role.set': ['agent'], 'session.roles.override.set': ['agent'],
+      } }),
       agentStartContext: { caller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
         baseline: { machineId: 'machine-1', directory: '/repo' }, ledSubtreeSessionIds: ['child'],
         workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' },
@@ -928,7 +1043,6 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   beforeEach(async () => {
-    callExactMachineRpc.mockReset();
     createSpawnedSession.mockReset();
     lookupSessionsByTags.mockReset();
     validateStoredAuthTokenAgainstActiveServer.mockReset();
@@ -942,22 +1056,21 @@ describe('createCliActionDeps hook dispatch', () => {
     executeExecutionRunAction.mockReset();
     callSessionRpc.mockReset();
     callMachineRpc.mockReset();
+    callMachineRpc.mockImplementation(readyMachineRpc);
     listSessions.mockReset();
     readAgentCatalogSnapshot.mockReset();
     const catalog = await vi.importActual<typeof import('@/agent/catalog/snapshot')>('@/agent/catalog/snapshot');
     readAgentCatalogSnapshot.mockImplementation(catalog.readAgentCatalogSnapshot);
-    readMachineOperationProtocolCapabilitiesV1.mockReset();
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+    machineOperationProtocolCapabilities = {
       capabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ sessionSpawn: { protocolVersions: [1] } }),
       revision: 1,
-    });
+    };
     routeSessionGoalControl.mockReset();
     routeSessionCatalogControl.mockReset();
     routeSessionUsageLimitRecoveryCheckNow.mockReset();
     routeSessionUsageLimitRecoverySwitchAccountNow.mockReset();
     routeSessionUsageLimitRecoveryWaitResumeCancel.mockReset();
     routeSessionUsageLimitRecoveryWaitResumeEnable.mockReset();
-    readSettings.mockReset();
     getPreferredHostName.mockReset();
     setSessionModel.mockReset();
     createPluginPermissionGrantActionExecutor.mockReset();
@@ -975,12 +1088,14 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it.each(['orchestrator', 'payments-reviewer'])('preserves root spawn role %s through real native creation dispatch', async roleId => {
-    const credentials = { token: 'token', encryption: null } as const;
+    const credentials = { token: 'token', encryption: null, credentialProvenance: 'stored_session' } as const;
     const accountSettings = AccountSettingsSchema.parse({});
     resetActiveAccountSettingsSnapshotForTests();
     setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network',
       settings: accountSettings, rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: 1,
-      promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+      promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'role-overrides', value: { v: 1, overrides: {
+        [roleId]: { roleId, instructionsOverride: 'Account-specific instructions.' },
+      } } } }], tombstones: [], diagnostics: [] } });
     const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
     createCliApprovalsArtifactStore.mockImplementation(realApprovals.createCliApprovalsArtifactStore);
     const realCatalog = await vi.importActual<typeof import('@/agent/catalog/snapshot')>('@/agent/catalog/snapshot');
@@ -1000,24 +1115,24 @@ describe('createCliActionDeps hook dispatch', () => {
     } });
     const spawn = vi.fn<DirectSpawnedSessionTransport['spawn']>(async () => ({ type: 'error' as const, errorCode: 'agent_cli_missing', errorMessage: 'Agent setup required.', agentId: 'codex' }));
     const settingsProvider = createActionSettingsProvider({ accountSettings });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const deps = createCliActionDeps({ token: 'token', credentials,
       sessionId: '', mode: 'plain', ctx: null, readRoleSources,
-      actionsSettingsProvider: { ...settingsProvider, getAccountRoleOverrides: () => ({ status: 'ready', overrides: {
-        [roleId]: { roleId, instructionsOverride: 'Account-specific instructions.' },
-      } }) },
+      actionsSettingsProvider: settingsProvider,
       sessionSpawnDirectTargetTransport: { machineId: 'machine-1',
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) },
       },
     });
-    const executor = createActionExecutor(deps);
+    const executor = createActionExecutor({ ...deps, actionAutomations: createEmptyActionAutomationPort('account') });
     const result = await executor.execute('session.spawn_new', {
       creationKey: `root-${roleId}`, executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-1' },
       directory: { kind: 'path', path: '/repo' }, organizationPlacement: { sectionId: null, tagIds: [] },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       connectedServices: { v: 2, bindingsByServiceId: {} }, roleId,
     }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'error', code: 'agent_cli_missing' } });
+    expect(result).toEqual({ ok: false, errorCode: 'agent_cli_missing', error: 'agent_cli_missing',
+      details: { type: 'error', code: 'agent_cli_missing', retryable: false, agentId: 'codex' },
+    });
     expect(spawn.mock.calls[0]?.[0]).toMatchObject({ initialSessionRolesV1: {
       roleId, overrides: {}, notes: '', sessionRoles: {
         [roleId]: { roleId, instructions: 'Account-specific instructions.' },
@@ -1030,7 +1145,8 @@ describe('createCliActionDeps hook dispatch', () => {
 
   it('creates a Role-selected Session after resolving a legacy unhinted Role under partial classification', async () => {
     const accountId = 'legacy-role-owner';
-    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null } as const;
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      encryption: null, credentialProvenance: 'stored_session' } as const;
     const accountSettings = AccountSettingsSchema.parse({});
     resetActiveAccountSettingsSnapshotForTests();
     setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network',
@@ -1052,7 +1168,8 @@ describe('createCliActionDeps hook dispatch', () => {
     const bodyReads: string[][] = [];
     // HTTP and the native launch/socket are the replaced system boundaries.
     // Artifact selection, Role resolution, Action and creation settlement stay real.
-    const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+    const defaultGet = vi.mocked(axios.get).getMockImplementation()!;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (input, options) => {
       const url = new URL(String(input));
       if (url.pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (url.pathname === '/v1/artifacts') {
@@ -1061,6 +1178,7 @@ describe('createCliActionDeps hook dispatch', () => {
           hasUnclassified: true, coverage: classification } };
       }
       if (url.pathname === '/v2/sessions/legacy-role-session') throw new Error('Session visibility is not available yet');
+      if (url.pathname.startsWith('/v1/machines/')) return defaultGet(input, options);
       throw new Error(`Unexpected legacy Role GET ${url.pathname}`);
     });
     const post = vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
@@ -1154,7 +1272,7 @@ describe('createCliActionDeps hook dispatch', () => {
             launchError: { kind: 'launch_error', code: errorCode, message: 'Agent setup is required.' } }
         : { type: 'error', code: errorCode, agentId: 'codex', retryable: false,
             ...(errorCode === 'agent_signed_out' ? { launchError: { kind: 'launch_error', code: errorCode,
-              message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i) } } : {}) });
+              message: expect.any(String), failureCause: { failureReason: 'authentication_required', phase: 'authentication' } } } : {}) });
       expect(SessionSpawnNewResultV1Schema.safeParse(result)).toMatchObject({ success: true, data: result });
       if (errorCode === 'SPAWN_FAILED') {
         expect(spawn).toHaveBeenCalledTimes(1);
@@ -1205,7 +1323,9 @@ describe('createCliActionDeps hook dispatch', () => {
         details: buildProviderSpawnErrorResult(providerError),
       });
       expect(spawn).toHaveBeenCalled();
-      expect(result).toEqual({ type: 'error', code: 'spawn_failed', retryable: providerError.retryable, providerError });
+      expect(result, JSON.stringify(result)).toEqual({ type: 'error', code: 'spawn_failed', retryable: providerError.retryable, providerError,
+        launchError: { kind: 'launch_error', code, message: code },
+      });
       expect(SessionSpawnNewResultV1Schema.safeParse(result)).toMatchObject({ success: true, data: result });
     },
   );
@@ -1424,7 +1544,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -1474,7 +1594,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -1516,7 +1636,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -1530,9 +1650,11 @@ describe('createCliActionDeps hook dispatch', () => {
     })).resolves.toEqual({
       ok: false,
       errorCode: 'restart_required',
-      error: 'restart_required',
+      error: expect.any(String),
       details: {
+        ok: false,
         status: 'restart_required',
+        sessionId: 'sess-1',
         activeSelection: {
           agentTargetKey: 'agent:happier.agent.codex/codex',
           providerConnectionId: 'pc_work',
@@ -1570,7 +1692,7 @@ describe('createCliActionDeps hook dispatch', () => {
       status: 'accepted' as const,
       localId: 'plugin-input-v1:spawn-transport',
     }));
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -1634,10 +1756,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy' as const,
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -1784,7 +1903,7 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(callExactMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-exact',
       method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
-      request: { directory: { kind: 'path', path: '/repo/exact' }, sessionCreationTag },
+      request: { directory: { kind: 'path', path: '/repo/exact' }, sessionCreationTag, prepareAgentIsolationMember: true },
     }));
   });
 
@@ -1810,11 +1929,9 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy' as const,
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
+      serverIdentityId: 'srv_account_current',
       sessionId: 'cli-global',
       mode: 'plain',
       ctx: null,
@@ -1862,16 +1979,13 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'sess-direct',
     });
 
-    expect(prepare).toHaveBeenCalledWith(
-      {
-        directory: { kind: 'path', path: '/repo/direct' },
-        sessionCreationTag: deriveSessionCreationTagV1({
-          callerCreationNamespace: 'automation:automation-1',
-          creationKey: 'automation-run:run-1',
-        }),
-      },
-      { signal: controller.signal },
-    );
+    expect(prepare).not.toHaveBeenCalled();
+    expect(callExactMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-exact', method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+      signal: controller.signal,
+      request: { directory: { kind: 'path', path: '/repo/direct' }, prepareAgentIsolationMember: true,
+        sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'automation:automation-1', creationKey: 'automation-run:run-1' }) },
+    }));
     expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-exact',
       placementOrigin: {
@@ -1889,8 +2003,6 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(creation.directTransport.spawn(request, { signal: controller.signal }))
       .resolves.toEqual({ type: 'success', sessionId: 'sess-direct' });
     expect(spawnedSession.spawn).toHaveBeenCalledWith(request, { signal: controller.signal });
-    expect(readMachineOperationProtocolCapabilitiesV1).not.toHaveBeenCalled();
-    expect(callMachineRpc).not.toHaveBeenCalled();
   });
 
   it('passes pool origin to a remote spawn only when the target advertises support', async () => {
@@ -1904,24 +2016,24 @@ describe('createCliActionDeps hook dispatch', () => {
       organizationPlacement: { folderId: null, tagIds: [] },
       initialInput: { status: 'notRequested' },
     });
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
       checkout: null,
     });
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+    machineOperationProtocolCapabilities = {
       capabilities: {
         sessionSpawn: { protocolVersions: [1] },
         sessionSpawnPlacementOrigin: { protocolVersions: [1] },
       },
       revision: 2,
-    });
+    };
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -1956,21 +2068,21 @@ describe('createCliActionDeps hook dispatch', () => {
       organizationPlacement: { folderId: null, tagIds: [] },
       initialInput: { status: 'notRequested' },
     });
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
       checkout: null,
     });
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+    machineOperationProtocolCapabilities = {
       capabilities: { sessionSpawn: { protocolVersions: [1] } },
       revision: 1,
-    });
+    };
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -1997,7 +2109,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('compares Agent child-Session choices with the live parent before approval', async () => {
-    const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) } };
+    const credentials = { token: 'token', encryption: null };
     const accountSettings = AccountSettingsSchema.parse({});
     setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network',
       settings: accountSettings, rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: 1,
@@ -2061,7 +2173,7 @@ describe('createCliActionDeps hook dispatch', () => {
       directoryKind: 'path' as const, directoryCreationRequired: true,
       checkout: null,
     }));
-    callExactMachineRpc.mockResolvedValue(await prepare());
+    mockPreparedMachineRpc(await prepare());
     prepare.mockClear();
     const input = {
       creationKey: SessionCreationKeyV1Schema.parse('portable-directory-approval'),
@@ -2082,10 +2194,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy' as const,
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2135,7 +2244,7 @@ describe('createCliActionDeps hook dispatch', () => {
       callerCreationNamespace: 'user',
       creationKey: v2Input.creationKey,
     });
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/new-directory',
       directoryKind: 'path' as const, directoryCreationRequired: true,
@@ -2152,7 +2261,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -2210,14 +2319,6 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionCreationTag,
       actionCaller: { kind: 'host' },
       sessionCreationDirectoryApproval: preflight.approval,
-      // This direct bridge caller supplies the Home Action transport boundary.
-      // Directory admission and readiness parsing remain real beneath it.
-      invokeAgentReadinessAction: async () => ({ ok: true, result: MachinesAgentsListOutputSchema.parse({ items: [{
-        agentId: 'codex', title: 'Codex', installed: true, version: '1.2.3', latestVersion: null,
-        update: { supported: false, command: null },
-        signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
-        install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
-      }] }) }),
     });
     expect(approved, JSON.stringify(approved)).toMatchObject({
       type: 'success',
@@ -2252,7 +2353,7 @@ describe('createCliActionDeps hook dispatch', () => {
       callerCreationNamespace: 'user',
       creationKey: v2Input.creationKey,
     });
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -2277,7 +2378,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2329,7 +2430,7 @@ describe('createCliActionDeps hook dispatch', () => {
       callerCreationNamespace: 'user',
       creationKey,
     });
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -2345,7 +2446,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2403,7 +2504,7 @@ describe('createCliActionDeps hook dispatch', () => {
         forkPoint: { type: 'latest' as const },
       },
     };
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -2431,7 +2532,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2499,7 +2600,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2534,7 +2635,7 @@ describe('createCliActionDeps hook dispatch', () => {
   it('retains a prepared checkout when the source recipe cannot be resolved and current exclusive ownership is unproven', async () => {
     const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
     createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
-      token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      token: 'token', encryption: null,
     } }));
     const v2Input = {
       creationKey: SessionCreationKeyV1Schema.parse('configure-from-unreadable-source'),
@@ -2581,7 +2682,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2608,7 +2709,7 @@ describe('createCliActionDeps hook dispatch', () => {
   it('never rolls back a reused checkout when pre-spawn source resolution fails', async () => {
     const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
     createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
-      token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      token: 'token', encryption: null,
     } }));
     fetchSessionByIdCompat.mockResolvedValue({ share: null, machineId: 'machine-exact' });
     resolveReplaySeedDraft.mockResolvedValue({ status: 'unavailable' });
@@ -2617,7 +2718,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2669,16 +2770,17 @@ describe('createCliActionDeps hook dispatch', () => {
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
-  it('rejects an opaque V2 target that disagrees with the local direct daemon', async () => {
+  it('routes another exact Machine through canonical creation without reusing the local direct transport', async () => {
     const prepare = vi.fn();
+    const localSpawn = vi.fn();
+    const localResolve = vi.fn();
+    createSpawnedSession.mockResolvedValue({ disposition: 'created', sessionId: 'remote-session',
+      organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy' as const,
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'cli-global',
       mode: 'plain',
@@ -2687,8 +2789,8 @@ describe('createCliActionDeps hook dispatch', () => {
         machineId: 'machine-exact',
         prepare,
         spawnedSession: {
-          spawn: vi.fn(),
-          resolveSpawnSessionByNonce: vi.fn(),
+          spawn: localSpawn,
+          resolveSpawnSessionByNonce: localResolve,
         },
       },
     });
@@ -2713,16 +2815,17 @@ describe('createCliActionDeps hook dispatch', () => {
         },
       },
       actionCaller: { kind: 'host' },
-    })).resolves.toEqual({
-      type: 'error',
-      code: 'target_unavailable',
-      retryable: false,
-    });
+    })).resolves.toMatchObject({ type: 'success', sessionId: 'remote-session',
+      executionTarget: { serverId: configuration.activeServerId, machineId: 'different-machine' } });
 
     expect(prepare).not.toHaveBeenCalled();
-    expect(createSpawnedSession).not.toHaveBeenCalled();
-    expect(readMachineOperationProtocolCapabilitiesV1).not.toHaveBeenCalled();
-    expect(callMachineRpc).not.toHaveBeenCalled();
+    expect(localSpawn).not.toHaveBeenCalled();
+    expect(localResolve).not.toHaveBeenCalled();
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'different-machine' }));
+    expect(createSpawnedSession.mock.lastCall?.[0]).not.toHaveProperty('directTransport');
+    expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/v1/machines/different-machine'), expect.any(Object));
+    expect(callExactMachineRpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'different-machine',
+      method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT }));
   });
 
   it('keeps the provenance-pinned V1 approval readable but refuses execution without immutable origin', async () => {
@@ -2771,7 +2874,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
         credentialProvenance: 'stored_session',
       },
       sessionId: 'sess-parent',
@@ -2788,9 +2891,8 @@ describe('createCliActionDeps hook dispatch', () => {
       artifactId: 'approval-remote-dev-1',
       decision: 'approve',
     }, { surface: 'cli', authority: 'present_user' });
-    expect(approvalDecision).toMatchObject({
-      ok: true,
-      result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
+    expect(approvalDecision, JSON.stringify(approvalDecision)).toMatchObject({
+      ok: false, errorCode: 'approval_stale', effectAttempted: false,
     });
 
     expect(approvalsGet).toHaveBeenCalledWith({
@@ -2799,7 +2901,8 @@ describe('createCliActionDeps hook dispatch', () => {
     });
     expect(callMachineRpc).not.toHaveBeenCalled();
     expect(createSpawnedSession).not.toHaveBeenCalled();
-    expect(persistedApproval).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } });
+    expect(persistedApproval).toMatchObject({ v: 1, status: 'approved', decision: { kind: 'approve' }, actionArgs: predecessorActionArgs });
+    expect(persistedApproval).not.toHaveProperty('execution');
   });
 
   it('materializes a checkout on the exact target before correspondence and spawn', async () => {
@@ -2807,7 +2910,7 @@ describe('createCliActionDeps hook dispatch', () => {
       callerCreationNamespace: 'user',
       creationKey: SessionCreationKeyV1Schema.parse('create-checkout'),
     });
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/.dev/worktree/feature-session',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -2829,7 +2932,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -2899,7 +3002,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('resolves a resumed Action attempt through its stable spawn nonce without submitting a second create', async () => {
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -2920,7 +3023,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -2965,7 +3068,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('preserves an admitted-but-unresolved spawn as pending with an unknown outcome', async () => {
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -2988,7 +3091,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3023,7 +3126,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('maps the exact terminal organization-placement refusal without parsing message text', async () => {
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -3051,7 +3154,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3084,7 +3187,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('maps the exact terminal creation-correspondence conflict without parsing message text', async () => {
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -3112,7 +3215,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3144,7 +3247,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('keeps a possibly admitted spawn pending when caller cancellation races its settlement', async () => {
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -3169,7 +3272,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3214,14 +3317,14 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
       ctx: null,
     });
 
-    await expect(deps.sessionSpawnNew({
+    const result = await deps.sessionSpawnNew({
       connectedServices: { v: 2, bindingsByServiceId: {} },
       creationKey: SessionCreationKeyV1Schema.parse('create-preparation-timeout'),
       sessionCreationTag,
@@ -3243,10 +3346,14 @@ describe('createCliActionDeps hook dispatch', () => {
         },
       },
       actionCaller: { kind: 'host' },
-    })).resolves.toEqual({
-      type: 'error',
-      code,
-      retryable,
+    });
+    expect(result, JSON.stringify(result)).toEqual({
+      type: 'error', code, retryable,
+      ...(code === 'spawn_failed' ? {
+        launchError: { kind: 'launch_error', code: 'MACHINE_RPC_TIMEOUT', rpcErrorCode: 'MACHINE_RPC_TIMEOUT',
+          message: 'Target Machine RPC timed out.' },
+        failureCause: { errorClass: 'Error', errorCode: null, httpStatus: null, phase: 'session.target_preparation' },
+      } : {}),
     });
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
@@ -3261,7 +3368,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3294,7 +3401,7 @@ describe('createCliActionDeps hook dispatch', () => {
   });
 
   it('fails closed when the exact target lacks the live session-spawn handler', async () => {
-    callExactMachineRpc.mockResolvedValue({
+    mockPreparedMachineRpc({
       ok: true,
       directory: '/repo/exact',
       directoryKind: 'path' as const, directoryCreationRequired: false,
@@ -3311,7 +3418,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3353,10 +3460,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy' as const,
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -3404,25 +3508,23 @@ describe('createCliActionDeps hook dispatch', () => {
       type: 'error',
       code: 'target_unavailable',
       retryable: false,
+      failureCause: { errorClass: 'Error', errorCode: 'agent_contribution_unavailable', httpStatus: null, phase: 'session.agent_target' },
     });
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
   it('rejects an exact target without the persisted session-spawn capability before it can create a Session', async () => {
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+    machineOperationProtocolCapabilities = {
       capabilities: {},
       revision: 1,
-    });
+    };
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'user',
       creationKey: SessionCreationKeyV1Schema.parse('create-capability-negative'),
     });
     const credentials = {
       token: 'token',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array([1, 2, 3, 4]),
-      },
+      encryption: null,
     };
     const deps = createCliActionDeps({
       token: credentials.token,
@@ -3456,24 +3558,19 @@ describe('createCliActionDeps hook dispatch', () => {
       incompatibleTarget: { reason: 'session_spawn_protocol_unavailable' },
     });
 
-    expect(readMachineOperationProtocolCapabilitiesV1).toHaveBeenCalledWith({
-      credentials,
-      machineId: 'machine-incompatible',
-    });
+    expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/v1/machines/machine-incompatible'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: `Bearer ${credentials.token}` }) }));
     expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
   it('requires Session-spawn V2 before dispatching a one-launch Saved Secret overlay', async () => {
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
+    machineOperationProtocolCapabilities = {
       capabilities: { sessionSpawn: { protocolVersions: [1] } },
       revision: 1,
-    });
+    };
     const credentials = {
       token: 'token',
-      encryption: {
-        type: 'legacy' as const,
-        secret: new Uint8Array([1, 2, 3, 4]),
-      },
+      encryption: null,
     };
     const deps = createCliActionDeps({
       token: credentials.token,
@@ -3535,10 +3632,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3575,7 +3669,10 @@ describe('createCliActionDeps hook dispatch', () => {
       requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: false,
       timeoutMs: 30000,
+      serverIdentityId: undefined,
+      modelInputConstraints: [undefined, undefined],
       localId: 'retained-1',
+      explicitMessageSend: true,
       permissionModeOverride: 'read_only',
       modelSelectionInput: {
         providerConnectionId: 'pc_work',
@@ -3618,7 +3715,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3653,7 +3750,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3692,7 +3789,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3722,7 +3819,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3812,7 +3909,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3861,10 +3958,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -3892,6 +3986,7 @@ describe('createCliActionDeps hook dispatch', () => {
       requestedAction: { v: 1, kind: 'steer_if_active' },
       wait: false,
       timeoutMs: 15000,
+      explicitMessageSend: true,
     });
     expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
       happyHomeDir: '/tmp/happier-home',
@@ -3931,10 +4026,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -4013,10 +4105,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -4074,10 +4163,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -4145,10 +4231,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -4671,10 +4754,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -4731,7 +4811,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -4784,7 +4864,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -4825,10 +4905,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -4874,10 +4951,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -4920,10 +4994,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -4992,7 +5063,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5030,7 +5101,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5067,7 +5138,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain' as const,
@@ -5102,10 +5173,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5156,10 +5224,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5208,10 +5273,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5287,10 +5349,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5355,10 +5414,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5384,10 +5440,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-current',
       mode: 'plain',
@@ -5431,10 +5484,7 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
@@ -5469,17 +5519,14 @@ describe('createCliActionDeps hook dispatch', () => {
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: {
-          type: 'legacy',
-          secret: new Uint8Array([1, 2, 3, 4]),
-        },
+        encryption: null,
       },
       sessionId: 'sess-1',
       mode: 'plain',
       ctx: null,
       rawSession: { metadata: {} },
     });
-    const executor = createActionExecutor(deps);
+    const executor = createActionExecutor({ ...deps, actionAutomations: createEmptyActionAutomationPort() });
     const owner = {
       kind: 'plugin' as const,
       pluginId: 'happier.agent.acme',
@@ -5626,7 +5673,7 @@ describe('Session initial-access spawn settlement', () => {
   it.each(['initial_access', 'initial_access_account_owned', 'terminal_host'] as const)('carries %s through the real spawn dependency result', async (failure) => {
     const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
     createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
-      token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      token: 'token', encryption: null,
     } }));
     const realCatalog = await vi.importActual<typeof import('@/agent/catalog/snapshot')>('@/agent/catalog/snapshot');
     readAgentCatalogSnapshot.mockImplementation(realCatalog.readAgentCatalogSnapshot);
@@ -5649,7 +5696,7 @@ describe('Session initial-access spawn settlement', () => {
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: AccountSettingsSchema.parse({ memoryUpkeepInNewBots: false }) }),
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
       sessionId: 'sess-parent',
       mode: 'plain',
@@ -5840,7 +5887,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
       serverId: 'server-a',
       actionRequestId: 'plugin-invocation-1:session.open:1',
       signal,
-    })).resolves.toEqual({
+    }, { surface: 'cli', authority: 'present_user' })).resolves.toEqual({
       ok: true,
       status: 'opened',
       sessionId: 'session-1',
@@ -5852,10 +5899,13 @@ describe('createCliActionDeps session lifecycle bindings', () => {
       credentials,
       machineId: 'machine-source',
       method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+      requireCurrentMachine: true,
       signal,
       request: expect.objectContaining({
         type: 'resume-session',
         sessionId: 'session-1',
+        initialTranscriptAfterSeq: 17,
+        runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
         executionAuthorization: {
           provenance: 'user_request',
           requestId: 'plugin-invocation-1:session.open:1',
@@ -6057,6 +6107,7 @@ describe('createCliActionDeps session lifecycle bindings', () => {
       credentials,
       machineId: 'machine-source',
       method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
+      serverUrl: 'https://server-a.example.test',
       signal,
       request: {
         sessionId: 'session-1',
