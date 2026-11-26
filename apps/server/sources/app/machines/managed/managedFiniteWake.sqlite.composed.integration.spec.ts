@@ -504,6 +504,36 @@ describe('finite managed wake original Action authority (real storage)', () => {
         });
     });
 
+    it.runIf(process.env.HAPPIER_DB_PROVIDER === 'postgres')('serves authenticated controller reads within one PostgreSQL snapshot each', async () => {
+        const { measurePostgresCreate } = await import('./managedProjectionVolume.testkit');
+        const test = await setup();
+        await publishWakeDeclaration(test);
+        const correlation = { homeId, managedId: test.row.id, controller: test.target.controller,
+            requestId: test.row.admittedActionRequestId, expectedIntentRevision: test.row.intentRevision };
+        await withAuthenticatedTestApp((app: ServerFastify) => {
+            // The authentication fixture supplies the HTTP middleware's exact signed Action facts.
+            app.addHook('onRequest', async request => {
+                Object.assign(request, { externalActionExecutionAuthorized: true,
+                    externalActionExecutionMachineId: test.controller.id,
+                    externalActionEffectActionId: 'machines.managed.acquire',
+                    externalActionExecutionRequestId: correlation.requestId,
+                    externalActionExecutionCustodianAccountId: test.account.id });
+            });
+            registerManagedMachineRoutes(app);
+        }, async app => {
+            for (const name of ['context', 'current', 'enrollment-context']) {
+                const read = await measurePostgresCreate(() => app.inject({ method: 'POST',
+                    url: `/v1/machines/managed/controller/${name}`, headers: { 'x-test-user-id': test.account.id },
+                    payload: { ...correlation, ...(name === 'enrollment-context' ? { resource: test.row.resource } : {}) } }));
+                expect(read.value.statusCode, read.value.body).toBe(200);
+                expect(read.value.json()).toMatchObject({ machine: { id: test.row.id } });
+                const transactions = read.statements.filter(sql => /^COMMIT\b/u.test(sql)).length;
+                console.info('MANAGED_CONTROLLER_READ_TRANSACTIONS', JSON.stringify({ name, transactions }));
+                expect.soft(transactions).toBe(1);
+            }
+        });
+    });
+
     it.each([false, true])('reads selected current resources without fleet wake discovery (controller-free: %s)', async controllerFree => {
         const test = await setup();
         const controller = { machineId: test.controller.id, installationId: test.controller.installationId! };

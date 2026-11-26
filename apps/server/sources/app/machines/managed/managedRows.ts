@@ -666,15 +666,25 @@ function readStoredManagedDevcontainerChild(row: StoredManagedMachine): Devconta
         enrolledMachineId: row.enrolledMachineId ?? undefined, resource }) ?? null;
 }
 
-export async function requireCurrentManagedMachineInTx(tx: Tx, input: Readonly<{
+type ManagedCurrentnessInput = Readonly<{
     homeId: string; managedId: string; expectedIntentRevision: number; requestId: string;
     controller?: { machineId: string; installationId: string };
-}>, options: Readonly<{ requestAuthority?: "creation" | "intent"; allowCanceledResourceReport?: boolean; allowInactiveCurrentIntent?: boolean }> = {}): Promise<StoredManagedMachine> {
-    const row = await readManagedMachineInTx(tx, input);
+}>;
+type ManagedCurrentnessOptions = Readonly<{
+    requestAuthority?: "creation" | "intent"; allowCanceledResourceReport?: boolean; allowInactiveCurrentIntent?: boolean;
+}>;
+
+export async function requireCurrentManagedMachineInTx(tx: Tx, input: ManagedCurrentnessInput, options?: ManagedCurrentnessOptions): Promise<StoredManagedMachine> {
+    return requireCurrentManagedMachineRowInTx(tx, await readManagedMachineInTx(tx, input), input, options);
+}
+
+/** Uses the exact row already read by the caller in this snapshot. */
+export async function requireCurrentManagedMachineRowInTx(tx: Tx, row: StoredManagedMachine,
+    input: Omit<ManagedCurrentnessInput, 'homeId' | 'managedId'>, options: ManagedCurrentnessOptions = {}): Promise<StoredManagedMachine> {
     // Native work was admitted with the controller's then-current authority.
     // Follow-ups prove the retained controller identity below; fresh admission
     // and the signed-request verifier own controller lifecycle, not this check.
-    await requireManagedHomeInTx(tx, input.homeId);
+    await requireManagedHomeInTx(tx, row.homeId);
     const creation = options.requestAuthority === "creation" || options.allowCanceledResourceReport === true;
     const currentAdmission = !creation && !row.controllerMachineId && input.controller
         ? readManagedAdmissionState(row.admittedInput).currentAdmission : undefined;

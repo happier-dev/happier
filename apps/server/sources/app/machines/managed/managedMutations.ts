@@ -30,7 +30,7 @@ import { applyMachineReplacement } from "@/app/machines/applyMachineReplacement"
 import { assertManagedWakeOriginCurrentInTx } from './managedWake';
 import { doesManagedNativeObservationSettleIntent } from './managedNativeObservation';
 import {
-    ManagedControllerDeclarationError, ManagedMachineError, requireCurrentManagedMachineInTx, resolveManagedRowDeclarationInTx, resolveManagedDeclarationInTx,
+    ManagedControllerDeclarationError, ManagedMachineError, requireCurrentManagedMachineInTx, requireCurrentManagedMachineRowInTx, resolveManagedRowDeclarationInTx, resolveManagedDeclarationInTx,
     requireActiveManagedResizeInTx, readManagedIntentReportAuthority,
     projectManagedMachine, invalidateManagedMachineInTx, sameManagedInput, matchesManagedEnrollmentResource,
     createManagedMachineRetainedSchema,
@@ -995,8 +995,12 @@ export async function requireManagedMachineRegistrationInTx(tx: Tx, input: Manag
 /** Enrollment remains inside ordinary registration's transaction, before any Machine write. */
 export async function requireManagedEnrollmentInTx(tx: Tx, canonical: ManagedEnrollmentCorrelationV1,
     authority: string | Readonly<{ controllerCustodianAccountId: string }>, declarationBodies?: ManagedDeclarationBodies) {
-    const retained = await readManagedMachineInTx(tx, canonical);
-    const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority:
+    return requireManagedEnrollmentRowInTx(tx, await readManagedMachineInTx(tx, canonical), canonical, authority, declarationBodies);
+}
+
+export async function requireManagedEnrollmentRowInTx(tx: Tx, retained: StoredManagedMachine, canonical: ManagedEnrollmentCorrelationV1,
+    authority: string | Readonly<{ controllerCustodianAccountId: string }>, declarationBodies?: ManagedDeclarationBodies) {
+    const row = await requireCurrentManagedMachineRowInTx(tx, retained, canonical, { requestAuthority:
         canonical.requestId === retained.admittedActionRequestId ? 'creation' : 'intent' });
     const admission = readManagedAdmissionState(row.admittedInput);
     if (admission.workspaceAttachment || admission.submittedEffect?.intent === 'rebuild') throw new ManagedMachineError('enrollment_retired');

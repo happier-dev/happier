@@ -22,8 +22,8 @@ import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { admitManagedAcquire } from "./managedAcquire";
-import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy, reportManagedStoppedObservationInTx } from "./managedMutations";
-import { ManagedControllerDeclarationError, ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess, inManagedMachinePublicationTx } from "./managedRows";
+import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentRowInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy, reportManagedStoppedObservationInTx } from "./managedMutations";
+import { ManagedControllerDeclarationError, ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, requireCurrentManagedMachineRowInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess, inManagedMachinePublicationTx } from "./managedRows";
 import { getManagedMachine, listManagedMachines, cancelManagedCreation, admitsManagedTargetInTx } from "./managedRead";
 import { readAdmittedManagedWakeTargetsInTx, readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
@@ -67,8 +67,8 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
     homeId: string; managedId: string; requestId?: string; controller?: { machineId: string; installationId: string };
 }>, allowedEffects: readonly string[], options: Readonly<{ admission?: z.infer<typeof ManagedControlAdmissionInputV1Schema>; submittedReport?: boolean;
     controllerDestination?: { machineId: string; installationId: string } | null; creationMutation?: boolean;
-    retainedContext?: boolean }> = {}) {
-    return inReadSnapshot(async tx => {
+    retainedContext?: boolean; snapshot?: Tx }> = {}) {
+    const verify = async (tx: Tx) => {
         const row = await readManagedMachineInTx(tx, input);
         if (request.externalActionExecutionAuthorized === true) {
             const stopAdmission = options.admission?.action === MANAGED_POWER_SET_ACTION_ID_V1
@@ -107,7 +107,7 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
             }
             const proof = requireManagedControllerProof(request, executionMachineId, allowedEffects);
             if (proof.custodianAccountId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
-            return { ...proof, requestAuthority: managedRequestAuthority(request) };
+            return { ...proof, requestAuthority: managedRequestAuthority(request), row };
         }
         // Home owns retained intent admission, including paired-terminal automation.
         // admitManagedControl checks this actor's Manage role; a controller
@@ -115,26 +115,27 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
         if (options.admission && (request.authTokenKind === 'account' || request.authTokenKind === 'terminal')
             && request.authTokenLegacy === false) {
             if (!input.requestId) throw new ManagedMachineError('request_conflict');
-            return { requestId: input.requestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'intent' as const };
+            return { requestId: input.requestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'intent' as const, row };
         }
         requireManagedPresentUser(request);
         // Pair-present recovery keeps its domain actor-access check after credential admission.
         if (options.creationMutation && row.controllerMachineId !== null) return {
-            requestId: readManagedCurrentRequestId(row), custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const,
+            requestId: readManagedCurrentRequestId(row), custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const, row,
         };
         if (row.controllerMachineId !== null || input.controller || request.userId !== row.custodianAccountId) throw new ManagedMachineError('permission_denied');
         if (options.creationMutation) return { requestId: readManagedCurrentRequestId(row),
-            custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const };
+            custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const, row };
         if (options.retainedContext && input.requestId === undefined) return {
             requestId: row.admittedActionRequestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const,
-            accountContext: true as const,
+            accountContext: true as const, row,
         };
         const creation = input.requestId === row.admittedActionRequestId;
         const submitted = options.submittedReport && readManagedAdmissionState(row.admittedInput).submittedEffect?.requestId === input.requestId;
         if (!input.requestId || (!options.admission && !creation && !submitted && input.requestId !== readManagedCurrentRequestId(row))) throw new ManagedMachineError('request_conflict');
         return { requestId: input.requestId, custodianAccountId: row.custodianAccountId,
-            requestAuthority: creation ? 'creation' as const : 'intent' as const };
-    });
+            requestAuthority: creation ? 'creation' as const : 'intent' as const, row };
+    };
+    return options.snapshot ? verify(options.snapshot) : inReadSnapshot(verify);
 }
 /** Same installation identity authenticates policy-owned HTTP effects; it never mints a public Action envelope. */
 export async function requireManagedPolicyRequest(request: FastifyRequest, path: string, input: Readonly<{ homeId: string; managedId: string; requestId?: string }>, phase: 'admit' | 'current' | 'submit' | 'report' | 'reconcile' | 'read' | 'activation-failure' | 'observe-stop', publicationTx?: Tx) {
@@ -513,16 +514,16 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             managedAcquireDelegation: request.externalActionExecutionAuthorizationBinding?.managedAcquireDelegation, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));
     app.post("/v1/machines/managed/controller/context", { preHandler: app.authenticate, schema: { body: ManagedControllerContextInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        // The signed HTTP purpose has already bound this active Session to its
-        // creation and installed controller. Read the retained creation context.
-        const boundSession = request.externalActionExecutionAuthorized === true && request.body.sessionId !== undefined
-            && isSessionSpawnNewActionIdV1(request.externalActionEffectActionId ?? '');
-        const proof = boundSession ? { requestAuthority: 'creation' as const }
-            : request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
-            ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/context', request.body, 'read')
-            : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install', MANAGED_EXEC_ACTION_ID_V1], { retainedContext: true });
-        return await inTx(async (tx) => {
-            const row = await readManagedMachineInTx(tx, request.body);
+        return await inReadSnapshot(async tx => {
+            // The signed HTTP purpose already bound this Session to its creation and installed controller.
+            const boundSession = request.externalActionExecutionAuthorized === true && request.body.sessionId !== undefined
+                && isSessionSpawnNewActionIdV1(request.externalActionEffectActionId ?? '');
+            const proof = boundSession ? { requestAuthority: 'creation' as const, row: await readManagedMachineInTx(tx, request.body) }
+                : request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
+                ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/context', request.body, 'read', tx)
+                : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install', MANAGED_EXEC_ACTION_ID_V1],
+                    { retainedContext: true, snapshot: tx });
+            const { row } = proof;
             // Enrollment recovery seals its child against the retained creation,
             // even when Inspect carries a fresh intent request of its own.
             const requestAuthority = request.body.includeEnrollmentInstallation
@@ -536,7 +537,8 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 throw new ManagedMachineError('permission_denied');
             }
             const requestId = requestAuthority === 'creation' ? row.admittedActionRequestId : readManagedCurrentRequestId(row);
-            const current = await requireCurrentManagedMachineInTx(tx, { ...request.body, requestId }, { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
+            const current = await requireCurrentManagedMachineRowInTx(tx, row, { ...request.body, requestId },
+                { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
             const enrollmentInstallation = request.body.includeEnrollmentInstallation ? await (async () => {
                 if (!current.enrolledMachineId) throw new ManagedMachineError('permission_denied');
                 const guest = await tx.machine.findUnique({ where: { id: current.enrolledMachineId }, select: {
@@ -575,12 +577,13 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         });
     }));
     app.post("/v1/machines/managed/controller/current", { preHandler: app.authenticate, schema: { body: ManagedControllerCurrentInputV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
-            ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/current', request.body, 'current')
-            : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install']);
-        return await inTx(async (tx) => {
+        return await inReadSnapshot(async tx => {
+            const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
+                ? await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/current', request.body, 'current', tx)
+                : await requireManagedOperationRequest(request, request.body, [...effects, 'machines.managed.credentials.install'], { snapshot: tx });
             const requestAuthority = 'requestAuthority' in proof ? proof.requestAuthority : managedRequestAuthority(request);
-            const row = await requireCurrentManagedMachineInTx(tx, request.body, { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
+            const row = await requireCurrentManagedMachineRowInTx(tx, proof.row, request.body,
+                { requestAuthority, allowInactiveCurrentIntent: requestAuthority === 'intent' });
             if (request.externalActionEffectActionId === 'machines.managed.credentials.install') {
                 const native = request.externalActionExecutionAuthorizationBinding?.managedAdmission;
                 if (native?.actionId !== 'machines.managed.credentials.install'
@@ -660,8 +663,10 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         return await createManagedBootstrapCredential(request.body);
     }));
     app.post("/v1/machines/managed/controller/enrollment-context", { preHandler: app.authenticate, schema: { body: ManagedEnrollmentCorrelationV1Schema } }, async (request, reply) => respond(reply, async () => {
-        const { custodianAccountId } = await requireManagedOperationRequest(request, request.body, effects);
-        return await inTx(async (tx) => ({ machine: projectManagedMachine(
-            await requireManagedEnrollmentInTx(tx, request.body, { controllerCustodianAccountId: custodianAccountId })) }));
+        return await inReadSnapshot(async tx => {
+            const { custodianAccountId, row } = await requireManagedOperationRequest(request, request.body, effects, { snapshot: tx });
+            return { machine: projectManagedMachine(await requireManagedEnrollmentRowInTx(tx, row, request.body,
+                { controllerCustodianAccountId: custodianAccountId })) };
+        });
     }));
 }
