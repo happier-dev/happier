@@ -70,7 +70,7 @@ export async function verifyResumeReachableCodex(
 
   const acceptReachablePath = async (resolvedPath: string): Promise<VerifyResumeReachableResult> => {
     const reconciled = await reconcileCodexResumeRolloutPath({
-      targetMaterializedEnv: input.targetMaterializedEnv,
+      env: input.targetMaterializedEnv,
       vendorResumeId,
       resolvedRolloutPath: resolvedPath,
       cwd: input.cwd,

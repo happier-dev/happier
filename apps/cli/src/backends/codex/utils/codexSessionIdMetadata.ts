@@ -76,7 +76,11 @@ function resolveCodexRuntimeSourceAffinity(params: Readonly<{
   sqliteHomePath?: string;
 }> {
   const source = resolveCodexDirectSource(params);
-  const sqliteHomePath = resolveConfiguredCodexSqliteHome(params.processEnv ?? process.env);
+  const env = params.processEnv ?? process.env;
+  const projectedEnv = { ...env, CODEX_HOME: resolveCodexHome(params) };
+  const sqliteHomePath = resolveConfiguredCodexSqliteHome(projectedEnv, process.cwd(), {
+    launchPin: source.home === 'connectedService' ? env.CODEX_SQLITE_HOME : undefined,
+  }) ?? undefined;
   return source.home === 'connectedService'
     ? {
       home: 'connectedService',

@@ -29,7 +29,7 @@ describe('verifyResumeReachableCodex', () => {
         })).resolves.toEqual({ ok: true, resolvedPath: `${plain}.zst` });
         expect(database.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(vendorResumeId))
           .toEqual({ rollout_path: plain });
-        await expect(resolveExistingCodexIndexedRolloutPath({ env, vendorResumeId, cwd: root }))
+        await expect(resolveExistingCodexIndexedRolloutPath({ sqliteHome, vendorResumeId }))
           .resolves.toBe(`${plain}.zst`);
       } finally {
         database.close();

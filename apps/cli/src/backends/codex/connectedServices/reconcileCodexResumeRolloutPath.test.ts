@@ -1,10 +1,10 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { openSqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
-import { reconcileNativeCodexResumeRolloutPath } from './reconcileCodexResumeRolloutPath';
+import { reconcileCodexResumeRolloutPath } from './reconcileCodexResumeRolloutPath';
 
 const THREAD_ID = '01a1098d-ecd5-7113-b3cc-b365a60bfbbe';
 const ROLLOUT_NAME = `rollout-2026-10-05T01-54-18-${THREAD_ID}.jsonl`;
@@ -33,12 +33,47 @@ async function nativeHome(params: Readonly<{ rolloutPath: string; withLocalRollo
   return { env: { CODEX_HOME: codexHome }, localRollout, readRow };
 }
 
-describe('reconcileNativeCodexResumeRolloutPath', () => {
+describe('reconcileCodexResumeRolloutPath', () => {
   it('points a thread copied from another machine at the same rollout in this Codex home', async () => {
     const home = await nativeHome({ rolloutPath: WINDOWS_PATH, withLocalRollout: true });
-    await expect(reconcileNativeCodexResumeRolloutPath({ env: home.env, vendorResumeId: THREAD_ID, cwd: '/project' }))
-      .resolves.toBe(true);
+    await expect(reconcileCodexResumeRolloutPath({
+      env: { CODEX_HOME: basename(home.env.CODEX_HOME) },
+      vendorResumeId: THREAD_ID,
+      cwd: dirname(home.env.CODEX_HOME),
+    })).resolves.toBe(true);
     expect(home.readRow()).toBe(home.localRollout);
+  });
+
+  it.each(['TOML', 'argv', 'managed'] as const)('repairs the %s-selected index and preserves the fallback index', async config => {
+    const home = await nativeHome({ rolloutPath: WINDOWS_PATH, withLocalRollout: true });
+    const sqliteHome = join(home.env.CODEX_HOME, 'configured-sqlite');
+    await mkdir(sqliteHome);
+    const override = `sqlite_home = ${JSON.stringify(sqliteHome)}`;
+    if (config === 'managed') await writeFile(join(home.env.CODEX_HOME, 'cloud-config-bundle-cache.json'), '{}');
+    if (config === 'TOML') await writeFile(join(home.env.CODEX_HOME, 'config.toml'), override + '\n');
+    const competingRollout = join(home.env.CODEX_HOME, 'sessions', `rollout-2026-10-06T01-54-18-${THREAD_ID}.jsonl`);
+    await writeFile(competingRollout, `${JSON.stringify({ type: 'session_meta', payload: { id: THREAD_ID } })}\n`);
+    const databasePath = join(sqliteHome, 'state_5.sqlite');
+    const db = openSqliteDatabaseSync(databasePath);
+    try {
+      db.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)');
+      db.prepare('INSERT INTO threads (id, rollout_path) VALUES (?, ?)').run(THREAD_ID, WINDOWS_PATH);
+      await reconcileCodexResumeRolloutPath({
+        env: { ...home.env, CODEX_SQLITE_HOME: home.env.CODEX_HOME },
+        vendorResumeId: THREAD_ID,
+        cwd: '/project',
+        configOverrides: config === 'argv' ? [override] : undefined,
+        readNativeConfig: config === 'managed' ? async method => method === 'configRequirements/read'
+          ? { requirements: { sqliteHome } }
+          : { config: { sqlite_home: home.env.CODEX_HOME } } : undefined,
+      });
+      expect(db.prepare('SELECT rollout_path FROM threads WHERE id = ?').get(THREAD_ID)).toMatchObject({
+        rollout_path: home.localRollout,
+      });
+      expect(home.readRow()).toBe(WINDOWS_PATH);
+    } finally {
+      db.close();
+    }
   });
 
   it('leaves the row alone when its rollout still exists or no local rollout can replace it', async () => {
@@ -46,11 +81,11 @@ describe('reconcileNativeCodexResumeRolloutPath', () => {
     const db = openSqliteDatabaseSync(join(intact.env.CODEX_HOME, 'state_5.sqlite'));
     db.prepare('UPDATE threads SET rollout_path = ? WHERE id = ?').run(intact.localRollout, THREAD_ID);
     db.close();
-    await reconcileNativeCodexResumeRolloutPath({ env: intact.env, vendorResumeId: THREAD_ID, cwd: '/project' });
+    await reconcileCodexResumeRolloutPath({ env: intact.env, vendorResumeId: THREAD_ID, cwd: '/project' });
     expect(intact.readRow()).toBe(intact.localRollout);
 
     const missing = await nativeHome({ rolloutPath: WINDOWS_PATH, withLocalRollout: false });
-    await expect(reconcileNativeCodexResumeRolloutPath({ env: missing.env, vendorResumeId: THREAD_ID, cwd: '/project' }))
+    await expect(reconcileCodexResumeRolloutPath({ env: missing.env, vendorResumeId: THREAD_ID, cwd: '/project' }))
       .resolves.toBe(false);
     expect(missing.readRow()).toBe(WINDOWS_PATH);
   });

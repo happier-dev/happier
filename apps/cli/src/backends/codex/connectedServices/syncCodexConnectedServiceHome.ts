@@ -67,7 +67,7 @@ export type SyncCodexConnectedServiceHomeResult = Readonly<{
   requestedStateMode: CodexStateMode;
   effectiveStateMode: CodexStateMode;
   diagnostics: readonly CodexConnectedServiceStateSharingDiagnostic[];
-  targetSqliteHome: string;
+  targetSqliteHome: string | null;
 }>;
 
 function resolveCodexHomeSharingSettings(
@@ -286,7 +286,9 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
     ? [params.destinationCodexHome, sourceCodexHome]
     : [params.destinationCodexHome];
   return await withConnectedServiceStateSharingLocks(lockRoots, async () => {
-    const sourceSqliteHome = resolve(resolveConfiguredCodexSqliteHome(processEnv));
+    const sourceSqliteHome = settings.stateMode === 'shared'
+      ? resolveConfiguredCodexSqliteHome(configuredSourceCodexHome ? { ...processEnv, CODEX_HOME: configuredSourceCodexHome } : processEnv)
+      : null;
     if (!configuredSourceCodexHome && settings.stateMode === 'shared') {
       return {
         providerId: 'codex',

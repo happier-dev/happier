@@ -17,25 +17,21 @@ export async function resolveCodexAppServerProcessEnv(params: Readonly<{
   const homePath = params.affinity?.homePath?.trim() ?? '';
   if (!homePath) return processEnv;
 
+  if (params.affinity?.home !== 'connectedService') return { ...processEnv, CODEX_HOME: homePath };
+
   const persistedSqliteHomePath = params.affinity?.sqliteHomePath?.trim() ?? '';
   let sqliteHomePath = persistedSqliteHomePath;
   if (!sqliteHomePath) {
-    if (params.affinity?.home === 'connectedService') {
-      const manifest = await readConnectedServiceStateSharingManifest(homePath);
-      sqliteHomePath = manifest.effectiveStateMode === 'shared'
-        ? resolveConfiguredCodexSqliteHome(processEnv)
-        : homePath;
-    } else {
-      sqliteHomePath = typeof processEnv.CODEX_SQLITE_HOME === 'string' && processEnv.CODEX_SQLITE_HOME.trim()
-        ? resolveConfiguredCodexSqliteHome(processEnv)
-        : homePath;
-    }
+    const manifest = await readConnectedServiceStateSharingManifest(homePath);
+    sqliteHomePath = manifest.effectiveStateMode === 'shared'
+      ? resolveConfiguredCodexSqliteHome(processEnv) ?? ''
+      : homePath;
   }
 
   return {
     ...processEnv,
     CODEX_HOME: homePath,
-    CODEX_SQLITE_HOME: sqliteHomePath,
+    CODEX_SQLITE_HOME: sqliteHomePath || undefined,
   };
 }
 

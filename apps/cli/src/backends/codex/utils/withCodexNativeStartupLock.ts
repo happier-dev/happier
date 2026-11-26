@@ -1,13 +1,14 @@
 import { userInfo } from 'node:os';
 import { execFile } from 'node:child_process';
 import { mkdir, readFile, readdir, realpath, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { logger } from '@/ui/logger';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
 import { resolveConfiguredCodexHome } from './resolveConfiguredCodexHome';
 import { parseCodexVersionInfo } from '../mcp/version';
+import { resolveCodexSqliteLaunch } from '../connectedServices/codexStateFileNames';
 
 type StartupConfiguration = Readonly<{
   processEnv: NodeJS.ProcessEnv;
@@ -82,14 +83,15 @@ export async function withCodexNativeStartupLock<TResult>(
   const parsed = configuration ? parseCodexVersionInfo(configuration.versionOutput) : null;
   const version = parsed?.parsed && !parsed.prereleaseTag && /^codex(?:-cli)?\s+v?\d+\.\d+\.\d+\s*$/iu.test(configuration?.versionOutput.trim() ?? '')
     ? `${parsed.major}.${parsed.minor}.${parsed.patch}` : null;
-  const sqliteHome = configuration?.processEnv.CODEX_SQLITE_HOME;
-  const callerSelectedSqliteHome = configuration?.configOverrides?.some(value => /^\s*sqlite_home\s*=/u.test(value));
-  const requestedRoot = sqliteHome && isAbsolute(sqliteHome) && !callerSelectedSqliteHome ? sqliteHome : null;
-  const root = configuration && version && requestedRoot ? await resolveStartupRoot(configuration, requestedRoot) : null;
+  const cwd = configuration?.cwd ?? process.cwd();
+  const store = configuration
+    ? await resolveCodexSqliteLaunch({ env: configuration.processEnv, cwd, configOverrides: configuration.configOverrides })
+    : null;
+  const root = configuration && version && store?.sqliteHome ? await resolveStartupRoot(configuration, store.sqliteHome) : null;
   // Auth/config uncertainty retains global exclusion, but the materializer's
   // projection must still beat copied relative sqlite_home configuration.
   // Managed native requirements can override this pin, so it is not root proof.
-  const launchRoot = root ?? requestedRoot;
+  const launchRoot = store?.launchPin;
   const overrides = [...(configuration?.configOverrides ?? []), ...(launchRoot ? [`sqlite_home=${JSON.stringify(launchRoot)}`] : [])];
   // Unresolved native config can select any SQLite root; cold/migrating starts
   // therefore share the OS-user lock. Resolved warm starts still skip admission.
