@@ -110,7 +110,7 @@ export async function capturePerfSourceBasis({ source, captured, signal }) {
   try {
     [sha, dirty] = await Promise.all([
       command('git', ['rev-parse', 'HEAD'], { cwd: source, capture: true, signal }),
-      command('git', ['status', '--porcelain'], { cwd: source, capture: true, signal }).then(Boolean),
+      command('git', ['--no-optional-locks', 'status', '--porcelain'], { cwd: source, capture: true, signal }).then(Boolean),
     ]);
   } catch {
     signal?.throwIfAborted();

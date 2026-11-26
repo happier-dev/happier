@@ -33,7 +33,7 @@ function isGitRepo(cwd) {
  * @returns {string[]}
  */
 function gitStatusPorcelain(cwd) {
-  const out = execFileSync('git', ['status', '--porcelain=v1'], {
+  const out = execFileSync('git', ['--no-optional-locks', 'status', '--porcelain=v1'], {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],

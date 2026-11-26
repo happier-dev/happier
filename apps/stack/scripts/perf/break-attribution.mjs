@@ -56,7 +56,7 @@ export async function attributeBreakLane({ repoDir, board, files, module, line, 
   try { text = await readBoard(board); } catch { return null; }
   const posts = parseBoardPosts(text).filter(post => !/^LOAD-SENTINEL/.test(post.from));
   for (const file of files) {
-    const dirty = (await git(repoDir, ['status', '--porcelain', '--', file.path])).trim() !== '';
+    const dirty = (await git(repoDir, ['--no-optional-locks', 'status', '--porcelain', '--', file.path])).trim() !== '';
     if (dirty) {
       // A writer names its file before or around the write; later posts are
       // usually other lanes discussing the break.
