@@ -12,6 +12,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
@@ -104,6 +105,7 @@ function DeploymentDispositionSheet(
   const [typedResource, setTypedResource] = React.useState('');
   const resource = props.providerResource ?? null;
   const resourceConfirmed = !resource || choice !== 'remove' || typedResource === resource.name;
+  const resourceConfirmation = resource ? t('projects.deployments.platformLink.typeToDelete', { resource: resource.name }) : null;
   const [busy, setBusy] = React.useState(false);
   const [volumeReview, setVolumeReview] = React.useState<DeploymentTeardownPreviewV1['volumes'] | null>(null);
   const [volumeError, setVolumeError] = React.useState<ActionExecuteFailure | null>(null);
@@ -376,9 +378,9 @@ function DeploymentDispositionSheet(
       ) : null}
       {resource && platform && resourceName && choice === 'remove' ? <ItemGroup testID="project-deployments.disposition.resource"
         title={resource.consequence ?? t('projects.deployments.platformLink.deleteConsequence', { resource: resourceName, platform })}>
-        <Item title={t('projects.deployments.platformLink.typeToDelete', { resource: resourceName })} accessoryLayout="adaptive"
+        <Item title={resourceConfirmation} titleStyle={Typography.mono()} accessoryLayout="adaptive"
           showChevron={false} rightElement={<FieldTextInput testID="project-deployments.disposition.resourceConfirmation"
-            accessibilityLabel={t('projects.deployments.platformLink.typeToDelete', { resource: resourceName })}
+            accessibilityLabel={resourceConfirmation ?? undefined}
             value={typedResource} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
             onChangeText={setTypedResource} />} />
       </ItemGroup> : null}
@@ -400,10 +402,10 @@ function DeploymentDispositionSheet(
             options={[{ id: 'keep', label: t('common.keep') }, { id: 'delete', label: t('common.delete') }]}
             onChange={next => setVolumeChoices(previous => ({ ...previous, [volume.name]: next }))} />
           {volumeChoices[volume.name] === 'delete' ? <Item title={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
-            accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput
+            titleStyle={Typography.mono()} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput
               testID={`project-deployments.disposition.volume.${volume.name}.confirmation`}
               accessibilityLabel={t('projects.deployments.volumeConfirmation', { name: volumeDisplayName(volume.name) })}
-              value={confirmations[volume.name] ?? ''} editable={!busy} monospace
+              value={confirmations[volume.name] ?? ''} editable={!busy} monospace autoCapitalize="none" autoComplete="off"
               onChangeText={text => setConfirmations(previous => ({ ...previous, [volume.name]: text }))} />} /> : null}
         </React.Fragment>)}
       </ItemGroup> : null}

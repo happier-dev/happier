@@ -1027,7 +1027,7 @@ describe('Environment → Database → Workbench', () => {
     const principal = { kind: 'account' as const, accountId: 'owner',
       purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
       target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } };
-    const resourceName = 'Shop orders';
+    const resourceName = 'shop-orders';
     const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
       targetLinks: [{ targetLink, content: { ...(origin ? { providerResourceOrigin: origin } : {}), credentialPrincipal: principal,
         preparedNative: { projectName: resourceName },
@@ -1067,6 +1067,10 @@ describe('Environment → Database → Workbench', () => {
       if (starts === 'detach') await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
       const resourceConfirmation = screen.findByTestId('project-deployments.disposition.resourceConfirmation');
       expect(resourceConfirmation).not.toBeNull();
+      const { t } = await import('@/text');
+      const prompt = t('projects.deployments.platformLink.typeToDelete', { resource: resourceName });
+      expect(screen.getTextContent()).toContain(prompt);
+      expect(resourceConfirmation?.props.accessibilityLabel).toBe(prompt);
       await act(async () => resourceConfirmation!.props.onChangeText('project-123'));
       expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
       await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText(resourceName));
