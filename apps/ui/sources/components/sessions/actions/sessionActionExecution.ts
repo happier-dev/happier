@@ -150,6 +150,7 @@ function readSessionLifecycleActionOutcome(
             : details && typeof details === 'object' && 'error' in details && typeof details.error === 'string'
                 ? details.error : outcome.error;
         return { success: false, message, code: outcome.errorCode,
+            failureCause: outcome.failureCause, effectAttempted: outcome.effectAttempted, requestId: outcome.requestId,
             ...(details === undefined ? {} : { details }) };
     }
     const result = outcome.result;
@@ -310,7 +311,8 @@ function resolveMoveToFolder(context: SessionActionExecutionContext | undefined)
 function throwIfFailed(result: SessionActionOperationResult | void, fallbackMessage: string): void {
     if (!result || result.success) return;
     const message = result.message && result.message !== result.code ? result.message : fallbackMessage;
-    throw new HappyError(message, false, { code: result.code, details: result.details });
+    throw new HappyError(message, false, { code: result.code, details: result.details,
+        failureCause: result.failureCause, effectAttempted: result.effectAttempted, requestId: result.requestId });
 }
 
 function throwUnsupportedSingleTargetAction(): never {

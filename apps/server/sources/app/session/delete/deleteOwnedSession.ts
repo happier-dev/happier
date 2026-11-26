@@ -16,6 +16,8 @@ import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSess
 import { applyManagedCreationScopeEndInTx } from '@/app/machines/managed/managedCreationBirth';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';
 import { loadSessionDeleteRecipients } from './loadSessionDeleteRecipients';
+import { readStoredCommittedSessionInputMachineTarget } from '@/app/session/messages/sessionInputAdmission';
+import { readMachineOnlineAvailabilityDiagnostic } from '@/app/machines/machineStateGuards';
 
 /**
  * Deletion outcomes are kept apart because callers act on them differently.
@@ -27,8 +29,8 @@ import { loadSessionDeleteRecipients } from './loadSessionDeleteRecipients';
  *   between the read and the write (a concurrent metadata write, or a retention
  *   guard that stopped matching). Nothing was deleted and the row still exists,
  *   so this is retryable and must never be read as "already gone".
- * - `active`: a caller initiated deletion before stopping the Session. Nothing
- *   was deleted; the caller must stop the Session before requesting deletion.
+ * - `active`: a caller initiated deletion of a running Session whose committed
+ *   Machine is online or cannot be established. Stop it before deletion.
  */
 export type DeleteOwnedSessionResult =
     | Readonly<{ ok: true }>
@@ -102,7 +104,15 @@ export async function deleteSessionWithRecipientsInTx(
 
     const isCallerInitiated = params.reason === 'user_request';
     if (isCallerInitiated && session.active) {
-        return { ok: false, error: 'active' } as const;
+        // A stopped daemon cannot perform native cleanup. The Session's runner
+        // may still publish as active; explicit owner deletion may retire that
+        // history while its managed folder stays on the offline Machine.
+        const target = readStoredCommittedSessionInputMachineTarget(session);
+        const machine = target ? await tx.machine.findUnique({ where: { id: target.machineId },
+            select: { active: true } }) : null;
+        if (!machine || !readMachineOnlineAvailabilityDiagnostic(machine, true)) {
+            return { ok: false, error: 'active' } as const;
+        }
     }
 
     // Resolve recipients before the row disappears, and resolve them through
@@ -134,7 +144,7 @@ export async function deleteSessionWithRecipientsInTx(
         ...(params.ownerAccountId ? { accountId: params.ownerAccountId } : {}),
         ...(isCallerInitiated
             ? {
-                active: false,
+                active: session.active,
                 metadataLayoutVersion:
                     session.metadataLayoutVersion,
             }

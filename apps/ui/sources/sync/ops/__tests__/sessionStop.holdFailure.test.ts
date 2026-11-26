@@ -18,6 +18,21 @@ beforeEach(async () => { boundary.resetRequests(); await loadSyncSingletonForTes
 afterAll(async () => { await resetServerReachabilitySupervisors(); await boundary.dispose(); });
 
 describe('explicit Stop hold failure through real metadata transport', () => {
+    it('retains a machine admission refusal through the Session lifecycle UI adapter', async () => {
+        const home = await boundary.addHome('https://stop-admission-refusal.example', 'stop-owner');
+        const sessionId = 'stop-admission-refusal';
+        const metadata = createSessionMetadataHttpBoundary(() => ({}));
+        metadata.replaceSession(sessionId, createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, active: true }));
+        boundary.setHttpResponder(async (input, init) => metadata.handle(input, init));
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 };
+        boundary.setRpcAckResponder(async () => ({ ok: false, error: 'Forbidden',
+            errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause, effectAttempted: false }));
+        const { executeSessionLifecycleAction } = await import('@/components/sessions/actions/sessionActionExecution');
+        expect(await executeSessionLifecycleAction('session.stop', sessionId, { serverId: home.id }))
+            .toMatchObject({ success: false, code: RPC_ERROR_CODES.FORBIDDEN, failureCause, effectAttempted: false });
+        expect(boundary.requests.map(request => request.method)).toEqual(['stop-session']);
+    });
+
     it.each(['daemon', 'runner'] as const)('retains retirement diagnostics through the public Stop Action (%s)', async route => {
         const home = await boundary.addHome(`https://stop-diagnostics-${route}.example`, 'stop-owner');
         const sessionId = `stop-diagnostics-${route}`;

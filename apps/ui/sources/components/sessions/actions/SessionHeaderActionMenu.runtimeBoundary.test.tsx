@@ -6,6 +6,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/sessions/readState/actions';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { Modal } from '@/modal';
 
 import { createMachineFixture, createSessionFixture, createSessionAccessFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -23,7 +25,7 @@ import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/dae
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { buildSessionOrganizationLabelKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { selectEffectiveSessionAppearanceColor } from '@/sync/store/selectors/sessionAppearance';
-import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_SET_APPEARANCE_COLOR_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
+import { SESSION_ACTION_DELETE_ID, SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_SET_APPEARANCE_COLOR_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
 import { SessionHeaderActionMenu } from './SessionHeaderActionMenu';
 import { resolvePluginSessionHeaderActionPresentations } from './pluginHeaderActions';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -124,6 +126,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     let boundary: ReturnType<typeof createSocketIoBoundaryStub>;
     let previousState: ReturnType<typeof storage.getState>;
     let readStateReply: (() => Response) | null;
+    let deleteReply: (() => Response) | null;
     let setAppearanceReply: ((body: unknown) => Response) | null;
     let externalAction: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null;
 
@@ -141,6 +144,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         } });
         previousState = storage.getState();
         readStateReply = null;
+        deleteReply = null;
         setAppearanceReply = null;
         externalAction = null;
         voiceSessionBindingStore.setState({
@@ -164,6 +168,11 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
                     capabilities: { serverIdentity: { serverIdentityId: url.hostname === 'projection.home.test' ? SERVER_IDENTITY_ID : null } },
                 }));
                 if (path === '/v2/sessions/sess_1/read-state' && readStateReply) return readStateReply();
+                if (path === '/v1/sessions/sess_1' && method === 'DELETE' && deleteReply) return deleteReply();
+                if (path === '/v2/sessions/sess_1' && method === 'GET' && deleteReply) return Response.json({
+                    session: createPlainSessionCurrentProjectionRecordFixture({ id: 'sess_1', active: true,
+                        metadata: storage.getState().sessions.sess_1!.metadata! }),
+                });
                 if (path === '/v2/session-organization/appearances/sess_1' && method === 'PUT' && setAppearanceReply) {
                     return setAppearanceReply(body);
                 }
@@ -262,6 +271,30 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         expect(selectEffectiveSessionAppearanceColor(storage.getState(), target)).toEqual(projectColor);
         await act(async () => { menu().onOpenChange(true); });
         expect(resetItem()).toBeUndefined();
+    });
+
+    it('keeps a typed Home refusal behind Technical details in the real header action catch', async () => {
+        const session = { ...storage.getState().sessions.sess_1!, active: true,
+            metadata: { ...storage.getState().sessions.sess_1!.metadata!, sessionDirectoryV1: { v: 1 as const, kind: 'managed' as const } } };
+        storage.setState({ sessions: { [session.id]: session } });
+        const machine = { ...storage.getState().machines[MACHINE_ID]!, active: false };
+        storage.getState().applyMachines([machine], true, { sourceServerId: homes.homes.projection!.id });
+        vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(true);
+        deleteReply = () => Response.json({ error: 'Forbidden' }, { status: 403 });
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        try {
+            expect(screen.findByType(DropdownMenu).props.items).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: SESSION_ACTION_DELETE_ID }),
+            ]));
+            await act(async () => {
+                screen.findByType(DropdownMenu).props.onSelect(SESSION_ACTION_DELETE_ID);
+            });
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalled());
+            await vi.waitFor(() => expect(modalAlert).toHaveBeenCalled(), { timeout: 10_000 });
+            const { t } = await import('@/text');
+            expect(modalAlert).toHaveBeenLastCalledWith(t('common.error'), expect.any(String),
+                expect.arrayContaining([expect.objectContaining({ text: t('approvals.technicalDetails') })]));
+        } finally { await screen.unmount(); }
     });
 
     it.each([

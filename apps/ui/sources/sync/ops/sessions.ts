@@ -1493,6 +1493,8 @@ export async function sessionReadLogTail(
 }
 
 export type SessionStopResponse = SessionStopResult & Readonly<{
+    ok?: false;
+    errorCode?: string;
     success: boolean;
     message?: string;
     code?: import('./sessionStopContract').SessionStopResponseCode;
@@ -1608,7 +1610,8 @@ export async function sessionStopWithServerScope(
         };
     }
 
-    return { ...confirmation, success: false, message: stopResult.message, code: 'session_stop_failed' };
+    return { ...confirmation, success: false, message: stopResult.message, code: 'session_stop_failed',
+        ...(stopResult.errorCode ? { ok: false, errorCode: stopResult.errorCode } as const : {}) };
 }
 
 export { sessionArchiveWithServerScope, sessionUnarchiveWithServerScope, type SessionArchiveResponse } from './sessionArchive';

@@ -6,6 +6,7 @@ import type { SessionArchiveOperation } from '@/sync/domains/session/listing/ses
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionArchiveActionResultV1, SessionDeleteResult, SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 import type { SESSION_ACTION_CLEAR_STATUS_ID } from './sessionActionIds';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type SessionActionSurface =
     | 'rowMenu'
@@ -101,7 +102,7 @@ export type SessionActionTarget = Readonly<{
     reminderAction: SessionReminderActionAvailability;
 }>;
 
-export type SessionActionOperationResult = Readonly<{
+export type SessionActionOperationResult = Readonly<Pick<ActionExecuteFailure, 'failureCause' | 'effectAttempted' | 'requestId'> & {
     success: boolean;
     message?: string;
     code?: string;

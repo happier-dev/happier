@@ -26,6 +26,7 @@ const allocateAccountSeq = vi.fn(async (params: { where: { id: string } }) => ({
     seq: params.where.id === 'owner' ? 301 : 302,
 }));
 const findAudienceAccounts = vi.fn();
+const findMachine = vi.fn(async () => ({ active: false, installationId: 'installation-1' }));
 const findSession = vi.fn(async () => ({
     accountId: 'owner',
     account: { status: 'active' },
@@ -54,7 +55,13 @@ const findSessionDrafts = vi.fn(async () => []);
 
 function createTx() {
     return {
+            machine: { findUnique: findMachine },
             ...inTxPostgresControlStatementMock,
+            // Prisma's SQLite metadata fence is a no-op row write at the database boundary.
+            $executeRawUnsafe: async (query: string, ...values: unknown[]) => {
+                if (query === 'UPDATE "Account" SET "settingsVersion" = "settingsVersion" WHERE "id" = ?') return 1;
+                return inTxPostgresControlStatementMock.$executeRawUnsafe(query, ...values);
+            },
             simpleCache: { findUnique: async () => null },
             session: {
                 findFirst,
@@ -88,7 +95,8 @@ function createTx() {
             sessionMessage: { deleteMany: deleteMessages },
             usageReport: { deleteMany: deleteReports },
             usageEvent: { groupBy: async () => [] },
-            accessKey: { deleteMany: deleteAccessKeys },
+            accessKey: { deleteMany: deleteAccessKeys, findMany: async () => [] },
+            artifact: { findMany: async () => [] },
             ephemeralRunnerActivation: { findFirst: findRunnerActivation },
             sessionFollowEdge: createEmptySessionFollowEdgeTransactionModel(),
             automation: { findMany: async () => [] },
@@ -121,6 +129,7 @@ function seedDeleteTarget(metadataLayoutVersion: 0 | 1, recipientAccountIds: str
 describe('deleteOwnedSession', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        findMachine.mockReset().mockResolvedValue({ active: false, installationId: 'installation-1' });
     });
 
     it('deletes a session by id for system-initiated retention and emits owner + share updates', async () => {
@@ -197,11 +206,11 @@ describe('deleteOwnedSession', () => {
             const { log } = await import('@/utils/logging/log');
             expect(log).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    module: 'session-delete',
+                    module: 'session-publication',
                     sessionId: 's1',
-                    error: publicationFailure,
+                    level: 'warn',
                 }),
-                'Failed to emit one or more delete-session updates',
+                expect.any(String),
             );
         });
     });
@@ -220,6 +229,19 @@ describe('deleteOwnedSession', () => {
             where: expect.objectContaining({ id: 's1', accountId: 'owner' }),
         }));
         expect(deleteSession).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('deletes an own active Session on a stopped shared Machine only; machine active=%s', async active => {
+        const { SessionInputMachineTargetV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+        findMachine.mockResolvedValueOnce({ active, installationId: 'installation-1' });
+        findFirst.mockResolvedValueOnce({ id: 's1', accountId: 'owner', active: true, archivedAt: null,
+            runtimeMachineTarget: SessionInputMachineTargetV1Schema.parse({ homeId: 'home-1', accountId: 'owner',
+                sessionId: 's1', machineId: 'shared-machine', installationId: 'installation-1' }),
+            metadataLayoutVersion: 1, updatedAt: new Date('2025-01-01T00:00:00.000Z') });
+        findAudienceAccounts.mockResolvedValue([{ id: 'owner' }]);
+        expect(await deleteOwnedSession({ sessionId: 's1', ownerAccountId: 'owner', reason: 'user_request' }))
+            .toEqual(active ? { ok: false, error: 'active' } : { ok: true });
+        expect(deleteSession).toHaveBeenCalledTimes(active ? 0 : 1);
     });
 
     it('refuses a caller-initiated delete while the Session is active', async () => {

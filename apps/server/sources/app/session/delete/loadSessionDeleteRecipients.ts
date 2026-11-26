@@ -14,6 +14,7 @@ const sessionDeleteTargetSelect = {
     id: true,
     accountId: true,
     active: true,
+    runtimeMachineTarget: true,
     archivedAt: true,
     managedCreationId: true,
     metadataLayoutVersion: true,

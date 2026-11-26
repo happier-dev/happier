@@ -104,6 +104,7 @@ import {
 } from '@/components/sessions/actions/sessionActionIds';
 import { buildSessionMetadataStabilitySignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
 import { HappyError } from '@/utils/errors/errors';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import {
@@ -256,7 +257,9 @@ function readCurrentSessionActionTargetSnapshot(
 
 function showSessionHeaderActionError(error: unknown): void {
   if (error instanceof HappyError) {
-    Modal.alert(t('common.error'), error.message);
+    alertActionFailure({ reason: error.message, code: error.code ?? null, requestId: error.requestId,
+      context: { ...readSafeFailureDetails(error.details), ...error.failureCause,
+        ...(error.effectAttempted === undefined ? {} : { effectAttempted: error.effectAttempted }) } });
     return;
   }
   Modal.alert(t('common.error'), t('errors.unknownError'));

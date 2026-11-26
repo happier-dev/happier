@@ -22,6 +22,7 @@ import type { SessionStopOutcome } from '@happier-dev/protocol/sessions/control/
 import { createRpcCallError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 import { log } from '@/log';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 type SessionKillRequest = Record<string, never>;
 type SessionStopFailureDiagnostics = Pick<Extract<StopSessionResult, { status: 'incomplete' }>,
@@ -315,10 +316,13 @@ async function requestDaemonMachineSessionStop(params: Readonly<{
                 ...(errorCode ? { errorCode } : {}),
             };
         }
+        const failure = readActionFailureEnvelope({ ...(typeof error === 'object' && error !== null ? error : {}),
+            ok: false, errorCode: errorCode ?? 'session_stop_failed', error: message });
         return {
             type: 'failed',
             message,
             ...(errorCode ? { errorCode } : {}),
+            failureCause: failure?.failureCause, effectAttempted: failure?.effectAttempted,
         };
     }
 }
