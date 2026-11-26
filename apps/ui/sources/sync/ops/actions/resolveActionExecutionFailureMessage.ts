@@ -231,6 +231,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const prerequisite = describeActionExecutionPrerequisite(code);
     if (prerequisite) return prerequisite.message;
     if (code === 'contributed_action_unavailable') return t('pluginRuntime.actionUnavailable');
+    if (code === 'session_input_target_unavailable') return t('session.pendingMessages.admissionRejected.targetUnavailable');
     if (code === 'client_required') return t('errors.clientRequired');
     if (code === 'secret_save_client_required') return t('errors.secretSaveClientRequired');
     if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');

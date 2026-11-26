@@ -120,8 +120,12 @@ export function createAccountNoticeInvestigation(input: Readonly<{
                 ...(options?.placement ? { placement: options.placement } : {}) }, options);
             return result.ok ? (result.result as PresentationResult).outcome : presentActionRefusal(result);
         },
-        async openEditor(actionId?: string) {
-            await invoke({ kind: 'edit', ...(actionId === undefined ? {} : { actionId }) });
+        async openEditor(actionId?: string): Promise<FailureInvestigationUnavailable | null> {
+            const result = await invoke({ kind: 'edit', ...(actionId === undefined ? {} : { actionId }) });
+            if (!result.ok) return presentActionRefusal(result);
+            const answer = result.result as Readonly<{ kind: 'edited' }> | PresentationResult;
+            if (answer.kind === 'edited') return null;
+            return answer.outcome?.kind === 'unavailable' ? answer.outcome : { kind: 'unavailable', code: 'invalid_result' };
         },
         async readLinkedSession(entry: TriageFailureSubjectV1, options?: FailureInvestigationExecutionOptions) {
             const subject = read(entry);

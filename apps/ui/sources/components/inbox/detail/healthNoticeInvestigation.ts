@@ -102,7 +102,7 @@ export function useHealthNoticeInvestigate(
     if (configuredActionId !== undefined) pressedActionId.current = configuredActionId;
     return performInvestigation(undefined, mode === 'start' ? 'send' : 'compose');
   }, [performInvestigation]);
-  return { investigate, investigateWithPlacement, launch, pending, outcome };
+  return { investigate, investigateWithPlacement, launch, pending, outcome, reportRefusal: setOutcome };
 }
 
 export type InvestigationAgentAction = FailureAgentAction;

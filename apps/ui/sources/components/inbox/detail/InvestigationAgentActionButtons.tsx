@@ -7,7 +7,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import type { FailureAgentCatalogOutcome } from '@/hooks/inbox/useInvestigateFailure';
 import type { InvestigationAgentAction } from './healthNoticeInvestigation';
-import { useOpenFailureActionEditor } from './useOpenFailureActionEditor';
+import { useOpenFailureActionEditor, type FailureActionEditorRefusal } from './useOpenFailureActionEditor';
 
 /** A record to draw; the default record before the catalog answers has no id yet. */
 export type InvestigationAgentActionButtonModel = Readonly<Omit<InvestigationAgentAction, 'actionId'> & { actionId?: string }>;
@@ -40,12 +40,13 @@ export function InvestigationAgentActionButtons(props: Readonly<{
    */
   emphasis?: 'primary' | 'secondary';
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
+  onEditRefusal?: (outcome: FailureActionEditorRefusal) => void;
   /** The Account owner's catalog state, shown in the controls' place. */
   catalogOutcome?: FailureAgentCatalogOutcome | null;
   /** Reads the catalog again (the line's Retry). */
   onRetry?: () => void;
 }>): React.ReactElement | null {
-  const openEditor = useOpenFailureActionEditor();
+  const openEditor = useOpenFailureActionEditor(props.onEditRefusal);
   if (props.catalogOutcome) {
     // The line spans the controls' row, so its Retry stays on the sentence's line instead of wrapping under it.
     return <View style={UNAVAILABLE_LINE_STYLE}>
@@ -73,7 +74,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
         launchMode={first.launchMode}
         {...(first.startable ? {} : { startUnavailableReason: t('ui.pluginUi.agentActionStartNeedsTask') })}
         onLaunch={(mode) => { props.onLaunch(mode, first.actionId); }}
-        {...(openEditor === null ? {} : { onEdit: () => { openEditor(first.actionId); } })}
+        {...(openEditor === null || first.actionId === undefined ? {} : { onEdit: () => { openEditor(first.actionId); } })}
         {...(otherGroups ? {
           groups: otherGroups,
           showGroupLabels: false,

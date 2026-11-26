@@ -37,6 +37,9 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
         <InvestigationAgentActionButtons
             actions={investigation.actions?.length ? investigation.actions : fallback}
             pending={investigation.pending}
+            catalogOutcome={investigation.catalogOutcome}
+            onRetry={investigation.retryCatalog}
+            onEditRefusal={investigation.reportRefusal}
             compact={compact}
             {...(props.emphasis === undefined ? {} : { emphasis: props.emphasis })}
             onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}

@@ -114,8 +114,8 @@ describe('Inbox notice detail', () => {
     const screen = await render({ kind: 'unavailable', code: 'session_input_target_unavailable' });
     await act(async () => { await screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('start'); });
     expect(screen.findByTestId('inbox.notice.investigate.unavailable')).not.toBeNull();
-    await screen.pressByTestIdAsync('inbox.notice.investigate.unavailable.details');
-    expect(screen.getTextContent()).toContain('session_input_target_unavailable');
+    expect(screen.getTextContent()).toContain('session.pendingMessages.admissionRejected.targetUnavailable');
+    expect(screen.findByTestId('inbox.notice.investigate.unavailable.details')).toBeNull();
   });
 
   it('offers the configured action launch and edit modes and keeps Dismiss secondary', async () => {

@@ -4,6 +4,8 @@ import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -52,6 +54,19 @@ vi.mock('@/utils/web/radixCjs', async () => {
 });
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
+const catalogTransport = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    return { ...original, createFrontDoorActionExecute: (...args: Parameters<typeof original.createFrontDoorActionExecute>) => {
+        const execute = original.createFrontDoorActionExecute(...args);
+        const dispatch = (...[actionId, input, context]: Parameters<typeof execute>): ReturnType<typeof execute> => {
+            if (catalogTransport.getMockImplementation() && actionId === 'action.invoke') return catalogTransport(input, context);
+            return execute(actionId, input, context);
+        };
+        return Object.assign(dispatch, execute);
+    } };
+});
+
 const sessionRequests = installSessionActionRpcBoundary(() => undefined);
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -70,7 +85,7 @@ const { WorkflowInvocationDetail } = await import('./WorkflowInvocationDetail');
 const { projectWorkflowInvocationRecovery } = await import('./workflowRunDetailPresentation');
 const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
 const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
-const { InvestigationOutcomeBanner } = await import('@/components/inbox/detail/InvestigationOutcomeBanner');
+const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
 const { ModalProvider, useModal } = await import('@/modal');
 const originalState = storage.getState();
 const originalAppliedSnapshot = getAppliedActiveServerSnapshot();
@@ -176,15 +191,12 @@ function expectNoSessionTransport() {
 }
 
 describe('WorkflowInvocationDetail canonical request cards', () => {
-    it('offers the shared agent action on a failed Run and presents its configured handoff refusal', async () => {
+    it('shows the investigation catalog refusal on a failed Run without offering a launch', async () => {
         const screen = await renderDetail({ progress: null, lifecycle: 'failed',
             investigationSubject: { kind: 'workflowRun', serverId, runId: 'failed-run' } });
         try {
-            const buttons = screen.findAllByType(AgentActionButton);
-            expect(buttons).toHaveLength(1);
-            await act(async () => { buttons[0]!.props.onLaunch('review'); });
-            await vi.waitFor(() => expect(screen.findAllByType(InvestigationOutcomeBanner)[0]?.props.outcome)
-                .toEqual({ kind: 'unavailable', code: 'failure_actions_unavailable' }));
+            await vi.waitFor(() => expect(screen.findByTestId('investigation.agentActions.unavailable')).not.toBeNull());
+            expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
             expectNoSessionTransport();
         } finally { await screen.unmount(); }
     });
@@ -272,6 +284,21 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
     // DESIGN-ACCEPT-6 NF-10: the step pane leads with one filled action, never Investigate and Run again both filled.
     it('fills one action in a failed step pane that offers Investigate and Run again', async () => {
         const onRunAgain = vi.fn();
+        const binding = normalizePluginUiDestinationBindingV1({
+            pluginId: 'happier.triage', destinationId: 'triage', rendererId: 'actions-editor',
+            container: 'appPage', target: { kind: 'app' },
+        });
+        if (!binding) throw new Error('Expected the investigation contribution');
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => ({
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            surfacePlacementsById: { triage: {
+                id: 'triage', pluginId: 'happier.triage', contributionKind: 'surfacePlacement', descriptorId: 'triage',
+                binding, target: binding.target, renderer: { kind: 'reactNative', contributionId: 'actions-editor' },
+                display: { developerFallback: 'Triage' }, availability: { state: 'available', reason: 'available', diagnostics: [] },
+                headerActions: [], failureActions: { action: 'native-failure/handle-v1' },
+            } },
+        }));
+        catalogTransport.mockResolvedValue({ ok: true, result: { kind: 'actions', actions: [] } });
         const screen = await renderDetail({ progress: null, lifecycle: 'failed', onRunAgain, noChoicesNext: 'run_again',
             investigationSubject: { kind: 'workflowRun', serverId, runId: 'failed-run' },
             recovery: projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
@@ -279,8 +306,11 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         try {
             const runAgain = screen.findByTestId('workflow-run-recovery-run-again');
             expect(runAgain).not.toBeNull();
-            const agentActions = screen.findAllByType(AgentActionButton);
-            expect(agentActions).toHaveLength(1);
+            const agentActions = await vi.waitFor(() => {
+                const actions = screen.findAllByType(AgentActionButton);
+                expect(actions).toHaveLength(1);
+                return actions;
+            });
             const filled = [runAgain!.props.display !== 'secondary', agentActions[0]!.props.emphasis !== 'secondary'];
             expect(filled.filter(Boolean)).toHaveLength(1);
             // One actions row holds both, the filled Run again first (FIN-DESIGN-ACCEPT-9 P4).
@@ -291,7 +321,11 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
             const order = rows[0]!.findAll(node => node.type === AgentActionButton || node.props.testID === 'workflow-run-recovery-run-again')
                 .map(node => node.type === AgentActionButton ? 'investigate' : 'runAgain');
             expect([...new Set(order)]).toEqual(['runAgain', 'investigate']);
-        } finally { await screen.unmount(); }
+        } finally {
+            await screen.unmount();
+            catalogTransport.mockReset();
+            unpublish();
+        }
     });
     it('explains the Machine source-runtime repair before offering another launch', async () => {
         const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'step',

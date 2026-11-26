@@ -3,6 +3,7 @@ import * as React from 'react';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 import type { HealthNoticeInvestigationOutcome, HealthNoticeInvestigationPlacement } from './healthNoticeInvestigation';
@@ -43,9 +44,9 @@ export function InvestigationOutcomeBanner(props: Readonly<{
             action: openEditor === null ? null : { label: t('inbox.work.healthNotice.notSetUpAction'),
               onPress: () => { openEditor(outcome.configuredActionId); } } }
           : { tone: 'danger' as const, title: t('inbox.work.healthNotice.unavailableTitle'),
-            description: t('inbox.work.healthNotice.unavailableBody'), details: [outcome.code] };
+            description: resolveActionExecutionFailureMessage({ ok: false, errorCode: outcome.code }, t('common.requestFailed')) };
   return <AttentionBanner testID={`${testID}.${outcome.kind}`} tone={copy.tone} title={copy.title}
-    description={copy.description} details={'details' in copy ? copy.details : undefined}
+    description={copy.description}
     action={'action' in copy ? copy.action : undefined} placement={props.placement} />;
 }
 
