@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { DatabaseOperationResultV1, DatabaseRelationStructureV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseOperationResultV1, DatabaseRelationStructureV1, DatabaseRowsContinuationV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
@@ -10,12 +10,16 @@ import { workbenchTargetKey, createWorkbenchInstance } from './workbench.js';
 const descriptor = createDatabaseDescriptorV1Fixture();
 const targetKey = workbenchTargetKey(descriptor.target);
 
-it('reads only demanded catalogue pages, retains held row identity, and scopes own-write invalidation', async () => {
+it('retains opened pages across switches and only reads on new demand, Refresh or a matching write', async () => {
     const relation = { schema: 'public', name: 'items' };
     const structure: DatabaseRelationStructureV1 = { relation, kind: 'table',
         columns: [{ name: 'id', nativeType: 'bigint', semanticType: 'integer', nullable: false, generated: false }],
         primaryKey: ['id'], indexes: [], foreignKeys: [], capabilities: [] };
     const calls: string[] = [];
+    const continuation: DatabaseRowsContinuationV1 = { kind: 'offset', offset: 1, binding: {
+        target: descriptor.target, relation, columns: ['id'], order: [],
+    } };
+    let firstId = '9007199254740993';
     let ownWrite: Parameters<WorkbenchClient['subscribeOwnWrites']>[0] | undefined;
     // Genuine Action transport boundary: deterministic driver answers, real cache/draft logic underneath.
     const client: WorkbenchClient = {
@@ -27,8 +31,15 @@ it('reads only demanded catalogue pages, retains held row identity, and scopes o
             if (input.operation === 'schemas.list') return { ok: true, operation: input.operation, schemas: [{ name: 'public' }], completeness: incomplete(input.operation) };
             if (input.operation === 'relations.list') return { ok: true, operation: input.operation, relations: [{ relation, kind: 'table' }], completeness: incomplete(input.operation) };
             if (input.operation === 'relation.structure') return { ok: true, operation: input.operation, structure: { ...structure, relation: input.relation } };
-            if (input.operation === 'rows.read') return { ok: true, operation: input.operation, result: { columns: structure.columns,
-                rows: [{ cells: [{ type: 'integer', value: '9007199254740993' }], identity: { key: [{ column: 'id', value: { type: 'integer', value: '9007199254740993' } }], original: [] } }], completeness: { complete: true } } };
+            if (input.operation === 'rows.read') {
+                const later = input.page.continuation?.kind === 'offset' && input.page.continuation.offset === 1;
+                const cell = { type: 'integer', value: later ? '9007199254740995' : firstId } as const;
+                return { ok: true, operation: input.operation, result: { columns: structure.columns,
+                    rows: [{ cells: [cell], identity: { key: [{ column: 'id', value: cell }], original: [] } }],
+                    completeness: later || input.relation.name !== relation.name ? { complete: true } : {
+                        complete: false, reason: 'page', continuation,
+                    } } };
+            }
             throw new Error('Unexpected operation');
         },
         access: async () => { throw new Error('Read caching does not read policy'); },
@@ -43,19 +54,47 @@ it('reads only demanded catalogue pages, retains held row identity, and scopes o
     const groups = instance.schemaRelations(targetKey, 'public');
     const page = instance.page(location);
     const otherPage = instance.page({ ...location, relation: { schema: 'public', name: 'other' } });
-    const off = [schemas.subscribe(() => {}), groups.subscribe(() => {}), page.subscribe(() => {}), otherPage.subscribe(() => {})];
+    const off = [schemas.subscribe(() => {}), groups.subscribe(() => {})];
     try {
         await schemas.demand();
         expect(calls).toEqual(['schemas.list']);
         await groups.demand();
         expect(calls).toEqual(['schemas.list', 'relations.list']);
+        const hideFirstPage = page.subscribe(() => {});
+        off.push(hideFirstPage);
         await page.demand();
-        await otherPage.demand();
         const held = page.get().data;
-        const before = [...calls];
-        await instance.page(location).demand();
+        const initialCalls = calls.length;
+        const completeness = held?.completeness;
+        if (!completeness || completeness.complete || completeness.continuation?.kind !== 'offset') {
+            throw new Error('Expected a second page');
+        }
+        hideFirstPage();
+        const laterPage = instance.page({ ...location, page: { ...location.page, offset: 1, continuation: completeness.continuation } });
+        const hideLaterPage = laterPage.subscribe(() => {});
+        off.push(hideLaterPage);
+        await laterPage.demand();
+        expect(laterPage.get().data?.rows[0]?.cells).toEqual([{ type: 'integer', value: '9007199254740995' }]);
+        expect(calls.slice(initialCalls)).toEqual(['rows.read']);
+        hideLaterPage();
+
+        off.push(otherPage.subscribe(() => {}));
+        await otherPage.demand();
+        const untouched = otherPage.get().data;
+        const beforeReveal = calls.length;
+        firstId = '9007199254740994'; // An external write has no Workbench own-write notification.
+        off.push(page.subscribe(() => {}));
+        await page.demand();
         expect(page.get().data).toBe(held);
-        expect(calls).toEqual(before);
+        expect(calls).toHaveLength(beforeReveal);
+
+        page.invalidate();
+        await page.demand();
+        expect(calls.slice(beforeReveal)).toEqual(['rows.read']);
+        expect(page.get().data?.rows[0]?.cells).toEqual([{ type: 'integer', value: firstId }]);
+        expect(otherPage.get().data).toBe(untouched);
+        const refreshed = page.get().data;
+        const before = [...calls];
         const change = { targetKey, relation, rowKey: 'row', label: 'Row', change: {
             kind: 'delete' as const, key: [{ column: 'id', value: { type: 'integer' as const, value: '1' } }],
         } };
@@ -67,11 +106,13 @@ it('reads only demanded catalogue pages, retains held row identity, and scopes o
             status: 'committed', inserted: '0', updated: '0', deleted: '1' } });
         await page.demand();
         expect(calls, 'Apply settlement waits for the same own-write push as every other workbench').toEqual(before);
-        expect(page.get().data).toBe(held);
+        expect(page.get().data).toBe(refreshed);
         ownWrite?.({ target: descriptor.target, relation });
         await page.demand();
         expect(calls.slice(before.length)).toEqual(['relation.structure', 'rows.read']);
-        expect(otherPage.get().data).toBeDefined();
+        expect(otherPage.get().data).toBe(untouched);
+        await laterPage.demand();
+        expect(calls.slice(before.length)).toEqual(['relation.structure', 'rows.read', 'rows.read']);
     } finally { for (const unsubscribe of off) unsubscribe(); instance.close(); }
 });
 

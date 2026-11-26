@@ -13,6 +13,8 @@ import { DatabaseTargetsListInputV1Schema } from '@happier-dev/plugin-sdk/databa
 import { DatabaseTargetsConnectInputV1Schema } from '@happier-dev/database-protocol';
 import { createManualDatabaseTargets, type DatabaseManualIdentity, type DatabaseManualScope } from './manualTargets.js';
 import type { DatabaseWorkbenchConnection } from './connection.js';
+// Load the driver graph during collection so the first Connect measures the actual open and Retry.
+import './connection.js';
 
 const directories: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -82,8 +84,12 @@ describe('manual target associations in the persistent daemon KV boundary', () =
         expect(connected.target).toEqual(listed.targets[0]?.target);
         await expect(owner.admit({ target: connected.target, access: 'read', requester: 'agent' }))
             .rejects.toMatchObject({ code: 'database_agent_access_none' });
-        await owner.forget({ target: manual(connected.target) });
+        const target = manual(connected.target);
+        await owner.forget({ target });
         expect((await owner.list({ input: { scope: selected }, requester: 'person' })).targets).toEqual([]);
+        await expect(owner.resolve({ input: { operation: 'describe', target }, access: 'read', requester: 'person', secrets: state.secrets }))
+            .rejects.toMatchObject({ code: 'database_target_unavailable' });
+        expect(state.acquisitions).toEqual([input.savedSecretId]);
         expect(await state.secrets.readSavedSecret(input.savedSecretId)).toBe(state.secretValue);
     });
 
