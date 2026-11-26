@@ -10,6 +10,7 @@ import {
   DeploymentEnvironmentListResultV1Schema,
   DeploymentEnvironmentUpdateInputV1Schema,
   DeploymentEnvironmentUpdateResultV1Schema,
+  DeploymentReceiptGetResultV1Schema,
   type DeploymentEnvironmentUpdateInputV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -30,13 +31,19 @@ function readResult<T>(schema: Readonly<{ safeParse(value: unknown): { success: 
   return parsed.success ? parsed.data : null;
 }
 
-/** Every private content head an Environment's readers open: its content, every target link, its Domains. */
+/** Every private content head an Environment's readers open: its content, every target link, each link's active
+ * receipt and its Domains. A native database read opens the active receipt for its approved input basis; receipt
+ * history stays with its key holder and is never listed. */
 async function collectEnvironmentHeads(ports: DeploymentContentRecipientPortsV1, serverId: string, environmentId: string,
   context: ActionExecutorContext, heads: string[]): Promise<void> {
   const detail = readResult(DeploymentEnvironmentGetResultV1Schema,
     await ports.deploymentAction('deployments.environments.get', { serverId, environmentId }, context));
   if (!detail?.ok) return;
   heads.push(detail.environment.contentArtifactId, ...detail.targetLinks.map(link => link.contentArtifactId));
+  const receipts = await Promise.all(detail.targetLinks.flatMap(link => link.activeDeploymentId ? [link.activeDeploymentId] : [])
+    .map(async deploymentId => readResult(DeploymentReceiptGetResultV1Schema, await ports.deploymentAction('deployments.receipts.get',
+      { serverId, environmentId, deploymentId }, context))));
+  for (const receipt of receipts) if (receipt?.ok && receipt.deployment.contentArtifactId) heads.push(receipt.deployment.contentArtifactId);
   let cursor: string | undefined;
   do {
     const page = readResult(DeploymentDomainListResultV1Schema, await ports.deploymentAction('deployments.domains.list',
@@ -75,7 +82,7 @@ export function prepareDeploymentEnvironmentRecipientsV1(ports: DeploymentConten
 }
 
 /** Committed Source audience/owner change: deliver every current private deployment head the Source holds.
- * Receipts are excluded: new ones carry their audience at creation; older ones need their key holder to share them. */
+ * New receipts carry their audience at creation; of the older ones only each link's active receipt is delivered. */
 export function prepareProjectSourceDeploymentRecipientsV1(ports: DeploymentContentRecipientPortsV1,
   input: Readonly<{ serverId: string; projectSourceId: string }>, context: ActionExecutorContext): Promise<void> {
   return deliver(ports, context, async heads => {

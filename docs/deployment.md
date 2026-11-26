@@ -2008,7 +2008,9 @@ Environment's owning Account or Team retains admin access. A Machine Use deploye
 reads earlier receipts as themselves when preparing a stored-definition redeploy;
 this does not grant definition management or permit a non-member to read history.
 An older private E2EE receipt still requires its existing key holder to share it;
-a new requester cannot manufacture a missing recipient envelope.
+a new requester cannot manufacture a missing recipient envelope. The one exception
+is each target link's active receipt, which a keyholder's committed audience change
+delivers (see the effective Source audience below).
 
 For a signed native root in 0.3 development, mint admits one finite Deploy
 preparation. Candidate publication inside it retains that admission after a
@@ -2619,11 +2621,14 @@ reader can open it; the server never creates or opens these keys. Two committed
 changes deliver them through the existing Artifact recipient preparation (census
 plus key-envelope commit), run by the keyholding app or CLI that made the change:
 a Source owner or audience edit delivers every Environment's content, all of its
-target links (retained ones included), its Domains and the Source's deployment
-defaults; an Environment Permissions Save that changes deployers or data editors
-delivers that one Environment's content, links and Domains to the audience already
-present. `packages/deployment-protocol/src/v1/contentRecipients.ts` owns both
-selections. Receipts are excluded, as described for receipt history. Delivery is
+target links (retained ones included), the receipt each link names as active, its
+Domains and the Source's deployment defaults; an Environment Permissions Save that
+changes deployers or data editors delivers that one Environment's content, links,
+active receipts and Domains to the audience already present. A native database
+read opens the active receipt for its approved input basis, so a reader needs that
+envelope. `packages/deployments/src/actions/contentRecipients.ts` owns both
+selections. Receipt history is not listed or delivered, as described for receipt
+history. Delivery is
 best effort after the commit: an audience member whose envelope is missing (the
 editor is not a keyholder, a read failed, or the member has no content key yet)
 still gets `deployment_content_unavailable` until a later trigger delivers it.

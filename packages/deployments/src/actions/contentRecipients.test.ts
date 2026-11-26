@@ -4,6 +4,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 
 import {
   createDeploymentEnvironmentHeaderV1,
+  createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import {
@@ -25,7 +26,7 @@ const reference = (id: string) => ({
 });
 
 // Home answers are the boundary here: the stored rows' read projections, built by the canonical fixtures.
-function home(options: Readonly<{ domainsFail?: boolean }> = {}) {
+function home(options: Readonly<{ domainsFail?: boolean; receiptFails?: boolean }> = {}) {
   const prepared: string[][] = [];
   const calls: string[] = [];
   const ports = {
@@ -55,11 +56,14 @@ function home(options: Readonly<{ domainsFail?: boolean }> = {}) {
             createDeploymentTargetLinkHeaderV1({
               id: `${id}-runtime`,
               environmentId: id,
+              activeDeploymentId: `${id}-deploy`,
               ...reference(`${id}-runtime-content`),
             }),
             createDeploymentTargetLinkHeaderV1({
               id: `${id}-retained`,
               environmentId: id,
+              // No active deployment: no receipt to deliver for this link.
+              activeDeploymentId: undefined,
               ...reference(`${id}-retained-content`),
             }),
           ],
@@ -90,6 +94,20 @@ function home(options: Readonly<{ domainsFail?: boolean }> = {}) {
           ],
         };
       }
+      if (actionId === 'deployments.receipts.get') {
+        if (options.receiptFails)
+          return { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+        const deploymentId = String(input.deploymentId);
+        return {
+          ok: true,
+          deployment: createDeploymentReceiptHeaderV1({
+            id: deploymentId,
+            environmentId: id,
+            targetLinkId: `${id}-runtime`,
+            ...reference(`${deploymentId}-receipt-content`),
+          }),
+        };
+      }
       throw new Error(`unexpected ${actionId}`);
     },
     async readDefaults() {
@@ -113,7 +131,7 @@ function home(options: Readonly<{ domainsFail?: boolean }> = {}) {
 }
 
 describe('deployment content recipient delivery', () => {
-  it('delivers one Environment content, every target link and its Domains in one preparation', async () => {
+  it('delivers one Environment content, every target link, each link\'s active receipt and its Domains in one preparation', async () => {
     const { ports, prepared } = home();
     await expect(
       prepareDeploymentEnvironmentRecipientsV1(
@@ -127,12 +145,21 @@ describe('deployment content recipient delivery', () => {
         'env-a-content',
         'env-a-runtime-content',
         'env-a-retained-content',
+        'env-a-deploy-receipt-content',
         'env-a-domain-content',
       ],
     ]);
   });
 
-  it('delivers every Source head plus defaults and never lists receipts', async () => {
+  it('still delivers the Environment heads when the active receipt read is refused', async () => {
+    const { ports, prepared } = home({ receiptFails: true });
+    await prepareDeploymentEnvironmentRecipientsV1(ports, { serverId: 'home', environmentId: 'env-a' }, context);
+    expect(prepared).toEqual([
+      ['env-a-content', 'env-a-runtime-content', 'env-a-retained-content', 'env-a-domain-content'],
+    ]);
+  });
+
+  it('delivers every Source head, each active receipt and defaults, and never lists receipt history', async () => {
     const { ports, prepared, calls } = home();
     await expect(
       prepareProjectSourceDeploymentRecipientsV1(
@@ -146,10 +173,12 @@ describe('deployment content recipient delivery', () => {
         'env-a-content',
         'env-a-runtime-content',
         'env-a-retained-content',
+        'env-a-deploy-receipt-content',
         'env-a-domain-content',
         'env-b-content',
         'env-b-runtime-content',
         'env-b-retained-content',
+        'env-b-deploy-receipt-content',
         'env-b-domain-content',
         'defaults-content',
       ]),
@@ -167,7 +196,7 @@ describe('deployment content recipient delivery', () => {
       ),
     ).resolves.toBeUndefined();
     expect(prepared).toEqual([
-      ['env-a-content', 'env-a-runtime-content', 'env-a-retained-content'],
+      ['env-a-content', 'env-a-runtime-content', 'env-a-retained-content', 'env-a-deploy-receipt-content'],
     ]);
   });
 
