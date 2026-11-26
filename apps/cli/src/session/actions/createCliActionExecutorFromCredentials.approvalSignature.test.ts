@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { signExternalActionApprovalInputV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
@@ -73,6 +74,11 @@ it.each(['same key', 'changed key'] as const)('replays a PAT Session-target appr
         // decision retain the real Artifact, provenance and signature owners.
         const producer = createActionExecutor({ ...createAccountServerActionDeps({ token: credentials.token, serverId,
           serverHttpBaseUrl: home, isCredentialCurrent: async () => true }),
+          actionAutomations: createActionAutomationHttpPortV1({ accountId, request: async (path, request) => {
+            const response = await app.inject({ method: request.method, url: path, payload: request.body });
+            expect(response.statusCode).toBe(200);
+            return response.json();
+          } }),
           approvalsCreate: store.approvalsCreate, readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1, actions: { ['teams.members.remove']: { approvalRequiredSurfaces: Object.keys(ActionSurfaceSchema.shape) } } }) });
         const created = await producer.execute('teams.members.remove', actionInput, {
           surface: 'api', authority: 'account_automation', serverId, serverIdentityId: homeId,

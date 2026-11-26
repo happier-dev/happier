@@ -1138,7 +1138,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
     const result = await executor.execute(REVIEW_NEW_ROUND_ACTION_ID_V1, { reviewId: first.reviewId }, { surface: 'cli' });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
       result: { reviewRound: { reviewId: first.reviewId, roundOrdinal: 2 }, comparisonId } });
-    expect(captures).toEqual([{ cwd: '/original/workspace', source }]);
+    expect(captures).toEqual([{ cwd: '/original/workspace', source, projection: { kind: 'index' } }]);
     expect((await records.read(first.reviewId))?.rounds).toEqual([
       expect.objectContaining({ ordinal: 1, state: 'completed', runs: [], comparisonId: oldComparisonId }),
       expect.objectContaining({ ordinal: 2, state: 'completed', runs: [], reviewerIds: [], comparisonId }),
