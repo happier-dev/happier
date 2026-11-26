@@ -1,4 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import axios from 'axios';
+import { execFile } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentSessionRuntimeEventV1Schema, SessionTurnMutationV1Schema } from '@happier-dev/protocol';
+import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { projectAutomationSessionLifecycleLaunchProfileId } from '@happier-dev/protocol/automations/automationSessionLifecycle';
@@ -6,12 +16,12 @@ import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/pr
 import { serializeAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { getSessionLifecycleAutomationPublicationAudienceInTx } from '@/app/workflows/workflowPublicationAudience';
 import { prepareLayout1SessionCreate } from '@/app/session/create/prepareLayout1SessionCreate';
 import { createOrRejoinLayout1SessionByTagInTx } from '@/app/session/create/createOrRejoinLayout1SessionByTag';
-import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
+import { applySessionTurnMutation, createSessionMessage } from '@/app/session/sessionWriteService';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { admitSessionLifecycleAutomationRunsTx } from './automationSessionLifecycleAdmission';
 import { encodeAutomationSessionLifecycleConfiguration } from './automationSessionLifecycleConfigurationCodec';
@@ -19,6 +29,25 @@ import { updateAutomationTrigger } from './automationCrudService';
 import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
 import { logger } from '@/utils/logging/log';
 import { withWebLatencyTrace } from '@/utils/webLatencyTrace';
+import { runSessionLoopLifecycle } from '../../../../cli/src/agent/runtime/session/loop/lifecycle';
+import { createLifecycleParams, createMetadata } from '../../../../cli/src/agent/runtime/session/loop/lifecycle.testkit';
+import { createNativeAgentSessionOperations } from '../../../../cli/src/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import { runPermissionModePromptLoop } from '../../../../cli/src/agent/runtime/runPermissionModePromptLoop';
+import { cleanupBackendRunResources } from '../../../../cli/src/agent/runtime/cleanupBackendRunResources';
+import { registerRunnerTerminationHandlers } from '../../../../cli/src/agent/runtime/lifecycle/runnerTerminationHandlers';
+import { sendReadyWithPushNotification } from '../../../../cli/src/agent/runtime/notifications/sendReadyWithPushNotification';
+import { createMutableApiSessionClientFixture } from '../../../../cli/src/testkit/backends/sessionFixtures';
+import { installEmptyProjectAccountRowsHttpBoundary } from '../../../../cli/src/testkit/http/projectAccountRows';
+import { createHostScmCommandRunner } from '../../../../cli/src/scm/runtime';
+import { pluginReloadController } from '../../../../cli/src/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
+import { createSessionProviderInputOutcomeBinding } from '../../../../cli/src/agent/runtime/session/input/providerInputOutcome';
+import { createNotificationAccountSnapshotFixture } from '../../../../cli/src/testkit/notificationAccountSnapshot';
+import { resolveAccountSettingsScopeKey } from '../../../../cli/src/settings/accountSettings/accountSettingsScopeKey';
+import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '../../../../cli/src/settings/accountSettings/activeAccountSettingsSnapshot';
+import { artifactListResponse } from '../../../../cli/src/testkit/http/artifactHome';
+import { reloadConfiguration } from '../../../../cli/src/configuration';
+import { buildAcpAgentMessageEnvelope } from '../../../../cli/src/api/session/acpMessageEnvelope';
 
 const serverId = 'srv_00000000000000000000000000000000';
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -180,6 +209,192 @@ describe('Session lifecycle scoped admission', () => {
         expect(runs).toHaveLength(2);
         expect(runs.map(run => run.triggerId)).toEqual([selected.trigger.id, selected.trigger.id]);
         expect(runs.map(run => run.causeSourceSessionId).sort()).toEqual([first.id, second.id].sort());
+    });
+
+    it('admits native changed-work facts once across selected launch profiles and ignores unchanged and other-profile turns', async () => {
+        const current = await owner();
+        const credentials = { token: await createAccountTokenForTests(current.accountId, {
+            kind: 'account', authority: 'present_user',
+        }), encryption: null };
+        const snapshot = createNotificationAccountSnapshotFixture({ scopeKey: resolveAccountSettingsScopeKey(credentials), rawSettings: {},
+            promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] },
+            profileCatalog: { status: 'ready', authority: 'active', source: 'destination', diagnostics: [],
+                referenceGuardRevision: 1, control: null, controlRevision: 'absent',
+                records: ['profile-one', 'profile-two', 'other-profile'].map(id => ({ revision: 1,
+                    record: ProfileRecordV1Schema.parse({ v: 1, id, enabled: true, promptStack: [], secretBindings: {},
+                        definition: { kind: 'inline', profile: { v: 2, id, name: id, createdAt: 1, updatedAt: 1 } } }),
+                })),
+            },
+        });
+        const selected = await habit(current, {
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
+            filter: { v: 1, all: [
+                { field: '/launchProfileId', op: 'in', values: ['profile-one', 'profile-two'] },
+                { field: '/changedFiles', op: 'eq', value: true },
+            ] },
+        });
+        const root = await mkdtemp(join(tmpdir(), 'happier-native-habit-'));
+        const git = promisify(execFile);
+        const restoreHttp = installEmptyProjectAccountRowsHttpBoundary();
+        const accountGet = vi.mocked(axios.get).getMockImplementation();
+        if (!accountGet) throw new Error('Expected Account HTTP boundary');
+        vi.spyOn(axios, 'get').mockImplementation(async (url, config) => new URL(String(url)).pathname === '/v1/artifacts'
+            ? { status: 200, data: artifactListResponse(String(url), []) } : accountGet(url, config));
+        const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+        try {
+            process.env.HAPPIER_SERVER_URL = 'http://habit-home.test';
+            process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = 'optional';
+            reloadConfiguration();
+            const accountSnapshot = { ...snapshot, scopeKey: resolveAccountSettingsScopeKey(credentials) };
+            setActiveAccountSettingsSnapshot(accountSnapshot);
+            await git('git', ['init'], { cwd: root });
+            await git('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
+            await git('git', ['config', 'user.name', 'Happier Test'], { cwd: root });
+            await writeFile(join(root, 'tracked.txt'), 'initial\n');
+            await git('git', ['add', 'tracked.txt'], { cwd: root });
+            await git('git', ['commit', '-m', 'initial'], { cwd: root });
+            const sourceSessions: string[] = [];
+            for (const [index, scenario] of [
+                { profileId: 'profile-one', changed: false, runs: 0 },
+                { profileId: 'profile-one', changed: true, runs: 1 },
+                { profileId: 'other-profile', changed: true, runs: 1 },
+                { profileId: 'profile-two', changed: true, runs: 2 },
+            ].entries()) {
+                const source = await db.session.create({ data: { accountId: current.accountId,
+                    tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+                if (scenario.changed && scenario.profileId !== 'other-profile') sourceSessions.push(source.id);
+                const metadata = { ...createMetadata(), path: root, profileId: scenario.profileId, permissionMode: 'default' as const };
+                const base = createLifecycleParams();
+                const fixture = createMutableApiSessionClientFixture({ sessionId: source.id, metadata });
+                const terminals: Array<Extract<ReturnType<typeof SessionTurnMutationV1Schema.parse>, { action: 'complete' }>> = [];
+                const failures: unknown[] = [];
+                const inputLocalId = randomUUID();
+                const userMessage = await createSessionMessage({ actorUserId: current.accountId,
+                    sessionId: source.id, inputAdmission: 'authenticatedAccount', authentication,
+                    localId: inputLocalId, content: { t: 'plain', v: {
+                        role: 'user', content: { type: 'text', text: 'Do the work' },
+                    } } });
+                if (!userMessage.ok) throw new Error(JSON.stringify(userMessage));
+                let messageSeq = userMessage.message.seq;
+                const session = Object.assign(fixture, {
+                    getLastObservedMessageSeq: () => messageSeq,
+                    getCommittedUserMessageSeq: (localId: string) => localId === inputLocalId ? userMessage.message.seq : null,
+                    enqueueAgentMessageCommitted: async (
+                        provider: Parameters<typeof fixture.enqueueAgentMessageCommitted>[0],
+                        body: Parameters<typeof fixture.enqueueAgentMessageCommitted>[1],
+                        options: Parameters<typeof fixture.enqueueAgentMessageCommitted>[2],
+                    ) => {
+                        const written = await createSessionMessage({ actorUserId: current.accountId,
+                            sessionId: source.id, inputAdmission: 'transcriptOnly', localId: options.localId,
+                            content: { t: 'plain', v: buildAcpAgentMessageEnvelope({ provider, body, meta: options.meta }) } });
+                        if (!written.ok) throw new Error(JSON.stringify(written));
+                        messageSeq = written.message.seq;
+                        return { persisted: true as const, delivered: true as const, committedSequence: messageSeq };
+                    },
+                    enqueueSessionEventCommitted: async () => ({ persisted: true as const, delivered: true as const }),
+                    enqueueSessionTurnMutation: async (input: unknown) => {
+                        const mutation = SessionTurnMutationV1Schema.parse(input);
+                        expect(await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation }))
+                            .toMatchObject({ ok: true });
+                        if (mutation.action === 'complete') terminals.push(mutation);
+                    },
+                });
+                let sequence = 0;
+                const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+                const emit = (event: Readonly<Record<string, unknown>>) => {
+                    const parsed = AgentSessionRuntimeEventV1Schema.parse({ ...event, sessionId: source.id,
+                        sequence: ++sequence, emittedAtMs: Date.now() });
+                    for (const listener of listeners) listener(parsed);
+                };
+                // The vendor fixture supplies runtime events; the host derives both
+                // lifecycle facts, then the real Server admits the Account habit.
+                const provider: AgentSessionRuntime = {
+                    async send(request) {
+                        const turnId = request.delivery.turnId;
+                        emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+                        emit({ kind: 'turn-start', turnId, startedBy: 'host' });
+                        if (scenario.changed) {
+                            emit({ kind: 'tool-call', turnId, toolCallId: 'edit', toolName: 'Edit',
+                                input: { file_path: 'tracked.txt', old_string: await readFile(join(root, 'tracked.txt'), 'utf8'),
+                                    new_string: `change-${index}\n` } });
+                            await writeFile(join(root, 'tracked.txt'), `change-${index}\n`);
+                            emit({ kind: 'tool-result', turnId, toolCallId: 'edit', output: { status: 'completed' } });
+                        }
+                        emit({ kind: 'message-delta', turnId, channel: 'assistant', text: 'Done' });
+                        emit({ kind: 'turn-complete', turnId });
+                        return { status: 'admitted' };
+                    },
+                    watch(listener) { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; },
+                    dispose() {},
+                };
+                const runtime = { ...createNativeAgentSessionOperations(provider, source.id,
+                    undefined, undefined, undefined, undefined, undefined, {
+                        // This vendor boundary fixture does not consume the plugin context.
+                        context: {} as AgentSessionRuntimeContext, cwd: root, connectedAccounts: [],
+                        scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+                        capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+                        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+                    }), readSessionStartupInstructionsSupport: () => false };
+                const inputBinding = createSessionProviderInputOutcomeBinding({ getTarget: () => ({
+                    sessionId: source.id, hasPendingProviderInput: () => true,
+                    observeProviderInputSettlement: async () => undefined,
+                }) });
+                runtime.setOnPromptDeliveryOutcome(inputBinding.observeProviderInputOutcome);
+                const controller = new AbortController();
+                let ready = false;
+                base.permissionModeState.messageQueue.push({ text: 'Do the work', localId: inputLocalId,
+                    userMessageSeq: userMessage.message.seq }, { permissionMode: 'default' });
+                await runSessionLoopLifecycle({ ...base, opts: { credentials, accountSettingsContext: {
+                    source: 'network', scopeKey: accountSnapshot.scopeKey, settings: accountSnapshot.settings,
+                    settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], whenRefreshed: null,
+                } }, session, runtime, hookRuntime: runtime,
+                    registerProviderAcceptedEffect: inputBinding.registerProviderAcceptedEffect,
+                    runtimeDirectory: root, runtimeMetadata: metadata, machineId: current.machineId,
+                    deps: {
+                        runPermissionModePromptLoopFn: input => runPermissionModePromptLoop({ ...input,
+                            onPromptFailure: async (error, context) => {
+                                failures.push(error);
+                                await input.onPromptFailure?.(error, context);
+                            },
+                            shouldExit: () => ready, getAbortSignal: () => controller.signal }),
+                        cleanupBackendRunResourcesFn: cleanupBackendRunResources,
+                        registerRunnerTerminationHandlersFn: input => registerRunnerTerminationHandlers({ ...input,
+                            process: new EventEmitter(), exit() {} }),
+                        sendReadyWithPushNotificationFn: async input => {
+                            await sendReadyWithPushNotification(input);
+                            ready = true;
+                            controller.abort();
+                        },
+                    },
+                });
+                expect(failures).toEqual([]);
+                expect(terminals).toHaveLength(1);
+                expect(terminals[0].automationLifecycleFacts).toEqual({
+                    launchProfileId: projectAutomationSessionLifecycleLaunchProfileId(scenario.profileId),
+                    changedFiles: scenario.changed,
+                });
+                expect(await db.sessionTurn.findUniqueOrThrow({ where: { sessionId_turnId: {
+                    sessionId: source.id, turnId: terminals[0].turnId,
+                } }, select: { initiator: true, workDepth: true, status: true } })).toEqual({
+                    initiator: 'user', workDepth: 0, status: 'completed',
+                });
+                // Delivery replay consumes the captured fact, without deriving it again.
+                await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: terminals[0] });
+                expect(await db.automationRun.count({ where: { automationId: selected.automation.id } })).toBe(scenario.runs);
+            }
+            const runs = await db.automationRun.findMany({ where: { automationId: selected.automation.id },
+                select: { triggerId: true, causeSourceSessionId: true } });
+            expect(runs.map(run => run.triggerId)).toEqual([selected.trigger.id, selected.trigger.id]);
+            expect(runs.map(run => run.causeSourceSessionId).sort()).toEqual(sourceSessions.sort());
+        } finally {
+            clearActiveAccountSettingsSnapshot();
+            harness.resetEnv({ HAPPIER_SERVER_IDENTITY_ID: serverId });
+            reloadConfiguration();
+            await plugins.dispose();
+            restoreHttp();
+            await rm(root, { recursive: true, force: true });
+        }
     });
 
     it.each([undefined, null, false])('retires a currentTurn habit when its terminal changed-files fact is %s', async (changedFiles) => {
