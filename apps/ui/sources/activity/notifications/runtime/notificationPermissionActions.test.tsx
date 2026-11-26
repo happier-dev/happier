@@ -180,7 +180,7 @@ describe('Native notification permission entry points', () => {
         const current = response(kind === 'permission' ? PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1 : PUSH_NOTIFICATION_ACTION_IDS.questionChoice1V1);
         const data = { ...current.notification.request.content.data, accountId: 'account', kind: kind === 'permission' ? 'permission' : 'user_action',
             ...(kind === 'question' ? { questionAnswerV1: { kind: 'choices', questionKey: 'Which?', values: ['main'] } } : {}) };
-        const pressed = { ...current, notification: { request: { ...current.notification.request, content: { data } } } };
+        const pressed = { ...current, notification: { request: { ...current.notification.request, content: { data: { ...data, accountId: kind === 'permission' ? undefined : data.accountId } } } } };
         boundary.presented.mockResolvedValue([
             { request: { identifier: 'settled-copy', content: { data } } },
             { request: { identifier: current.notification.request.identifier, content: { data: { ...data, occurrenceId: 'newer-occurrence' } } } },
@@ -1001,6 +1001,8 @@ describe('Native notification permission entry points', () => {
         Platform.OS = 'ios';
         const { setPendingNotificationAction, getPendingNotificationAction } = await import('@/sync/domains/pending/pendingNotificationAction');
         setPendingNotificationAction({ serverUrl, sessionId: 'session', requestId: 'request', action: 'allow' });
+        const { setPendingNotificationNav, clearPendingNotificationNav } = await import('@/sync/domains/pending/pendingNotificationNav');
+        setPendingNotificationNav({ serverUrl, route: '/session/other-saved-session' });
         boundary.navigate.mockImplementationOnce(() => { throw new Error('navigation unavailable'); });
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         const hook = await renderHook(() => useNotificationResponseRouting({ enabled: true, refreshAuth: async () => {} }));
@@ -1008,6 +1010,9 @@ describe('Native notification permission entry points', () => {
             await flushHookEffects();
             expectSessionNavigationToServer(profiles.getActiveServerSnapshot().serverId);
             expect(error).toHaveBeenCalled();
+            expect(boundary.push).not.toHaveBeenCalledWith('/session/other-saved-session');
+            expect(boundary.listener).toEqual(expect.any(Function));
+            clearPendingNotificationNav();
             expect(getPendingNotificationAction()).toBeNull();
             expect(boundary.rpc).not.toHaveBeenCalled();
         } finally { await hook.unmount(); }
