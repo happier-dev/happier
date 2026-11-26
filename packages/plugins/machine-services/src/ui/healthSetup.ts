@@ -355,22 +355,23 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const investigation = editedInvestigation ?? props.sourceOptions.investigation ?? preparedPreview?.sourceConfig.investigation;
     const changeInvestigation = (next: InvestigationDraft) => {
         setInvestigation(next);
-        setRefusedSave(false);
+        setRefusedSave(null);
     };
     const investigationMode = investigation?.mode ?? 'inbox';
     const configuredActionId = investigation && 'configuredActionId' in investigation
         ? investigation.configuredActionId ?? '' : '';
     const [saving, setSaving] = useState(false);
-    const [refusedSave, setRefusedSave] = useState(false);
+    // The host's refusal of this Save, in its own words when it gave them; the entries stay for a correction.
+    const [refusedSave, setRefusedSave] = useState<string | null>(null);
     const [loadingKinds, setLoadingKinds] = useState(false);
     const [gatusHowOpen, setGatusHowOpen] = useState(false);
     const [kindsUnavailable, setKindsUnavailable] = useState(false);
     const nativeDomain = props.sourceOptions.domain !== undefined && !draft.contributedKind && !isMonitorKind(draft.kind);
-    const set = (patch: Partial<Draft>) => { setEditedDraft(current => ({ ...(current ?? draft), ...patch })); setRefusedSave(false); };
+    const set = (patch: Partial<Draft>) => { setEditedDraft(current => ({ ...(current ?? draft), ...patch })); setRefusedSave(null); };
     const selectSavedCheck = (checkId: string) => {
         setSelectedCheckId(checkId);
         setEditedDraft(null);
-        setRefusedSave(false);
+        setRefusedSave(null);
     };
     const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set(contributedCheckDraft(kind));
     const readInstalledKinds = useCallback(async () => {
@@ -520,8 +521,11 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         setSaving(true);
         try {
             await host.settleEphemeralInput({ kind: 'completed', input }, { signal: props.signal });
-        } catch {
-            setRefusedSave(true);
+        } catch (error) {
+            const refusal = projectPluginActionRejectionV1(error, t);
+            if (refusal.status === 'error' || refusal.status === 'outcomeUnknown') {
+                setRefusedSave(refusal.authoredMessage ?? t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.'));
+            }
         } finally {
             setSaving(false);
         }
@@ -613,7 +617,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             value => changeInvestigation({ mode: 'auto_start', configuredActionId: value }), { testID: 'health-setup-investigation-action',
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
-        refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
+        refusedSave ? h(Text, { tone: 'danger', value: refusedSave, testID: 'health-setup-save-refused' }) : null,
         h(ModalCardFooterActions, {
             // Keep both incomplete edits and the already settled Environment preview with this one open form.
             captureDraft: addingNew ? () => saving ? undefined : JSON.parse(JSON.stringify({

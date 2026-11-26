@@ -865,3 +865,45 @@ it('keeps the Gatus connection body behind its disclosure', async () => {
   await act(async () => { await page.press(await page.getByRole('button', { name: 'How to connect Gatus' })); });
   expect(document.body.textContent).toContain('add a custom alert that sends POST');
 });
+
+// R17-D3: the host refuses a Save while the sheet keeps the draft; the form says the host's own reason and Save works again.
+it('keeps the entries and shows the host refusal in its own words when a Save is refused', async () => {
+  const attempts: unknown[] = [];
+  let settleWrite: () => void = () => {};
+  const write = new Promise<void>(resolve => { settleWrite = resolve; });
+  await act(async () => {
+    mounted = await createPluginUiTestkit({
+      identity: { instanceId: 'health-setup', mountNonce: 'health-setup-refused' },
+      authorPlugin: { id: MACHINE_SERVICES_PLUGIN_ID, version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      launchInput: { initialInput: { v: 1, subject } },
+      handlers: {
+        executeAction: async request => {
+          const { mode: _mode, ...sourceConfig } = request.input as Record<string, JsonValue>;
+          return { mode: 'preview', destinationSelectionContext,
+            sourceConfig: { ...sourceConfig, alerts: { channels: [], phases: ['open', 'recovered'] } } };
+        },
+        settleEphemeralInput: async ({ settlement }) => {
+          attempts.push(settlement);
+          await write;
+          throw new PluginError({ code: 'invalid_input', retryable: false,
+            message: 'This source already has a different configuration. Edit the saved source to make this change.' });
+        },
+      },
+    });
+  });
+  const page = mounted!;
+  await expect(page.getByText('Off')).resolves.toBeDefined();
+  await type('Endpoint', 'https://app.example.test/ready');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(attempts).toHaveLength(1);
+  // Save stays busy while the host's write runs.
+  expect((await addButton(page)).state?.busy).toBe(true);
+  await act(async () => { settleWrite(); });
+  await expect(page.getByText('This source already has a different configuration. Edit the saved source to make this change.'))
+    .resolves.toBeDefined();
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Endpoint"]')?.value).toBe('https://app.example.test/ready');
+  expect((await addButton(page)).state?.disabled).not.toBe(true);
+});

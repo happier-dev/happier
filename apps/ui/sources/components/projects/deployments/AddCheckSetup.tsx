@@ -6,6 +6,7 @@ import type { PluginUiActionFailureV1 } from '@happier-dev/protocol/plugins/ui/c
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
+import type { PluginEventAutomationSetupSurfaceRefusal } from '@/components/automations/editor/presentPluginEventAutomationSetupSurface';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
@@ -28,10 +29,24 @@ type Configured = Extract<Settlement, { kind: 'configured' }>;
 
 const readMachineOwnership = (machine: Machine | null) => machine ? !machine.isShared : null;
 
+/** The write owner's typed failure as this host says it: its reason sentence and whether the outcome is known. */
+function presentAddCheckWriteFailure(failure: PluginUiActionFailureV1) {
+  const unconfirmed = isActionOutcomeUnknownErrorCodeV1(failure.errorCode);
+  const presentation = presentActionExecutionFailure(failure,
+    t(unconfirmed ? 'errors.scmOutcomeUnknown' : 'common.requestFailed'), { closedCodesOnly: true });
+  const reason = failure.errorCode === AUTOMATION_EVENT_WATCHER_NOT_OWNED
+    ? t('projects.deployments.monitoring.addCheckCollectorOwnership')
+    : failure.errorCode === AUTOMATION_EVENT_WATCHER_NOT_CURRENT
+      ? t('workflows.problem.targetUnavailable')
+      : presentation.reason;
+  return { unconfirmed, presentation, reason };
+}
+
 /**
  * Add check (PAGE-ACCEPT-176 R10-D1): the check's own native form, opened directly on the Machine that runs it, as the
- * one surface. Its Save writes one observation-only trigger; Cancel writes nothing. While the form opens, saves or
- * cannot open, this host says which, in place.
+ * one surface. Its Save writes one observation-only trigger while the form stays open and busy; Cancel writes nothing.
+ * A refused write goes back to the open form (R17-D3). While the form opens or cannot open, and after a write whose
+ * outcome is unknown, this host says which, in place.
  */
 export function AddCheckSetup(
   props: Readonly<{
@@ -43,13 +58,9 @@ export function AddCheckSetup(
     testID: string;
   }>,
 ) {
-  const [write, setWrite] = React.useState<
-    | { status: 'saving' }
-    | { status: 'failed'; settlement: Configured; failure: PluginUiActionFailureV1 }
-    | null
-  >(null);
-  const save = useEventCallback(async (settlement: Configured) => {
-    setWrite({ status: 'saving' });
+  // Only a write that may have landed leaves the form: it cannot be corrected and saved again.
+  const [unsettledWrite, setUnsettledWrite] = React.useState<PluginUiActionFailureV1 | null>(null);
+  const save = useEventCallback(async (settlement: Configured): Promise<PluginEventAutomationSetupSurfaceRefusal | undefined> => {
     try {
       await addWorkflowTrigger(
         {
@@ -64,15 +75,21 @@ export function AddCheckSetup(
         ok: false as const, errorCode: workflow?.rawCode ?? UNEXPECTED_ACTION_FAILURE_CODES_V1[1],
         details: workflow?.rawDetails, requestId: workflow?.requestId,
       };
-      setWrite({ settlement, status: 'failed', failure });
-      return;
+      const presented = presentAddCheckWriteFailure(failure);
+      if (presented.unconfirmed || failure.effectAttempted === true) {
+        setUnsettledWrite(failure);
+        return undefined;
+      }
+      return { failure, reason: presented.reason };
     }
     fireAndForget(sync.refreshAutomations());
     props.onClose();
+    return undefined;
   });
   const onSettled = useEventCallback((settlement: Settlement) => {
-    if (settlement.kind === 'cancelled') props.onClose();
-    else void save(settlement);
+    if (settlement.kind !== 'cancelled') return save(settlement);
+    props.onClose();
+    return undefined;
   });
   const machineLabel = (machineName: string | null) =>
     machineName ?? t('machine.unnamedMachine');
@@ -83,36 +100,20 @@ export function AddCheckSetup(
   const inventoryStatus = useMachineListStatusForServer(serverId);
   const collectorRefused = collectorId && (ownedCollector === false || (ownedCollector === null && inventoryStatus === 'idle'));
   const waitingForCollector = collectorId && ownedCollector === null && inventoryStatus === 'loading';
-  const failedWrite = write?.status === 'failed' ? write : null;
-  const unconfirmed = isActionOutcomeUnknownErrorCodeV1(failedWrite?.failure.errorCode);
-  const writeFailure = failedWrite && presentActionExecutionFailure(failedWrite.failure,
-    t(unconfirmed ? 'errors.scmOutcomeUnknown' : 'common.requestFailed'), { closedCodesOnly: true });
-  const writeReason = failedWrite?.failure.errorCode === AUTOMATION_EVENT_WATCHER_NOT_OWNED
-    ? t('projects.deployments.monitoring.addCheckCollectorOwnership')
-    : failedWrite?.failure.errorCode === AUTOMATION_EVENT_WATCHER_NOT_CURRENT
-      ? t('workflows.problem.targetUnavailable')
-      : writeFailure?.reason;
+  const writeFailure = unsettledWrite && presentAddCheckWriteFailure(unsettledWrite);
   return (
     <View testID={props.testID}>
-      {write?.status === 'saving' ? (
-        <SurfaceStateCard
-          size="line"
-          kind="loading"
-          title={t('projects.deployments.services.addCheckSaving')}
-        />
-      ) : failedWrite && writeFailure ? (
+      {unsettledWrite && writeFailure ? (
         <SurfaceStateCard
           testID={`${props.testID}.failed`}
           size="line"
           kind="error"
-          title={t(unconfirmed ? 'projects.deployments.stateUnknown' : 'projects.deployments.services.addCheckFailed')}
-          reason={writeReason}
-          diagnosticCode={failedWrite.failure.errorCode}
-          diagnosticDetail={writeFailure.technicalDetails
+          title={t(writeFailure.unconfirmed ? 'projects.deployments.stateUnknown' : 'projects.deployments.services.addCheckFailed')}
+          reason={writeFailure.reason}
+          diagnosticCode={unsettledWrite.errorCode}
+          diagnosticDetail={writeFailure.presentation.technicalDetails
             .filter(line => line.key !== 'code').map(line => `${line.label} ${line.value}`).join('\n')}
-          action={unconfirmed || failedWrite.failure.effectAttempted === true
-            ? { label: t('common.close'), onPress: props.onClose }
-            : { label: t('common.retry'), onPress: () => { void save(failedWrite.settlement); } }}
+          action={{ label: t('common.close'), onPress: props.onClose }}
         />
       ) : collectorRefused ? (
         <SurfaceStateCard

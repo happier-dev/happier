@@ -1278,7 +1278,8 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 });
 
 // The alternate Machine can finish its first origin read after the native form opens.
-it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+// R17-D3 (refusedInDraft): the open form keeps its draft until the write settles, and a refused write comes back to it.
+it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'refusedInDraft'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1378,6 +1379,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     let refuseProjection = outcome === 'projectionRefused';
     let holdSchema = outcome === 'retiredWhileOpening';
     let openedSchemaRead = false;
+    let heldSetupAction = Promise.resolve();
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
             if (refuseProjection) return { protocolVersion: 1 };
@@ -1399,9 +1401,9 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             return schemaResponse.promise.then(() => ({ ok: true, inputSchema: event.setupAction.inputSchema }));
         }
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
-            return { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
+            return heldSetupAction.then(() => ({ ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
                 sourceConfig: HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input')),
-                displayLabel: 'Production Health', observationOnly: { kind: 'observationOnly' } } };
+                displayLabel: 'Production Health', observationOnly: { kind: 'observationOnly' } } }));
         return undefined;
     };
     const modal = vi.spyOn(Modal, 'show').mockImplementation(config => {
@@ -1410,6 +1412,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
     });
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     let nativeForm: PluginUiTestkit | undefined;
+    let formReply: unknown;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         await publishMachineInventoryForTest(lifetime.scope,
@@ -1487,6 +1490,70 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             expect(modal.mock.calls[0]?.[0].props).toMatchObject({ launchInput: { initialInput: seed.setupInput } });
             return;
         }
+        const { PluginUiPresentationHostProviderInternal, useOptionalPluginUiPresentationHost } =
+            await import('../../../../../../packages/plugin-ui/src/presentationHost/context');
+        const { PluginModalCardFooterSlot, PluginModalCardFooterSlotContext, usePluginModalCardFooterSlot } =
+            await import('@/components/plugins/surfaces/pluginModalCardFooterSlot');
+        const { PluginError } = await import('@happier-dev/plugin-sdk');
+        const previews: string[] = [];
+        const preview = HealthCheckSetupPreviewResultV1ProtocolSchema.parse({ mode: 'preview',
+            sourceConfig: { v: 1, subject, alerts: { channels: [], phases: ['open', 'recovered'] } },
+            destinationSelectionContext: { serverId: connection.serverId, machineId },
+        });
+        let captureDraft: (() => unknown) | undefined;
+        function FooterHost({ children }: { children: React.ReactNode }) {
+            const footer = usePluginModalCardFooterSlot();
+            const parentHost = useOptionalPluginUiPresentationHost();
+            if (!parentHost) throw new Error('Expected the semantic presentation host');
+            captureDraft = footer.captureDraft;
+            return <PluginModalCardFooterSlotContext.Provider value={footer.set}>
+                <PluginUiPresentationHostProviderInternal host={{ ...parentHost,
+                    useModalCardFooterSlot: () => React.useContext(PluginModalCardFooterSlotContext),
+                }}>{children}</PluginUiPresentationHostProviderInternal>
+                <PluginModalCardFooterSlot store={footer} fallback={null} />
+            </PluginModalCardFooterSlotContext.Provider>;
+        }
+        const replies: unknown[] = [];
+        // The open sheet's own settlement handler answers the form, as the physical transport carries its reply.
+        function settleThroughSheet(call: number) {
+            const onSettle = Reflect.get(Object(modal.mock.calls[call]?.[0].props), 'onSettle');
+            const handler = createPluginEventAutomationSetupSurfaceBinding({ isSettled: () => false, settle: onSettle })
+                .createMountedHostApiHandlers?.({ isCurrent: lifetime!.isCurrent })?.handlers.settleEphemeralInput;
+            if (!handler) throw new Error('Expected canonical ephemeral input handler');
+            return async (settlement: unknown) => {
+                const reply = await handler(PluginUiHostApiRequestEnvelopeV1Schema.parse({ version: 1, requestId: `native-settle-${call}`,
+                    surface: { pluginId, contributionId: event.event.identity.localId, surfaceId: 'native-add-check',
+                        platform: 'web', channel: 'development' }, method: 'settleEphemeralInput', payload: settlement }));
+                replies.push(reply);
+                if (reply === null) return;
+                const error = Object(reply) as { code: string; message?: string; retryable?: boolean; details?: never };
+                throw new PluginError({ code: error.code, ...(error.message ? { message: error.message } : {}),
+                    retryable: error.retryable === true, ...(error.details === undefined ? {} : { details: error.details }) });
+            };
+        }
+        async function mountNative(call: number, watcherId: string) {
+            const launchInput = Reflect.get(Object(modal.mock.calls[call]?.[0].props), 'launchInput');
+            const settle = settleThroughSheet(call);
+            await act(async () => {
+                nativeForm = await createPluginUiTestkit({ surface: context => <FooterHost>{renderSurface(context)}</FooterHost>,
+                    identity: { instanceId: 'native-add-check', mountNonce: `native-${call}` },
+                    authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, surfaceContext: createSurfaceContextFixture(),
+                    adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }), launchInput,
+                    handlers: { executeAction: async () => {
+                        previews.push(watcherId);
+                        if (watcherId !== machineId) throw new Error('The alternate cannot load a second Environment preview');
+                        return preview;
+                    }, settleEphemeralInput: async ({ settlement }) => { await settle(settlement); } },
+                });
+            });
+            return nativeForm!;
+        }
+        async function typeField(label: string, value: string) {
+            const field = document.querySelector(`input[aria-label="${label}"]`);
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (!(field instanceof HTMLInputElement) || !setter) throw new Error(`Expected ${label} field`);
+            await act(async () => { setter.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); });
+        }
         if (peer) {
             const props = modal.mock.calls[0]?.[0].props;
             const selection = Reflect.get(Object(props), 'watcherSelection') as NativeSetupWatcherSelection;
@@ -1510,52 +1577,6 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             }
             const chooseWatcher: unknown = Reflect.get(Object(props), 'chooseWatcher');
             if (typeof chooseWatcher !== 'function') throw new Error('Expected to switch the open native form');
-            const { PluginUiPresentationHostProviderInternal, useOptionalPluginUiPresentationHost } =
-                await import('../../../../../../packages/plugin-ui/src/presentationHost/context');
-            const { PluginModalCardFooterSlot, PluginModalCardFooterSlotContext, usePluginModalCardFooterSlot } =
-                await import('@/components/plugins/surfaces/pluginModalCardFooterSlot');
-            const previews: string[] = [];
-            const preview = HealthCheckSetupPreviewResultV1ProtocolSchema.parse({ mode: 'preview',
-                sourceConfig: { v: 1, subject, alerts: { channels: [], phases: ['open', 'recovered'] } },
-                destinationSelectionContext: { serverId: connection.serverId, machineId },
-            });
-            let captureDraft: (() => unknown) | undefined;
-            function FooterHost({ children }: { children: React.ReactNode }) {
-                const footer = usePluginModalCardFooterSlot();
-                const parentHost = useOptionalPluginUiPresentationHost();
-                if (!parentHost) throw new Error('Expected the semantic presentation host');
-                captureDraft = footer.captureDraft;
-                return <PluginModalCardFooterSlotContext.Provider value={footer.set}>
-                    <PluginUiPresentationHostProviderInternal host={{ ...parentHost,
-                        useModalCardFooterSlot: () => React.useContext(PluginModalCardFooterSlotContext),
-                    }}>{children}</PluginUiPresentationHostProviderInternal>
-                    <PluginModalCardFooterSlot store={footer} fallback={null} />
-                </PluginModalCardFooterSlotContext.Provider>;
-            }
-            async function mountNative(call: number, watcherId: string) {
-                const modalProps = modal.mock.calls[call]?.[0].props;
-                const launchInput = Reflect.get(Object(modalProps), 'launchInput');
-                const settle = Reflect.get(Object(modalProps), 'onSettle');
-                await act(async () => {
-                    nativeForm = await createPluginUiTestkit({ surface: context => <FooterHost>{renderSurface(context)}</FooterHost>,
-                        identity: { instanceId: 'native-add-check', mountNonce: `native-${call}` },
-                        authorPlugin: { id: pluginId, version: PLUGIN_MANIFEST.version }, surfaceContext: createSurfaceContextFixture(),
-                        adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }), launchInput,
-                        handlers: { executeAction: async () => {
-                            previews.push(watcherId);
-                            if (watcherId !== machineId) throw new Error('The alternate cannot load a second Environment preview');
-                            return preview;
-                        }, settleEphemeralInput: async ({ settlement }) => { settle(settlement); } },
-                    });
-                });
-                return nativeForm!;
-            }
-            async function typeField(label: string, value: string) {
-                const field = document.querySelector(`input[aria-label="${label}"]`);
-                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-                if (!(field instanceof HTMLInputElement) || !setter) throw new Error(`Expected ${label} field`);
-                await act(async () => { setter.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); });
-            }
             const original = await mountNative(0, machineId);
             await original.getByText('Off');
             await typeField('Endpoint', 'https://production.example.test/health');
@@ -1580,13 +1601,59 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             expect(add.state?.disabled ?? false).toBe(false);
             expect(previews).toEqual([machineId]);
             await act(async () => { await alternate.press(add); });
+        } else if (outcome === 'refusedInDraft') {
+            // A first Add check saves this Environment's source; a second with another address must edit that source.
+            const first = settleThroughSheet(0);
+            await act(async () => { await first({ kind: 'completed', input: setupInput }); });
+            await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
+            expect(workflows.creates).toHaveLength(1);
+            await screen.unmount();
+            screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed}
+                deploymentEnvironment={deploymentEnvironment} onClose={onClose} />);
+            await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(2));
+            const hide = vi.spyOn(Modal, 'hide');
+            // The open sheet's settlement slot, as the form reaches it (the form's own rendering is the plugin's test).
+            const sheet = settleThroughSheet(1);
+            const firstCheck = setupInput.checks[0]!;
+            const corrected = { ...setupInput, checks: [{ ...firstCheck,
+                config: { endpoint: 'https://production.example.test/ready', expectStatus: 200 } }] };
+            const dispatches = rpc.hostActions.length;
+            const setupAction = createDeferred<void>();
+            heldSetupAction = setupAction.promise;
+            let saved: Promise<unknown> = Promise.resolve();
+            await act(async () => { saved = sheet({ kind: 'completed', input: corrected }).then(() => 'saved', () => 'refused'); });
+            await waitForHomeGovernance(() => expect(rpc.hostActions).toHaveLength(dispatches + 1));
+            // A second Save while the write runs is refused at the sheet: one write.
+            await expect(sheet({ kind: 'completed', input: corrected })).rejects.toMatchObject({ code: 'stale_surface' });
+            await act(async () => { setupAction.resolve(); });
+            await expect(saved).resolves.toBe('refused');
+            // The typed refusal reaches the open form unchanged, with the source's remedy as its sentence.
+            expect(replies.at(-1)).toMatchObject({ code: 'invalid_input',
+                message: expect.stringContaining('Edit the saved source'),
+                details: { issues: [expect.objectContaining({ path: '/trigger/sourceConfig' })] } });
+            expect(rpc.hostActions).toHaveLength(dispatches + 1);
+            expect(workflows.creates).toHaveLength(1);
+            expect(onClose).toHaveBeenCalledTimes(1);
+            expect(hide).not.toHaveBeenCalled();
+            expect(screen.findByTestId('add-check.failed')).toBeNull();
+            // The draft is still the sheet's: Cancel closes it and writes nothing.
+            await act(async () => { await sheet({ kind: 'cancelled' }); });
+            await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(2));
+            expect(hide).toHaveBeenCalledWith('native-add-check');
+            expect(workflows.creates).toHaveLength(1);
+            hide.mockRestore();
+            return;
         } else {
             const settle: unknown = Reflect.get(Object(modal.mock.calls.at(-1)?.[0].props), 'onSettle');
             if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
-            await act(async () => { settle(outcome === 'cancelled' ? { kind: 'cancelled' } : { kind: 'completed', input: setupInput }); });
+            await act(async () => {
+                formReply = settle(outcome === 'cancelled' ? { kind: 'cancelled' } : { kind: 'completed', input: setupInput });
+            });
         }
         if (outcome === 'replyLostAndCompensated') {
-            await waitForHomeGovernance(() => expect(screen!.findByTestId('add-check.failed')).not.toBeNull());
+            // Nothing was saved: the open form takes the typed failure back for another Save.
+            await expect(formReply).resolves.toMatchObject({ code: expect.any(String), message: expect.any(String) });
+            expect(screen.findByTestId('add-check.failed')).toBeNull();
             expect(workflows.creates).toHaveLength(1);
             expect(workflows.rows.size).toBe(0);
             expect(onClose).not.toHaveBeenCalled();

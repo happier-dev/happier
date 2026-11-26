@@ -9,6 +9,10 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginUiLaunchInputV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiActionFailureV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { WorkflowValidationIssueV1Schema } from '@happier-dev/protocol/workflows/workflowValidationIssueV1';
+import { HappierValidationMessage } from '@happier-dev/plugin-ui/presentation';
+import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import {
@@ -55,12 +59,52 @@ type SetupSurfaceWatcherSelection = Readonly<{
 const noWatcherChoices = () => undefined;
 const subscribeToNoWatcherChoices = () => () => {};
 
+/** A refused write handed back to the open draft: the owner's typed failure and its presented sentence, unchanged. */
+export type PluginEventAutomationSetupSurfaceRefusal = Readonly<{
+    failure: PluginUiActionFailureV1;
+    reason: string;
+}>;
+
+/**
+ * The open setup sheet after its form completed: the draft stays mounted, its Save busy, until the write settles.
+ * `close` ends it (the write landed or nothing remains to show); `refuse` gives the draft back with the refusal at
+ * its fields; `next` waits for the draft's next Save, Cancel or Machine change.
+ */
+export type PluginEventAutomationSetupSurfaceHold = Readonly<{
+    close: () => void;
+    refuse: (refusal: PluginEventAutomationSetupSurfaceRefusal) => boolean;
+    next: (signal?: AbortSignal) => Promise<PluginEventAutomationSetupSurfaceSettlement>;
+}>;
+
 export type PluginEventAutomationSetupSurfaceSettlement = PluginUiEphemeralInputSettlementV1
+    | Readonly<{ kind: 'completed'; input: Extract<PluginUiEphemeralInputSettlementV1, { kind: 'completed' }>['input'];
+        hold: PluginEventAutomationSetupSurfaceHold }>
     | Readonly<{ kind: 'superseded'; machineId: string; draft: unknown }>;
+
+/** A held settlement's reply to the form: null once the write landed, a host error while the draft takes it back. */
+type SetupSurfaceSettleReply = Promise<PluginUiJsonValueV1 | null> | null;
+
+// The trigger write's issue paths, by the sheet region that answers them: the plugin's form owns the source, the host
+// owns where it is checked from (workflowTriggerAccountHost's source-consistency refusal).
+const SOURCE_ISSUE_PATH = '/trigger/sourceConfig';
+const ORIGIN_ISSUE_PATH = '/trigger/observationTransport';
+
+function readWriteIssues(details: unknown) {
+    const issues = details !== null && typeof details === 'object' ? Reflect.get(details, 'issues') : undefined;
+    return Array.isArray(issues) ? issues.flatMap((issue) => {
+        const parsed = WorkflowValidationIssueV1Schema.safeParse(issue);
+        return parsed.success && parsed.data.severity === 'error' ? [parsed.data] : [];
+    }) : [];
+}
+
+function messagesAt(issues: readonly { path: string; message: string }[], path: string) {
+    const messages = issues.filter(issue => issue.path === path || issue.path.startsWith(`${path}/`)).map(issue => issue.message);
+    return messages.length > 0 ? messages.join(' ') : undefined;
+}
 
 export function createPluginEventAutomationSetupSurfaceBinding(params: Readonly<{
     isSettled: () => boolean;
-    settle: (settlement: PluginEventAutomationSetupSurfaceSettlement) => void;
+    settle: (settlement: PluginUiEphemeralInputSettlementV1) => SetupSurfaceSettleReply | void;
 }>): BoundPluginSurfaceBinding {
     return Object.freeze({
         createMountedHostApiHandlers: ({ isCurrent }) => {
@@ -77,8 +121,7 @@ export function createPluginEventAutomationSetupSurfaceBinding(params: Readonly<
                             'ephemeral_input_settlement_invalid',
                         ]);
                     }
-                    params.settle(parsed.data);
-                    return null;
+                    return params.settle(parsed.data) ?? null;
                 },
             });
             return Object.freeze({ handlers });
@@ -129,10 +172,16 @@ type SetupSurfaceModalProps = Readonly<{
     machineId: string;
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
-    onSettle: (settlement: PluginEventAutomationSetupSurfaceSettlement) => void;
+    /** A held settlement returns the form's reply; any other closes the sheet. */
+    onSettle: (settlement: PluginUiEphemeralInputSettlementV1) => SetupSurfaceSettleReply;
+    /** The refused write's issue at "Check from", while the draft holds it. */
+    originIssue?: SetupSurfaceIssueStore;
     watcherSelection?: NativeSetupWatcherSelection;
     chooseWatcher?: (machineId: string, draft: unknown) => boolean;
 }> & CustomModalInjectedProps;
+
+type SetupSurfaceIssueStore = Readonly<{ get: () => string | undefined; subscribe: (listener: () => void) => () => void }>;
+const noIssue = () => undefined;
 
 function PluginEventAutomationSetupSurfaceModal(
     props: SetupSurfaceModalProps,
@@ -147,11 +196,14 @@ function PluginEventAutomationSetupSurfaceModal(
     onSettleRef.current = props.onSettle;
     const onCloseRef = React.useRef(props.onClose);
     onCloseRef.current = props.onClose;
-    const settle = React.useCallback((settlement: PluginEventAutomationSetupSurfaceSettlement) => {
-        if (settledRef.current) return;
+    const settle = React.useCallback((settlement: PluginUiEphemeralInputSettlementV1) => {
+        if (settledRef.current) return null;
+        // A held Save keeps the sheet: its owner closes it once the write lands, or hands the draft back.
+        const held = onSettleRef.current(settlement);
+        if (held) return held;
         settledRef.current = true;
-        onSettleRef.current(settlement);
         onCloseRef.current();
+        return null;
     }, []);
     const binding = React.useMemo<BoundPluginSurfaceBinding>(() => (
         createPluginEventAutomationSetupSurfaceBinding({
@@ -166,6 +218,9 @@ function PluginEventAutomationSetupSurfaceModal(
     const readWatchers = props.watcherSelection?.getSnapshot ?? noWatcherChoices;
     const watcherChoices = React.useSyncExternalStore(
         props.watcherSelection?.subscribe ?? subscribeToNoWatcherChoices, readWatchers, readWatchers);
+    const readOriginIssue = props.originIssue?.get ?? noIssue;
+    const originIssue = React.useSyncExternalStore(
+        props.originIssue?.subscribe ?? subscribeToNoWatcherChoices, readOriginIssue, readOriginIssue);
     const chooseWatcher = (machineId: string) => {
         if (settledRef.current) return false;
         const draft = footerSlot.captureDraft();
@@ -220,7 +275,7 @@ function PluginEventAutomationSetupSurfaceModal(
         launchInput={props.launchInput} />;
     const origin = props.originLabel ? <SetupOriginRow label={props.originLabel} machineId={props.machineId}
         serverId={props.serverId} watcherChoices={hasDraft ? watcherChoices : undefined}
-        chooseWatcher={chooseWatcher} /> : null;
+        chooseWatcher={chooseWatcher} {...(originIssue ? { issue: originIssue } : {})} /> : null;
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
         <PluginModalCardFooterSlotContext.Provider value={footerSlot.set}>
@@ -233,6 +288,13 @@ function PluginEventAutomationSetupSurfaceModal(
     );
 }
 
+/** The shared field issue line, in the plugin forms' theme, so "Check from" says its remedy as the fields below do. */
+function SetupOriginIssue(props: Readonly<{ message: string }>) {
+    const { theme } = useUnistyles();
+    return <HappierValidationMessage testID="plugin-event-automation-setup-surface-origin-issue"
+        message={props.message} theme={usePluginUiTheme(theme)} accessibilityLiveRegion="polite" />;
+}
+
 /** Where the setup runs, as the sheet's first field (the composer preselects the surface's Machine). */
 export function SetupOriginRow(props: Readonly<{
     label: string;
@@ -240,8 +302,11 @@ export function SetupOriginRow(props: Readonly<{
     serverId: string | null;
     watcherChoices?: readonly NativeSetupWatcherChoice[];
     chooseWatcher: (machineId: string) => boolean;
+    /** A refused write's remedy for where the check runs, shown at this field as the form's own fields show theirs. */
+    issue?: string;
 }>) {
     const { theme } = useUnistyles();
+    const issue = props.issue ? <SetupOriginIssue message={props.issue} /> : null;
     const machine = useServerScopedMachineLabel(props.serverId, props.machineId);
     const all = useMachineListForServer(props.serverId);
     // The composer's usable watchers (21fe08b30ac): choosing another moves the open form there with what was typed.
@@ -256,13 +321,14 @@ export function SetupOriginRow(props: Readonly<{
             <SessionMachineField testID="plugin-event-automation-setup-surface-origin" serverId={props.serverId}
                 machines={machines} machineId={selected} title={props.label}
                 onSelectMachine={next => { if (next.id !== selected) props.chooseWatcher(next.id); }} />
-        </ItemGroup></ListPresentationProvider>;
+        </ItemGroup>{issue ? <View style={{ paddingBottom: theme.space.s16 }}>{issue}</View> : null}</ListPresentationProvider>;
     }
     // It stands on the form's own edge and rhythm, as the plugin's fields below it do: a label over its value.
     return (
         <View testID="plugin-event-automation-setup-surface-origin" style={{ gap: theme.space.s4, paddingBottom: theme.space.s16 }}>
             <Text variant="body" emphasis="medium" style={{ color: theme.colors.text.primary }}>{props.label}</Text>
             <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{machine ?? t('machine.unnamedMachine')}</Text>
+            {issue}
         </View>
     );
 }
@@ -286,6 +352,8 @@ type EphemeralInputSurfaceParams = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
     commandBridge?: BaseModalConfig['commandBridge'];
+    /** Keep a completed form open with its Save busy until the caller settles its hold (setup sheets only). */
+    holdUntilSettled?: true;
 }>;
 
 export function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & { watcherSelection?: never }):
@@ -310,26 +378,106 @@ export async function presentPluginEphemeralInputSurface(params: EphemeralInputS
 
     return await new Promise<PluginEventAutomationSetupSurfaceSettlement>((resolve) => {
         let modalId = '';
-        let settled = false;
+        // open: the draft takes input; held: its Save waits on the write; done: the sheet is gone.
+        let phase: 'open' | 'held' | 'done' = 'open';
+        let waiter: ((settlement: PluginEventAutomationSetupSurfaceSettlement) => void) | null = resolve;
+        let pending: PluginEventAutomationSetupSurfaceSettlement | null = null;
+        let heldReply: ((reply: PluginUiJsonValueV1 | null) => void) | null = null;
+        let presentationSignal: AbortSignal | undefined;
+        let originIssue: string | undefined;
+        const originIssueListeners = new Set<() => void>();
+        const setOriginIssue = (next: string | undefined) => {
+            if (next === originIssue) return;
+            originIssue = next;
+            originIssueListeners.forEach(listener => listener());
+        };
         let releaseRetirement: (() => void) | undefined;
         let releaseProjection: (() => void) | undefined;
-        const finish = (settlement: PluginEventAutomationSetupSurfaceSettlement) => {
-            if (settled) return;
-            settled = true;
-            params.signal?.removeEventListener('abort', onAbort);
+        const deliver = (settlement: PluginEventAutomationSetupSurfaceSettlement) => {
+            const current = waiter;
+            waiter = null;
+            if (current) current(settlement);
+            else pending = settlement;
+        };
+        const detachSignal = () => {
+            presentationSignal?.removeEventListener('abort', onAbort);
+            presentationSignal = undefined;
+        };
+        const attachSignal = (signal: AbortSignal | undefined) => {
+            detachSignal();
+            if (!signal) return;
+            if (signal.aborted) { onAbort(); return; }
+            presentationSignal = signal;
+            signal.addEventListener('abort', onAbort, { once: true });
+        };
+        const finish = (settlement: PluginEventAutomationSetupSurfaceSettlement, reply: PluginUiJsonValueV1 | null =
+            createPluginSurfaceHostApiError('stale_surface', ['ephemeral_input_mount_retired'])) => {
+            if (phase === 'done') return;
+            phase = 'done';
+            detachSignal();
             releaseRetirement?.();
             releaseProjection?.();
+            const replyToForm = heldReply;
+            heldReply = null;
+            replyToForm?.(reply);
             if (modalId) Modal.hide(modalId);
-            resolve(settlement);
+            deliver(settlement);
         };
-        const onAbort = () => finish({ kind: 'cancelled' });
-        params.signal?.addEventListener('abort', onAbort, { once: true });
+        function onAbort() { finish({ kind: 'cancelled' }); }
+        const hold: PluginEventAutomationSetupSurfaceHold = Object.freeze({
+            close: () => finish({ kind: 'cancelled' }, null),
+            refuse: (refusal: PluginEventAutomationSetupSurfaceRefusal) => {
+                if (phase !== 'held' || !heldReply) return false;
+                const issues = readWriteIssues(refusal.failure.details);
+                const atOrigin = messagesAt(issues, ORIGIN_ISSUE_PATH);
+                // The form says the source's own remedy, or the typed reason; "Check from" says its own when it is shown.
+                const message = [messagesAt(issues, SOURCE_ISSUE_PATH) ?? refusal.reason,
+                    ...(params.originLabel ? [] : [atOrigin])].filter(Boolean).join(' ');
+                const details = PluginUiJsonValueV1Schema.safeParse(refusal.failure.details);
+                phase = 'open';
+                setOriginIssue(params.originLabel ? atOrigin : undefined);
+                const replyToForm = heldReply;
+                heldReply = null;
+                replyToForm(createPluginSurfaceHostApiError(refusal.failure.errorCode, [], message, {
+                    ...(details.success ? { details: details.data } : {}),
+                    ...(refusal.failure.requestId ? { requestId: refusal.failure.requestId } : {}),
+                    ...(refusal.failure.retryable === undefined ? {} : { retryable: refusal.failure.retryable }),
+                }));
+                return true;
+            },
+            next: (signal?: AbortSignal) => {
+                const ready = pending;
+                pending = null;
+                if (ready) return Promise.resolve(ready);
+                if (phase === 'done') return Promise.resolve({ kind: 'cancelled' } as const);
+                attachSignal(signal);
+                return new Promise<PluginEventAutomationSetupSurfaceSettlement>(next => { waiter = next; });
+            },
+        });
+        const onSurfaceSettle = (settlement: PluginUiEphemeralInputSettlementV1): SetupSurfaceSettleReply => {
+            if (phase === 'held') {
+                return Promise.resolve(createPluginSurfaceHostApiError('stale_surface', ['ephemeral_input_write_pending']));
+            }
+            if (phase === 'open' && params.holdUntilSettled && settlement.kind === 'completed') {
+                // The write now owns the sheet's lifetime; the setup's own operation ending no longer closes it.
+                phase = 'held';
+                detachSignal();
+                setOriginIssue(undefined);
+                return new Promise(reply => {
+                    heldReply = reply;
+                    deliver({ kind: 'completed', input: settlement.input, hold });
+                });
+            }
+            finish(settlement);
+            return null;
+        };
+        attachSignal(params.signal);
         const retirement = params.accountLifetime.onRetire(onAbort);
         releaseRetirement = () => retirement.dispose();
         releaseProjection = subscribeMachineContributionRegistryProjectionInvalidation({
             machineId: params.machineId, serverId: params.serverId,
         }, onAbort);
-        if (settled) {
+        if (phase === 'done') {
             releaseRetirement();
             releaseProjection();
             return;
@@ -348,10 +496,14 @@ export async function presentPluginEphemeralInputSurface(params: EphemeralInputS
                 machineId: params.machineId,
                 serverId: params.serverId,
                 accountLifetime: params.accountLifetime,
-                onSettle: finish,
+                onSettle: onSurfaceSettle,
+                ...(params.holdUntilSettled ? { originIssue: { get: () => originIssue, subscribe: (listener: () => void) => {
+                    originIssueListeners.add(listener);
+                    return () => { originIssueListeners.delete(listener); };
+                } } } : {}),
                 watcherSelection: params.watcherSelection,
                 chooseWatcher: (machineId: string, draft: unknown) => {
-                    if (settled || !params.watcherSelection?.canChoose(machineId) || !PluginUiJsonValueV1Schema.safeParse(draft).success) return false;
+                    if (phase !== 'open' || !params.watcherSelection?.canChoose(machineId) || !PluginUiJsonValueV1Schema.safeParse(draft).success) return false;
                     finish({ kind: 'superseded', machineId, draft });
                     return true;
                 },
@@ -386,5 +538,6 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
         description: heading ? heading.description : params.eligibleEvent.event.description ?? undefined,
         ...(heading?.originLabel ? { originLabel: heading.originLabel } : {}),
         presentation: 'setup',
+        holdUntilSettled: true,
     });
 }

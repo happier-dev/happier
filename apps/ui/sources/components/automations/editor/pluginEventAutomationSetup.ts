@@ -48,7 +48,9 @@ import {
 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 import { EVENT_OBSERVER_BINDING_UNAVAILABLE, resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
-import { presentPluginEventAutomationSetupSurface, type NativeSetupWatcherSelection, type SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
+import {
+    presentPluginEventAutomationSetupSurface, type NativeSetupWatcherSelection, type PluginEventAutomationSetupSurfaceHold, type SetupSurfaceHeading,
+} from './presentPluginEventAutomationSetupSurface';
 
 export type PluginEventAutomationSetupFailure = Readonly<{
     code: string;
@@ -75,6 +77,8 @@ type SetupOutcome =
         webhookEndpoint: PluginEventAutomationWebhookEndpoint | null;
         /** Automatic delivery can enroll polling while exposing endpoint recovery. */
         webhookEndpointUnavailable?: true;
+        /** The native sheet, still open on its busy Save: the caller closes it once its write lands, or refuses into it. */
+        surfaceHold?: PluginEventAutomationSetupSurfaceHold;
     }>
     | (Readonly<{ kind: 'unavailable' }> & Partial<PluginEventAutomationSetupFailure>)
     | Readonly<{ kind: 'stale'; reason: 'event_retired' }>
@@ -292,6 +296,9 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     const actionSnapshotRef: MutableRefObject<PluginContributedActionCurrentSnapshot | null> = {
         current: null,
     };
+    // A completed native sheet stays open until this setup hands it to its caller; every other outcome closes it.
+    let surfaceHold: PluginEventAutomationSetupSurfaceHold | undefined;
+    let handedSurfaceHold = false;
     const currentOrigin = params.resolveExecutionOrigin();
     if (
         !currentOrigin
@@ -417,6 +424,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             selection.form.cancel();
                             return await selection.result;
                         }
+                        if (surfaceSettlement.kind === 'completed' && 'hold' in surfaceSettlement) surfaceHold = surfaceSettlement.hold;
                         const candidate = surfaceSettlement.input;
                         if (!isSetupSurfaceObjectInput(candidate)) {
                             selection.form.cancel();
@@ -585,6 +593,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             eligibleEvents: [current.event], draft, watcherOrigin: current.origin.origin,
         });
         if (!trigger) return { kind: 'unavailable' };
+        handedSurfaceHold = surfaceHold !== undefined;
         return {
             kind: 'configured',
             trigger,
@@ -594,12 +603,14 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             }),
             webhookEndpoint,
             ...(webhookEndpointUnavailable ? { webhookEndpointUnavailable: true as const } : {}),
+            ...(surfaceHold ? { surfaceHold } : {}),
         };
     } catch {
         return operationScope.signal.aborted || !params.accountLifetime.isCurrent()
             ? { kind: 'unavailable' }
             : { kind: 'unavailable' };
     } finally {
+        if (!handedSurfaceHold) surfaceHold?.close();
         actionSnapshotRef.current = null;
         operationScope.abort();
         params.signal?.removeEventListener('abort', onExternalAbort);

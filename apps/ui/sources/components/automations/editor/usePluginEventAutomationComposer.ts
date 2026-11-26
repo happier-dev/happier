@@ -1,6 +1,6 @@
 import type { PluginEventAutomationSetupSeed } from './pluginEventAutomationSetup';
 import * as React from 'react';
-import type { NativeSetupWatcherChoice, SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
+import type { NativeSetupWatcherChoice, PluginEventAutomationSetupSurfaceHold, PluginEventAutomationSetupSurfaceRefusal, SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -96,8 +96,9 @@ export type NewNativeSourceSetup = Readonly<{
     seed: PluginUiOpenAutomationEventRequestV1;
     /** What the host calls this setup (Add check); the Event's trigger title otherwise. */
     heading?: SetupSurfaceHeading;
+    /** Writes the configured source while its sheet stays open; a returned refusal goes back to the open draft. */
     onSettled: (settlement: (NativeSourceConfigured & Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>)
-        | NativeSourceCancelled) => void;
+        | NativeSourceCancelled) => void | Promise<PluginEventAutomationSetupSurfaceRefusal | undefined>;
 }>;
 
 /**
@@ -957,129 +958,145 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setWebhookEndpointRefreshing(false);
     }, [setupScope]);
 
-    const configureSource = useEventCallback(() => {
+    // `openSheet` is the native sheet still open on a refused write: this pass waits on its next Save instead of opening one.
+    const runSetup = useEventCallback((openSheet?: PluginEventAutomationSetupSurfaceHold) => {
         void (async () => {
-            if (!accountLifetime || setupScope.signal.aborted) {
-                setSourceFailure(null);
-                setSourceStatus('unavailable');
-                return;
-            }
-            if (!filter.valid || !maximumObservationAgeMs.valid) {
-                setSourceFailure(null);
-                setSourceStatus('unavailable');
-                return;
-            }
-            const currentEvent = currentSetupEvent;
-            if (!currentEvent) {
-                setSourceFailure(null);
-                setSourceStatus('unavailable');
-                return;
-            }
-            if (!resolveExecutionOrigin()) {
-                setSourceFailure(null);
-                setSourceStatus('unavailable');
-                return;
-            }
-            if (!supportsPluginEventAutomationObservationTransport(currentEvent, effectiveObservationTransport)) {
-                setSourceFailure(null);
-                setSourceStatus('unavailable');
-                return;
-            }
-            const previousStatus = sourceStatus;
-            const previousFailure = sourceFailure;
-            setSourceStatus('settingUp');
-            setSourceFailure(null);
-            const setupHeading = (params.newSourceSetup ?? params.savedSourceSetup)?.heading;
-            const selectedMachineId = selectedWatcherOrigin
-                ? getPluginMachineExecutionOriginRef(selectedWatcherOrigin).machineId : null;
-            const resume = nativeSetupResume && nativeSetupResume.machineId === selectedMachineId ? nativeSetupResume : null;
-            const configured = await configurePluginEventAutomationSetup({
-                commandBridge,
-                requireNativeRenderer: params.newSourceSetup !== undefined,
-                ...(setupHeading ? { surfaceHeading: setupHeading } : {}),
-                savedSourceRendererInput: params.savedSourceSetup?.input,
-                ...(params.savedSourceSetup || params.newSourceSetup ? {
-                    onApplying: () => { if (!setupScope.signal.aborted) setSourceStatus('applying'); },
-                } : {}),
-                eligibleEvent: currentEvent,
-                ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
-                    ? { initialSource: configuredSetup.draft.source }
-                    : initialEditSeed && arePluginContributionIdentitiesEqual(initialEditSeed.eventRef, currentEvent.event.identity)
-                        ? { initialSource: initialEditSeed.source } : {}),
-                ...(initialSetupSeed && arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, currentEvent.event.identity)
-                    ? { initialSetupSeed: resume
-                        ? { ...initialSetupSeed, monitoringMachineId: resume.machineId } : initialSetupSeed } : {}),
-                ...(params.newSourceSetup ? {
-                    nativeSetupDraft: resume?.input,
-                    watcherSelection: {
-                        getSnapshot: nativeWatcherChoices.getSnapshot,
-                        subscribe: nativeWatcherChoices.subscribe,
-                        canChoose: machineId => !setupScope.signal.aborted && nativeWatcherChoices.getSnapshot()
-                            .some(choice => choice.machineId === machineId && !choice.selected),
-                    },
-                } : {}),
-                observationTransport: effectiveObservationTransport,
-                filter: filter.value,
-                maximumObservationAgeMs: maximumObservationAgeMs.value,
-                accountLifetime,
-                ensureWebhookEndpoint: input => ensurePluginEventAutomationWebhookEndpoint({ ...input, executeAction: executeWebhookAction }),
-                signal: setupScope.signal,
-                resolveExecutionOrigin,
-                loadCurrentProjection: async (target) => await loadDaemonMergedProjectionInputs({
-                    machineId: target.machineId,
-                    serverId: target.serverId,
-                    staleMs: 0,
-                    sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
-                }),
-            });
-            if (
-                setupScope.signal.aborted
-                || selectedEventRef.current === null
-                || !sameEligibleEvent(selectedEventRef.current, currentEvent)
-            ) {
-                return;
-            }
-            if (configured.kind === 'superseded') {
-                if (selectNativeWatcher(configured.machineId)) {
-                    setNativeSetupResume({ machineId: configured.machineId, input: configured.input });
-                } else {
-                    if (selectedMachineId) setNativeSetupResume({ machineId: selectedMachineId, input: configured.input });
+            // Every pass ends with the sheet closed unless its draft took a refusal back.
+            let sheet = openSheet;
+            let keepSheet = false;
+            try {
+                if (!accountLifetime || setupScope.signal.aborted) {
+                    setSourceFailure(null);
                     setSourceStatus('unavailable');
+                    return;
                 }
-                return;
-            }
-            if (configured.kind === 'cancelled') {
+                if (!filter.valid || !maximumObservationAgeMs.valid) {
+                    setSourceFailure(null);
+                    setSourceStatus('unavailable');
+                    return;
+                }
+                const currentEvent = currentSetupEvent;
+                if (!currentEvent) {
+                    setSourceFailure(null);
+                    setSourceStatus('unavailable');
+                    return;
+                }
+                if (!resolveExecutionOrigin()) {
+                    setSourceFailure(null);
+                    setSourceStatus('unavailable');
+                    return;
+                }
+                if (!supportsPluginEventAutomationObservationTransport(currentEvent, effectiveObservationTransport)) {
+                    setSourceFailure(null);
+                    setSourceStatus('unavailable');
+                    return;
+                }
+                const previousStatus = sourceStatus;
+                const previousFailure = sourceFailure;
+                setSourceStatus('settingUp');
+                setSourceFailure(null);
+                const setupHeading = (params.newSourceSetup ?? params.savedSourceSetup)?.heading;
+                const selectedMachineId = selectedWatcherOrigin
+                    ? getPluginMachineExecutionOriginRef(selectedWatcherOrigin).machineId : null;
+                const resume = nativeSetupResume && nativeSetupResume.machineId === selectedMachineId ? nativeSetupResume : null;
+                const configured = await configurePluginEventAutomationSetup({
+                    commandBridge,
+                    ...(openSheet ? { presentSetupSurface: surface => openSheet.next(surface.signal) } : {}),
+                    requireNativeRenderer: params.newSourceSetup !== undefined,
+                    ...(setupHeading ? { surfaceHeading: setupHeading } : {}),
+                    savedSourceRendererInput: params.savedSourceSetup?.input,
+                    ...(params.savedSourceSetup || params.newSourceSetup ? {
+                        onApplying: () => { if (!setupScope.signal.aborted) setSourceStatus('applying'); },
+                    } : {}),
+                    eligibleEvent: currentEvent,
+                    ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
+                        ? { initialSource: configuredSetup.draft.source }
+                        : initialEditSeed && arePluginContributionIdentitiesEqual(initialEditSeed.eventRef, currentEvent.event.identity)
+                            ? { initialSource: initialEditSeed.source } : {}),
+                    ...(initialSetupSeed && arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, currentEvent.event.identity)
+                        ? { initialSetupSeed: resume
+                            ? { ...initialSetupSeed, monitoringMachineId: resume.machineId } : initialSetupSeed } : {}),
+                    ...(params.newSourceSetup ? {
+                        nativeSetupDraft: resume?.input,
+                        watcherSelection: {
+                            getSnapshot: nativeWatcherChoices.getSnapshot,
+                            subscribe: nativeWatcherChoices.subscribe,
+                            canChoose: machineId => !setupScope.signal.aborted && nativeWatcherChoices.getSnapshot()
+                                .some(choice => choice.machineId === machineId && !choice.selected),
+                        },
+                    } : {}),
+                    observationTransport: effectiveObservationTransport,
+                    filter: filter.value,
+                    maximumObservationAgeMs: maximumObservationAgeMs.value,
+                    accountLifetime,
+                    ensureWebhookEndpoint: input => ensurePluginEventAutomationWebhookEndpoint({ ...input, executeAction: executeWebhookAction }),
+                    signal: setupScope.signal,
+                    resolveExecutionOrigin,
+                    loadCurrentProjection: async (target) => await loadDaemonMergedProjectionInputs({
+                        machineId: target.machineId,
+                        serverId: target.serverId,
+                        staleMs: 0,
+                        sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
+                    }),
+                });
+                if (
+                    setupScope.signal.aborted
+                    || selectedEventRef.current === null
+                    || !sameEligibleEvent(selectedEventRef.current, currentEvent)
+                ) {
+                    return;
+                }
+                if (configured.kind === 'superseded') {
+                    if (selectNativeWatcher(configured.machineId)) {
+                        setNativeSetupResume({ machineId: configured.machineId, input: configured.input });
+                    } else {
+                        if (selectedMachineId) setNativeSetupResume({ machineId: selectedMachineId, input: configured.input });
+                        setSourceStatus('unavailable');
+                    }
+                    return;
+                }
+                if (configured.kind === 'cancelled') {
+                    setNativeSetupResume(null);
+                    setSourceStatus(previousStatus);
+                    setSourceFailure(previousFailure);
+                    (params.savedSourceSetup ?? params.newSourceSetup)?.onSettled({ kind: 'cancelled' });
+                    return;
+                }
+                if (configured.kind !== 'configured') {
+                    setWebhookEndpoint(null);
+                    setSourceFailure(configured.kind === 'unavailable' && configured.code && configured.reason
+                        ? { ...configured, code: configured.code, reason: configured.reason }
+                        : configured.kind === 'stale' && params.newSourceSetup ? RETIRED_SETUP_FAILURE : null);
+                    setSourceStatus('unavailable');
+                    return;
+                }
+                sheet = configured.surfaceHold ?? sheet;
                 setNativeSetupResume(null);
-                setSourceStatus(previousStatus);
-                setSourceFailure(previousFailure);
-                (params.savedSourceSetup ?? params.newSourceSetup)?.onSettled({ kind: 'cancelled' });
-                return;
-            }
-            if (configured.kind !== 'configured') {
-                setWebhookEndpoint(null);
-                setSourceFailure(configured.kind === 'unavailable' && configured.code && configured.reason
-                    ? { ...configured, code: configured.code, reason: configured.reason }
-                    : configured.kind === 'stale' && params.newSourceSetup ? RETIRED_SETUP_FAILURE : null);
-                setSourceStatus('unavailable');
-                return;
-            }
-            setNativeSetupResume(null);
-            setConfiguredSetup(configured.draft);
-            setWebhookEndpoint(configured.webhookEndpoint);
-            setSourceStatus('configured');
-            setSourceFailure(configured.webhookEndpointUnavailable
-                ? { code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' } : null);
-            advanceRevision();
-            if (params.savedSourceSetup || params.newSourceSetup) {
-                const { trigger } = configured;
-                const observationOnly = configured.draft.draft.source.observationOnly;
-                if (params.savedSourceSetup) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
-                else if (observationOnly && params.newSourceSetup) {
-                    params.newSourceSetup.onSettled({ kind: 'configured', trigger, observationOnly });
-                } else setSourceStatus('unavailable');
+                setConfiguredSetup(configured.draft);
+                setWebhookEndpoint(configured.webhookEndpoint);
+                setSourceStatus('configured');
+                setSourceFailure(configured.webhookEndpointUnavailable
+                    ? { code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' } : null);
+                advanceRevision();
+                if (params.savedSourceSetup || params.newSourceSetup) {
+                    const { trigger } = configured;
+                    const observationOnly = configured.draft.draft.source.observationOnly;
+                    if (params.savedSourceSetup) params.savedSourceSetup.onSettled({ kind: 'configured', trigger });
+                    else if (observationOnly && params.newSourceSetup) {
+                        const refusal = await params.newSourceSetup.onSettled({ kind: 'configured', trigger, observationOnly });
+                        // A refused write goes back to the open draft, which waits for the person's correction.
+                        if (refusal && sheet?.refuse(refusal) && !setupScope.signal.aborted) {
+                            keepSheet = true;
+                            runSetup(sheet);
+                        }
+                    } else setSourceStatus('unavailable');
+                }
+            } finally {
+                if (!keepSheet) sheet?.close();
             }
         })();
     });
+    const configureSource = useEventCallback(() => runSetup());
 
     const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;
     const webhookEndpointPluginId = configuredSetup?.draft.eventRef.pluginId ?? null;
