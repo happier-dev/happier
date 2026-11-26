@@ -70,6 +70,7 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
     snapshotSignature: string | null;
     workspaceScope?: WorkspaceScopeBase | null;
     filePath: string;
+    previousFilePath?: string;
     isBinaryContent?: boolean;
     estimatedChangedLines?: number | null;
     diffStateSource: ChangedFilesReviewDiffStateSource;
@@ -489,6 +490,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     reviewCommentsEnabled={props.reviewCommentsEnabled}
                     reviewCommentDrafts={props.reviewCommentDrafts}
                     reviewComments={props.reviewComments}
+                    previousFilePath={props.previousFilePath}
                     serverId={props.workspaceScope?.serverId ?? undefined}
                     wrapLines={effectiveWrapLines}
                     showLineNumbers={effectiveShowLineNumbers}

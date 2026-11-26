@@ -1214,6 +1214,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         reviewCommentsEnabled,
         reviewCommentDrafts,
         reviewComments: props.reviewComments,
+        capturedFileByPath,
         onUpsertReviewCommentDraft: props.onUpsertReviewCommentDraft,
         onDeleteReviewCommentDraft: props.onDeleteReviewCommentDraft,
         onReviewCommentError: props.onReviewCommentError,

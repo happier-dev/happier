@@ -140,11 +140,15 @@ it('keeps sealed finding excerpts readable without a capture or Machine read', a
     await screen.unmount();
 });
 
-it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments and Viewed marks in the captured Session namespace %s', async comparisonSessionId => {
+it.each([
+    { comparisonSessionId: undefined, renamed: false },
+    { comparisonSessionId: 'cmwnalobm00h105mc6nucsgo7', renamed: false },
+    { comparisonSessionId: undefined, renamed: true },
+])('keeps saved gutter comments and Viewed marks in the captured comparison %j', async ({ comparisonSessionId, renamed }) => {
     // Retained QA Review f8c93a92 captured a working tree inside this Session namespace.
     const comparison = ScmComparisonSchema.parse({ id: '46dae58ca4a04ab832497525f9b8ece106f331bde36322d8ed070e7161c8b1f8', source: { kind: 'workingTree', area: 'pending' },
         repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
-            path: 'total.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+            path: 'total.ts', ...(renamed ? { previousPath: 'previous-total.ts' } : {}), changeKind: renamed ? 'renamed' : 'modified', binary: false, generated: false, lockfile: false,
             occurrences: [{ id: 'total-change', alias: 'total-change', path: 'total.ts', position: 0,
                 before: { startLine: 2, lineCount: 1 }, after: { startLine: 2, lineCount: 1 } }],
             evidence: { state: 'available', unifiedDiff: '@@ -1,3 +1,3 @@\n export function total(prices: number[]) {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum - price, 0);\n }\n' },
@@ -170,7 +174,7 @@ it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments a
         body: 'Preserve addition: subtraction returns a negative total.', snapshot: { kind: 'none', capturedAt: 1 } });
     // A finding on the same line is the page's own row: under its line it is one line that opens it, not its body again.
     const finding = buildReviewCommentFixture({ id: 'saved-finding', reviewId: 'gutter-review', roundOrdinal: 1, findingId: 'f1',
-        findingSeverity: 'high', anchor: { kind: 'line', filePath: 'total.ts', line: 2, side: 'after' }, snapshot: { kind: 'none', capturedAt: 1 },
+        findingSeverity: 'high', anchor: { kind: 'line', filePath: renamed ? 'previous-total.ts' : 'total.ts', line: 2, side: renamed ? 'before' : 'after' }, snapshot: { kind: 'none', capturedAt: 1 },
         body: 'Total subtracts every price.', finding: { id: 'f1', title: 'Total subtracts every price', summary: 'The reducer subtracts.',
             severity: 'high', category: 'correctness' } });
     const onOpenComment = vi.fn();
@@ -190,7 +194,7 @@ it.each([undefined, 'cmwnalobm00h105mc6nucsgo7'])('keeps saved gutter comments a
     expect(onOpenComment).toHaveBeenCalledWith('saved-finding');
     const lines = screen.findByType(DiffViewer).props.precomputedLines;
     const renderAfterLine = screen.findByType(DiffViewer).props.renderAfterLine;
-    expect(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'remove'))).toBeNull();
+    expect(Boolean(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'remove')))).toBe(renamed);
     expect(renderAfterLine(lines.find((line: { kind: string }) => line.kind === 'add'))).not.toBeNull();
     await screen.pressByTestIdAsync('diff-file-menu:total.ts');
     await vi.waitFor(() => expect(screen.findByTestId('diff-file-viewed')).not.toBeNull());

@@ -32,6 +32,7 @@ const DISABLED_INTRA_LINE_WORD_DIFF = {
 export type DiffReviewCommentsViewerProps = Pick<UnifiedDiffViewerProps, 'findActive' | 'findRangesByLineId' | 'registerFindRefold' | 'precomputedLines' | 'contextBaseText' | 'hunks' | 'reviewUnits'
     | 'renderLeadingLane' | 'highlightLineIds'> & Readonly<{
     filePath: string;
+    previousFilePath?: string;
     unifiedDiff: string;
     scrollToLineId?: string;
     highlightLineId?: string;
@@ -77,6 +78,7 @@ function areDiffReviewCommentsViewerPropsEqual(
         && previous.externalScrollView === next.externalScrollView
         && previous.renderAfterLine === next.renderAfterLine
         && previous.filePath === next.filePath
+        && previous.previousFilePath === next.previousFilePath
         && previous.unifiedDiff === next.unifiedDiff
         && previous.reviewCommentsEnabled === next.reviewCommentsEnabled
         && areDraftArraysEquivalent(previous.reviewCommentDrafts, next.reviewCommentDrafts)
@@ -148,7 +150,9 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         const result = new Map<string, ReviewCommentV1[]>();
         for (const comment of props.reviewComments ?? []) {
             if (comment.parentCommentId || (comment.anchor.kind !== 'line' && comment.anchor.kind !== 'range')) continue;
-            const resolution = resolveCodeLineAnchor({ filePath: props.filePath, source: 'diff', lines, anchor: comment.anchor });
+            const filePath = comment.anchor.side === 'before' && comment.anchor.filePath === props.previousFilePath
+                ? comment.anchor.filePath : props.filePath;
+            const resolution = resolveCodeLineAnchor({ filePath, source: 'diff', lines, anchor: comment.anchor });
             const lineId = resolution.lines.at(-1)?.id;
             if (!lineId) continue;
             const comments = result.get(lineId);
@@ -156,7 +160,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
             else result.set(lineId, [comment]);
         }
         return result;
-    }, [props.reviewComments, props.filePath, lines]);
+    }, [props.reviewComments, props.filePath, props.previousFilePath, lines]);
     const labels = commentsByLineId.size > 0 ? buildReviewCommentLabels() : null;
     const openFinding = React.useContext(ReviewFindingAnchorContext);
     const renderAfterLine = React.useCallback((line: CodeLine) => {

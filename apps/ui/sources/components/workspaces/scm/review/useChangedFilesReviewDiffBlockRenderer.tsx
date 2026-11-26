@@ -9,6 +9,7 @@ import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import type { ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
+import type { CapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
 
 const EMPTY_REVIEW_COMMENT_DRAFTS: readonly ReviewCommentDraft[] = [];
 const EMPTY_REVIEW_COMMENTS: readonly ReviewCommentV1[] = [];
@@ -25,6 +26,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     reviewComments?: readonly ReviewCommentV1[];
+    capturedFileByPath?: CapturedFileByPath | null;
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
@@ -56,17 +58,22 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     } = input;
     const flat = input.flat === true;
     const hunkReviewSource = input.hunkReviewSource;
+    const currentPathByPreviousPath = React.useMemo(() => new Map(
+        [...(input.capturedFileByPath?.values() ?? [])].flatMap(file => file.previousPath ? [[file.previousPath, file.path] as const] : []),
+    ), [input.capturedFileByPath]);
     const commentsByPath = React.useMemo(() => {
         const result = new Map<string, ReviewCommentV1[]>();
         for (const comment of input.reviewComments ?? []) {
             if (comment.parentCommentId || !('filePath' in comment.anchor)) continue;
-            const path = comment.anchor.filePath;
+            const path = 'side' in comment.anchor && comment.anchor.side === 'before'
+                ? currentPathByPreviousPath.get(comment.anchor.filePath) ?? comment.anchor.filePath
+                : comment.anchor.filePath;
             const comments = result.get(path);
             if (comments) comments.push(comment);
             else result.set(path, [comment]);
         }
         return result;
-    }, [input.reviewComments]);
+    }, [input.reviewComments, currentPathByPreviousPath]);
 
     const reviewCommentDraftsByDiffFilePath = React.useMemo(() => {
         if (reviewCommentsEnabled !== true || !reviewCommentDrafts || reviewCommentDrafts.length === 0) {
@@ -100,6 +107,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 snapshotSignature={fileFacts.snapshotSignature}
                 workspaceScope={workspaceScope ?? null}
                 filePath={path}
+                previousFilePath={input.capturedFileByPath?.get(path)?.previousPath}
                 isBinaryContent={fileFacts.isBinaryContent}
                 estimatedChangedLines={fileFacts.estimatedChangedLines}
                 diffStateSource={diffStateSource}
@@ -140,6 +148,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         onUpsertReviewCommentDraft,
         reviewCommentDraftsByDiffFilePath,
         commentsByPath,
+        input.capturedFileByPath,
         reviewCommentsEnabled,
         sessionId,
         theme,
