@@ -10,6 +10,8 @@ import {
   unbindVoiceRuntimeAttemptBindingIfOwned,
 } from '@/voice/binding/voiceConversationBindingStore';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createScmCapabilities, ScmComparisonCaptureInputSchema, ScmComparisonCaptureOutputSchema,
+  ScmStatusSnapshotRequestSchema, ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -67,6 +69,33 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 // The daemon response is authored at the genuine Socket.IO boundary. Session
 // eligibility, scoped Account admission, RPC framing and response parsing run.
 const daemonRpc = vi.fn<(request: Readonly<{ serverUrl: string; sessionId: string; method: string; payload: unknown }>) => Promise<unknown>>();
+
+// The Machine SCM transport supplies repository facts and retained evidence;
+// the real Review admission still selects and captures its comparison.
+function reviewScmRpcResponse(request: Parameters<typeof daemonRpc>[0]) {
+  if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+    const { cwd = '/review-repo' } = ScmStatusSnapshotRequestSchema.parse(request.payload);
+    return ScmStatusSnapshotResponseSchema.parse({ success: true, snapshot: {
+      projectKey: `m1:${cwd}`, fetchedAt: 1,
+      repo: { isRepo: true, rootPath: cwd, backendId: 'git', mode: '.git' },
+      capabilities: createScmCapabilities({ readStatus: true }),
+      branch: { head: 'main', upstream: null, ahead: 0, behind: 0, detached: false },
+      hasConflicts: false, entries: [], totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0,
+        includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
+    } });
+  }
+  if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+    const capture = ScmComparisonCaptureInputSchema.parse(request.payload);
+    if (!capture.source) throw new Error('Review fixture requires a comparison source');
+    const id = capture.comparisonId ?? 'a'.repeat(64);
+    return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: {
+      id, source: capture.source, repository: { rootPath: capture.cwd }, endpoints: {},
+      inventory: { state: 'complete', files: [], reasons: [] },
+    }, metadata: { source: capture.source, sourceKey: id } });
+  }
+  return undefined;
+}
+
 const routerNavigate = vi.fn();
 const refreshFromActiveServer = vi.fn(async () => {});
 const pendingEnqueue = vi.fn<(request: Readonly<{ serverUrl: string; sessionId: string; runId: string | null; init: RequestInit }>) => Promise<Response>>();
@@ -1207,15 +1236,19 @@ describe('voice tool handlers', () => {
 
   it('starts review through the catalog Voice binding, executor and Session RPC', async () => {
     const { ExecutionRunStartResponseSchema } = await import('@happier-dev/protocol/execution/runs/responseSchemas');
-    daemonRpc.mockImplementation(async request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
-      ? { error: 'RPC_METHOD_NOT_FOUND' }
-      : ExecutionRunStartResponseSchema.parse({ runId: 'run-review', callId: 'call-review', sidechainId: 'call-review' }));
+    daemonRpc.mockImplementation(async request => {
+      const scm = reviewScmRpcResponse(request);
+      if (scm) return scm;
+      return request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        ? { error: 'RPC_METHOD_NOT_FOUND' }
+        : ExecutionRunStartResponseSchema.parse({ runId: 'run-review', callId: 'call-review', sidechainId: 'call-review' });
+    });
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1'),
       currentSessionAddress: { serverId: homeA, sessionId: 's1' } });
     const inventory = JSON.parse(await tools.listReviewEngines({ sessionId: 's1' }, { serverId: homeA }));
     expect(inventory, JSON.stringify(inventory)).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ engineId: 'claude', enabled: true })]) });
-    const result = JSON.parse(await tools.startReview({ engineIds: ['claude'], instructions: 'Review the current worktree.' }));
+    const result = JSON.parse(await tools.startReview({ reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the current worktree.' }));
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, sessionId: 's1', results: [
       { ok: true, result: { runId: 'run-review' } },
     ] });
@@ -2434,6 +2467,8 @@ describe('voice tool handlers', () => {
       metadata: { ...state.sessionListRowsByServerId[homeB].s_other.metadata, machineId: 'm1' },
     })], { source: 'ordinary', mode: 'replace' });
     daemonRpc.mockImplementation(async request => {
+      const scm = reviewScmRpcResponse(request);
+      if (scm) return scm;
       if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
         return { protocolVersion: 1, projection: machineInventory.projection };
       }
@@ -2442,7 +2477,7 @@ describe('voice tool handlers', () => {
     });
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : null) });
-    const result = JSON.parse(await tools.startReview({ sessionId: 's_other', engineIds: ['claude'], instructions: 'Review the other Home.' }, { serverId: homeB }));
+    const result = JSON.parse(await tools.startReview({ sessionId: 's_other', reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review the other Home.' }, { serverId: homeB }));
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, sessionId: 's_other', results: [
       { ok: true, result: { runId: 'run-other-review' } },
     ] });
