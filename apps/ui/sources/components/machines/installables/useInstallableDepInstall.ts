@@ -67,7 +67,9 @@ export function useInstallableDepInstall(
               : t('deps.installFailed'),
           );
         } else if (!invoke.response.ok) {
-          Modal.alert(t('common.error'), invoke.response.error.message);
+          Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(
+            invoke.response.error, t('deps.installFailed'), { closedCodesOnly: true },
+          ));
         } else {
           const result = invoke.response.result;
           const logPath =

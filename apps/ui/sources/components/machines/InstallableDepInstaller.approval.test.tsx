@@ -27,6 +27,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { InstallableDepInstaller } = await import('./InstallableDepInstaller');
+const { useInstallableDepInstall } = await import('./installables/useInstallableDepInstall');
 const { useComputerDriverRepair } = await import('@/components/computer/useComputerDriverRepair');
 const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -112,6 +113,23 @@ describe('install and Computer repair share configurable Action approval', () =>
             ));
             expect(boundary.rpc).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
+    });
+
+    it.each([
+        ['permission_denied', 'errors.permissionDenied'],
+        ['unsupported-method', 'deps.installFailed'],
+    ])('presents the native install refusal %s without exposing the daemon message', async (code, reason) => {
+        const { serverId } = await addInstallerHome('Allowed');
+        boundary.rpc.mockResolvedValue({ ok: false, error: { code, message: 'Raw daemon diagnostic' } });
+        const refresh = vi.fn();
+        const hook = await renderHook(() => useInstallableDepInstall({
+            serverId, machineId: 'machine', depId: COMPUTER_CUA_DRIVER_DEP_ID, depStatus: null, refreshStatus: refresh,
+        }));
+        try {
+            await act(async () => { await hook.getCurrent().run(); });
+            expect(refresh).toHaveBeenCalled();
+            expect(boundary.alert).toHaveBeenCalledExactlyOnceWith('common.error', reason);
+        } finally { await hook.unmount(); }
     });
 
     it('distinguishes a failed capability invocation from an unsupported capability', async () => {
