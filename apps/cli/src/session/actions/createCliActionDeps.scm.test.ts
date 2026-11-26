@@ -19,6 +19,8 @@ import { createCliActionDeps } from './createCliActionDeps';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { runWithScmAccountScope } from '@/scm/accountScope';
 import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
@@ -32,10 +34,16 @@ import { ScmHostingRepositoryGetRequestV1Schema } from '@happier-dev/protocol/sc
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
-import { createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
+import { createTestGitScmBackendRegistry, createTestRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
 import { applyScmReviewedMarkIntent, ScmDiffSummaryResultClearResponseSchema, ScmReviewedMarkResponseSchema } from '@happier-dev/protocol';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 afterEach(() => vi.restoreAllMocks());
+
+function receivingScmOperation<T>(workingDirectory: string, run: () => Promise<T>): Promise<T> {
+  return scmRpcOperationContextStorage.run({ context: { signal: new AbortController().signal }, workingDirectory,
+    accessPolicy: { kind: 'restrictedRoots', roots: [workingDirectory] } }, run);
+}
 
 describe('Session-backed SCM owner workspace', () => {
   const sessionId = 'c111111111111111111111111';
@@ -44,10 +52,10 @@ describe('Session-backed SCM owner workspace', () => {
     type: 'dataKey', publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey,
   } } satisfies StoredCredentials;
 
-  it.each(['differentId', 'differentUrl', 'unboundUrl', 'contextId', 'currentUrl', 'currentApi', 'currentRuntime'] as const)('binds this producer retained result to the exact selected Home (%s)', async scenario => {
+  it.each(['differentId', 'differentUrl', 'unboundUrl', 'contextId', 'currentUrl', 'currentApi', 'currentRuntime'] as const)('binds this producer retained result to the exact selected Home (%s)', async scenario => runWithScmAccountScope('owner', async () => {
     const release = publishServerHttpRuntimeOrigin('http://127.0.0.1:48187', 'iroh');
     try {
-    await withTempDir('scm-owner-home-admission-', async workspace => {
+    await withTempDir('scm-owner-home-admission-', async workspace => receivingScmOperation(workspace, async () => {
       const saved = await scmDiffSummaryResultStore.create({ cwd: workspace, sessionId,
         output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
           metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
@@ -79,17 +87,17 @@ describe('Session-backed SCM owner workspace', () => {
         { surface: 'cli', defaultSessionId: sessionId,
           ...(scenario === 'contextId' ? { serverId: `${configuration.activeServerId}-other` } : {}) });
       const currentHome = scenario === 'currentUrl' || scenario === 'currentApi' || scenario === 'currentRuntime';
-      expect(result).toMatchObject(currentHome ? { ok: true, result: { success: true,
+      expect(result, JSON.stringify(result)).toMatchObject(currentHome ? { ok: true, result: { success: true,
         result: { output: { outputs: { summary: { value: { summaryMarkdown: 'Private Home A result' } } } } } } }
         : { ok: false, errorCode: 'server_scope_mismatch' });
       if (!currentHome) expect(JSON.stringify(result)).not.toContain('Private Home A result');
-    });
+    }));
     } finally { release(); }
-  });
+  }));
 
   const cases = ['plain', 'e2ee', 'e2eeSession', 'layout0', 'absent', 'modeMismatch', 'wrongKey'] as const;
-  it.each(cases)('reads the authenticated owner workspace (%s) before real SCM dispatch', async (scenario) => {
-    await withTempDir('scm-owner-workspace-', async (workspace) => {
+  it.each(cases)('reads the authenticated owner workspace (%s) before real SCM dispatch', async (scenario) => runWithScmAccountScope('owner', async () => {
+    await withTempDir('scm-owner-workspace-', async (workspace) => receivingScmOperation(workspace, async () => {
       const encrypted = scenario === 'e2ee' || scenario === 'e2eeSession' || scenario === 'wrongKey';
       const accountMode = encrypted || scenario === 'modeMismatch' ? 'e2ee' : 'plain';
       const credentials: StoredCredentials = encrypted ? encryptedCredentials : { token: 'scm-owner-token', encryption: null };
@@ -140,21 +148,23 @@ describe('Session-backed SCM owner workspace', () => {
         // Session Actions must use their owner workspace even when a different cwd is supplied.
         cwd: '/unrelated/input-worktree', resultId: saved.resultId,
       }, { surface: 'cli', defaultSessionId: sessionId });
-      expect(result).toMatchObject(scenario === 'plain' || scenario === 'e2ee' || scenario === 'e2eeSession' || scenario === 'layout0'
+      expect(result, JSON.stringify(result)).toMatchObject(scenario === 'plain' || scenario === 'e2ee' || scenario === 'e2eeSession' || scenario === 'layout0'
         ? { ok: true, result: { success: true,
           result: { output: { outputs: { summary: { value: { summaryMarkdown: 'Authenticated owner workspace' } } } } } } }
-        : { ok: false, errorCode: 'scm_action_worktree_unavailable' });
-    });
-  });
+        : { ok: false, errorCode: 'approval_context_unavailable' });
+      if (!result.ok) expect(JSON.stringify(result)).not.toContain('Authenticated owner workspace');
+    }));
+  }));
 });
 
 describe('exact-machine SCM Action targeting', () => {
-  it.each(['account', 'terminal'] as const)('retains custodian list/read/delete through signed public Actions after Session deletion (%s)', async kind => {
+  it.each(['account', 'terminal'] as const)('retains custodian list/read/delete through signed public Actions after Session deletion (%s)', async kind => runWithScmAccountScope('custodian', async () => {
     const { executeExternalAction } = await import('@/daemon/externalActions/executeExternalAction');
     const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
     const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
     await withTempDir('scm-public-retained-custodian-', async home => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+      const currentness = await createRequesterCurrentnessSocketHarness();
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'public-retained-home' });
         reloadConfiguration();
@@ -171,19 +181,43 @@ describe('exact-machine SCM Action targeting', () => {
             analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
           }) });
         // Only Home HTTP is substituted: deleted Session reads and signed root currentness.
-        vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: {} });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+          const path = new URL(String(url)).pathname;
+          if (path === '/v1/account/profile') return { status: 200, data: { id: 'custodian' } };
+          if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+          } };
+          if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+          return { status: 404, data: {} };
+        });
         const verify = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
-        const token = 'public-custodian';
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+          expect(new URL(request.url!).pathname).toBe(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+          expect(request.method).toBe('GET');
+          return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+        });
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'custodian', tokenEpoch: 1,
+          provenance: { v: 1, kind, authority: kind === 'account' ? 'present_user' : 'account_automation' } })).toString('base64url')}.signature`;
+        const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
+        const scm = createTestRpcManager({ machineId: 'machine', workingDirectory: home,
+          scopePrefix: 'machine',
+          admissionBoundary: { machineId: 'machine', resolveInstallationId: () => 'installation',
+            resolveCustodianAccountId: async () => 'custodian', resolveHomeServerIdentityId: async () => 'srv_retained',
+            verifyMachineAdmission: async () => { throw new Error('Retained own requester needs no new Machine admission'); } },
+          accessPolicy: { kind: 'restrictedRoots', roots: [home] },
+          actionExecutor: { execute: (...args) => executor.execute(...args) } });
         const deps = createCliActionDeps({ token, credentials: { token, encryption: null },
           sessionId: '', mode: 'plain', ctx: null,
+          externalActionMachineRequestPrivateKey: installation.secretKey,
+          externalActionMachineInstallationId: 'installation',
+          machineActionDirectTargetTransport: { machineId: 'machine', invoke: scm.invokeLocal },
           scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } });
         // Account policy is explicit fixture data; run the real shared policy owner.
         const settings = { v: 1 as const, actions: {}, approvalWaivedSurfaces: {
           'scm.diffSummary.result.delete': ['cli' as const, 'ui' as const],
         } };
-        const executor = createActionExecutor({ ...deps,
+        const executor: ReturnType<typeof createActionExecutor> = createActionExecutor({ ...deps,
           readActionsSettings: () => settings });
-        const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const invoke = async (actionId: 'scm.diffSummary.result.list' | 'scm.diffSummary.result.read' | 'scm.diffSummary.result.delete',
           input: JsonValue, accountId = 'custodian', current = true, privateHttp = true) => {
@@ -200,18 +234,24 @@ describe('exact-machine SCM Action targeting', () => {
             ...(privateHttp ? { currentServerHttpBaseUrl: configuration.serverUrl } : {}), currentInstallationId: 'installation',
             surface: kind === 'account' ? 'ui' : 'cli',
             externalActionMachineRequestPrivateKey: installation.secretKey,
-            verifyExecutionAuthorization: async () => current, resolveTarget: async () => target, executor });
-          expect(result.kind).toBe('response');
+            verifyExecutionAuthorization: async () => current, resolveTarget: async () => target, executor,
+            ...(privateHttp ? { prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({ ...input,
+              purpose: { kind: 'external_action' }, machineId: 'machine', installationId: 'installation',
+              installationPrivateKey: installation.secretKey, serverId: configuration.activeServerId, serverIdentityId: 'srv_retained',
+              serverHttpBaseUrl: configuration.serverUrl, ownCredentials: { token, encryption: null },
+              isCurrent: async () => current, createExecutor: () => executor }) } : {}) });
+          if (!current) return result;
+          expect(result.kind, JSON.stringify(result)).toBe('response');
           if (result.kind !== 'response') throw new Error('Public Action admission failed');
           if (result.response.v !== 1) throw new Error('Expected plaintext Action response');
           return result.response.execution;
         };
         const request = { cwd: home, resultId: saved.resultId };
         const sharedRead = await invoke('scm.diffSummary.result.read', request, 'shared-user');
-        expect(sharedRead, sharedRead.ok ? undefined : sharedRead.errorCode)
-          .toMatchObject({ ok: true, result: { success: false, errorCode: 'result_unavailable' } });
+        expect(sharedRead, JSON.stringify(sharedRead))
+          .toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
         expect(await invoke('scm.diffSummary.result.read', request, 'custodian', false))
-          .toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+          .toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
         expect(await invoke('scm.diffSummary.result.read', request, 'custodian', true, false))
           .toMatchObject({ ok: true, result: { success: false, errorCode: 'result_unavailable' } });
         expect(await invoke('scm.diffSummary.result.list', { query: { cwd: home, sessionId: 'deleted-session' } }))
@@ -219,13 +259,13 @@ describe('exact-machine SCM Action targeting', () => {
         expect(await invoke('scm.diffSummary.result.read', request))
           .toMatchObject({ ok: true, result: { success: true, result: { resultId: saved.resultId } } });
         const deleted = await invoke('scm.diffSummary.result.delete', { ...request, expectedRevision: 0 });
-        expect(deleted, deleted.ok ? undefined : deleted.errorCode)
+        expect(deleted, JSON.stringify(deleted))
           .toMatchObject({ ok: true, result: { success: true, resultId: saved.resultId } });
         expect(verify).toHaveBeenCalled();
         expect(await scmDiffSummaryResultStore.read(request)).toMatchObject({ success: false, errorCode: 'result_not_found' });
-      } finally { env.restore(); reloadConfiguration(); }
+      } finally { await currentness.close(); env.restore(); reloadConfiguration(); }
     });
-  });
+  }));
 
   it.each(['owner', 'shared-user'] as const)('keeps requester results reachable after Session deletion through verified Machine Manage access (%s)', async requesterAccountId => runWithScmAccountScope(requesterAccountId, async () => {
     await withTempDir('scm-retained-custodian-', async home => {
@@ -305,11 +345,12 @@ describe('exact-machine SCM Action targeting', () => {
     });
   }));
 
-  it('retries only personal mark cleanup after custodian Clear deletes a result whose generator Session is absent', async () => {
+  it('retries only personal mark cleanup after custodian Clear deletes a result whose generator Session is absent', async () => runWithScmAccountScope('owner', async () => {
     await withTempDir('scm-retained-clear-retry-', async home => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-retained-clear-repo-' });
       let admitted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+      return receivingScmOperation(fixture.rootPath, async () => {
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'retained-clear-home' });
         reloadConfiguration();
@@ -348,11 +389,17 @@ describe('exact-machine SCM Action targeting', () => {
             kvReads++;
             return { status: 200, data: { key: decodeURIComponent(path.slice('/v1/kv/'.length)), value: content, version } };
           }
+          if (path === '/v2/sessions' || path === '/v2/sessions/archived') return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
+          if (path.includes('/sessions/different-session')) return { status: 200, data: {
+            session: createSessionRecordFixture({ id: 'different-session', encryptionMode: 'plain',
+              metadata: JSON.stringify({ path: cwd }), share: null }),
+          } };
           if (path.includes(`/sessions/${sessionId}`)) return { status: 404, data: {} };
           throw new Error(`Unexpected test HTTP request ${path}`);
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-          if (new URL(url).pathname !== '/v1/kv') throw new Error('Unexpected test HTTP mutation');
+          if (new URL(url).pathname === '/v2/sessions/lookup-by-tags') return { status: 200, data: { sessions: [] } };
+          if (new URL(url).pathname !== '/v1/kv') throw new Error(`Unexpected test HTTP mutation ${new URL(url).pathname}`);
           kvWrites++;
           if (failCleanup) return { status: 503, data: { error: 'Account KV unavailable' } };
           const mutation = (body as { mutations: { key: string; value: string; version: number }[] }).mutations[0]!;
@@ -360,11 +407,13 @@ describe('exact-machine SCM Action targeting', () => {
           content = mutation.value;
           return { status: 200, data: { success: true, results: [{ key: mutation.key, version: ++version }] } };
         });
-        const token = 'retained-clear-custodian';
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
+          provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
           sessionId: '', mode: 'plain', ctx: null,
           scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }));
         const owner: RpcActionExecutorContext = { surface: 'rpc', authority: 'account_automation', bypassApprovals: true,
+          runtimeAccountId: 'owner',
           serverId: configuration.activeServerId, externalActionTarget: { kind: 'machine', machineId: 'machine' },
           machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
             installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
@@ -374,8 +423,9 @@ describe('exact-machine SCM Action targeting', () => {
         admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
         // Custody of retained evidence must not authorize creating new Session evidence.
-        expect(await executor.execute('scm.diffSummary.capture', { cwd, sessionId, source: comparison.source }, owner))
-          .toMatchObject({ ok: true, result: { success: false, errorCode: 'DIFF_UNAVAILABLE' } });
+        const deletedSessionCapture = await executor.execute('scm.diffSummary.capture', { cwd, sessionId, source: comparison.source }, owner);
+        expect(deletedSessionCapture, JSON.stringify(deletedSessionCapture))
+          .toMatchObject({ ok: false, errorCode: 'session_not_found' });
         await admitted.dispose();
         admitted = undefined;
         const deniedCallers = [
@@ -386,7 +436,7 @@ describe('exact-machine SCM Action targeting', () => {
         ];
         for (const denied of deniedCallers) {
           const clear = await executor.execute('scm.diffSummary.result.clear', { results: [reference] }, denied);
-          expect(clear).toMatchObject({ ok: true, result: { success: true, deleted: [], failures: [{
+          expect(clear, JSON.stringify(clear)).toMatchObject({ ok: true, result: { success: true, deleted: [], failures: [{
             resultId: saved.resultId, errorCode: 'result_unavailable',
           }] } });
           expect(await executor.execute('scm.diffSummary.reviewed.unmark', reset, denied))
@@ -406,8 +456,9 @@ describe('exact-machine SCM Action targeting', () => {
         expect((await readCapturedScmComparison(reset)).comparison).toEqual(comparison);
         // The native UI retries by reading this exact retained capture first;
         // that read needs neither the deleted Session nor a serving SCM backend.
-        expect(await executor.execute('scm.diffSummary.capture', { cwd, sessionId, comparisonId: comparison.id,
-          source: comparison.source }, owner)).toMatchObject({ ok: true, result: { success: true, comparison } });
+        const retainedCapture = await executor.execute('scm.diffSummary.capture', { cwd, sessionId, comparisonId: comparison.id,
+          source: comparison.source }, owner);
+        expect(retainedCapture, JSON.stringify(retainedCapture)).toMatchObject({ ok: true, result: { success: true, comparison } });
         expect(JSON.parse(Buffer.from(content, 'base64').toString()).v).toEqual(originalRecord);
         if (!cleared.success) throw new Error('Clear did not produce a deletion outcome');
         const failure = cleared.failures.find(item => item.errorCode === 'reviewed_marks_cleanup_failed');
@@ -427,10 +478,11 @@ describe('exact-machine SCM Action targeting', () => {
         env.restore(); reloadConfiguration();
         await rm(fixture.rootPath, { recursive: true, force: true });
       }
+      });
     });
-  });
+  }));
 
-  it('reads blame at the installed native SCM owner without recursively invoking its own RPC', async () => {
+  it('reads blame at the installed native SCM owner without recursively invoking its own RPC', async () => runWithScmAccountScope('owner', async () => {
     await withTempDir('scm-blame-native-home-', async home => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-native-blame-' });
@@ -458,12 +510,14 @@ describe('exact-machine SCM Action targeting', () => {
         const context = { surface: 'rpc' as const, authority: 'account_automation' as const,
           serverId: configuration.activeServerId, externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } };
         const request = { cwd: fixture.rootPath, path: fixture.trackedPath };
-        expect(await executor.execute('scm.blame.get', request, context)).toMatchObject({ ok: true, result: {
+        const invoke = (...args: Parameters<typeof executor.execute>) => receivingScmOperation(fixture.rootPath, () => executor.execute(...args));
+        const blame = await invoke('scm.blame.get', request, context);
+        expect(blame, JSON.stringify(blame)).toMatchObject({ ok: true, result: {
           success: true, commits: [], ranges: [{ startLine: 1, lineCount: 1, commitIndex: null }],
         } });
-        expect(await executor.execute('scm.blame.get', { ...request, expectedHash: '0'.repeat(64) }, context))
+        expect(await invoke('scm.blame.get', { ...request, expectedHash: '0'.repeat(64) }, context))
           .toMatchObject({ ok: true, result: { success: false, errorCode: 'stale_file' } });
-        expect(await executor.execute('scm.blame.get', request, { ...context, serverId: 'srv_foreign_home' }))
+        expect(await invoke('scm.blame.get', request, { ...context, serverId: 'srv_foreign_home' }))
           .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
         expect(network).not.toHaveBeenCalled();
       } finally {
@@ -471,9 +525,41 @@ describe('exact-machine SCM Action targeting', () => {
         await rm(fixture.rootPath, { recursive: true, force: true });
       }
     });
-  });
+  }));
 
-  it.each(['accessible', 'denied', 'foreignProof'] as const)('checks authenticated Session access for local machine comparison capture (%s)', async access => {
+  it('keeps live pull-request Session admission when loose input includes an unrelated result identity', async () => runWithScmAccountScope('owner', async () => {
+    await withTempDir('scm-live-result-selector-', async home => {
+      const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+      try {
+        env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'live-result-selector-home' });
+        reloadConfiguration();
+        await updateMachineRegistration(registration => ({ ...registration, machineId: 'machine' }), 'live-result-selector-home');
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+          if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+          } };
+          if (String(url).includes('/sessions/deleted-session')) return { status: 404, data: { error: 'session_not_found' } };
+          if (new URL(String(url)).pathname === '/v2/sessions' || new URL(String(url)).pathname === '/v2/sessions/archived') {
+            return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
+          }
+          throw new Error(`Unexpected live Session request: ${url}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+          expect(new URL(String(url)).pathname).toBe('/v2/sessions/lookup-by-tags');
+          return { status: 200, data: { sessions: [] } };
+        });
+        const token = 'live-result-selector';
+        const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
+          sessionId: '', mode: 'plain', ctx: null, scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } }));
+        const result = await receivingScmOperation(home, () => executor.execute('scm.pullRequest.get', {
+          cwd: home, sessionId: 'deleted-session', prReference: { number: 7 }, resultId: 'unrelated-result',
+        }, { surface: 'cli', externalActionTarget: { kind: 'machine', machineId: 'machine' } }));
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'session_not_found' });
+      } finally { env.restore(); reloadConfiguration(); }
+    });
+  }));
+
+  it.each(['accessible', 'denied', 'foreignProof'] as const)('checks authenticated Session access for local machine comparison capture (%s)', async access => runWithScmAccountScope('owner', async () => {
     await withTempDir('scm-machine-session-home-', async home => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-machine-session-' });
@@ -492,6 +578,9 @@ describe('exact-machine SCM Action targeting', () => {
         // The HTTP boundary supplies current access; Action qualification, Git capture
         // and retained comparison storage run unchanged beneath it.
         vi.spyOn(axios, 'get').mockImplementation(async url => {
+          if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+          } };
           if (!String(url).includes(`/sessions/${sessionId}`)) throw new Error('Unexpected Session access request');
           if (access === 'denied') throw Object.assign(new Error('Forbidden'), { response: { status: 403 } });
           return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId,
@@ -501,24 +590,25 @@ describe('exact-machine SCM Action targeting', () => {
         const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
           sessionId: '', mode: 'plain', ctx: null,
           scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [fixture.rootPath] } }));
-        const result = await executor.execute('scm.diffSummary.capture', { cwd: fixture.rootPath, sessionId,
+        const result = await receivingScmOperation(fixture.rootPath, () => executor.execute('scm.diffSummary.capture', { cwd: fixture.rootPath, sessionId,
           source: { kind: 'workingTree' } }, { surface: 'cli', externalActionTarget: { kind: 'machine', machineId: 'machine' },
-          ...(access === 'foreignProof' ? { rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'different-session' } } : {}) });
-        expect(result).toMatchObject({ ok: true, result: access === 'accessible'
-          ? { success: true, comparison: { repository: { rootPath: fixture.rootPath }, inventory: { state: 'complete',
+          ...(access === 'foreignProof' ? { rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'different-session' } } : {}) }));
+        expect(result, JSON.stringify(result)).toMatchObject(access === 'accessible'
+          ? { ok: true, result: { success: true, comparison: { repository: { rootPath: fixture.rootPath }, inventory: { state: 'complete',
               files: [expect.objectContaining({ path: fixture.trackedPath, evidence: expect.objectContaining({ state: 'available',
-                unifiedDiff: expect.stringContaining('Session-bound pending change') }) })] } } }
-          : { success: false, errorCode: 'DIFF_UNAVAILABLE' } });
+                unifiedDiff: expect.stringContaining('Session-bound pending change') }) })] } } } }
+          : access === 'denied' ? { ok: false, errorCode: 'not_authenticated' }
+            : { ok: true, result: { success: false, errorCode: 'DIFF_UNAVAILABLE' } });
       } finally {
         await admitted?.dispose();
         env.restore(); reloadConfiguration();
         await rm(fixture.rootPath, { recursive: true, force: true });
       }
     });
-  });
+  }));
 
-  it('admits a portable Home for real local saved-review list and read while refusing lost or ambiguous bindings', async () => {
-    await withTempDir('scm-portable-home-', async home => {
+  it('admits a portable Home for real local saved-review list and read while refusing lost or ambiguous bindings', async () => runWithScmAccountScope('owner', async () => {
+    await withTempDir('scm-portable-home-', async home => receivingScmOperation(home, async () => {
       const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       const profileId = 'local-machine-profile';
       const serverId = 'srv_portable_review_home';
@@ -544,15 +634,27 @@ describe('exact-machine SCM Action targeting', () => {
             analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
           }) });
         const token = 'admitted-review-requester';
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+          } };
+          if (path.includes('/sessions/caller-session')) return { status: 200, data: {
+            session: createSessionRecordFixture({ id: 'caller-session', encryptionMode: 'plain',
+              metadata: JSON.stringify({ path: home }), share: null }),
+          } };
+          throw new Error(`Unexpected test HTTP request ${path}`);
+        });
         const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
           serverId: profileId, serverHttpBaseUrl: serverUrl, sessionId: '', mode: 'plain', ctx: null,
           scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } }));
-        const context = { surface: 'rpc' as const, authority: 'account_automation' as const, serverId,
+        const context = { surface: 'rpc' as const, authority: 'account_automation' as const, serverId, runtimeAccountId: 'owner',
           machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
             installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const },
           verifyMachineAdmissionCurrent: async () => true,
           externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } };
-        expect(await executor.execute('scm.diffSummary.result.list', {}, context)).toMatchObject({ ok: true,
+        const listed = await executor.execute('scm.diffSummary.result.list', {}, context);
+        expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true,
           result: { success: true, results: [expect.objectContaining({ resultId: saved.resultId })] } });
         expect(await executor.execute('scm.diffSummary.result.read', { cwd: home, resultId: saved.resultId }, context))
           .toMatchObject({ ok: true, result: { success: true, result: { resultId: saved.resultId } } });
@@ -572,8 +674,8 @@ describe('exact-machine SCM Action targeting', () => {
             .toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
         }
       } finally { scope.restore(); reloadConfiguration(); }
-    });
-  });
+    }));
+  }));
 
   it('admits machine saved inventory without a fabricated directory and refuses a Session-wide inventory', async () => {
     const calls: unknown[] = [];

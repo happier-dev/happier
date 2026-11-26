@@ -12,15 +12,25 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
-  ExternalActionResponseEnvelopeV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  ExternalActionRequestEnvelopeV2Schema, ExternalActionResponseEnvelopeV1Schema,
+  bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2, projectExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { ProjectAccountRowPayloadV1Schema, ProjectAccountRowReadResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 afterEach(() => vi.restoreAllMocks());
 it('approves exact held remembered consent without re-authoring its origin or issuing a second prepare', async () => {
   const homeId = 'srv_consent_home';
   const workspace = { serverId: homeId, machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo' };
+  const workspaceRow = ProjectAccountRowPayloadV1Schema.parse({
+    key: { kind: 'workspace-ref', serverId: homeId, id: workspace.workspaceId },
+    value: { id: workspace.workspaceId, serverId: homeId, machineId: workspace.machineId,
+      rootPath: workspace.rootPath, projectKey: 'project', createdAtMs: 1 },
+  });
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
     provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -35,7 +45,11 @@ it('approves exact held remembered consent without re-authoring its origin or is
       machineId: 'machine', workspaceRefId: 'checkout', cwd: '/repo', sourceWorkspace: workspace } };
   const artifacts = new Map<string, { header: Readonly<Record<string, unknown>>; body: string; access: string }>();
   let trust: unknown = null;
-  const currentOperation = () => trust ? { ...held, revision: 3, setupReview: undefined } : held;
+  const currentOperation = () => {
+    if (!trust) return held;
+    const { setupReview: _review, ...operation } = held;
+    return { ...operation, revision: 3 };
+  };
   const inspection = ProjectDefinitionInspectOutputSchema.parse({ definition: { basis: { kind: 'absent' }, document: null },
     detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
     importCandidates: [], setupReview: { reviewedEffectDigest: setupReview.reviewedEffectDigest, reviewedEffect: setupReview.reviewedEffect } });
@@ -77,7 +91,11 @@ it('approves exact held remembered consent without re-authoring its origin or is
   });
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.endsWith('/v1/account/encryption')) return reply({ mode: 'plain', updatedAt: 1 });
+    if (url.endsWith('/v1/account/encryption/currentness')) return reply({
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    });
     if (url.endsWith('/v1/machines/machine')) return reply({ machine: { id: 'machine', kind: 'persistent', active: true,
+      metadata: '{}', metadataVersion: 1, daemonState: '{}', daemonStateVersion: 1,
       installationId: 'installation', installationPublicKey: Buffer.from(keys.publicKey).toString('base64'), revokedAt: null, replacedByMachineId: null,
       access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } });
     throw new Error(`Unexpected Home read ${url}`);
@@ -90,12 +108,34 @@ it('approves exact held remembered consent without re-authoring its origin or is
       return reply({ status: 'updated', revision: 1, cursor: 1 });
     }
     if (url.endsWith('/v1/account/project-rows/read')) {
-      const key = { kind: 'workspace-ref', serverId: homeId, id: 'checkout' };
-      return reply({ status: 'present', row: { key, revision: 1, content: { t: 'plain', v: { key, value: {
-        id: 'checkout', serverId: homeId, machineId: 'machine', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 } } } } });
+      return reply(ProjectAccountRowReadResponseV1Schema.parse({ status: 'present', row: {
+        key: workspaceRow.key, revision: 1, content: { t: 'plain', v: workspaceRow },
+      } }));
     }
     const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
     const { envelope } = request;
+    if (url.endsWith(bindExternalActionExecutionAuthorizationHttpPathV1('action.operations.get'))) return reply(
+      ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'operation-read-admission', binding: {
+        accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: homeId,
+        accountEncryptionMode: 'plain', machineId: 'machine', installationId: 'installation', actionId: 'action.operations.get',
+        requestId: envelope.requestId, target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        requesterOperationRead: true,
+      }, requesterOperationReadInstallationPublicKey: Buffer.from(keys.publicKey).toString('base64url') }));
+    if (url.endsWith('/v1/actions/action.operations.get')) {
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(request.executionAuthorization);
+      const material = openManagedControllerActionCodecV1({ authorization, machineId: 'machine', installationId: 'installation',
+        serverIdentityId: homeId, installationPrivateKey: keys.secretKey });
+      if (!material) throw new Error('Requester operation codec unavailable');
+      const encrypted = ExternalActionRequestEnvelopeV2Schema.parse(envelope);
+      const binding = projectExternalActionEncryptionBindingV2(authorization.binding);
+      expect(openExternalActionRequestV2({ envelope: encrypted, binding, material,
+        projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 })?.input).toEqual({
+        serverId: homeId, machineId: 'machine', operationId: 'held', refreshSetupReview: true,
+      });
+      return reply(prepareExternalActionResponseV2({ binding, material, request: encrypted,
+        executedMachineId: 'machine', execution: { ok: true, result: { kind: 'found', operation: currentOperation() } },
+        randomBytes: nacl.randomBytes }).response);
+    }
     if (url.endsWith(bindExternalActionExecutionAuthorizationHttpPathV1('projects.prepare'))) return reply(
       ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fresh-replay-admission', binding: {
         accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: homeId,

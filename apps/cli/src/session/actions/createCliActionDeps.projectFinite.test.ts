@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import * as machineTransport from '@/session/transport/rpc/machineRpc';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
@@ -17,9 +17,16 @@ import { openExternalActionRequesterAccountContextV1, type ExternalActionRequest
 import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 
 afterEach(() => vi.restoreAllMocks());
-const workspace = { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/repo' };
+beforeEach(() => {
+  vi.spyOn(axios, 'request').mockImplementation(async request => {
+    expect(new URL(request.url!).pathname).toBe(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+    return { status: 200, data: { v: 1, rows: [] } };
+  });
+});
+const workspace = { serverId: 'srv_finite_home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/repo' };
 const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(4));
 const signedTransport = { externalActionMachineRequestPrivateKey: installation.secretKey,
   externalActionMachineInstallationId: 'source-installation', serverIdentityId: 'srv_finite_home' };
@@ -38,9 +45,10 @@ function signedContext(actionId: string, input: unknown, context: ActionExecutor
     } }) };
 }
 function executor() {
-  const token = 'requester-token';
+  const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
+    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
   const owner = createCliActionExecutorHarness({ token, credentials: { token, encryption: null }, ...signedTransport,
-    sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.test' }).executor;
+    sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: workspace.serverId, serverHttpBaseUrl: 'https://home.test' }).executor;
   return { execute: (...[actionId, input, context]: Parameters<typeof owner.execute>) =>
     owner.execute(actionId, input, signedContext(actionId, input, context)) };
 }
@@ -132,7 +140,7 @@ describe('Project finite Actions through exact Machine transport', () => {
     const http = vi.spyOn(axios, 'post').mockRejectedValue(new Error('No Home dispatch before runtime-only policy'));
     const transport = vi.spyOn(machineTransport, 'callExactMachineRpc').mockRejectedValue(new Error('No native effect before policy'));
     const owner = createCliActionExecutor({ token, credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
-      serverId: 'home', serverHttpBaseUrl: 'https://home.test', sessionId: 'cli-global', mode: 'plain', ctx: null,
+      serverId: 'home', serverIdentityId: workspace.serverId, serverHttpBaseUrl: 'https://home.test', sessionId: 'cli-global', mode: 'plain', ctx: null,
       actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
         actions: { 'projects.script.run': { approvalRequiredSurfaces: ['cli'] } } }) },
     });
@@ -157,7 +165,7 @@ describe('Project finite Actions through exact Machine transport', () => {
       version: 1, operationId: 'accepted-command', actionId: 'projects.compute.exec', requestId: 'original-command-request',
       scope: { accountId: 'requester', machineId: 'selected-worker' }, state: 'accepted', revision: 1,
       createdAt: 1, title: 'Command', progress: { kind: 'indeterminate' }, cancellation: 'supported',
-      domainRef: { kind: 'projectCommand', purpose: 'exec', serverId: 'home', machineId: 'selected-worker',
+      domainRef: { kind: 'projectCommand', purpose: 'exec', serverId: workspace.serverId, machineId: 'selected-worker',
         workspaceRefId: 'worker-copy', cwd: '/worker-repo' },
     } });
     const boundary = vi.spyOn(machineTransport, 'callExactMachineRpc').mockImplementation(async () => {
@@ -168,10 +176,12 @@ describe('Project finite Actions through exact Machine transport', () => {
     // worker root cannot be reused to authorize projects.inspect on SOURCE.
     const input = { workspace, executable: 'make', argv: ['build'], cwd: '/repo',
       choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } } };
-    expect(await executor().execute('projects.compute.exec', input, {
+    const result = await executor().execute('projects.compute.exec', input, {
       surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'projects.compute.exec' },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'projects.compute.exec': ['cli'] } }),
       signal: controller.signal, actionRequestId: 'original-command-request',
-    })).toEqual({ ok: true, result: receipt });
+    });
+    expect(result, JSON.stringify(result)).toEqual({ ok: true, result: receipt });
     expect(boundary).toHaveBeenCalledTimes(1);
     expect(boundary).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'selected-worker',
       method: 'daemon.projects.compute.exec.v1', request: input, requestId: 'original-command-request' }));
@@ -212,10 +222,11 @@ describe('Project finite Actions through exact Machine transport', () => {
       details: { kind: 'pendingApproval', code: 'project_setup_consent_required',
         reviewedEffect: { commands: [] }, reviewedEffectDigest: 'reviewed' } };
     vi.spyOn(machineTransport, 'callExactMachineRpc').mockResolvedValue(failure);
-    expect(await executor().execute('projects.prepare', { workspace, phase: 'setup' }, {
+    const result = await executor().execute('projects.prepare', { workspace, phase: 'setup' }, {
       surface: 'agent', authority: 'account_automation', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
         approvalWaivedSurfaces: { 'projects.prepare': ['agent'] } }),
-    })).toEqual(failure);
+    });
+    expect(result, JSON.stringify(result)).toEqual({ ...failure, requestId: 'signed-finite-request' });
   });
   it('preserves exact native selection and revision-qualified value-free ad-hoc bindings', async () => {
     const pending = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
@@ -231,7 +242,8 @@ describe('Project finite Actions through exact Machine transport', () => {
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
         'projects.script.run': ['agent'], 'projects.compute.exec': ['agent'],
       } }) };
-    expect(await owner.execute('projects.script.run', script, context)).toEqual({ ok: true, result: pending });
+    const scriptResult = await owner.execute('projects.script.run', script, context);
+    expect(scriptResult, JSON.stringify(scriptResult)).toEqual({ ok: true, result: pending });
     expect(boundary).toHaveBeenLastCalledWith(expect.objectContaining({ machineId: workspace.machineId,
       method: 'daemon.projects.script.run.v1', request: script }));
     expect(await owner.execute('projects.compute.exec', compute, context)).toEqual({ ok: true, result: pending });
@@ -239,7 +251,7 @@ describe('Project finite Actions through exact Machine transport', () => {
       method: 'daemon.projects.compute.exec.v1', request: compute }));
     boundary.mockRejectedValueOnce(new machineTransport.MachineRpcTargetNotCurrentError('selected-worker', 'machine_revoked_or_replaced'));
     expect(await owner.execute('projects.compute.exec', compute, { ...context, actionRequestId: 'original-worker-invocation' }))
-      .toMatchObject({ ok: false, errorCode: 'action_failed' });
+      .toMatchObject({ ok: false, errorCode: 'machine_target_not_current' });
     expect(boundary).toHaveBeenLastCalledWith(expect.objectContaining({ machineId: 'selected-worker',
       request: compute, requestId: 'original-worker-invocation' }));
     expect(boundary.mock.calls.filter(([call]) => call.method === 'daemon.projects.compute.exec.v1')
@@ -284,13 +296,15 @@ describe('Project finite Actions through exact Machine transport', () => {
     const home = vi.spyOn(axios, 'request').mockImplementation(async request => {
       expect(request.url).toMatch(/^https:\/\/home\.test\//);
       expect(request.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+      if (new URL(request.url!).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return reply({ v: 1, rows: [] });
       if (request.url?.endsWith('/v1/account/encryption')) return reply({ mode: 'plain', updatedAt: 1 });
       if (request.url?.endsWith('/v1/projects/execution/config/read')) return reply({
         status: 'present', revision: 1, content: { t: 'plain', v: { enabled: true, destination,
           unavailable: 'ask', allowAdHoc: false, scriptOverrides: {}, services: {} } },
       });
       if (request.url?.endsWith('/v1/machines/pools/get')) return reply({
-        pool: { id: poolId, name: 'Workers', description: null, revision: 1, createdAt: 1, updatedAt: 1,
+        pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Workers' }, recipientEnvelope: null } },
+          description: null, revision: 1, createdAt: 1, updatedAt: 1,
           members: [{ machineId: 'ineligible-first-member', priorityTier: 0, enabled: true, state: 'connected' },
             { machineId: 'selected-worker', priorityTier: 0, enabled: true, state: 'connected' }] },
         availability: { state: 'known', connectedCount: 2, enabledCount: 2 },
@@ -305,9 +319,15 @@ describe('Project finite Actions through exact Machine transport', () => {
       installationId: 'source-installation' });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (url.endsWith('/v1/account/encryption')) return reply({ mode: 'plain', updatedAt: 1 });
+      if (url.endsWith('/v1/account/encryption/currentness')) return reply({
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      });
       if (url.endsWith('/v1/machines/selected-worker')) return reply({ machine: { ...installed,
         installationPublicKey: Buffer.from(installation.publicKey).toString('base64') } });
-      if (url.endsWith(`/v1/machines/${source.id}`)) return reply({ machine: source });
+      if (url.endsWith(`/v1/machines/${source.id}`)) {
+        if (!sourceListed) return { status: 404, data: { error: 'machine_not_found' } };
+        return reply({ machine: source });
+      }
       if (url.endsWith('/v1/machines')) return reply(sourceListed ? [source, installed] : [installed]);
       throw new Error(`Unexpected captured Home inventory request: ${url}`);
     });
@@ -324,15 +344,23 @@ describe('Project finite Actions through exact Machine transport', () => {
       expect(request.machineId).toBe(target.id);
       expect(envelope).toMatchObject({ target: { kind: 'machine', machineId: target.id },
         input: actionId === 'projects.inspect' ? { workspace } : actionId === 'projects.worker.status'
-          ? { workspace: { serverId: 'home', refId: workspace.workspaceId },
+          ? { workspace: { serverId: workspace.serverId, refId: workspace.workspaceId },
             destination: { kind: 'machine', machineId: target.id }, purpose: 'finite', memoryDemand } : input });
       if (actionId === 'projects.script.run') expect(envelope.requestId).toBe(context.actionRequestId);
+      const sync = projectWorkspaceSyncAdmissionInputV1(actionId, envelope.input);
       if (url === `https://home.test${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`) return reply(
         ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-finite-authorization', binding: {
           accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'terminal', tokenEpoch: tokenEpochCurrent ? 1 : 2 },
           serverIdentityId: 'srv_finite_home', machineId: target.id, installationId: target.installationId,
           accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
+          ...(envelope.idempotencyKey === undefined ? {} : { idempotencyKey: envelope.idempotencyKey }),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), target: request.envelope.target,
+          ...(sync ? { workspaceSyncAdmission: {
+            relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(envelope.requestId),
+            sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
+            source: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: sync.sourceMachineId,
+              installationId: source.installationId, role: 'manage', encryptionMode: 'plain' },
+          } } : {}),
         } }));
       expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
       expect(request.executionAuthorization?.binding).toMatchObject({ actionId, machineId: target.id, installationId: target.installationId,
@@ -341,16 +369,19 @@ describe('Project finite Actions through exact Machine transport', () => {
       if (actionId === 'projects.worker.status') {
         const machineId = target.id;
         const result = getActionSpec(actionId).outputSchema!.parse(available && machineId === 'selected-worker'
-          ? { eligible: true, candidate: { serverId: 'home', machineId }, load: { kind: 'unknown' }, explanation: 'load_unknown' }
+          ? { eligible: true, candidate: { serverId: workspace.serverId, machineId }, load: { kind: 'unknown' }, explanation: 'load_unknown' }
           : { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'not_accepting' });
         return reply(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
           execution: { ok: true, result } }));
       }
-      if (actionId === 'projects.script.run') finiteInvocation = openExternalActionRequesterAccountContextV1({
-        authorization: request.executionAuthorization, purpose: { kind: 'external_action' }, machineId: target.id,
-        installationId: target.installationId!, installationPrivateKey: installation.secretKey,
-        serverIdentityId: 'srv_finite_home', includeInvocation: true,
-      })?.invocation;
+      if (actionId === 'projects.script.run') {
+        const opened = openExternalActionRequesterAccountContextV1({
+          authorization: request.executionAuthorization, purpose: { kind: 'external_action' }, machineId: target.id,
+          installationId: target.installationId!, installationPrivateKey: installation.secretKey,
+          serverIdentityId: 'srv_finite_home', includeInvocation: true,
+        });
+        finiteInvocation = opened?.invocation;
+      }
       return reply(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
         execution: { ok: true, result: actionId === 'projects.inspect' ? inspection : pending } }));
     });
@@ -358,10 +389,10 @@ describe('Project finite Actions through exact Machine transport', () => {
       throw new Error(`Unexpected raw finite delivery: ${request.method}`);
     });
     const owner = createCliActionExecutor({ token, credentials, serverIdentityId: 'srv_finite_home', sessionId: 'cli-global', mode: 'plain', ctx: null,
-      serverId: 'home', serverHttpBaseUrl: 'https://home.test', pluginActionExecutionOwner: 'current_process',
+      serverId: workspace.serverId, serverHttpBaseUrl: 'https://home.test', pluginActionExecutionOwner: 'current_process',
       actionsSettingsProvider: { getActionsSettings: () => settings },
       accountServerActionDeps: createAccountServerActionDeps({ token, credentials,
-        serverId: 'home', serverHttpBaseUrl: 'https://home.test' }),
+        serverId: workspace.serverId, serverHttpBaseUrl: 'https://home.test' }),
     });
     const input = { workspace, selection: { kind: 'named' as const, name: 'check' } };
     const effectPosts = () => posts.mock.calls.filter(([url]) => url === 'https://home.test/v1/actions/projects.script.run');
@@ -370,8 +401,9 @@ describe('Project finite Actions through exact Machine transport', () => {
     expect(effectPosts()).toHaveLength(0);
     if (prepared.kind !== 'ready') throw new Error('Expected a prepared finite invocation');
     const submitted = prepared.invocation.run();
-    expect(prepared.invocation.run()).toBe(submitted);
+    const repeated = prepared.invocation.run();
     expect(await submitted).toEqual({ ok: true, result: pending });
+    expect(await repeated).toEqual({ ok: true, result: pending });
     expect(finiteInvocation).toMatchObject({ caller: { kind: 'host' }, surface: 'cli' });
     expect(effectPosts()).toHaveLength(1);
     expect(posts.mock.calls.some(([url]) => url === 'https://home.test/v1/actions/projects.inspect')).toBe(true);
@@ -387,7 +419,7 @@ describe('Project finite Actions through exact Machine transport', () => {
     available = true;
     sourceListed = false;
     expect(await owner.execute('projects.script.run', input, context)).toMatchObject({ ok: false,
-      errorCode: 'admission_unavailable' });
+      errorCode: 'access_denied' });
     expect(effectPosts()).toHaveLength(1);
     sourceListed = true;
     tokenEpochCurrent = false;

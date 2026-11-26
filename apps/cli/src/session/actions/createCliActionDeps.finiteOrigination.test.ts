@@ -1,7 +1,7 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliActionDeps } from './createCliActionDeps';
 import * as machineTransport from '@/session/transport/rpc/machineRpc';
 import nacl from 'tweetnacl';
@@ -9,7 +9,7 @@ import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@h
 import { ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { AccountSettingsSchema, MachineSetupApplyInputV1Schema } from '@happier-dev/protocol';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -18,15 +18,37 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { createMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 
 afterEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.spyOn(axios, 'request').mockImplementation(async request => {
+    expect(new URL(request.url!).pathname).toBe(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+    return { status: 200, data: { v: 1, rows: [] } };
+  });
+});
+
+function encryptedPublication(material: { type: 'dataKey'; machineKey: Uint8Array }, installationPublicKey: Uint8Array, dataKeyPublicKey: Uint8Array) {
+  const key = createMachineDataEncryptionKeyV1({ material, dataKeyPublicKey, randomBytes: nacl.randomBytes });
+  return { dataEncryptionKey: encodeBase64(key.dataEncryptionKey), metadata: createMachineContentCodec(key).encodeStored(
+    MachinePublishedMetadataV1Schema.parse({ host: 'fixture', platform: 'linux', happyCliVersion: '0.0.0',
+      homeDir: '/home/fixture', happyHomeDir: '/home/fixture/.happier',
+      installationPublicKey: encodeBase64(installationPublicKey, 'base64url') })), metadataVersion: 1 };
+}
 
 describe('original CLI Account finite Project admission', () => {
-  it('originates machine environment apply from its exact public input through own Account Home proof without an outer target flag', async () => {
+  it.each(['plain', 'e2ee'] as const)('originates Setup CombinedRun through exact %s Account Home proof and rejects retired credentials and mismatched responses', async mode => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 7,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
-    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const keys = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(6));
+    const material = { type: 'dataKey' as const, machineKey: keys.secretKey };
+    const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null
+      : { type: 'dataKey', publicKey: keys.publicKey, machineKey: keys.secretKey }, credentialProvenance: 'stored_session' };
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const scopeKey = resolveAccountSettingsScopeKeyForToken(token);
     // This is ordinary Account custody, not a runtime-only policy override:
@@ -35,27 +57,43 @@ describe('original CLI Account finite Project admission', () => {
       actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }),
     }), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey });
     onTestFinished(() => resetActiveAccountSettingsSnapshotForTests());
-    const input = { homeId: 'srv_finite_home', machineId: 'guest', sources: [
-      { kind: 'accountPreset', presetId: 'preset', presetRevision: 4, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
-      { kind: 'direct', setup: {} },
-    ] };
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_finite_home', machineId: 'guest', targets: [{
+      homeId: 'srv_finite_home', machineId: 'guest', desiredRevision: 0, exclusions: [], recipePlans: [], sources: [
+      { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 4, contentEncryptionMode: mode },
+      { kind: 'direct', setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }] } },
+    ] }] });
+    const result = { operationId: 'actual-environment-operation', runId: 'actual-environment-run' };
+    const binding = { accountId: 'owner', authentication: { kind: 'account' as const, tokenEpoch: 7 },
+      serverIdentityId: input.homeId, actionId: 'machines.setup.apply' as const, requestId: 'environment-request',
+      target: { kind: 'machine' as const, machineId: 'guest' } };
     const machine = { id: 'guest', kind: 'persistent', active: true, installationId: 'guest-installation', revokedAt: null,
       installationPublicKey: encodeBase64(installation.publicKey),
       replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
-      access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+      ...(mode === 'e2ee' ? encryptedPublication(material, installation.publicKey, keys.publicKey) : {}),
+      access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: mode, accessState: 'ready' } };
     vi.spyOn(axios, 'get').mockImplementation(async url => url.endsWith('/v1/account/encryption')
-      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+      ? { status: 200, data: { mode, updatedAt: 1 } }
       : url.endsWith('/v1/machines/guest') ? { status: 200, data: { machine } } : { status: 200, data: [machine] });
-    let delivered = false;
+    let deliveries = 0;
+    let mismatchedResponse = false;
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(carrier.envelope);
-      expect(envelope).toEqual({ v: 1, requestId: 'environment-request', target: { kind: 'machine', machineId: 'guest' }, input });
+      const envelope = ExternalActionRequestEnvelopeSchema.parse(carrier.envelope);
+      expect(envelope).toMatchObject({ requestId: binding.requestId, target: binding.target });
+      if (envelope.v === 1) {
+        expect(mode).toBe('plain');
+        expect(envelope.input).toEqual(input);
+      } else {
+        expect(mode).toBe('e2ee');
+        expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+          envelope, binding, material })).toEqual({ input });
+        expect(JSON.stringify(body)).not.toContain('echo reviewed');
+      }
       if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'exact-home-root', binding: {
-        accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 7 }, accountEncryptionMode: 'plain',
-        serverIdentityId: input.homeId, custodianAccountId: 'owner', machineId: 'guest', installationId: 'guest-installation',
-        actionId: 'machines.setup.apply', requestId: envelope.requestId, target: envelope.target,
+        ...binding, accountEncryptionMode: mode, custodianAccountId: 'owner', machineId: 'guest', installationId: 'guest-installation',
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        ...(envelope.v === 2 && envelope.machineRuntimeDemand !== undefined ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+        deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId: binding.actionId, envelope }),
       } } };
       expect(url).toBe('https://home-a.test/v1/actions/machines.setup.apply');
       expect(carrier.executionAuthorization?.token).toBe('exact-home-root');
@@ -64,16 +102,30 @@ describe('original CLI Account finite Project admission', () => {
         purpose: { kind: 'external_action' }, machineId: 'guest', installationId: 'guest-installation',
         serverIdentityId: input.homeId, installationPrivateKey: installation.secretKey, includeInvocation: true })).toMatchObject({ credentials: encodeStoredCredentials(credentials),
         invocation: { caller: { kind: 'host' }, surface: 'cli' } });
-      delivered = true;
-      return { status: 200, data: { v: 1, actionId: 'machines.setup.apply', requestId: envelope.requestId,
-        execution: { ok: true, result: { operationId: 'actual-environment-operation' } } } };
+      deliveries += 1;
+      const response = envelope.v === 1
+        ? { v: 1, actionId: binding.actionId, requestId: envelope.requestId, execution: { ok: true, result } }
+        : prepareExternalActionResponseV2({ binding, material, request: envelope, executedMachineId: 'guest',
+          execution: { ok: true, result }, randomBytes: length => new Uint8Array(length).fill(8) }).response;
+      return { status: 200, data: { ...response, ...(mismatchedResponse ? { requestId: 'another-request' } : {}) } };
     });
-    const owner = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+    let current = true;
+    const owner = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => current ? credentials : null,
       externalActionClient: true, serverId: 'home-a', serverIdentityId: input.homeId, serverApiUrl: 'https://home-a.test',
       actionsSettingsProvider: createActionSettingsProvider({ scopeKey }) });
-    expect(await owner.execute('machines.setup.apply', input, { surface: 'cli', actionRequestId: 'environment-request',
-      presentUserConfirmation: { actionId: 'machines.setup.apply' } })).toEqual({ ok: true, result: { operationId: 'actual-environment-operation' } });
-    expect(delivered).toBe(true);
+    const context = { surface: 'cli' as const, actionRequestId: binding.requestId,
+      presentUserConfirmation: { actionId: binding.actionId } };
+    expect(await owner.execute(binding.actionId, input, context)).toEqual({ ok: true, result });
+    expect(deliveries).toBe(1);
+    expect(await owner.execute(binding.actionId, { ...input, homeId: 'foreign-home' }, context))
+      .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(deliveries).toBe(1);
+    mismatchedResponse = true;
+    expect(await owner.execute(binding.actionId, input, context)).toMatchObject({ ok: false });
+    expect(deliveries).toBe(2);
+    current = false;
+    expect(await owner.execute(binding.actionId, input, context)).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+    expect(deliveries).toBe(2);
   });
   it('keeps hosted finite work on its existing typed Session transport and refuses an unbound ambient caller', async () => {
     const token = 'incumbent-session-credential';
@@ -102,7 +154,7 @@ describe('original CLI Account finite Project admission', () => {
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
-    const input = { workspace: { serverId: 'home-a', workspaceId: 'checkout', machineId: 'alice-guest', rootPath: '/repo' }, phase: 'setup' };
+    const input = { workspace: { serverId: 'srv_finite_home', workspaceId: 'checkout', machineId: 'alice-guest', rootPath: '/repo' }, phase: 'setup' };
     const machine = { id: 'alice-guest', kind: 'persistent', active: false, installationId: 'alice-installation',
       installationPublicKey: encodeBase64(installation.publicKey), revokedAt: null, replacedByMachineId: null,
       dataEncryptionKey: null, runnerContentKeyBinding: null,
@@ -153,7 +205,7 @@ describe('original CLI Account finite Project admission', () => {
     const keys = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(6));
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const material = { type: 'dataKey' as const, machineKey: keys.secretKey };
-    const input = { workspace: { serverId: 'home-a', workspaceId: 'checkout', machineId: 'guest', rootPath: '/private-repo' }, phase: 'setup' };
+    const input = { workspace: { serverId: 'srv_finite_home', workspaceId: 'checkout', machineId: 'guest', rootPath: '/private-repo' }, phase: 'setup' };
     const binding = { serverIdentityId: 'srv_finite_home', accountId: 'terminal-owner', authentication: { kind: 'terminal' as const, tokenEpoch: 4 },
       actionId: 'projects.prepare' as const, requestId: 'terminal-protected-request', target: { kind: 'machine' as const, machineId: 'guest' } };
     let returnedAccountAlias = false;
@@ -181,7 +233,7 @@ describe('original CLI Account finite Project admission', () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'terminal-owner', tokenEpoch: 4,
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-    const input = { workspace: { serverId: 'home-a', workspaceId: 'checkout', machineId: 'sleeping-guest', rootPath: '/repo' }, phase: 'setup' };
+    const input = { workspace: { serverId: 'srv_finite_home', workspaceId: 'checkout', machineId: 'sleeping-guest', rootPath: '/repo' }, phase: 'setup' };
     const result = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'reviewed' };
     let credentialCurrent = true;
     let retireDuringInventory = false;
@@ -231,11 +283,12 @@ describe('original CLI Account finite Project admission', () => {
     expect(await owner.execute('projects.prepare', input, { surface: 'cli', actionRequestId: 'terminal-request',
       presentUserConfirmation: { actionId: 'projects.prepare' } })).toEqual({ ok: true, result });
     expect(delivered).toBe(1);
-    const requestsBeforeRetirement = posts.mock.calls.length;
+    const effectRequests = () => posts.mock.calls.filter(([url]) => url === 'https://home-a.test/v1/actions/projects.prepare');
+    const requestsBeforeRetirement = effectRequests().length;
     retireDuringInventory = true;
     expect(await owner.execute('projects.prepare', input, { surface: 'cli', actionRequestId: 'retired-terminal-request',
       presentUserConfirmation: { actionId: 'projects.prepare' } })).toMatchObject({ ok: false });
-    expect(posts.mock.calls).toHaveLength(requestsBeforeRetirement);
+    expect(effectRequests()).toHaveLength(requestsBeforeRetirement);
     expect(delivered).toBe(1);
   });
   it('uses the current Account mode and correlated protected envelope without disclosing E2EE input', async () => {
@@ -243,12 +296,13 @@ describe('original CLI Account finite Project admission', () => {
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     const keys = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(6));
     const material = { type: 'dataKey' as const, machineKey: keys.secretKey };
-    const input = { workspace: { serverId: 'home-a', workspaceId: 'checkout', machineId: 'guest', rootPath: '/private-repo' }, phase: 'setup' };
+    const input = { workspace: { serverId: 'srv_finite_home', workspaceId: 'checkout', machineId: 'guest', rootPath: '/private-repo' }, phase: 'setup' };
     const binding = { serverIdentityId: 'srv_finite_home', accountId: 'encrypted-owner', authentication: { kind: 'account' as const, tokenEpoch: 3 },
       actionId: 'projects.prepare' as const, requestId: 'encrypted-request', target: { kind: 'machine' as const, machineId: 'guest' } };
+    const installationPublicKey = nacl.sign.keyPair().publicKey;
     const machine = { id: 'guest', kind: 'persistent', active: false, installationId: 'installation',
-      installationPublicKey: encodeBase64(nacl.sign.keyPair().publicKey), revokedAt: null,
-      replacedByMachineId: null, dataEncryptionKey: 'sealed-key', runnerContentKeyBinding: null,
+      installationPublicKey: encodeBase64(installationPublicKey), revokedAt: null,
+      replacedByMachineId: null, ...encryptedPublication(material, installationPublicKey, keys.publicKey), runnerContentKeyBinding: null,
       access: { custodian: { accountId: 'encrypted-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } };
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       if (url === 'https://home-a.test/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
@@ -265,6 +319,7 @@ describe('original CLI Account finite Project admission', () => {
       if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-encrypted-origin', binding: {
         ...binding, accountEncryptionMode: 'e2ee', custodianAccountId: 'encrypted-owner', machineId: machine.id,
         installationId: machine.installationId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        ...(envelope.machineRuntimeDemand === undefined ? {} : { machineRuntimeDemand: envelope.machineRuntimeDemand }),
       } } };
       expect(url).toBe('https://home-a.test/v1/actions/projects.prepare');
       expect(carrier.executionAuthorization).toMatchObject({ token: 'home-encrypted-origin', binding: { authentication: binding.authentication } });
@@ -295,7 +350,7 @@ describe('original CLI Account finite Project admission', () => {
     'keeps the original %s request at Home while the exact guest is stopped', async (actionId) => {
       const token = `header.${Buffer.from(JSON.stringify({ sub: 'finite-owner', tokenEpoch: 2,
         provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
-      const workspace = { serverId: 'home-a', workspaceId: 'checkout', machineId: 'sleeping-guest', rootPath: '/repo' };
+      const workspace = { serverId: 'srv_finite_home', workspaceId: 'checkout', machineId: 'sleeping-guest', rootPath: '/repo' };
       const input = actionId === 'projects.prepare' ? { workspace, phase: 'setup' }
         : actionId === 'projects.script.run' ? { workspace, selection: { kind: 'named', name: 'check' }, choice: { kind: 'primary' } }
         : { workspace, executable: 'make', argv: ['check'], cwd: '/repo', choice: { kind: 'primary' } };
@@ -317,12 +372,20 @@ describe('original CLI Account finite Project admission', () => {
         expect(config?.headers).toMatchObject({ Authorization: `Bearer ${token}` });
         const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(carrier.envelope);
-        expect(envelope).toEqual({ v: 1, requestId: 'original-finite-request', target: { kind: 'machine', machineId: workspace.machineId }, input });
+        expect(envelope).toMatchObject({ v: 1, requestId: 'original-finite-request', target: { kind: 'machine', machineId: workspace.machineId }, input });
+        const sync = projectWorkspaceSyncAdmissionInputV1(actionId, envelope.input);
         if (url.endsWith('/execution-authorization')) return { status: 200, data: { v: 1, token: 'home-original-finite-origin', binding: {
           accountId: 'finite-owner', authentication: { kind: 'account', tokenEpoch: 2 }, accountEncryptionMode: 'plain',
           serverIdentityId: 'srv_finite_home', custodianAccountId: 'finite-owner', machineId: machine.id, installationId: machine.installationId,
           actionId, requestId: envelope.requestId, target: envelope.target,
+          ...(envelope.idempotencyKey === undefined ? {} : { idempotencyKey: envelope.idempotencyKey }),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          ...(sync ? { workspaceSyncAdmission: {
+            relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(envelope.requestId),
+            sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
+            source: { actorAccountId: 'finite-owner', custodianAccountId: 'finite-owner', machineId: sync.sourceMachineId,
+              installationId: machine.installationId, role: 'manage', encryptionMode: 'plain' },
+          } } : {}),
         } } };
         expect(url).toBe(`https://home-a.test/v1/actions/${actionId}`);
         expect(config?.timeout).toBeUndefined();
@@ -334,8 +397,9 @@ describe('original CLI Account finite Project admission', () => {
       const signal = new AbortController().signal;
       const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: 'cli-global',
         mode: 'plain', ctx: null, serverId: 'home-a', serverIdentityId: 'srv_finite_home', serverHttpBaseUrl: 'https://home-a.test' });
-      expect(await deps.projectAction!({ actionId, input,
-        context: { surface: 'cli', authority: 'present_user', actionRequestId: 'original-finite-request', signal } })).toEqual(result);
+      const actual = await deps.projectAction!({ actionId, input,
+        context: { surface: 'cli', authority: 'present_user', actionRequestId: 'original-finite-request', signal } });
+      expect(actual, JSON.stringify(actual)).toEqual(result);
       expect(requests).toHaveLength(1);
       expect(rawGuest).not.toHaveBeenCalled();
     });

@@ -169,6 +169,7 @@ import { SessionMessageExplicitReplyV1Schema, SessionMessageReplyMutationResultV
 import { AutonomousExchangeControlRequestV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
 import { AutonomousExchangeObservedRevisionV1Schema } from '../sessions/messages/autonomousExchangeV1.js';
 import { ActionResolvedSessionTargetsV1Schema, isActionSessionReadSetV1, normalizeSessionTargetV1, type ActionSessionTargetDeclarationV1 } from './sessionTargetV1.js';
+import { isStoredScmReviewEvidenceAction } from './scmActionIdsV1.js';
 import { TargetActionApprovalRequestV1Schema, projectTargetActionApprovalInvocationV1 } from '../approvals/targetActionApprovalRequestV1.js';
 import { deriveDeploymentEnvironmentApprovalSubjectKeyV1, deriveManagedDeleteApprovalSubjectKeyV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { executeApprovalObservationAction } from './executor/approvalObservation.js';
@@ -1110,6 +1111,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
   const readActionSessionTargetDeclaration = (id: string, input: unknown, ctx: ActionExecutorContext):
     (ActionSessionTargetDeclarationV1 & Readonly<{ scopeSideEffectClass?: ActionSpec['sideEffectClass'];
       contributedActionId?: QualifiedPluginActionId; executionPlacement?: ActionSpec['executionPlacement'] }>) | undefined => {
+    if (isStoredScmReviewEvidenceAction(id, readRecord(input))) return undefined;
     if (id === ACTION_INVOKE_ACTION_ID_V1) {
       const action = readRecord(readRecord(input).action);
       if (typeof action.pluginId !== 'string' || typeof action.localId !== 'string') return undefined;
