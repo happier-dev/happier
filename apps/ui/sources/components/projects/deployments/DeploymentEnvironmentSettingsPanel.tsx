@@ -32,10 +32,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Status } from '@happier-dev/plugin-ui';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { useDeploymentSavedChecks } from './useDeploymentSavedChecks';
-import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
-import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
-import { serviceCheckListFacts, serviceCheckStatusTone, serviceCheckStatusWord } from './serviceCheckPresentation';
-import { buildServiceCheckHref } from './deploymentNavigation';
+import { serviceCheckStatusTone, serviceCheckStatusWord } from './serviceCheckPresentation';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/SettingRow';
@@ -617,46 +614,26 @@ type SectionProps = Readonly<{
   testID: string;
 }>;
 
-/** Native deployed-service health; saved checks and alerts use the source editor above. */
-/** Configured checks are the managed inventory's family; Settings reads only that family, once for the section. */
-const SAVED_CHECK_KINDS = ['configuredCheck'] as const;
-const NO_INVENTORY_OPEN = () => {};
-
-/**
- * The Environment's saved checks (their owner's read), one row each: what it checks and where, the check owner's own
- * state (one inventory read for the section, never recomputed here), and the check's page one press away (R18-D1).
- */
+/** The scoped owner supplies each saved check's latest observation and exact destination. */
 function SavedCheckRows(props: SectionProps) {
   const { environment } = props.detail;
   const presented = props.demand.mounted && props.demand.visible;
   const saved = useDeploymentSavedChecks(props.lifetime ?? null, environment.id, presented,
     props.environmentTitle(environment.id) ?? undefined);
-  const scope = props.lifetime?.scope ?? null;
-  const query = React.useMemo(() => ({ scope, machine: null, projectKey: null, presented, kinds: SAVED_CHECK_KINDS }),
-    [scope, presented]);
   const router = useRouter();
   const { theme } = useUnistyles();
-  if (saved.rows.length === 0) return null;
-  return (
-    <MachineManagedInventorySection query={query} groupBy="kind" openKey={null} onOpenChange={NO_INVENTORY_OPEN}>
-      {(state) => saved.rows.map(row => {
-        const listed = state.rows.find((candidate): candidate is ManagedConfiguredCheckRow => candidate.kind === 'configuredCheck'
-          && candidate.automationId === row.source.automationId && candidate.triggerId === row.source.triggerId);
-        const facts = listed ? serviceCheckListFacts(listed) : null;
-        const tone = facts ? serviceCheckStatusTone(facts.status) : null;
-        return (
-          <Item key={`${row.source.automationId}:${row.source.triggerId}:${row.check.checkId}`}
-            testID={`${props.testID}.saved.${row.check.checkId}`} title={row.title}
-            subtitle={[facts ? serviceCheckStatusWord(facts.status) : null, row.targetLabel].filter(Boolean).join(' · ') || undefined}
-            subtitleLeading={tone ? <StatusDot size={6} color={tone === 'danger'
-              ? theme.colors.state.danger.foreground : theme.colors.state.warning.foreground} /> : undefined}
-            showChevron
-            onPress={() => router.push(buildServiceCheckHref({ automationId: row.source.automationId,
-              triggerId: row.source.triggerId }) as never)} />
-        );
-      })}
-    </MachineManagedInventorySection>
-  );
+  return saved.rows.map(row => {
+    const tone = row.healthStatus ? serviceCheckStatusTone(row.healthStatus) : null;
+    return (
+      <Item key={`${row.source.automationId}:${row.source.triggerId}:${row.check.checkId}`}
+        testID={`${props.testID}.saved.${row.check.checkId}`} title={row.title}
+        subtitle={[row.healthStatus ? serviceCheckStatusWord(row.healthStatus) : null, row.targetLabel].filter(Boolean).join(' · ') || undefined}
+        subtitleLeading={tone ? <StatusDot size={6} color={tone === 'danger'
+          ? theme.colors.state.danger.foreground : theme.colors.state.warning.foreground} /> : undefined}
+        showChevron
+        onPress={() => router.push(row.href as never)} />
+    );
+  });
 }
 
 function ChecksRows(props: SectionProps) {

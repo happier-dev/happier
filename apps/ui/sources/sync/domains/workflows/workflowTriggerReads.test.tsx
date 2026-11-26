@@ -1,9 +1,12 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { readAutomationDefinitionDetailsDemand } from '@/sync/domains/automations/automationReadDemand';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
 import bundledMachineServices from '../../../../../cli/assets/bundled-plugin-manifests/machine-services.json';
@@ -20,6 +23,9 @@ import {
     WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 // The real Action owner asks for destructive confirmation before removing a set.
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ confirmResult: true }).module;
@@ -73,7 +79,7 @@ function listed(row: ReturnType<typeof automation>) {
 }
 
 describe('Account trigger reads through real Action and Automation owners', () => {
-    it('shares one exact saved check read and follows its pushed status without rereading unrelated Environments', async () => {
+    it('shows the saved check in Environment Settings with one scoped read and no reads for unrelated changes', async () => {
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected the real Account lifetime');
@@ -147,6 +153,25 @@ describe('Account trigger reads through real Action and Automation owners', () =
         const subscription = observeDeploymentSavedChecks(lifetime, environmentId, observed);
         onTestFinished(subscription.dispose);
         const hook = await renderHook(() => useDeploymentSavedChecks(lifetime, environmentId, true, 'Staging'));
+        const { DeploymentEnvironmentSettingsPanel } = await import('@/components/projects/deployments/DeploymentEnvironmentSettingsPanel');
+        const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
+        const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+        const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { serviceCheckStatusWord } = await import('@/components/projects/deployments/serviceCheckPresentation');
+        const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ id: environmentId, serverId }) });
+        const controller = createDeploymentReadControllerV1({ scope: lifetime.scope, transport: {
+            listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+            readEnvironment: async () => ({ ok: true, value: detail }),
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+            readReceipt: async () => ({ ok: false, failure: { code: 'deployment_unavailable', retryable: false } }),
+        } });
+        onTestFinished(() => controller.retire());
+        const screen = await renderAccountScreen(<DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+            demand={{ mounted: true, visible: true, focused: true }} machineName={id => id} environmentTitle={() => 'Staging'}
+            definitionDocument={{ document: '', change: () => {} }} lifetime={lifetime} />);
+        const checkRow = () => screen.findByTestId('project-deployments.environment.settings.checks-alerts.saved.app-http');
+        const checkText = () => checkRow()?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string')
+            .map(node => node.props.children).join(' ');
         await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === kvPath)).toHaveLength(1));
         await waitForHomeGovernance(() => {
             expect(observed.mock.lastCall?.[0]).toMatchObject({ pending: false, definitions: { status: 'ready',
@@ -168,13 +193,21 @@ describe('Account trigger reads through real Action and Automation owners', () =
             })]);
         };
         const kvReads = () => home.requests.filter(request => request.path === kvPath).length;
+        const automationReads = () => home.requests.filter(request => request.path.startsWith('/v3/automations'));
+        await waitForHomeGovernance(() => expect(checkRow()).not.toBeNull());
         const publications = observed.mock.calls.length;
         await act(async () => push(1, healthResultCheckpointKey('production')));
         expect(kvReads()).toBe(1);
         expect(observed).toHaveBeenCalledTimes(publications);
+        expect(automationReads()).toMatchObject([
+            { path: '/v3/automations/query', input: { healthCheckSources: { environmentId } } },
+        ]);
+        expect(Number(readAutomationDefinitionDetailsDemand(lifetime))).toBe(0);
+        expect(checkText()).toContain(serviceCheckStatusWord('down'));
         status = 'up';
         await act(async () => push(2, key));
         await waitForHomeGovernance(() => expect(hook.getCurrent().rows[0]?.healthStatus).toBe('up'));
+        await waitForHomeGovernance(() => expect(checkText()).toContain(serviceCheckStatusWord('up')));
         expect(kvReads()).toBe(2);
         expect(home.requests.filter(request => request.path.startsWith('/v3/automations'))).toMatchObject([
             { path: '/v3/automations/query', input: { healthCheckSources: { environmentId } } },
