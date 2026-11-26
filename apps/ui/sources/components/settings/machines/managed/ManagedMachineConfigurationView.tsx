@@ -732,8 +732,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         && isBlankInput(readInputPath(fieldInput, field.path)));
     const missingDimension = draft ? managedConfiguratorMissingDimension(draft, projection) : undefined;
     // Account roles can require a managing Machine for delivery. Their Account input comes first.
-    const accountCredentialFirst = declaredAcquireTarget === 'account' && !creationPreset && !props.presetOnly
-        && requiredCredentialPurposes && requiredCredentialPurposes.length > 0;
+    const accountCredentialFirst = requiresControllerSelection && declaredAcquireTarget === 'account'
+        && !creationPreset && requiredCredentialPurposes && requiredCredentialPurposes.length > 0;
     const creationReadiness = busy ? blockedCreation('busy', t('common.loading'))
         : !activeBinding?.isCurrent() ? blockedCreation('homeUnavailable', t('common.unavailable'))
         // Delegated review consumes its saved facts; authoring consumes the current options scope.
