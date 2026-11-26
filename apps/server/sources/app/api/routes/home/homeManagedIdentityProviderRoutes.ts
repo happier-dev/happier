@@ -223,6 +223,8 @@ async function mutationError(result: Readonly<{ status: string; instance?: Ident
                     ? "identity_provider_revision_conflict"
                     : result.status === "immutable_issuer"
                         ? "identity_provider_issuer_immutable"
+                        : result.status === "in_use"
+                            ? "identity_provider_in_use"
                         : result.status === "provider_unavailable"
                             ? "identity_provider_disabled"
                             : result.status === "validation_failed" && "error" in result

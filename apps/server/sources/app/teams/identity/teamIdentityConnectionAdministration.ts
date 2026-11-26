@@ -25,15 +25,8 @@ import {
     readIdentityConnectionAdministrationSnapshotInTx,
     type IdentityConnectionAdministrationSnapshot,
 } from "@/app/auth/providers/identityProviderCatalog";
-import {
-    checkAccountRetainsLoginRouteForDecisions,
-    readAccountLoginViabilityFactsByAccountIdAfterProviderRemovalInTx,
-    resolveEffectiveAccountLoginMethodsForDecisions,
-} from "@/app/auth/methods/effectiveAccountLoginMethods";
-import { resolveEffectiveHomeAuthMethodsInTx } from "@/app/auth/methods/effectiveHomeAuthMethods";
 import { resolveTeamAuthenticationPolicyInTx } from "@/app/auth/entry/resolveTeamAuthenticationPolicy";
 import { normalizeAuthMethodId } from '@happier-dev/protocol/auth/providers';
-import { findIdentityProviderBlockers } from "@/app/auth/providers/accountIdentityLifecycle";
 import {
     readIdentityProviderInstanceInTx,
     setIdentityProviderInstanceEnabledInTx,
@@ -82,6 +75,7 @@ import {
     type ScopedIdentityConnectionV1 as IdentityConnectionV1,
 } from "./teamIdentityConnectionProjection";
 import { resolveTeamIdentityConnectionReturnUrl } from "./teamIdentityConnectionUrls";
+import { readHomeIdentityMethodWithdrawalBlockerInTx, readIdentityProviderLoginImpactInTx } from "./homeIdentityMethodWithdrawal";
 
 import { resolveTeamAdmissionModeApplicabilityInTx } from "./teamAdmissionModeApplicability";
 import type { WorkosAdministrationDependencies } from "./teamWorkosAdministration";
@@ -131,13 +125,12 @@ async function resolveTeamIdentityConnectionRemovalPreflightInTx(
         return { ok: false, error: "identity_connection_conflict" };
     }
 
-    const [team, identityRows, directorySources, externalGroupBindings, managedMemberships, effectiveHome] = await Promise.all([
+    const [team, loginImpact, directorySources, externalGroupBindings, managedMemberships] = await Promise.all([
         input.teamId === null ? Promise.resolve(null) : tx.team.findUnique({ where: { id: input.teamId }, select: { authenticationPolicy: true } }),
-        findIdentityProviderBlockers(tx, resolved.connection.providerInstanceId),
+        readIdentityProviderLoginImpactInTx(tx, { env: input.env, providerInstanceId: resolved.connection.providerInstanceId }),
         tx.teamDirectorySource.count({ where: { teamIdentityConnectionId: input.connectionId } }),
         tx.teamExternalGroupBinding.count({ where: { teamIdentityConnectionId: input.connectionId } }),
         tx.teamMembershipIdentityConnectionManagement.count({ where: { teamIdentityConnectionId: input.connectionId } }),
-        resolveEffectiveHomeAuthMethodsInTx(tx, { env: input.env }),
     ]);
     if (input.teamId !== null && !team) return { ok: false, error: "team_not_found" };
 
@@ -168,45 +161,8 @@ async function resolveTeamIdentityConnectionRemovalPreflightInTx(
         if (!blockers.includes("team_authentication_policy_in_use")) blockers.push("team_authentication_policy_in_use");
     }
 
-    const accountIds = [...new Set(identityRows.map((row) => row.accountId))];
-    let accountsRequiringAlternateLogin = 0;
-    if (accountIds.length > 0 && effectiveHome.status !== "ready") {
-        blockers.push("home_authentication_policy_unavailable");
-    } else if (effectiveHome.status === "ready") {
-        const [currentFactsByAccountId, remainingFactsByAccountId] = await Promise.all([
-            readAccountLoginViabilityFactsByAccountIdAfterProviderRemovalInTx(tx, {
-                accountIds,
-                env: input.env,
-                excludedProviderId: null,
-                identityEligibility: "current",
-            }),
-            readAccountLoginViabilityFactsByAccountIdAfterProviderRemovalInTx(tx, {
-                accountIds,
-                env: input.env,
-                excludedProviderId: resolved.connection.providerInstanceId,
-                identityEligibility: "current",
-            }),
-        ]);
-        for (const accountId of accountIds) {
-            const currentFacts = currentFactsByAccountId.get(accountId);
-            const remainingFacts = remainingFactsByAccountId.get(accountId);
-            if (!currentFacts || !remainingFacts) continue;
-            const currentlyViable = resolveEffectiveAccountLoginMethodsForDecisions(
-                effectiveHome.decisions,
-                currentFacts,
-            ).viable;
-            if (
-                currentlyViable
-                && !checkAccountRetainsLoginRouteForDecisions(
-                    effectiveHome.decisions,
-                    remainingFacts,
-                ).ok
-            ) accountsRequiringAlternateLogin += 1;
-        }
-        if (accountsRequiringAlternateLogin > 0) {
-            blockers.push("account_would_lose_login");
-        }
-    }
+    if (loginImpact.homeAuthenticationUnavailable) blockers.push("home_authentication_policy_unavailable");
+    if (loginImpact.accountsRequiringAlternateLogin > 0) blockers.push("account_would_lose_login");
     if (resolved.connection.providerKind !== "workos_sso") {
         if (directorySources > 0) blockers.push("directory_source_in_use");
         if (externalGroupBindings > 0) blockers.push("external_group_binding_in_use");
@@ -221,8 +177,8 @@ async function resolveTeamIdentityConnectionRemovalPreflightInTx(
                 v: 1 as const,
                 canRemove: blockers.length === 0,
                 impact: {
-                    linkedAccounts: accountIds.length,
-                    accountsRequiringAlternateLogin,
+                    linkedAccounts: loginImpact.linkedAccounts,
+                    accountsRequiringAlternateLogin: loginImpact.accountsRequiringAlternateLogin,
                     directorySources,
                     externalGroupBindings,
                     managedMemberships,
@@ -623,6 +579,19 @@ export async function setTeamIdentityConnectionEnabledForActor(
     return await inTx(async (tx) => {
         const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
         if (!authority.ok) return authority;
+        if (input.teamId === null) {
+            // A Home connection is a Home identity method; taking it out of
+            // service shares the provider's withdrawal decision.
+            const resolved = await readTeamIdentityConnectionInTx(tx, { id: input.connectionId, teamId: null });
+            if (resolved.status === "ready" && resolved.connection.enabled) {
+                const blocker = await readHomeIdentityMethodWithdrawalBlockerInTx(tx, {
+                    env: input.env,
+                    providerInstanceId: resolved.connection.providerInstanceId,
+                });
+                if (blocker === "team_authentication_policy_in_use") return { ok: false, error: "identity_connection_policy_in_use" };
+                if (blocker !== null) return { ok: false, error: "identity_provider_in_use" };
+            }
+        }
         const result = await setTeamIdentityConnectionEnabledInTx(tx, {
             id: input.connectionId,
             teamId: input.teamId,

@@ -38,6 +38,7 @@ import type { HomeAdministrationActionV1 } from '@happier-dev/protocol/home/gove
 
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 import { readHomeGovernanceAccountInTx, resolveHomeGovernanceAuthority } from "./homeCapabilities";
+import { readHomeIdentityMethodWithdrawalBlockerInTx } from "@/app/teams/identity/homeIdentityMethodWithdrawal";
 import { publishHomeGovernanceChangedInTx } from "./governanceChanges";
 import { readHomeGovernancePolicyInTx, resolveTeamProviderKindPolicy } from "./governancePolicy";
 
@@ -326,6 +327,10 @@ export async function setHomeManagedIdentityProviderEnabled(input: Readonly<{
         if (current.instance.kind !== "oidc" && !(owner.kind === "home" && current.instance.kind === "github_app_identity")) {
             return { status: "provider_unavailable" as const };
         }
+        if (owner.kind === "home" && current.instance.enabled && await readHomeIdentityMethodWithdrawalBlockerInTx(tx, {
+            env: input.env ?? process.env,
+            providerInstanceId: input.id,
+        }) !== null) return { status: "in_use" as const };
         const result = await setIdentityProviderInstanceEnabledInTx(tx, {
             id: input.id,
             owner,
@@ -579,6 +584,12 @@ export async function deleteHomeManagedIdentityProvider(input: Readonly<{
             where: { id: input.id },
             select: { displayName: true },
         });
+        // Linked identities already block removal, so only a Team policy that
+        // accepts this Home method can still depend on it.
+        if (owner.kind === "home" && removing && await readHomeIdentityMethodWithdrawalBlockerInTx(tx, {
+            env: input.env ?? process.env,
+            providerInstanceId: input.id,
+        }) === "team_authentication_policy_in_use") return { status: "in_use" as const };
         const result = await deleteIdentityProviderInstanceInTx(tx, {
             id: input.id,
             owner,

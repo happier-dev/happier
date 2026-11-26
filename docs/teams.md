@@ -613,7 +613,13 @@ Implemented in the 0.3 development source:
   rejects an out-of-date prior value with `team_authentication_policy_conflict`, and requires
   current credential evidence both against an existing narrowing and against a replacement;
 - the narrow Home administrator owner-recovery operation remains separate from ordinary Team
-  policy mutation.
+  policy mutation;
+- taking a Home identity method out of service (disabling a Home provider or its Home
+  connection, or removing a Home provider) is refused with the existing in-use codes while a
+  Team policy accepts that method or an Account's last current login route depends on it.
+  `readHomeIdentityMethodWithdrawalBlockerInTx` in
+  `apps/server/sources/app/teams/identity/homeIdentityMethodWithdrawal.ts` decides this once,
+  and connection removal preflight reads the same login impact.
 
 The Team authentication destination includes the narrowed-policy selector/editor. It preserves
 the administrator's draft across a stale comparison, requires deliberate acknowledgement of

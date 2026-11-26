@@ -33,6 +33,7 @@ import { setHomeGovernancePolicyInTx } from "./governancePolicy";
 import { resolveEffectiveHomeAuthMethods } from "@/app/auth/methods/effectiveHomeAuthMethods";
 import { TEAM_CHANGE_ENTITY_ID } from "@/app/teams/teamChanges";
 import { createTeamIdentityConnectionInTx } from "@/app/teams/identity/teamIdentityConnectionLifecycle";
+import { setTeamIdentityConnectionEnabledForActor } from "@/app/teams/identity/teamIdentityConnectionAdministration";
 
 let harness: LightSqliteHarness;
 let sequence = 0;
@@ -81,6 +82,129 @@ afterEach(async () => {
     await db.team.deleteMany({});
     await db.homeGovernancePolicy.deleteMany({});
     await db.account.deleteMany({});
+});
+
+/**
+ * Taking a Home identity method out of service (disabling the provider or its
+ * Home connection, or removing the provider) must not strand an Account's last
+ * login route or a Team authentication policy that accepts that Home method.
+ */
+describe("Home identity method withdrawal", () => {
+    async function enabledProvider(owner: string) {
+        const created = await createHomeManagedOidcProvider({
+            actorAccountId: owner,
+            displayName: `Login ${++sequence}`,
+            config: oidcConfig,
+            clientSecret: "withdrawal-secret",
+        });
+        if (created.status !== "created") throw new Error(created.status);
+        const enabled = await setHomeManagedIdentityProviderEnabled({
+            actorAccountId: owner,
+            id: created.instance.id,
+            expectedRevision: created.instance.revision,
+            expectedSecurityRevision: created.instance.securityRevision,
+            enabled: true,
+        });
+        if (enabled.status !== "applied") throw new Error(enabled.status);
+        return enabled.instance;
+    }
+    const disable = (
+        owner: string,
+        instance: Readonly<{ id: string; revision: number; securityRevision: number }>,
+        env?: NodeJS.ProcessEnv,
+    ) =>
+        setHomeManagedIdentityProviderEnabled({
+            actorAccountId: owner,
+            id: instance.id,
+            expectedRevision: instance.revision,
+            expectedSecurityRevision: instance.securityRevision,
+            enabled: false,
+            ...(env ? { env } : {}),
+        });
+    const restrictTeamTo = async (methodId: string) => await db.team.create({ data: {
+        name: `Restricted ${++sequence}`,
+        authenticationPolicy: { v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId }] },
+    } });
+    const storedEnabled = async (id: string) =>
+        (await db.identityProviderInstance.findUniqueOrThrow({ where: { id }, select: { enabled: true } })).enabled;
+
+    it("refuses disabling a Home provider that a Team authentication policy accepts", async () => {
+        const owner = await account("owner");
+        const instance = await enabledProvider(owner);
+        await restrictTeamTo(instance.id);
+
+        await expect(disable(owner, instance)).resolves.toMatchObject({ status: "in_use" });
+        expect(await storedEnabled(instance.id)).toBe(true);
+    });
+
+    it("refuses disabling the last login route of an Account that signs in only through it", async () => {
+        const owner = await account("owner");
+        const instance = await enabledProvider(owner);
+        const linked = await db.account.create({ data: { encryptionMode: "plain", status: "active" } });
+        await db.accountIdentity.create({ data: {
+            accountId: linked.id, provider: instance.id, providerUserId: `subject-${linked.id}`, eligibilityStatus: "eligible",
+        } });
+        // The provider is a keyless login route for this Plain Account, not only a connect target.
+        const keylessLogin = {
+            ...process.env,
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: instance.id,
+        };
+
+        await expect(disable(owner, instance, keylessLogin)).resolves.toMatchObject({ status: "in_use" });
+        expect(await storedEnabled(instance.id)).toBe(true);
+    });
+
+    it("still disables a Home provider no Account or Team depends on", async () => {
+        const owner = await account("owner");
+        const instance = await enabledProvider(owner);
+
+        await expect(disable(owner, instance)).resolves.toMatchObject({ status: "applied", instance: { enabled: false } });
+    });
+
+    it("refuses removing a Home provider that a Team authentication policy accepts", async () => {
+        const owner = await account("owner");
+        const instance = await enabledProvider(owner);
+        await restrictTeamTo(instance.id);
+
+        await expect(deleteHomeManagedIdentityProvider({
+            actorAccountId: owner,
+            id: instance.id,
+            expectedRevision: instance.revision,
+        })).resolves.toMatchObject({ status: "in_use" });
+        expect(await db.identityProviderInstance.count({ where: { id: instance.id } })).toBe(1);
+    });
+
+    it("refuses disabling a Home identity connection that a Team authentication policy accepts", async () => {
+        const owner = await account("owner");
+        const instance = await enabledProvider(owner);
+        await restrictTeamTo(instance.id);
+        const connection = await inTx(async (tx) => await createTeamIdentityConnectionInTx(tx, {
+            teamId: null,
+            providerInstanceId: instance.id,
+            externalReference: { v: 1, kind: "oidc" },
+            settings: { v: 1, kind: "oidc", allowedUsers: [], allowedEmailDomains: [], groupsAny: [], groupsAll: [] },
+            createdByAccountId: owner,
+        }));
+        if (connection.status !== "created") throw new Error(connection.status);
+        const enabledRow = await db.teamIdentityConnection.update({
+            where: { id: connection.connection.id },
+            data: { enabled: true, revision: { increment: 1 } },
+        });
+
+        await expect(setTeamIdentityConnectionEnabledForActor({
+            actorAccountId: owner,
+            teamId: null,
+            connectionId: connection.connection.id,
+            expectedRevision: enabledRow.revision,
+            enabled: false,
+            env: process.env,
+        })).resolves.toEqual({ ok: false, error: "identity_connection_policy_in_use" });
+        expect((await db.teamIdentityConnection.findUniqueOrThrow({ where: { id: connection.connection.id } })).enabled)
+            .toBe(true);
+    });
 });
 
 describe("Home managed OIDC consumed lifecycle", () => {
