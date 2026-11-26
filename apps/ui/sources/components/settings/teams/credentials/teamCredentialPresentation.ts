@@ -502,8 +502,9 @@ export function credentialFailureMessage(failure: HomeDomainFailure<string>): st
             return t('teams.credentials.errors.brokerUnavailable');
         case 'source_owner_required':
             return t('teams.credentials.errors.sourceOwnerRequired');
-        case 'source_replaced_or_missing':
         case 'resource_corrupt':
+            return t('teams.credentials.errors.resourceUnreadable');
+        case 'source_replaced_or_missing':
             return t('teams.credentials.errors.sourceMissing');
         case 'disclosure_not_allowed':
             return t('teams.credentials.audience.ceilingBlocked');

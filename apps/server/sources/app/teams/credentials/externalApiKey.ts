@@ -349,15 +349,19 @@ export async function authorizeTeamCredentialExternalApiKeyInTx(
     const evidence = await resolveCurrentAuthenticationEvidenceInTx(tx, {
         env: authentication.env ?? process.env, accountId: actorAccountId, evidence: authentication.authenticationEvidence,
     });
-    const updated = await tx.teamCredentialExternalApiKey.update({
+    const authenticationEvidence = evidence.length > 0
+        ? AuthTokenAuthenticationEvidenceSnapshotV1Schema.parse({ v: 1, evidence })
+        : null;
+    const key = await project(tx, { ...row, authenticationEvidence }, actorAccountId, authentication.env);
+    if (key === null) return { ok: false, error: 'resource_corrupt' };
+
+    await tx.teamCredentialExternalApiKey.update({
         where: { id: row.id },
-        data: { authenticationEvidence: evidence.length > 0
-            ? AuthTokenAuthenticationEvidenceSnapshotV1Schema.parse({ v: 1, evidence }) : getActivePrismaRuntime().DbNull },
-        select: SUMMARY_SELECT,
+        data: { authenticationEvidence: authenticationEvidence ?? getActivePrismaRuntime().DbNull },
+        select: { id: true },
     });
     await publishTeamChangedInTx(tx, { teamId: row.resource.team.id, additionalAccountIds: [actorAccountId] });
-    const key = await project(tx, updated, actorAccountId, authentication.env);
-    return key === null ? { ok: false, error: 'resource_corrupt' } : { ok: true, key };
+    return { ok: true, key };
 }
 
 export async function revokeTeamCredentialExternalApiKeyInTx(

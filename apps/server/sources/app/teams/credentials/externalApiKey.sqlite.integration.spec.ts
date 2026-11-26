@@ -532,6 +532,19 @@ describe("Team credential external API key owner", () => {
             await expect(inTx(tx => listTeamCredentialExternalApiKeysInTx(tx, {
                 resourceId: resource.id, actorAccountId: member.id, authentication,
             }))).resolves.toMatchObject({ ok: true, keys: [{ keyId: created.key.keyId, canAuthorize: true }] });
+
+            await db.teamCredentialExternalApiKey.update({
+                where: { id: keyId }, data: { label: JSON.stringify({ content: { t: "encrypted" }, recipients: [] }) },
+            });
+            await expect(inTx(tx => authorizeTeamCredentialExternalApiKeyInTx(tx, {
+                ...input, actorAccountId: member.id, authentication,
+            }))).resolves.toEqual({ ok: false, error: "resource_corrupt" });
+            expect((await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: keyId } })).authenticationEvidence)
+                .toBeNull();
+            await db.teamCredentialExternalApiKey.update({
+                where: { id: keyId }, data: { label: storedBefore.label },
+            });
+
             const authorized = await inTx(tx => authorizeTeamCredentialExternalApiKeyInTx(tx, {
                 ...input, actorAccountId: member.id, authentication,
             }));

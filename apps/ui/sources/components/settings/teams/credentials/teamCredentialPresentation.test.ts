@@ -27,6 +27,13 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it('distinguishes unreadable stored material from a missing source in immediate and approved writes', () => {
+        expect(credentialFailureMessage({ kind: 'unknown', retryable: false, code: 'resource_corrupt' }))
+            .toBe(t('teams.credentials.errors.resourceUnreadable'));
+        expect(credentialApprovalFailureMessage('resource_corrupt')).toBe(t('teams.credentials.errors.resourceUnreadable'));
+        expect(credentialApprovalFailureMessage('source_replaced_or_missing')).toBe(t('teams.credentials.errors.sourceMissing'));
+    });
+
     it.each(['approval_canceled', 'approval_rejected'])('keeps %s silent for immediate and deferred credential mutations', (code) => {
         expect(credentialFailureMessage({ kind: 'forbidden', retryable: false, code })).toBeNull();
         expect(credentialApprovalFailureMessage(code)).toBeNull();
