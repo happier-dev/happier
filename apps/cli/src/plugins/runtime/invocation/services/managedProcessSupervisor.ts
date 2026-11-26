@@ -1,3 +1,4 @@
+import { managedServiceUnavailable } from './managedServiceUnavailable';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
@@ -840,7 +841,7 @@ function canonicalSpecFacts(spec: ManagedServiceProcessSpec): unknown {
     }
     if (spec.mode.endpointNone) {
         if (spec.healthCheck?.kind === 'http') {
-            return fail('plugin_managed_service_unavailable', 'URL-less service has no HTTP health capability');
+            throw managedServiceUnavailable('http_health_requires_endpoint', 'URL-less service has no HTTP health capability', { serviceId: spec.id });
         }
         return spec;
     }
@@ -1106,6 +1107,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         ) => Readonly<{ release(): void }>,
         preparedRunnerSupervision?: RunnerManagedServiceSupervisionAuthorization,
     ): Promise<ManagedServiceProcessHandle> {
+        const serviceIdentity = { serviceId: spec.id, pluginId: scope.pluginId };
         let endpoint = resolveInitialEndpoint(spec);
         let endpointOwnerPid: number | null = null;
         if (spec.healthCheck?.kind === 'http' && endpoint) {
@@ -1629,7 +1631,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             if (healthCheck.kind === 'command') {
                 return await runBoundedHealthProbe(async (probeSignal) => {
                     if (!scope.exec) {
-                        return fail('plugin_managed_service_unavailable', 'Project command-health admission is unavailable');
+                        throw managedServiceUnavailable('project_command_health_authorization_unavailable', 'Project command-health admission is unavailable', { ...serviceIdentity, phase: 'managed_service.health' });
                     }
                     const result = await scope.exec.run({
                         executable: healthCheck.executable,
@@ -1888,7 +1890,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 || !['ready', 'not_ready', 'not_reported'].includes(observation.readiness)
                 || (observation.endpoint !== null && typeof observation.endpoint !== 'string')
                 || (observation.displayName !== undefined && (typeof observation.displayName !== 'string' || observation.displayName.length === 0))) {
-                fail('plugin_managed_service_unavailable', 'Native observation is invalid');
+                throw managedServiceUnavailable('native_observation_invalid', 'Native observation is invalid', serviceIdentity);
             }
         }
 
@@ -1903,7 +1905,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         async function inspectNative(signal?: AbortSignal, explicitFailureOutput = false,
             pushed?: ManagedServiceNativeObservationV1, clearExpectedDown = false): Promise<ManagedServiceNativeObservationV1> {
             if (spec.mode.kind !== 'native') {
-                return fail('plugin_managed_service_unavailable', 'Native lifecycle is unavailable');
+                throw managedServiceUnavailable('native_lifecycle_unavailable', 'Native lifecycle is unavailable', serviceIdentity);
             }
             assertNotAborted(signal);
             assertGenerationUsable();
@@ -2156,13 +2158,13 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         > => {
         if (spec.mode.kind === 'native') {
             if (custodyOwner !== 'daemon') {
-                return fail('plugin_managed_service_unavailable', 'Native lifetime requires daemon custody');
+                throw managedServiceUnavailable('native_daemon_custody_required', 'Native lifetime requires daemon custody', serviceIdentity);
             }
             assertGenerationUsable();
             if (spec.mode.observationOnly) {
                 // Plan 41 activated this exact generation once. Observation can never
                 // acquire a starter or recreate an absent/stopped deployment.
-                if (!spec.mode.builtinLifecycle) return fail('plugin_managed_service_unavailable', 'Deployment native observation is unavailable');
+                if (!spec.mode.builtinLifecycle) throw managedServiceUnavailable('deployment_native_observation_unavailable', 'Deployment native observation is unavailable', serviceIdentity);
             } else if (scope.kind === 'project' && spec.authorizeLaunch) {
                 const launch = await spec.authorizeLaunch({ endpoint: null, signal: entry.lifecycle.signal });
                 retainLaunchDiagnostics(launch);
@@ -2199,7 +2201,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 try { process = await scope.exec.spawn(spec.launch, { signal: entry.lifecycle.signal }); }
                 finally { ownerInstall.dispose(); }
             } else {
-                return fail('plugin_managed_service_unavailable', 'Native launch admission is unavailable');
+                throw managedServiceUnavailable('native_launch_authorization_unavailable', 'Native launch admission is unavailable', serviceIdentity);
             }
             observeSpawnedProcessTerminal();
             await rejectUnstartedProjectProcess('native_service_start_failed');
@@ -2432,7 +2434,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             ): Promise<PluginProcessHandle> => {
                 if (scope.kind === 'project' || scope.kind === 'machine') {
                     if (!spec.authorizeLaunch) {
-                        return fail('plugin_managed_service_unavailable', 'Project launch admission is unavailable');
+                        throw managedServiceUnavailable('project_launch_authorization_unavailable', 'Project launch admission is unavailable', serviceIdentity);
                     }
                     const authorized = await spec.authorizeLaunch({ endpoint, signal: entry.lifecycle.signal });
                     retainLaunchDiagnostics(authorized);
@@ -2463,7 +2465,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         assertNotAborted(entry.lifecycle.signal);
                     } catch (error) { await authorized.release(); throw error; }
                     return spawnAuthorizedHostExecLaunchForHost({ ...authorized, processOwnerTag }, {
-                        ...(scope.kind === 'project' && custodyOwner === 'daemon' ? { serviceOutputLifetime: true as const } : {}),
+                        ...(scope.kind === 'project' && custodyOwner === 'daemon' ? { serviceOutputLifetime: { serviceId: spec.id } } : {}),
                         readSpawnFailureLimits: params.readSpawnFailureLimits,
                         signal: entry.lifecycle.signal,
                         retainLaunch,
@@ -2472,7 +2474,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                     }).handle;
                 }
                 if (!launch) {
-                    return fail('plugin_managed_service_unavailable', 'Managed launch admission is unavailable');
+                    throw managedServiceUnavailable('managed_launch_authorization_unavailable', 'Managed launch admission is unavailable', serviceIdentity);
                 }
                 const authorizedLaunchRequest = supervisionLaunch
                     && params.transformRunnerManagedSpawnEnvironment
@@ -2732,7 +2734,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             async waitUntilHealthy(options?: { timeoutMs?: number; signal?: AbortSignal }) {
                 if ((spec.mode.kind === 'managedSpawn' && spec.mode.endpointNone && !spec.healthCheck)
                     || (spec.mode.kind === 'native' && snapshot.readiness === 'not_reported')) {
-                    return fail('plugin_managed_service_unavailable', 'Service has no reported readiness capability');
+                    throw managedServiceUnavailable('readiness_unreported', 'Service has no reported readiness capability', { ...serviceIdentity, phase: 'managed_service.health' });
                 }
                 const timeoutMs = options?.timeoutMs;
                 if (timeoutMs !== undefined && (

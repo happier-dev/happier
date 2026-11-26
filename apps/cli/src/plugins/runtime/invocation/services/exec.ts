@@ -1,3 +1,4 @@
+import { managedServiceUnavailable } from './managedServiceUnavailable';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -489,7 +490,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
         /** Host-only binary pipeline: stdout belongs to the raw pipe, not diagnostics. */
         pipeStdout?: true;
         /** Project Services retain their pipe writers across daemon replacement. */
-        serviceOutputLifetime?: true;
+        serviceOutputLifetime?: Readonly<{ serviceId: string }>;
         processCustody?: ProcessCustodySpawnSpec;
         /** Host-owned worker containment; ordinary Exec retains its dedicated group. */
         posixProcessGroup?: 'inherit';
@@ -544,8 +545,10 @@ export function spawnAuthorizedHostExecLaunchForHost(
         ] : scopedLaunch?.args ?? launch.args;
         if (options.serviceOutputLifetime && !placed) {
             const executable = resolveProcessCustodySupportExecutable();
-            if (!executable) throw new PluginError({ code: 'plugin_managed_service_unavailable',
-                message: 'Service output runtime is unavailable' });
+            if (!executable) {
+                throw managedServiceUnavailable('service_output_support_executable_missing', 'Service output runtime is unavailable',
+                    options.serviceOutputLifetime);
+            }
             args = ['service-io', '--', command, ...args];
             command = executable;
         }

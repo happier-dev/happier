@@ -2,6 +2,7 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { describe, expect, it, vi } from 'vitest';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import { materializeSessionConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
+import * as filesystemBoundary from 'node:fs';
 import { mkdir, readFile, realpath, rmdir, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { createServer } from 'node:http';
@@ -353,6 +354,30 @@ describe('createStablePluginExecService', () => {
             await release?.();
             expect(disposed).toBe(1);
         } finally { await supervised.dispose(); await release?.(); }
+    });
+
+    it('reports the missing service-output support executable before spawning', () => {
+        // Hide the packaged native helper at the filesystem boundary only.
+        const exists = filesystemBoundary.existsSync;
+        const assets = vi.spyOn(filesystemBoundary, 'existsSync').mockImplementation(path =>
+            /[\\/]happier-process-custody(?:\.exe)?$/u.test(String(path)) ? false : exists(path));
+        const release = vi.fn();
+        try {
+            let failure: unknown;
+            try {
+                spawnAuthorizedHostExecLaunchForHost({
+                    command: process.execPath, args: ['-e', 'process.exit(0)'], env: {}, release,
+                }, { serviceOutputLifetime: { serviceId: 'project-worker' } });
+            } catch (error) {
+                failure = error;
+            }
+            expect(projectActionFailureCauseV1(failure)).toMatchObject({
+                errorCode: 'plugin_managed_service_unavailable', nativeErrorReason: 'service_output_support_executable_missing',
+            });
+            expect(release).toHaveBeenCalledOnce();
+        } finally {
+            assets.mockRestore();
+        }
     });
 
     it('preserves the host launch frame through the actual authorized spawn boundary', async () => {

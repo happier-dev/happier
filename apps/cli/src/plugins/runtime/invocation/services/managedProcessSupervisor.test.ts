@@ -937,6 +937,18 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         } finally { await handle.dispose(); }
     });
 
+    it('reports that Project launch authorization is unavailable', async () => {
+        const supervisor = createManagedServiceProcessSupervisorHost().bind({ kind: 'project', isOccurrenceCurrent: () => true });
+        const failure = await supervisor.supervise({
+            id: 'project-no-launch', startupTimeoutMs: 30_000,
+            watchdog: { intervalMs: 5_000, missedIntervals: 2 },
+            mode: { kind: 'managedSpawn', endpointNone: true },
+        }).catch((error: unknown) => error);
+        expect(projectActionFailureCauseV1(failure)).toMatchObject({
+            errorCode: 'plugin_managed_service_unavailable', nativeErrorReason: 'project_launch_authorization_unavailable',
+        });
+    });
+
     it('releases the Project launch capture when cancellation prevents process acquisition', async () => {
         const cancellation = new AbortController();
         const release = vi.fn();

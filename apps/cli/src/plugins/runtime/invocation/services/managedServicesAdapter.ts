@@ -1,4 +1,4 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { managedServiceUnavailable } from './managedServiceUnavailable';
 import type {
     ConnectedAccountRequestAuthUseV1,
     QualifiedConnectedAccountRequestAuthUseV1,
@@ -8,6 +8,7 @@ import type {
     ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
     ManagedServiceHandle,
+    ManagedServiceSpec,
     ManagedServiceRequest,
     ManagedServiceResponse,
 } from '@happier-dev/plugin-sdk/managed-services';
@@ -183,10 +184,7 @@ export type ManagedServicesInvocationOwner = Readonly<{
 
 export function createUnavailableManagedServices(): PluginServices['managedServices'] {
     const unavailable = async (): Promise<never> => {
-        throw new PluginError({
-            code: 'plugin_managed_service_unavailable',
-            message: 'The canonical managed-service owner is unavailable',
-        });
+        throw managedServiceUnavailable('managed_service_owner_unavailable', 'The canonical managed-service owner is unavailable');
     };
     return Object.freeze({
         dependencies: Object.freeze({
@@ -195,7 +193,10 @@ export function createUnavailableManagedServices(): PluginServices['managedServi
             update: unavailable,
             remove: unavailable,
         }),
-        supervise: unavailable,
+        async supervise(spec: ManagedServiceSpec) {
+            throw managedServiceUnavailable('managed_service_owner_unavailable', 'The canonical managed-service owner is unavailable',
+                { serviceId: spec.id });
+        },
         observeWorkload: async () => ({ kind: 'unavailable' as const, reason: 'admission_unavailable' as const }),
     });
 }

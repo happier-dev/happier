@@ -1,3 +1,4 @@
+import { managedServiceUnavailable } from './managedServiceUnavailable';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { ManagedServiceLocalIdSchema, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { normalizeProviderPublicHeaders } from '@happier-dev/protocol/providers/credential-headers';
@@ -239,7 +240,7 @@ export function normalizeManagedServiceSpec(
         }
     }
     if (spec.mode.kind === 'spawn' && spec.mode.endpoint.kind === 'none' && spec.healthCheck?.kind === 'http') {
-        throw new PluginError({ code: 'plugin_managed_service_unavailable', message: 'URL-less service has no HTTP health capability' });
+        throw managedServiceUnavailable('http_health_requires_endpoint', 'URL-less service has no HTTP health capability', { serviceId: spec.id });
     }
     if (spec.mode.kind === 'attach' && spec.durableLog !== undefined) {
         return specInvalid(

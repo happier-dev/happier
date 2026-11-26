@@ -2583,6 +2583,13 @@ entries. Built-in Project services do not fabricate plugin identities. Their
 actual supervisor-issued instance id, not the stable declaration id, identifies
 current controls; feed and preview consumers project the same handle and snapshot.
 
+In unreleased 0.3, the managed-service runtime assigns closed reasons to its
+`plugin_managed_service_unavailable` failures. Service Start carries the reason
+in the existing Action cause's `nativeErrorReason`. The Services row uses the
+same cause for immediate and retained failures. The runtime error includes
+known service and plugin IDs in its details. Reasons describe the condition
+without secret names, values, or paths.
+
 Workload-consuming Domain reads join the installed Machine's existing
 Environment-service recovery before selecting the managed Compose service.
 Domain verification and removal do not require workload recovery. An unavailable

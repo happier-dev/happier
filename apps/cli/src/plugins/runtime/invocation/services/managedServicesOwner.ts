@@ -1,3 +1,4 @@
+import { managedServiceUnavailable } from './managedServiceUnavailable';
 import { readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins/http';
 import { resolveProjectManagedService } from './projectServiceResolution';
 import { createProjectServiceRecoveryStore } from './projectServiceRecoveryStore';
@@ -568,10 +569,7 @@ function managedServiceSpecConflict(incumbentIdentity: string, requestedIdentity
 
 function assertScopeCurrent(scope: ManagedServicesScope): void {
     if (scope.signal?.aborted || !scope.isOccurrenceCurrent()) {
-        fail(
-            'plugin_managed_service_unavailable',
-            'Managed-service invocation authority is no longer current',
-        );
+        throw managedServiceUnavailable('invocation_not_current', 'Managed-service invocation authority is no longer current', { pluginId: scope.pluginId });
     }
 }
 
@@ -592,10 +590,7 @@ function assertManagedProviderCurrent(
         || binding.providerLocalId.trim().length === 0
         || !readsCurrent(binding.isCurrent)
     ) {
-        fail(
-            'plugin_managed_service_unavailable',
-            'Managed Provider invocation authority is unavailable',
-        );
+        throw managedServiceUnavailable('provider_invocation_unavailable', 'Managed Provider invocation authority is unavailable');
     }
 }
 
@@ -719,10 +714,7 @@ function validateRequestAuth(
         || !isAbsolute(binding.capabilityPath)
         || !binding.isCurrent()
     ) {
-        return fail(
-            'plugin_managed_service_unavailable',
-            'Managed Provider request-auth capability authority is unavailable',
-        );
+        throw managedServiceUnavailable('request_auth_unavailable', 'Managed Provider request-auth capability authority is unavailable', { serviceId: spec.id });
     }
     return Object.freeze({
         capabilityPath: binding.capabilityPath,
@@ -735,10 +727,7 @@ function assertRequestAuthCurrent(
     requestAuth: ValidatedRequestAuth | null,
 ): void {
     if (requestAuth && !requestAuth.isCurrent()) {
-        fail(
-            'plugin_managed_service_unavailable',
-            'Managed Provider request-auth capability authority is no longer current',
-        );
+        throw managedServiceUnavailable('request_auth_not_current', 'Managed Provider request-auth capability authority is no longer current');
     }
 }
 
@@ -1109,10 +1098,7 @@ async function resolveDeclaredClientCredential(
         return Object.freeze({ credential: createHostClientCredential(access) });
     }
     if (!resolveDeclaredSecret) {
-        return fail(
-            'plugin_managed_service_unavailable',
-            'Declared-secret client access is unavailable',
-        );
+        throw managedServiceUnavailable('declared_secret_resolver_unavailable', 'Declared-secret client access is unavailable', { pluginId: scope.pluginId });
     }
     const secret = await resolveDeclaredSecret({
         scope,
@@ -1121,10 +1107,7 @@ async function resolveDeclaredClientCredential(
         ...(signal ? { signal } : {}),
     });
     if (secret === null) {
-        return fail(
-            'plugin_managed_service_unavailable',
-            'Declared-secret client access is unavailable',
-        );
+        throw managedServiceUnavailable('declared_secret_unavailable', 'Declared-secret client access is unavailable', { pluginId: scope.pluginId });
     }
     return Object.freeze({
         credential: typeof secret.value === 'string' && secret.value.length > 0
@@ -1229,7 +1212,7 @@ function translateSpec(
     }
     if (spec.mode.kind === 'native') {
         if (!nativeLifecycle) {
-            return fail('plugin_managed_service_unavailable', 'Declared native service lifecycle is unavailable');
+            throw managedServiceUnavailable('native_lifecycle_unavailable', 'Declared native service lifecycle is unavailable', { serviceId: spec.id });
         }
         return Object.freeze({
             id: spec.id,
@@ -1386,7 +1369,8 @@ async function stopInvalidatedManagedService(
     }
     if (result?.status === 'stopped' || result?.status === 'detached') return;
     if (result?.status === 'unsupported') {
-        return fail('plugin_managed_service_unavailable', 'Managed service Stop is unsupported');
+        throw managedServiceUnavailable('stop_unsupported', 'Managed service Stop is unsupported',
+            { phase: 'managed_service.stop' });
     }
     if (stopFailure === undefined) {
         stopFailure = new PluginError({
@@ -1497,10 +1481,7 @@ async function materializeCredentialBindings(input: Readonly<{
     }
     const connectedAccounts = input.context.connectedAccounts;
     if (!connectedAccounts) {
-        return fail(
-            'plugin_managed_service_unavailable',
-            'Connected Accounts materialization is unavailable for managed services',
-        );
+        throw managedServiceUnavailable('connected_account_materialization_unavailable', 'Connected Accounts materialization is unavailable for managed services', { serviceId: input.spec.id, pluginId: input.scope.pluginId });
     }
     const environment = Object.create(null) as Record<string, string>;
     const healthHeaders = Object.create(null) as Record<string, string>;
@@ -1542,10 +1523,7 @@ async function materializeCredentialBindings(input: Readonly<{
     for (const validated of input.bindings) {
         assertScopeCurrent(input.scope);
         if (invalidated) {
-            return fail(
-                'plugin_managed_service_unavailable',
-                'Managed-service credentials changed during establishment',
-            );
+            throw managedServiceUnavailable('credentials_changed', 'Managed-service credentials changed during establishment', { serviceId: input.spec.id, pluginId: input.scope.pluginId });
         }
         const { binding, requestedNames } = validated;
         const materialized = await connectedAccounts.materialize(
@@ -1555,10 +1533,7 @@ async function materializeCredentialBindings(input: Readonly<{
         );
         assertScopeCurrent(input.scope);
         if (invalidated) {
-            return fail(
-                'plugin_managed_service_unavailable',
-                'Managed-service credentials changed during establishment',
-            );
+            throw managedServiceUnavailable('credentials_changed', 'Managed-service credentials changed during establishment', { serviceId: input.spec.id, pluginId: input.scope.pluginId });
         }
         if (materialized.kind !== binding.request.kind) {
             return specInvalid(
@@ -1630,10 +1605,7 @@ async function materializeCredentialBindings(input: Readonly<{
         );
         const fileOwner = input.context.credentialFiles;
         if (!fileOwner) {
-            return fail(
-                'plugin_managed_service_unavailable',
-                'Private managed-service credential-file materialization is unavailable',
-            );
+            throw managedServiceUnavailable('credential_file_materialization_unavailable', 'Private managed-service credential-file materialization is unavailable', { serviceId: input.spec.id, pluginId: input.scope.pluginId });
         }
         const lease = await fileOwner.materialize({
             scope: Object.freeze({
@@ -1670,10 +1642,7 @@ async function materializeCredentialBindings(input: Readonly<{
     }
     assertScopeCurrent(input.scope);
     if (invalidated) {
-        return fail(
-            'plugin_managed_service_unavailable',
-            'Managed-service credentials changed during establishment',
-        );
+        throw managedServiceUnavailable('credentials_changed', 'Managed-service credentials changed during establishment', { serviceId: input.spec.id, pluginId: input.scope.pluginId });
     }
     currentHealthHeaders = Object.freeze({ ...healthHeaders });
     currentProviderHeaders = Object.freeze({ ...providerHeaders });
@@ -1837,8 +1806,12 @@ function wrapHandle(
                     && result.status !== 'stopped'
                     && result.status !== 'detached'
                 ) {
+                    if (result.status === 'unsupported') {
+                        throw managedServiceUnavailable('stop_unsupported', 'Managed server termination could not be verified',
+                            { retryable: true, phase: 'managed_service.cleanup' });
+                    }
                     throw new PluginError({
-                        code: result.status === 'unsupported' ? 'plugin_managed_service_unavailable' : 'plugin_managed_server_termination_incomplete',
+                        code: 'plugin_managed_server_termination_incomplete',
                         message: 'Managed server termination could not be verified',
                         retryable: true,
                     });
@@ -1965,10 +1938,7 @@ function wrapHandle(
         },
         async request(input) {
             if (terminal || requestLifetime.signal.aborted) {
-                return fail(
-                    'plugin_managed_service_unavailable',
-                    'Managed-service handle is unavailable',
-                );
+                throw managedServiceUnavailable('service_handle_unavailable', 'Managed-service handle is unavailable');
             }
             try {
                 return await request(input, requestLifetime.signal, explicitStop.signal);
@@ -2099,6 +2069,9 @@ function requestFailure(
     message: string,
     cause?: unknown,
 ): never {
+    if (!callerSignal?.aborted && cause === undefined) {
+        throw managedServiceUnavailable('request_unavailable', message, { phase: 'managed_service.request' });
+    }
     throw new PluginError({
         code: callerSignal?.aborted ? 'plugin_operation_aborted' : 'plugin_managed_service_unavailable',
         message,
@@ -2365,10 +2338,8 @@ function boundManagedServiceResponseBody(input: Readonly<{
                     message:
                         'Managed-service request was cancelled by its caller',
                 })
-                : new PluginError({
-                    code: 'plugin_managed_service_unavailable',
-                    message: 'Managed-service response body is unavailable',
-                }));
+                : managedServiceUnavailable('response_body_unavailable', 'Managed-service response body is unavailable',
+                    { phase: 'managed_service.request' }));
         } catch {
             // A concurrently settled stream needs no second notification.
         }
@@ -2398,10 +2369,8 @@ function boundManagedServiceResponseBody(input: Readonly<{
                     }
                     if (!(next.value instanceof Uint8Array)) {
                         cancelInput();
-                        controller.error(new PluginError({
-                            code: 'plugin_managed_service_unavailable',
-                            message: 'Managed-service response body is invalid',
-                        }));
+                        controller.error(managedServiceUnavailable('response_body_invalid', 'Managed-service response body is invalid',
+                            { phase: 'managed_service.request' }));
                         settle();
                         return;
                     }
@@ -2797,10 +2766,7 @@ function projectManagedProviderExplicitStartJoin(
         && readsCurrent(input.isCurrent)
         && readsCurrent(outcome.projection.isCurrent)
     );
-    const unavailable = (): never => fail(
-        'plugin_managed_service_unavailable',
-        'Managed Provider explicit-start endpoint access is unavailable',
-    );
+    const unavailable = (): never => { throw managedServiceUnavailable('explicit_start_endpoint_unavailable', 'Managed Provider explicit-start endpoint access is unavailable'); };
     const projection = Object.freeze({
         access: Object.freeze({
             endpointUrl(endpointTemplateId: string): string | null {
@@ -2911,10 +2877,7 @@ function managedServiceLifecycle(
         });
     }
     if (scope.sessionId) {
-        return fail(
-            'plugin_managed_service_unavailable',
-            'Retained Session managed services require Session-runner custody',
-        );
+        throw managedServiceUnavailable('session_runner_custody_required', 'Retained Session managed services require Session-runner custody', { pluginId: scope.pluginId });
     }
     const identity = [
         'occurrenceId',
@@ -3217,12 +3180,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         });
         return matches.length === 1 ? matches[0]![1] : null;
     };
-    const assertAcceptingSupervision = (sharedProvider = false): void => {
+    const assertAcceptingSupervision = (sharedProvider: boolean, identity: Readonly<{ serviceId: string; pluginId: string }>): void => {
         if (sharedProvider ? sharedProviderRetirementStarted : permanentRetirementStarted) {
-            return fail(
-                'plugin_managed_service_unavailable',
-                'Managed-service owner is permanently retired',
-            );
+            throw managedServiceUnavailable('owner_retired', 'Managed-service owner is permanently retired', identity);
         }
     };
     const platformFetch = globalThis.fetch.bind(globalThis);
@@ -3723,8 +3683,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             dependencies,
             observeWorkload: suppliedContext.workloads ?? (async () => ({ kind: 'unavailable' as const, reason: 'admission_unavailable' as const })),
             async supervise(spec, options) {
+                const serviceIdentity = { serviceId: spec.id, pluginId: suppliedScope.pluginId };
                 assertAcceptingSupervision('requestAuth' in spec && spec.requestAuth?.kind === 'connectedAccountConsumerAccessPath'
-                    && suppliedBindingContext.managedProvider?.sharedGateway !== undefined);
+                    && suppliedBindingContext.managedProvider?.sharedGateway !== undefined, serviceIdentity);
                 let scope = suppliedScope;
                 let context = suppliedBindingContext;
                 let normalizedSpec = normalizeManagedServiceSpec(spec);
@@ -3817,10 +3778,10 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 let runnerSupervision: Awaited<ReturnType<NonNullable<typeof processSupervisor.prepareSpawn>>> | undefined;
                 if (context.authorizePreparedLaunch) {
                     if (normalizedSpec.mode.kind === 'native') {
-                        return fail('plugin_managed_service_unavailable', 'Native lifetime requires daemon custody');
+                        throw managedServiceUnavailable('native_daemon_custody_required', 'Native lifetime requires daemon custody', serviceIdentity);
                     }
                     if (normalizedSpec.mode.kind === 'spawn') {
-                        if (!processSupervisor.prepareSpawn) return fail('plugin_managed_service_unavailable', 'Runner launch admission is unavailable');
+                        if (!processSupervisor.prepareSpawn) throw managedServiceUnavailable('runner_launch_authorization_unavailable', 'Runner launch admission is unavailable', serviceIdentity);
                         const admissionSignals = composeAbortSignals([scope.signal, options?.signal]);
                         try {
                             runnerSupervision = await processSupervisor.prepareSpawn({ serverId: normalizedSpec.id,
@@ -3845,10 +3806,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     )
                     && !input.registerRawForRedaction
                 ) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Host-Basic redaction authority is unavailable',
-                    );
+                    throw managedServiceUnavailable('redaction_authority_unavailable', 'Host-Basic redaction authority is unavailable', serviceIdentity);
                 }
                 const bindings = validateCredentialBindings(
                     normalizedSpec,
@@ -3864,10 +3822,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     clientAccess.kind === 'declaredSecretBasic'
                     && !input.resolveDeclaredSecret
                 ) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Declared-secret client access is unavailable',
-                    );
+                    throw managedServiceUnavailable('declared_secret_resolver_unavailable', 'Declared-secret client access is unavailable', serviceIdentity);
                 }
                 const lifecycle = managedServiceLifecycle(
                     scope,
@@ -3890,10 +3845,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 const specIdentity = canonicalSpecIdentity(normalizedSpec);
                 let existing = semanticEntries.get(entryKey);
                 if (existing && !isManagedServiceSemanticEntry(existing)) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Managed-service semantic entry is unavailable',
-                    );
+                    throw managedServiceUnavailable('service_entry_unavailable', 'Managed-service semantic entry is unavailable', serviceIdentity);
                 }
                 if (existing) {
                     if (existing.specIdentity !== specIdentity) {
@@ -3929,13 +3881,10 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         // exact entry and private census now owns this scope.
                         return await services.supervise(spec, options);
                     }
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'A different managed-service occurrenceId still owns this lifecycle scope',
-                    );
+                    throw managedServiceUnavailable('occurrence_owns_scope', 'A different managed-service occurrenceId still owns this lifecycle scope', serviceIdentity);
                 }
 
-                assertAcceptingSupervision(Boolean(sharedConsumers));
+                assertAcceptingSupervision(Boolean(sharedConsumers), serviceIdentity);
 
                 const credentialCleanup =
                     createCredentialBindingCleanupOwner();
@@ -3972,7 +3921,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                             : createHostClientCredential(clientAccess);
                     let materialized: MaterializedCredentialSpec | null = null;
                     try {
-                        assertAcceptingSupervision(Boolean(sharedConsumers));
+                        assertAcceptingSupervision(Boolean(sharedConsumers), serviceIdentity);
                         if (sharedConsumers) await replacePrivateBearerFile({
                             path: sharedConsumers.path,
                             contents: JSON.stringify({ v: 1, consumers: [] }),
@@ -3991,7 +3940,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                             cleanup: credentialCleanup,
                             signal: establishmentSignals.signal,
                         });
-                        assertAcceptingSupervision(Boolean(sharedConsumers));
+                        assertAcceptingSupervision(Boolean(sharedConsumers), serviceIdentity);
                         assertScopeCurrent(scope);
                         if (context.managedProvider) {
                             assertManagedProviderCurrent(
@@ -4092,7 +4041,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                             : undefined;
                         assertScopeCurrent(scope);
                         if (normalizedSpec.mode.kind === 'native' && !nativeLifecycle) {
-                            return fail('plugin_managed_service_unavailable', 'Declared native service lifecycle is unavailable');
+                            throw managedServiceUnavailable('native_lifecycle_unavailable', 'Declared native service lifecycle is unavailable', serviceIdentity);
                         }
                         const handle = await processSupervisor.supervise(
                             translateSpec(
@@ -4139,18 +4088,12 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         ) {
                             await releaseEntryProcessHandle(entry, true);
                             await materialized.dispose();
-                            return fail(
-                                'plugin_managed_service_unavailable',
-                                'Managed-service invocation authority changed during establishment',
-                            );
+                            throw managedServiceUnavailable('invocation_changed', 'Managed-service invocation authority changed during establishment', serviceIdentity);
                         }
                         if (materialized.isInvalidated()) {
                             await releaseEntryProcessHandle(entry, true);
                             await materialized.dispose();
-                            return fail(
-                                'plugin_managed_service_unavailable',
-                                'Managed-service credentials changed during establishment',
-                            );
+                            throw managedServiceUnavailable('credentials_changed', 'Managed-service credentials changed during establishment', serviceIdentity);
                         }
                         const cleanupCredentials = materialized.dispose;
                         const requestHeaders = materialized.requestHeaders;
@@ -4333,10 +4276,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                                     || entry.terminal
                                     || !readsCurrent(scope.isOccurrenceCurrent)
                                 ) {
-                                    return fail(
-                                        'plugin_managed_service_unavailable',
-                                        'Managed-service client environment is unavailable',
-                                    );
+                                    throw managedServiceUnavailable('client_environment_unavailable', 'Managed-service client environment is unavailable', serviceIdentity);
                                 }
                                 if (clientAccess.kind === 'none') {
                                     return Object.freeze({});
@@ -4354,10 +4294,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                                     || entry.terminal
                                     || !readsCurrent(scope.isOccurrenceCurrent)
                                 ) {
-                                    return fail(
-                                        'plugin_managed_service_unavailable',
-                                        'Managed-service client environment is unavailable',
-                                    );
+                                    throw managedServiceUnavailable('client_environment_unavailable', 'Managed-service client environment is unavailable', serviceIdentity);
                                 }
                                 return Object.freeze({ [environmentKey]: value });
                             },
@@ -4450,7 +4387,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     ...(record.portSource ? { portSource: record.portSource } : {}),
                     isCurrent: () => true,
                     // Re-adoption has no launch authority, executable or credential lease.
-                    authorizeLaunch: async () => fail('plugin_managed_service_unavailable', 'Recovered service cannot replay Start'),
+                    authorizeLaunch: async () => { throw managedServiceUnavailable('recovered_service_has_no_launch_authorization', 'Recovered service cannot replay Start', { serviceId: record.process.snapshot.id }); },
                     processSpec: { mode: { kind: 'managedSpawn', ...(record.endpointNone ? { endpointNone: true } : {}) } },
                 }, process);
             }));
@@ -4469,7 +4406,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 if (retainedHostRetirementStarted || matching.some(entry => !readsCurrent(entry.scope.isOccurrenceCurrent)
                     || (entry.project.handle ? !entry.project.handle.isCurrent()
                         : entry.establishmentSettled || entry.terminal || entry.establishmentAbort.signal.aborted))) {
-                    return fail('plugin_managed_service_unavailable', 'Project service native custody is unsettled');
+                    throw managedServiceUnavailable('project_native_custody_unsettled', 'Project service native custody is unsettled');
                 }
                 const establishing = matching.filter(entry => !entry.project.handle);
                 if (!establishing.length) return Object.freeze(matching.flatMap(entry => entry.project.handle ? [entry.project.handle] : []));
@@ -4487,7 +4424,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     async function isWorkspaceStopped(rootPath: string): Promise<boolean> {
         const handles = await listProjectServices({ requireComplete: true });
         const inventory = await activity.read();
-        if (inventory.coverage !== 'complete') return fail('plugin_managed_service_unavailable', 'Project service custody is unavailable');
+        if (inventory.coverage !== 'complete') throw managedServiceUnavailable('project_custody_inventory_incomplete', 'Project service custody is unavailable');
         for (const handle of handles) {
             if (!inventory.items.some(item => item.ownerRef === handle.instanceId && item.state !== 'settled')) continue;
             const roots = handle.kind === 'workspace' ? [handle.workspace.rootPath, handle.cwd] : [handle.cwd];
@@ -4536,25 +4473,26 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 retainWatches: retained });
         };
         try {
+        const serviceIdentity = { serviceId: request.serviceId };
         const assertAcceptingProjectSupervision = (): void => {
             if (retainedHostRetirementStarted) {
-                fail('plugin_managed_service_unavailable', 'Project service custody owner is retired');
+                throw managedServiceUnavailable('owner_retired', 'Project service custody owner is retired', serviceIdentity);
             }
         };
         assertAcceptingProjectSupervision();
         if (request.signal?.aborted) {
             return fail('plugin_operation_aborted', 'Project service supervision was aborted');
         }
-        if (
-            input.processSupervisorHost.custodyOwner !== 'daemon'
-            || !readsCurrent(request.isCurrent)
-        ) {
-            return fail('plugin_managed_service_unavailable', 'Current Project service admission is unavailable');
+        if (input.processSupervisorHost.custodyOwner !== 'daemon') {
+            throw managedServiceUnavailable('project_custody_unavailable', 'Project services require daemon custody', serviceIdentity);
+        }
+        if (!readsCurrent(request.isCurrent)) {
+            throw managedServiceUnavailable('project_admission_not_current', 'Current Project service admission is unavailable', serviceIdentity);
         }
         let witness: ProjectManagedServiceWitness;
         let identity: MachineDeploymentServiceIdentityV1 | undefined;
         let entryKey: string;
-        if (!request.specIdentity.trim()) return fail('plugin_managed_service_unavailable', 'Project service effect identity is unavailable');
+        if (!request.specIdentity.trim()) throw managedServiceUnavailable('project_effect_identity_missing', 'Project service effect identity is unavailable', serviceIdentity);
         if (request.kind === 'environment') {
             await request.release.assertCurrent();
             identity = Object.freeze(MachineDeploymentServiceIdentityV1Schema.parse({ kind: 'deployment', machineId: request.machineId,
@@ -4565,7 +4503,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 || request.release.environmentInstanceId !== identity.environmentInstanceId
                 || request.release.deploymentId !== request.deploymentId || request.release.machineId !== identity.machineId
                 || request.processSpec.mode.kind !== 'native' || !request.processSpec.mode.builtinLifecycle) {
-                return fail('plugin_managed_service_unavailable', 'Environment service provenance does not match its admitted release');
+                throw managedServiceUnavailable('environment_release_mismatch', 'Environment service provenance does not match its admitted release', serviceIdentity);
             }
             witness = Object.freeze({ kind: 'environment', serverId: request.serverId, machineId: identity.machineId,
                 environmentId: identity.environmentId, environmentInstanceId: identity.environmentInstanceId,
@@ -4578,7 +4516,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             const requester = Object.freeze(RequesterWorkAttributionV1Schema.parse(request.requester));
             if (!isAbsolute(request.cwd) || declaration.workspaceRefId !== workspace.id
                 || requester.serverId !== workspace.serverId || requester.machineId !== workspace.machineId || !request.serviceId.trim()) {
-                return fail('plugin_managed_service_unavailable', 'Project service provenance does not match its admitted Workspace');
+                throw managedServiceUnavailable('project_workspace_mismatch', 'Project service provenance does not match its admitted Workspace', serviceIdentity);
             }
             witness = Object.freeze({ kind: 'workspace', workspace, declaration, requester, cwd: request.cwd,
                 serviceId: request.serviceId, ...(request.execution ? { execution: request.execution } : {}),
@@ -4607,7 +4545,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             if (request.kind === 'environment' && existing.observationRelease === request.releaseObservation) observationTransferred = true;
             await waitForManagedServiceEstablishment(existing, request.signal);
             if (!existing.project.handle || !readsCurrent(request.isCurrent)) {
-                return fail('plugin_managed_service_unavailable', 'Project service admission changed');
+                throw managedServiceUnavailable('project_admission_changed', 'Project service admission changed', serviceIdentity);
             }
             if (request.kind === 'environment' && existing.observationRelease !== request.releaseObservation) await releaseObservation();
             await retireAdoptedObservations(existing.nativeInstances);
@@ -4655,7 +4593,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         const assertCurrent = (): void => {
             assertAcceptingProjectSupervision();
             if (!isCurrent()) {
-                fail('plugin_managed_service_unavailable', 'Project service admission changed');
+                throw managedServiceUnavailable('project_admission_changed', 'Project service admission changed', serviceIdentity);
             }
         };
         // The owner retains establishment when its caller stops waiting. From
@@ -4913,7 +4851,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     assertCurrent();
                     await witness.release.assertCurrent();
                     assertCurrent();
-                    if (!process.controlNative) return fail('plugin_managed_service_unavailable', 'Native service control is unsupported');
+                    if (!process.controlNative) throw managedServiceUnavailable('native_control_unsupported', 'Native service control is unsupported', { ...serviceIdentity, phase: 'managed_service.control' });
                     const signal = AbortSignal.any([lifetime.signal, ...(options.signal ? [options.signal] : []),
                         ...(options.operation.signal ? [options.operation.signal] : [])]);
                     return await runManagedServiceNativeControl(entry, { ...request.nativeEffects,
@@ -4963,7 +4901,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     return wrapped.observe(snapshot => listener(snapshot.state === 'stopped' && failedSnapshot ? failedSnapshot : snapshot));
                 },
                 observeHealth(listener: (snapshot: ManagedServiceProcessHealthSnapshot) => void) {
-                    if (!process.observeHealth) return fail('plugin_managed_service_unavailable', 'Managed-service health observation is unavailable');
+                    if (!process.observeHealth) throw managedServiceUnavailable('health_observation_unavailable', 'Managed-service health observation is unavailable', { ...serviceIdentity, phase: 'managed_service.health' });
                     return process.observeHealth(listener);
                 },
                 async readLogs(options?: ManagedServiceNativeLogReadOptionsForHost) {
@@ -4979,7 +4917,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     assertCurrent();
                     if (witness.kind === 'environment') await witness.release.assertCurrent();
                     assertCurrent();
-                    if (!process.watchNativeLogs) return fail('plugin_managed_service_unavailable', 'Native log follow is unsupported');
+                    if (!process.watchNativeLogs) throw managedServiceUnavailable('native_log_follow_unsupported', 'Native log follow is unsupported', { ...serviceIdentity, phase: 'managed_service.logs' });
                     const subscription = await process.watchNativeLogs({ ...options,
                         signal: AbortSignal.any([lifetime.signal, ...(options.signal ? [options.signal] : [])]),
                         emit(result) { if (isCurrent()) options.emit(result); },
@@ -4989,7 +4927,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     return subscription;
                 },
                 async stop(options?: Parameters<ManagedServiceHandle['stop']>[0]) {
-                    if (witness.kind === 'environment') return fail('plugin_managed_service_unavailable', 'Environment control requires an admitted host operation');
+                    if (witness.kind === 'environment') throw managedServiceUnavailable('environment_control_admission_required', 'Environment control requires an admitted host operation', { ...serviceIdentity, phase: 'managed_service.control' });
                     logger.infoFile('[managed-service-lifecycle]', { phase: 'owner_stop', serviceId: process.snapshot().instanceId });
                     const result = await wrapped.stop(options);
                     clearFailedAttempt();
@@ -5047,7 +4985,9 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         lifetime.abort('Failed Project service dismissed');
                         removeSemanticEntry(entry);
                     };
-                    const unavailable = async (): Promise<never> => fail('plugin_managed_service_unavailable', 'Project service start failed');
+                    const unavailable = async (): Promise<never> => {
+                        throw managedServiceUnavailable('project_service_not_started', 'Project service start failed', serviceIdentity);
+                    };
                     entry.project.handle = Object.freeze({ ...witness, homeServerIdentityId,
                         lifecyclePurpose: witness.kind === 'environment' ? 'deployment' : 'development',
                         actionScope: witness.kind === 'environment' ? { kind: 'environment', environmentId: witness.environmentId }
@@ -5087,7 +5027,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         notifyActivity();
         await waitForManagedServiceEstablishment(entry, request.signal);
         if (!entry.project.handle) {
-            return fail('plugin_managed_service_unavailable', 'Project service establishment is unavailable');
+            throw managedServiceUnavailable('project_handle_unavailable', 'Project service establishment is unavailable', serviceIdentity);
         }
         await retireAdoptedObservations(entry.nativeInstances);
         return entry.project.handle;
@@ -5147,8 +5087,12 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 const handle = stopHandle ?? await capturedEstablishment!;
                 const result = await handle.stop();
                 if (result.status !== 'stopped') {
+                    if (result.status !== 'termination_incomplete') {
+                        throw managedServiceUnavailable('stop_unverified', 'Managed server termination could not be verified',
+                            { serviceId: snapshot.id, pluginId: entry.pluginId, retryable: true, phase: 'managed_service.stop' });
+                    }
                     throw new PluginError({
-                        code: result.status === 'termination_incomplete' ? 'plugin_managed_server_termination_incomplete' : 'plugin_managed_service_unavailable',
+                        code: 'plugin_managed_server_termination_incomplete',
                         message: 'Managed server termination could not be verified',
                         retryable: true,
                     });
@@ -5268,10 +5212,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             }) !== null;
         },
         bind() {
-            return fail(
-                'plugin_managed_service_unavailable',
-                'Managed services require the invocation exec owner',
-            );
+            throw managedServiceUnavailable('invocation_exec_owner_missing', 'Managed services require the invocation exec owner');
         },
         bindWithExec(seed, exec, context) {
             const resolvedScope = input.resolveScope({
@@ -5290,10 +5231,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     seed.isOccurrenceCurrent,
             }, context);
             if (!resolvedScope) {
-                return fail(
-                    'plugin_managed_service_unavailable',
-                    'Managed-services invocation scope is unavailable',
-                );
+                throw managedServiceUnavailable('invocation_scope_unavailable', 'Managed-services invocation scope is unavailable', { pluginId: seed.plugin.id });
             }
             const operationId = context.managedProvider
                 ?.operationClaimId?.trim()
@@ -5504,10 +5442,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     || entry.terminal
                     || !readsCurrent(operationInput.isCurrent)
                 ) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Managed Provider explicit-start authority is unavailable',
-                    );
+                    throw managedServiceUnavailable('explicit_start_authority_unavailable', 'Managed Provider explicit-start authority is unavailable', { pluginId });
                 }
                 return await operationInput.establish(Object.freeze({
                     signal: abort.signal,
@@ -5619,17 +5554,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             if (!entry) return null;
             return async (request) => {
                 if (resolveSessionManagedServiceEntry(requestInput) !== entry) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Managed-service handle is unavailable',
-                    );
+                    throw managedServiceUnavailable('service_handle_unavailable', 'Managed-service handle is unavailable');
                 }
                 const handle = await entry.establishment;
                 if (resolveSessionManagedServiceEntry(requestInput) !== entry) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Managed-service handle is unavailable',
-                    );
+                    throw managedServiceUnavailable('service_handle_unavailable', 'Managed-service handle is unavailable');
                 }
                 return await handle.request(request);
             };
@@ -5703,10 +5632,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     && currentEndpoint.startedAtMs
                         === projectedEndpoint.startedAtMs;
             };
-            const unavailable = (): never => fail(
-                'plugin_managed_service_unavailable',
-                'Managed Provider endpoint access is unavailable',
-            );
+            const unavailable = (): never => { throw managedServiceUnavailable('provider_endpoint_unavailable', 'Managed Provider endpoint access is unavailable'); };
             const access = Object.freeze({
                 endpointUrl(endpointTemplateId: string): string | null {
                     if (!readsAccessCurrent()) return null;
@@ -5812,10 +5738,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     || !readsCurrent(facts.scope.isOccurrenceCurrent)
                     || !readsCurrent(facts.binding.isCurrent)
                 ) {
-                    return fail(
-                        'plugin_managed_service_unavailable',
-                        'Managed Provider authority changed during Agent materialization',
-                    );
+                    throw managedServiceUnavailable('provider_authority_changed', 'Managed Provider authority changed during Agent materialization',
+                        { pluginId: facts.scope.pluginId });
                 }
                 return Object.freeze({
                     materialization:
@@ -5850,10 +5774,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 || !readsCurrent(facts.scope.isOccurrenceCurrent)
                 || !readsCurrent(facts.binding.isCurrent)
             ) {
-                return fail(
-                    'plugin_managed_service_unavailable',
-                    'Managed Provider authority changed during Agent materialization',
-                );
+                throw managedServiceUnavailable('provider_authority_changed', 'Managed Provider authority changed during Agent materialization',
+                        { pluginId: facts.scope.pluginId });
             }
             const transformer =
                 createRunnerManagedProviderBindingLaunchEnvironmentTransformer({

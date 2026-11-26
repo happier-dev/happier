@@ -18,6 +18,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import * as filesystemBoundary from 'node:fs';
 import { chmod, copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1722,6 +1723,35 @@ describe('accepted Project Service declaration starter', () => {
         const started = await f.routes.startTarget!(f.request, f.ingress, context);
         expect(started).toMatchObject({ status: 'succeeded' });
         expect(f.owner.readResourceTargets()).toHaveLength(1);
+    });
+
+    it('retains the Project managed-service refusal reason through reviewed Start', async () => {
+        const f = await fixture();
+        const reviewed = await f.selectStart();
+        if (!reviewed.reviewedEffectDigest) throw new Error('Missing service review');
+        const executor = await f.createRuntimeActionExecutor();
+        // Hide the staged helper at the filesystem boundary while keeping the
+        // launcher, supervisor and Action store on their production paths.
+        const exists = filesystemBoundary.existsSync;
+        vi.spyOn(filesystemBoundary, 'existsSync').mockImplementation(path =>
+            /[\\/]happier-process-custody(?:\.exe)?$/u.test(String(path)) ? false : exists(path));
+
+        const result = DaemonLocalServiceLauncherStartResponseV1Schema.parse(await executor({
+            actionId: 'localServices.launcher.start',
+            input: { ...f.request, expectedEffectDigest: reviewed.reviewedEffectDigest },
+            context: { ...f.context, actionRequestId: 'missing-service-output-helper-start' },
+        }));
+        assertActionOutputContract('localServices.launcher.start', result);
+        const failureCause = {
+            phase: 'managed_service.establishment', errorClass: 'Error',
+            errorCode: 'plugin_managed_service_unavailable', httpStatus: null,
+            nativeErrorReason: 'service_output_support_executable_missing',
+        };
+        expect(result).toMatchObject({ reasonCode: failureCause.errorCode, failureCause });
+        expect(f.operationRuntime.store.list({ accountId: 'owner', machineId: f.targetWorkspace.machineId }).items
+            .find(item => item.actionId === 'localServices.launcher.start')).toMatchObject({
+                state: 'failed', error: { errorCode: failureCause.errorCode, failureCause },
+            });
     });
 
     it('retains the real occupied-port establishment cause through declaration Start and its strict consumer', async () => {

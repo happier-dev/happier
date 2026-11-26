@@ -383,6 +383,7 @@ import {
     createRetainedRunnerManagedDependenciesHost,
 } from './invocation/services/retainedRunnerManagedDependencies';
 import { createManagedServiceProcessSupervisorHost } from './invocation/services/managedProcessSupervisor';
+import { managedServiceUnavailable } from './invocation/services/managedServiceUnavailable';
 import {
     createManagedServicesOwner,
     type ManagedProviderExplicitStartOperationInput,
@@ -3154,10 +3155,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         registerRawForRedaction(scope, value) {
             const correlationId = scope.operationId?.trim();
             if (!correlationId) {
-                throw new PluginError({
-                    code: 'plugin_managed_service_unavailable',
-                    message: 'Managed-service redaction scope is unavailable',
-                });
+                throw managedServiceUnavailable('redaction_scope_unavailable', 'Managed-service redaction scope is unavailable',
+                    { pluginId: scope.pluginId });
             }
             invocationServiceOwners.registerRawForRedaction({
                 plugin: Object.freeze({ id: scope.pluginId }),

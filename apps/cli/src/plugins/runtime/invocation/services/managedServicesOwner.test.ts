@@ -795,6 +795,64 @@ function createProjectLifecycleInput(options: Readonly<{
 }
 
 describe('managed-services SVC09 owner', () => {
+    it.each([
+        ['owner_retired', 'daemon', true],
+        ['project_custody_unavailable', 'sessionRunner', false],
+        ['project_admission_not_current', 'daemon', false],
+        ['project_admission_changed', 'daemon', false],
+    ] as const)('reports %s on the Project Start owner', async (reason, custody, retired) => {
+        const { owner } = createLifecycleHarness([], custody);
+        let initial = true;
+        const request = createProjectLifecycleInput({ isCurrent: () => {
+            if (reason !== 'project_admission_changed') return false;
+            const current = initial;
+            initial = false;
+            return current;
+        } });
+        try {
+            if (retired) await owner.dispose();
+            const failure = await owner.superviseProject(request).catch((error: unknown) => error);
+            expect(failure).toMatchObject({
+                code: 'plugin_managed_service_unavailable',
+                details: { serviceId: request.serviceId },
+            });
+            expect(projectActionFailureCauseV1(failure)).toMatchObject({
+                errorCode: 'plugin_managed_service_unavailable', nativeErrorReason: reason,
+            });
+        } finally {
+            await owner.dispose();
+        }
+    });
+
+    it.each([
+        ['declared_secret_resolver_unavailable', {
+            mode: { kind: 'attach', baseUrl: 'http://127.0.0.1:4312' },
+            clientAccess: { kind: 'declaredSecretBasic', passwordSecretId: 'private-test-secret' },
+        }],
+        ['connected_account_materialization_unavailable', {
+            credentialBindings: [{
+                purpose: 'provider.inference',
+                request: { kind: 'environment', keys: ['TOKEN'] },
+                injection: { kind: 'environment', targetEnvironmentKeysByMaterializedKey: { TOKEN: 'UPSTREAM_TOKEN' } },
+            }],
+            mode: { kind: 'spawn', launch: { executable: { kind: 'systemTool', id: 'fixture.node' } },
+                endpoint: { kind: 'assignAndInject', port: { kind: 'fixed', port: 4312 } } },
+        }],
+    ] as const)('reports %s before transferring launch custody', async (reason, spec) => {
+        const { owner, scope } = createHarness();
+        try {
+            const services = owner.bindScope(scope, exec, { connectedAccounts: null });
+            const failure = await services.supervise({ id: 'gateway', ...spec }).catch((error: unknown) => error);
+            expect(failure).toMatchObject({ code: 'plugin_managed_service_unavailable',
+                details: { serviceId: 'gateway', pluginId: scope.pluginId } });
+            const cause = projectActionFailureCauseV1(failure);
+            expect(cause).toMatchObject({ errorCode: 'plugin_managed_service_unavailable', nativeErrorReason: reason });
+            expect(JSON.stringify(cause)).not.toContain('private-test-secret');
+        } finally {
+            await owner.dispose();
+        }
+    });
+
     it('retains an admitted process after authority withdrawal and refuses the next admission', async () => {
         const process = createLifecycleProcess(4_512);
         const { owner, exec: lifecycleExec } = createLifecycleHarness([process], 'daemon');

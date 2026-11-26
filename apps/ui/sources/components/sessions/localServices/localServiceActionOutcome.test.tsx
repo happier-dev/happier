@@ -621,6 +621,24 @@ describe('describeRetainedLocalServiceStartFailure', () => {
         expect(presented?.establishmentFailure).toEqual(establishmentFailure);
     });
 
+    it('shows the managed-service refusal reason for both immediate and retained Start failures', () => {
+        const reasonCode = 'plugin_managed_service_unavailable';
+        const failureCause = { phase: 'managed_service.establishment', errorClass: 'Error',
+            errorCode: reasonCode, nativeErrorReason: 'project_admission_changed', httpStatus: null };
+        const outcome = readLocalServiceActionOutcome({ status: 'denied', reasonCode, failureCause });
+        expect(outcome.kind).toBe('failed');
+        if (outcome.kind !== 'failed') throw new Error('Expected a Start refusal');
+        expect(outcome.failure?.failureCause).toEqual(failureCause);
+        expect(describeLocalServiceActionFailure(outcome).details.join(' ')).toContain(failureCause.nativeErrorReason);
+
+        const presented = describeRetainedLocalServiceStartFailure({
+            actionId: 'localServices.launcher.start', state: 'failed',
+            error: { errorCode: reasonCode, error: reasonCode, failureCause },
+        });
+        expect(presented?.failure?.failureCause).toEqual(failureCause);
+        expect(presented?.details.join(' ')).toContain(failureCause.nativeErrorReason);
+    });
+
     it('reads nothing from a Start that has not failed or from another Action', () => {
         expect(describeRetainedLocalServiceStartFailure({ ...retained({ cause: 'process_exited', exitCode: 1 }), state: 'running' })).toBeNull();
         expect(describeRetainedLocalServiceStartFailure({ ...retained({ cause: 'process_exited', exitCode: 1 }), actionId: 'projects.service.relocate' })).toBeNull();
