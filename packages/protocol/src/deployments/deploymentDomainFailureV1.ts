@@ -4,7 +4,7 @@ import { DeploymentIdentifierV1Schema as id } from './deploymentIdentifiersV1.js
 import { ActionOperationAddressV1Schema } from '../actions/operations/addressV1.js';
 import { MachineElevatedNotAppliedResultV1Schema, MachineElevationFailureV1Schema } from '../machines/adminAccessV1.js';
 import { ExternalActionAuthorizationRefusalPhaseSchema } from '../actions/externalActionAuthorizationRefusalPhase.js';
-import { deploymentCollectorTailscaleSourceFailureV1, DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { deploymentCollectorTailscaleSourceFailureV1, deploymentDomainIdInUseV1, DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 
 export const DeploymentDomainCloudflareRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('adopt'), tunnelId: id,
@@ -41,7 +41,22 @@ export const DeploymentDomainNativeRequiredFactV1Schema = lazyZodSchema(() => z.
     'edgeCaddyMachine', 'publicCaddyObservation', 'publicCaddyListener', ...deploymentDomainCaddyRequiredFactsV1,
     deploymentCollectorTailscaleSourceFailureV1.requiredFact,
 ]), DeploymentFailureRecoveryV1Schema.shape.requiredFact]));
+const DeploymentDomainIdInUseDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+    // These address the submitted Action, never the Environment holding the ID.
+    environmentId: id, domainId: id,
+    reason: z.literal(deploymentDomainIdInUseV1.reason),
+    requiredFact: z.literal(deploymentDomainIdInUseV1.requiredFact),
+    remedy: z.optional(id),
+}));
+export const DeploymentDomainIdInUseFailureV1Schema = lazyZodSchema(() => z.strictObject({
+    ok: z.literal(false),
+    errorCode: z.literal('deployment_conflict'),
+    error: id,
+    effectAttempted: z.literal(false),
+    details: DeploymentDomainIdInUseDetailsV1Schema,
+}));
 export const DeploymentDomainFailureDetailsV1Schema = lazyZodSchema(() => z.union([
+    DeploymentDomainIdInUseDetailsV1Schema,
     deploymentDomainServiceFailureDetailsV1Schema,
     z.strictObject({ environmentId: id, domainId: id, domainHostname: z.optional(id),
         step: z.literal('removeDomain'), partial: z.literal(true),

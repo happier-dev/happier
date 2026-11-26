@@ -5,7 +5,7 @@ import { DeploymentDomainHeaderV1Schema, DeploymentDomainCapturedPlacementsV1Sch
     type DeploymentDomainTransitionInputV1, type DeploymentDomainPreparedContentInputV1, deploymentDomainObservationProofPayloadV1,
     type DeploymentDomainNetworkExposureV1,
     nativeCaddyDomainRouteIdsV1, verifyNativeCaddyRemovalProofV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { deploymentDomainIdInUseV1, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -56,6 +56,28 @@ function readProviderCapture(row: Readonly<{ capturedPlacements: unknown }>) {
     const parsed = DeploymentDomainProviderCaptureV1Schema.safeParse(row.capturedPlacements);
     return parsed.success ? parsed.data : null;
 }
+// Direct and edge routes capture a public listener alongside their private origins.
+// A retained placement can belong to an older Domain, Environment or Link body.
+function usesSharedTunnel(captures: Captures): boolean {
+    const publicCaptures = captures.filter(capture => capture.listener === 'public');
+    return captures.some(capture => capture.listener === 'privateOrigin'
+        && !publicCaptures.some(edge => isDeepStrictEqual(edge.content, capture.content)
+            && isDeepStrictEqual(edge.environmentContent, capture.environmentContent)
+            && isDeepStrictEqual(edge.targetLinkContent, capture.targetLinkContent)));
+}
+
+async function hasRetainedTunnelDomain(tx: Tx, environmentId: string,
+    excluded: Readonly<{ id: string } | { targetLinkId: string }>,
+): Promise<boolean> {
+    const rows = await tx.deploymentDomain.findMany({ where: { environmentId, deletedAt: null, NOT: excluded },
+        select: { capturedPlacements: true } });
+    return rows.some(row => {
+        const captures = readCaptures(row);
+        // Unknown native custody cannot establish that its tunnel is safe to retire.
+        return captures ? usesSharedTunnel(captures) : !readProviderCapture(row);
+    });
+}
+
 /** Reference disclosure projects only this Machine's admitted native placements. */
 export function projectDeploymentDomainMachineReferences(row: Readonly<{ id: string; environmentId: string; capturedPlacements: unknown }>, machineId: string) {
     return (readCaptures(row) ?? []).filter(capture => capture.placement.machineId === machineId
@@ -397,10 +419,16 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     const previous = await tx.deploymentDomain.findUnique({ where: { id: input.domainId } });
     if (repeated) return repeated === digest && previous?.environmentId === loaded.row.id
         ? domainResult(previous, loaded.row.revision) : deploymentFailure('deployment_conflict');
-    if (loaded.row.revision !== input.expectedRevision || loaded.row.runtimeTargetLinkId !== input.targetLinkId
-        || previous && (previous.environmentId !== loaded.row.id || previous.deletedAt || previous.state === 'removing'
-            || previous.revision !== input.expectedDomainRevision)
-        || !previous && input.expectedDomainRevision !== undefined) return deploymentFailure('deployment_conflict');
+    if (loaded.row.revision !== input.expectedRevision || loaded.row.runtimeTargetLinkId !== input.targetLinkId)
+        return deploymentFailure('deployment_conflict');
+    if (previous && previous.environmentId !== loaded.row.id) {
+        const { reason, requiredFact, remedy } = deploymentDomainIdInUseV1;
+        return { ok: false as const, errorCode: 'deployment_conflict' as const, error: remedy,
+            effectAttempted: false as const,
+            details: { environmentId: input.environmentId, domainId: input.domainId, reason, requiredFact } };
+    }
+    if (previous ? previous.deletedAt || previous.state === 'removing' || previous.revision !== input.expectedDomainRevision
+        : input.expectedDomainRevision !== undefined) return deploymentFailure('deployment_conflict');
     const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: loaded.row.id,
         role: 'runtime', deletedAt: null, detachedAt: null }, include: { machines: true } });
     if (!link || link.revision !== input.expectedTargetLinkRevision) {
@@ -578,9 +606,12 @@ export async function prepareDeploymentTeardownDomainsInTx(tx: Tx, actorAccountI
                     accountId: actorAccountId, controller: { machineId: binding.machineId, installationId: binding.installationId },
                     actionOperationId, requestId: binding.requestId } } } });
     }
-    for (const [index, job] of jobs.entries()) {
+    const lastTunnel = captured.findLast(job => job.captures && usesSharedTunnel(job.captures));
+    const retainedTunnel = lastTunnel !== undefined && scope.targetLinkId !== undefined
+        && await hasRetainedTunnelDomain(tx, loaded.row.id, { targetLinkId: scope.targetLinkId });
+    for (const job of jobs) {
         await markDeploymentDomainRemovingInTx(tx, job.row, job.captures, { actorAccountId, actionOperationId,
-            requestId: binding.requestId, retireSharedTunnel: index === jobs.length - 1, binding });
+            requestId: binding.requestId, retireSharedTunnel: !retainedTunnel && job.row.id === lastTunnel?.row.id, binding });
     }
     return { ok: true as const };
 }
@@ -630,13 +661,10 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     }
     const jobs = await captureDeploymentDomainRemovalContentInTx(tx, loaded, [{ row, captures }]);
     if (!jobs) return deploymentFailure('deployment_conflict');
-    // Plan 21 selects one shared tunnel per Environment, whose controller is
-    // already held on the Environment row. Private provider content is not an
-    // authority for this decision. Retained/removing Domains still consume it.
-    const retainedConsumer = await tx.deploymentDomain.findFirst({ where: {
-        environmentId: loaded.row.id, deletedAt: null, id: { not: row.id },
-    }, select: { id: true } });
-    const retireSharedTunnel = retainedConsumer === null;
+    // Plan 21 selects one shared tunnel per Environment. Retained and removing
+    // Domains still consume it while they hold a Tunnel placement.
+    const retireSharedTunnel = usesSharedTunnel(captures)
+        && !await hasRetainedTunnelDomain(tx, loaded.row.id, { id: row.id });
     const changed = await markDeploymentDomainRemovingInTx(tx, row, jobs[0]!.captures, { actorAccountId,
         actionOperationId: input.actionOperationId, requestId: input.requestId, retireSharedTunnel, binding: executionBinding });
     await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { revision: { increment: 1 } } });

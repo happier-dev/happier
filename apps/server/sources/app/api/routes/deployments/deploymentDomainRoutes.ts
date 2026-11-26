@@ -19,10 +19,11 @@ function responses<T extends z.ZodMiniType>(schema: T) {
     // A restricted API token refused at route admission answers the shared present-user body.
     return { 200: schema, 400: schema, 403: z.union([schema, PresentUserRequiredResponseSchema]), 404: schema, 409: schema, 413: schema, 503: schema };
 }
-function status(result: { ok: boolean; error?: string }) {
-    return result.ok ? 200 : result.error === 'deployment_unavailable' ? 404 : result.error === 'deployment_access_denied' ? 403
-        : result.error === 'deployment_conflict' || result.error === 'deployment_content_unavailable' ? 409
-            : result.error === 'machine_unavailable' ? 503 : result.error === 'quota_exceeded' ? 413 : 400;
+function status(result: { ok: boolean; error?: string; errorCode?: string }) {
+    const code = result.errorCode ?? result.error;
+    return result.ok ? 200 : code === 'deployment_unavailable' ? 404 : code === 'deployment_access_denied' ? 403
+        : code === 'deployment_conflict' || code === 'deployment_content_unavailable' ? 409
+            : code === 'machine_unavailable' ? 503 : code === 'quota_exceeded' ? 413 : 400;
 }
 
 /** Source-admitted desired writes and exact installation-signed observations share the Domain owner. */

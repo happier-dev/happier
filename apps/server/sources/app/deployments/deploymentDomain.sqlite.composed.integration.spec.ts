@@ -7,6 +7,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealS
     type DeploymentDomainObservationBodyV1, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -738,7 +740,38 @@ describe('public Domain storage and native custody', () => {
         });
     });
 
-    it.each([false, true])('captures shared tunnel retirement once at removal admission, retained sibling=%s', async retainedSibling => {
+    it('reports a Domain ID already in use without exposing the other Account or Environment', async () => {
+        const incumbent = await fixture();
+        const caller = await fixture();
+        const domainId = crypto.randomUUID();
+        const addInput = async (f: Awaited<ReturnType<typeof fixture>>) => ({ serverId, domainId,
+            environmentId: f.environment.id, expectedRevision: 1, targetLinkId: f.target.id, expectedTargetLinkRevision: 1,
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+            placements: [{ machineId: f.machine.id, installationId: f.machine.installationId!, nativeServer: 'public',
+                listener: 'public', dockerEngineId: 'domain-engine' }], ...await f.content('deployment-domain.v1') });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const add = (f: Awaited<ReturnType<typeof fixture>>, payload: Awaited<ReturnType<typeof addInput>>) => app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${f.environment.id}/domains`, headers: { 'x-test-user-id': f.owner.id }, payload });
+            expect((await add(incumbent, await addInput(incumbent))).statusCode).toBe(200);
+            const input = await addInput(caller);
+            expect((await add(caller, { ...input, domainId: crypto.randomUUID() })).statusCode).toBe(200);
+            const response = await add(caller, { ...input, expectedRevision: 2, requestKey: crypto.randomUUID() });
+            expect(response.statusCode).toBe(409);
+            const result = DeploymentDomainMutationResultV1Schema.parse(response.json());
+            const refusal = readActionFailureEnvelope(result);
+            expect(refusal).toMatchObject({ errorCode: 'deployment_conflict', effectAttempted: false,
+                error: expect.stringContaining('This Domain ID is already in use'),
+                details: { environmentId: caller.environment.id, domainId, reason: 'domain_id_in_use', requiredFact: 'domainId' } });
+            expect(readDeploymentRefusalRecoveryV1(refusal!.errorCode, refusal!.details)).toMatchObject({
+                requiredFact: 'domainId', nextAction: { destination: 'domains' },
+            });
+            expect(response.body).not.toContain(incumbent.environment.id);
+            expect(response.body).not.toContain(incumbent.owner.id);
+        });
+    });
+
+    it.each(['deleted', 'direct', 'tunnel'] as const)('captures retirement with a %s sibling Domain', async siblingPlacement => {
+        const retire = siblingPlacement !== 'tunnel';
         const f = await fixture();
         const input = { serverId, domainId: crypto.randomUUID(), environmentId: f.environment.id, expectedRevision: 1,
             targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
@@ -749,26 +782,64 @@ describe('public Domain storage and native custody', () => {
             const headers = { 'x-test-user-id': f.owner.id };
             const url = `/v1/deployments/environments/${f.environment.id}/domains`;
             expect((await app.inject({ method: 'POST', url, headers, payload: input })).statusCode).toBe(200);
-            // The shared tunnel belongs to this Environment; no private hostname,
-            // provider identity or credential is needed to decide its last consumer.
-            const sibling = await db.deploymentDomain.create({ data: { environmentId: f.environment.id, state: 'active',
-                targetLinkId: f.target.id, createdByAccountId: f.owner.id, ...await f.content('deployment-domain.v1'),
-                ...(retainedSibling ? {} : { deletedAt: new Date() }) } });
-            const remove = { serverId, environmentId: f.environment.id, domainId: input.domainId, expectedRevision: 2,
+            const siblingInput = { ...input, domainId: crypto.randomUUID(), expectedRevision: 2, requestKey: crypto.randomUUID(),
+                actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(), ...await f.content('deployment-domain.v1'),
+                placements: siblingPlacement === 'direct' ? [...input.placements, {
+                    ...input.placements[0]!, nativeServer: 'public', listener: 'public',
+                }] : input.placements };
+            expect((await app.inject({ method: 'POST', url, headers, payload: siblingInput })).statusCode).toBe(200);
+            if (siblingPlacement === 'deleted') await db.deploymentDomain.update({ where: { id: siblingInput.domainId }, data: { deletedAt: new Date() } });
+            const remove = { serverId, environmentId: f.environment.id, domainId: input.domainId, expectedRevision: 3,
                 expectedDomainRevision: 1, requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID() };
             const response = await app.inject({ method: 'POST', url: `${url}/${input.domainId}/remove`, headers, payload: remove });
             expect(response.statusCode).toBe(200);
             const removing = DeploymentDomainMutationResultV1Schema.parse(response.json());
             expect(removing).toMatchObject({ ok: true, domain: { state: 'removing', placements: [
-                { desired: false, retireSharedTunnel: !retainedSibling },
+                { desired: false, retireSharedTunnel: retire },
             ] } });
             const stored = await db.deploymentDomain.findUniqueOrThrow({ where: { id: input.domainId } });
-            expect(stored.capturedPlacements).toMatchObject([{ retireSharedTunnel: !retainedSibling }]);
+            expect(stored.capturedPlacements).toMatchObject([{ retireSharedTunnel: retire }]);
             // Replaying the admitted request must retain its decision after another
             // Domain disappears; the native consumer does not recount the rows.
-            await db.deploymentDomain.update({ where: { id: sibling.id }, data: { deletedAt: new Date() } });
+            await db.deploymentDomain.update({ where: { id: siblingInput.domainId }, data: { deletedAt: new Date() } });
             expect((await app.inject({ method: 'POST', url: `${url}/${input.domainId}/remove`, headers, payload: remove })).json()).toEqual(removing);
         });
+    });
+
+    it('captures retirement on the Tunnel Domain when teardown also removes a later Direct Domain', async () => {
+        const f = await fixture();
+        const tunnelId = `a-${crypto.randomUUID()}`;
+        const directId = `z-${crypto.randomUUID()}`;
+        const privateOrigin = { machineId: f.machine.id, installationId: f.machine.installationId!, nativeServer: 'private',
+            listener: 'privateOrigin', dockerEngineId: 'domain-engine' };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            for (const [index, domainId] of [tunnelId, directId].entries()) {
+                const response = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${f.environment.id}/domains`,
+                    headers: { 'x-test-user-id': f.owner.id }, payload: { domainId, serverId, environmentId: f.environment.id,
+                        targetLinkId: f.target.id, expectedRevision: index + 1, expectedTargetLinkRevision: 1,
+                        requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+                        placements: domainId === tunnelId ? [privateOrigin] : [privateOrigin, {
+                            ...privateOrigin, nativeServer: 'public', listener: 'public',
+                        }], ...await f.content('deployment-domain.v1') } });
+                expect(response.statusCode).toBe(200);
+            }
+        });
+        const binding = { serverIdentityId: serverId, accountId: f.owner.id,
+            authentication: { kind: 'account', tokenEpoch: f.owner.tokenEpoch }, actionId: 'deployments.teardown',
+            target: { kind: 'machine', machineId: f.machine.id }, machineId: f.machine.id,
+            custodianAccountId: f.owner.id, installationId: f.machine.installationId!, environmentId: f.environment.id,
+            requestId: crypto.randomUUID(), requestEnvelopeDigest: 'd'.repeat(43) } satisfies ExternalActionExecutionAuthorizationBindingV1;
+        const result = await inTx(async tx => {
+            const loaded = await loadDeploymentEnvironmentInTx(tx, f.owner.id, serverId, f.environment.id);
+            if (!loaded.ok) throw new Error(loaded.error);
+            return prepareDeploymentTeardownDomainsInTx(tx, f.owner.id, crypto.randomUUID(), loaded, binding);
+        });
+        expect(result).toEqual({ ok: true });
+        const rows = await db.deploymentDomain.findMany({ where: { id: { in: [tunnelId, directId] } }, orderBy: { id: 'asc' } });
+        expect(rows).toMatchObject([
+            { id: tunnelId, capturedPlacements: [{ retireSharedTunnel: true }] },
+            { id: directId, capturedPlacements: [{ retireSharedTunnel: false }, { retireSharedTunnel: false }] },
+        ]);
     });
 
     it('retains old content and placements when desired content changes, and refuses unknown legacy custody', async () => {

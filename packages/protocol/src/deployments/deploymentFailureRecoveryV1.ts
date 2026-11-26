@@ -355,6 +355,12 @@ export const deploymentCollectorTailscaleSourceFailureV1 = {
     phase: 'deployment.telemetry.collector.tailscale_source_rewritten',
 } as const;
 
+export const deploymentDomainIdInUseV1 = {
+    reason: 'domain_id_in_use',
+    requiredFact: 'domainId',
+    remedy: 'This Domain ID is already in use. Use a new Domain ID, then review the Domain again.',
+} as const;
+
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
     const image = DeploymentImageResolutionFailureV1Schema.safeParse(details).data;
@@ -408,6 +414,8 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
             `This address change needs administrator access on Machine ${adminMachineId}. Set up administrator access there, then review the address again.`,
             'machineAdminAccess', recoveries[code].nextAction.label, adminMachineId);
     }
+    if (code === 'deployment_conflict' && details.reason === deploymentDomainIdInUseV1.reason)
+        return recovery(deploymentDomainIdInUseV1.remedy, 'domains', 'Open Domains');
     if (code === 'deployment_conflict' && (details.step === 'native_execution'
         || failure?.step === 'native_execution'
         || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
