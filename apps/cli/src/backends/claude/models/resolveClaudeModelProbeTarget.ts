@@ -19,7 +19,11 @@ import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfile
 import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 import { resolveConfiguredClaudeConfigDir } from '@/backends/claude/utils/resolveConfiguredClaudeConfigDir';
 import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
-import type { CatalogProbeLifecycle, RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
+import {
+  withCatalogProbeLifecycle,
+  type CatalogProbeLifecycle,
+  type RegisterNativeCatalogCleanup,
+} from '@/capabilities/probes/catalogProbeLifecycle';
 import { DEFAULT_ANTHROPIC_BASE_URL } from './fetchAnthropicModels';
 import { readClaudeApiKeyHelperCredential } from './readClaudeApiKeyHelperCredential';
 
@@ -107,6 +111,8 @@ function targetCacheIdentity(baseUrl: string | null, credential: ClaudeModelProb
     baseUrl ?? 'https://api.anthropic.com',
     credential.kind,
     createHash('sha256').update(credential.value).digest('hex'),
+    // Claude Code can re-pin a gateway without issuing a new token; the pin decides the result.
+    ...(credential.kind === 'gateway_login' ? [credential.tlsCertificateSha256] : []),
   ].join('|');
 }
 
@@ -270,16 +276,19 @@ export async function resolveClaudeModelProbeTarget(
   // API, so it is never paired with an explicitly configured endpoint.
   const claudeConfigDir = resolveConfiguredClaudeConfigDir({ env: effectiveEnv });
   try {
-    if (baseUrl === null) {
-      const native = await readClaudeCodeNativeCredential({ claudeConfigDir, signal: params.signal });
-      const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
-      if (accessToken) {
-        const credential = { kind: 'bearer' as const, value: accessToken };
-        return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
+    // Saved logins can wait on the macOS keychain, so they share the discovery deadline.
+    return await withCatalogProbeLifecycle(params, async ({ signal }) => {
+      if (baseUrl === null) {
+        const native = await readClaudeCodeNativeCredential({ claudeConfigDir, signal });
+        const accessToken = readNonBlankString(native?.payload.claudeAiOauth.accessToken);
+        if (accessToken) {
+          const credential = { kind: 'bearer' as const, value: accessToken };
+          return { baseUrl: null, credential, cacheIdentity: targetCacheIdentity(null, credential) };
+        }
       }
-    }
-    const gatewayLogin = await readClaudeCodeNativeGatewayLogin({ claudeConfigDir, signal: params.signal });
-    return gatewayLogin ? resolveGatewayLoginTarget(gatewayLogin, baseUrl, (params.nowMs ?? Date.now)()) : null;
+      const gatewayLogin = await readClaudeCodeNativeGatewayLogin({ claudeConfigDir, signal });
+      return gatewayLogin ? resolveGatewayLoginTarget(gatewayLogin, baseUrl, (params.nowMs ?? Date.now)()) : null;
+    });
   } catch {
     return null;
   }

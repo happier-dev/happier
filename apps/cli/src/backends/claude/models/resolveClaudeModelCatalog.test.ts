@@ -44,6 +44,7 @@ const envKeys = [
   ...CLAUDE_AUTH_ENV_KEYS,
   'ANTHROPIC_BASE_URL',
   'HAPPIER_CLAUDE_DYNAMIC_MODEL_PROBE_ENABLED',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
 ] as const;
 let envScope = createEnvKeyScope(envKeys);
 
@@ -496,18 +497,38 @@ describe('resolveClaudeModelCatalog', () => {
       }
     });
 
+    it('re-resolves when Claude Code re-pins the gateway without issuing a new token', async () => {
+      const gateway = await startGateway();
+      try {
+        const expiresAt = Date.now() + 60 * 60_000;
+        await writeGatewaySignIn({ url: gateway.url, pin: 'f'.repeat(64), expiresAt });
+        expect((await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000 })).source).toBe('static');
+
+        await writeGatewaySignIn({ url: gateway.url, pin: gateway.pin, expiresAt });
+        const repinned = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000 });
+
+        expect(repinned).toMatchObject({ source: 'dynamic', models: [{ id: 'claude-gateway-only' }] });
+        expect(gateway.requests).toHaveLength(1);
+      } finally {
+        await gateway.close();
+      }
+    });
+
     it.each([
       { situation: 'the certificate does not match the pin', pin: 'f'.repeat(64), expiresInMs: 60 * 60_000 },
+      { situation: 'the certificate does not match the pin and NODE_TLS_REJECT_UNAUTHORIZED=0',
+        pin: 'f'.repeat(64), expiresInMs: 60 * 60_000, allowUnauthorizedTls: true },
       { situation: 'no certificate is pinned for the gateway host', pin: null, expiresInMs: 60 * 60_000 },
       { situation: 'the sign-in has expired', pin: 'gateway', expiresInMs: -1 },
       { situation: 'ANTHROPIC_BASE_URL names another endpoint', pin: 'gateway', expiresInMs: 60 * 60_000,
         baseUrl: 'https://other-gateway.example/anthropic' },
-    ])('never sends the gateway token when $situation', async ({ pin, expiresInMs, baseUrl }) => {
+    ])('never sends the gateway token when $situation', async ({ pin, expiresInMs, baseUrl, allowUnauthorizedTls }) => {
       const gateway = await startGateway();
       try {
         await writeGatewaySignIn({ url: gateway.url, pin: pin === 'gateway' ? gateway.pin : pin,
           expiresAt: Date.now() + expiresInMs });
         if (baseUrl) process.env.ANTHROPIC_BASE_URL = baseUrl;
+        if (allowUnauthorizedTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
         const resolution = await resolveClaudeModelCatalogResolution({ timeoutMs: 5_000 });
 

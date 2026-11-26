@@ -35,6 +35,8 @@ export function createCertificatePinnedFetch(tlsCertificateSha256: string): type
         headers: Object.fromEntries(new Headers(init?.headers).entries()),
         ...(init?.signal ? { signal: init.signal } : {}),
         agent: false,
+        // Explicit, so NODE_TLS_REJECT_UNAUTHORIZED=0 cannot turn a failed pin into a warning.
+        rejectUnauthorized: true,
         checkServerIdentity: (hostname, certificate) =>
           checkServerIdentity(hostname, certificate) ?? verifyPinnedCertificate(certificate, pinned),
       }, (incoming) => {

@@ -374,7 +374,8 @@ A provider with both surfaces needs **one owner** for the model list. Claude's i
 `apps/cli/src/backends/claude/models/resolveClaudeModelCatalog.ts`: the preflight probe adapter and
 the in-session `sessionModelsV1` publisher both read it, so the two pickers cannot disagree about
 which models exist or which effort tiers they report. Its provider-owned cache identity is the
-normalized endpoint, credential kind, and full SHA-256 credential hash. A warm cache entry avoids a
+normalized endpoint, credential kind, and full SHA-256 credential hash, plus the pinned certificate
+fingerprint for a gateway sign-in. A warm cache entry avoids a
 network request; a cold session start may fetch the catalog before publishing the resolved models.
 In development source, the same target resolver reads user-scoped Claude Code `apiKeyHelper`
 settings and executes the configured shell command when the canonical launch settings-source policy
@@ -398,6 +399,8 @@ in `gatewayTrust`. The standard chain and hostname checks still run, each reques
 handshake so session resumption cannot skip the pin, and the request is not routed through an
 HTTP(S) proxy. A sign-in with no pin, a non-https URL, or a passed `expiresAt` is not used; the
 resolver never refreshes it, so discovery returns the built-in catalog until Claude Code does.
+Saved-login reads, including the macOS keychain commands, run inside the discovery deadline and
+are cancelled with it.
 For Claude, a successful account response is authoritative for membership and API capability/context
 facts; curated rows only enrich matching ids and serve as the fallback before the first success. A
 later failed refresh retains the bounded last successful account snapshot, serves it during the
