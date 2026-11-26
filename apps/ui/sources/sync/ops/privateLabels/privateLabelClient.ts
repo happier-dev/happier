@@ -33,10 +33,14 @@ function rethrowLifecycleFailure(error: unknown, signal: AbortSignal | undefined
     if (isPrivateLabelLifecycleFailureV1(error, signal)) throw error;
 }
 
-function assertContextCurrent(context: Pick<PrivateLabelAccountContextV1, 'isCurrent'>, signal?: AbortSignal): void {
+function assertLabelNotCancelled(signal?: AbortSignal): void {
     if (signal?.aborted) {
         throw signal.reason ?? new DOMException('The label operation was cancelled.', 'AbortError');
     }
+}
+
+function assertContextCurrent(context: Pick<PrivateLabelAccountContextV1, 'isCurrent'>, signal?: AbortSignal): void {
+    assertLabelNotCancelled(signal);
     // A context owns its currentness decision. Convert its negative result to
     // the established lifecycle refusal so callers never render it as a
     // label-local decrypt failure; a context that already throws keeps that cause.
@@ -67,6 +71,12 @@ export type PrivateLabelOpenInputV1 = Readonly<{
     label: PrivateLabelReadV1 | PrivateLabelStoredV1 | null | undefined;
     signal?: AbortSignal;
 }>;
+
+function readEncryptedRecipientEnvelope(label: PrivateLabelOpenInputV1['label']) {
+    return label?.content.t === 'encrypted' && 'recipientEnvelope' in label
+        ? label.recipientEnvelope
+        : null;
+}
 
 /**
  * A captured Account transport plus its key opener. This lets Account Directory
@@ -178,12 +188,12 @@ export function createPrivateLabelClientForAccountContext(context: PrivateLabelA
         if (input.label.content.t === 'plain') {
             return openPrivateLabelV1({ binding: input.binding, label: input.label, readPolicy: input.readPolicy });
         }
-        const projection = 'recipientEnvelope' in input.label ? input.label : null;
-        if (!projection?.recipientEnvelope || !context.decryptEncryptionKey) return null;
+        const envelope = readEncryptedRecipientEnvelope(input.label);
+        if (!envelope || !context.decryptEncryptionKey) return null;
         try {
-            const dataKey = await context.decryptEncryptionKey(projection.recipientEnvelope.encryptedDataKey, input.signal);
+            const dataKey = await context.decryptEncryptionKey(envelope.encryptedDataKey, input.signal);
             assertContextCurrent(context, input.signal);
-            return dataKey ? openPrivateLabelV1({ binding: input.binding, label: projection, readPolicy: input.readPolicy, dataKey }) : null;
+            return dataKey ? openPrivateLabelV1({ ...input, dataKey }) : null;
         } catch (error) {
             rethrowLifecycleFailure(error, input.signal);
             return null;
@@ -259,6 +269,41 @@ export function createPrivateLabelClientForActionAccountContext(account: Private
             return dataKey;
         },
     });
+}
+
+/** Open one Home batch with one captured Account and one key resolution. */
+export async function openPrivateLabelBatch(
+    scope: ServerAccountScope,
+    inputs: readonly Omit<PrivateLabelOpenInputV1, 'signal'>[],
+    signal?: AbortSignal,
+): Promise<readonly (string | null)[]> {
+    assertLabelNotCancelled(signal);
+    if (inputs.some(input => readEncryptedRecipientEnvelope(input.label))) {
+        let account: LazyActionAccountContext | undefined;
+        try {
+            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+            account = await captureLazyActionAccountContext(scope.serverId, signal);
+            const matchesAccount = account.accountId === scope.accountId;
+            assertContextCurrent({ isCurrent: () => matchesAccount }, signal);
+
+            // The resolved material belongs to this batch only. Every envelope borrows
+            // the same resolution and still passes the Account's currentness check.
+            const encryption = await account.resolveAccountEncryption(signal);
+            const client = createPrivateLabelClientForActionAccountContext({
+                ...account,
+                resolveAccountEncryption: async () => encryption,
+            });
+            return await Promise.all(inputs.map(input => client.open({ ...input, signal })));
+        } catch (error) {
+            rethrowLifecycleFailure(error, signal);
+        } finally {
+            account?.dispose();
+        }
+    }
+
+    // No recipient key is available or needed. The codec still decides which
+    // Plain projections the owner policy admits.
+    return inputs.map(input => openPrivateLabelV1(input));
 }
 
 /** The ordinary Home adapter is one account context; Directory supplies its own captured context. */

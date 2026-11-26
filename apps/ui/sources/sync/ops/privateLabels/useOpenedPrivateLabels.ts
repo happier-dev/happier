@@ -5,12 +5,9 @@ import type {
     PrivateLabelReadPolicyV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
-import {
-    createPrivateLabelClient,
-    isPrivateLabelLifecycleFailureV1,
-} from './privateLabelClient';
+import { openPrivateLabelBatch } from './privateLabelClient';
 
 export type PrivateLabelOpenRequestV1 = Readonly<{
     /** A caller-owned stable identifier, usually the persisted resource id. */
@@ -21,78 +18,109 @@ export type PrivateLabelOpenRequestV1 = Readonly<{
     readPolicy: PrivateLabelReadPolicyV1;
 }>;
 
-const EMPTY_OPENED_LABELS: Readonly<Record<string, string | null>> = Object.freeze({});
+type ScopedRequest = PrivateLabelOpenRequestV1 & Readonly<{ scope: ServerAccountScope }>;
+type OpenedLabels = Readonly<Record<string, string | null>>;
+type OpenedBatch = Readonly<{
+    key: string;
+    requestKeys: ReadonlyMap<string, string>;
+    values: OpenedLabels;
+}>;
 
-function requestKey(request: PrivateLabelOpenRequestV1): string {
-    return JSON.stringify({
-        key: request.key,
-        binding: request.binding,
-        label: request.label ?? null,
-        readPolicy: request.readPolicy,
-    });
+const EMPTY_OPENED_LABELS: OpenedLabels = Object.freeze({});
+
+function retainOpenedLabels(requestKeys: ReadonlyMap<string, string>, openedBatch: OpenedBatch): OpenedLabels {
+    return Object.fromEntries([...requestKeys]
+        .filter(([id, key]) => openedBatch.requestKeys.get(id) === key && Object.hasOwn(openedBatch.values, id))
+        .map(([id]) => [id, openedBatch.values[id]]));
 }
 
 /**
- * Opens an already-authorized recipient projection under its persisted binding.
- * It makes no detail request: unavailable keys and stale views remain unlabeled
- * until the normal projection changes or a current credential can open them.
+ * Opens already-authorized recipient projections under their persisted bindings.
+ * A replacement withdraws its own label immediately and a lifecycle refusal
+ * withdraws the captured scope. Retained values live only in this hook mount.
  */
+export function useScopedOpenedPrivateLabels(
+    requests: readonly ScopedRequest[],
+    enabled = true,
+): ReadonlyMap<string, OpenedLabels> {
+    const { batches, key } = React.useMemo(() => {
+        const groupedRequests = new Map<string, { scope: ServerAccountScope; requests: ScopedRequest[] }>();
+        for (const request of requests) {
+            const scopeKey = serverAccountScopeKeySuffix(request.scope);
+            const batch = groupedRequests.get(scopeKey);
+            if (batch) batch.requests.push(request);
+            else groupedRequests.set(scopeKey, { scope: request.scope, requests: [request] });
+        }
+        const batches = new Map([...groupedRequests].map(([scopeKey, batch]) => {
+            const requestKeys = new Map(batch.requests.map(({ key, binding, label, readPolicy }) => [
+                key, JSON.stringify([binding, label ?? null, readPolicy]),
+            ]));
+            return [scopeKey, { ...batch, requestKeys, key: JSON.stringify([...requestKeys]) }];
+        }));
+        return { batches, key: JSON.stringify([...batches].map(([scopeKey, batch]) => [scopeKey, batch.key])) };
+    }, [requests]);
+    const batchesRef = React.useRef(batches);
+    batchesRef.current = batches;
+    const wasEnabled = React.useRef(enabled);
+    const [opened, setOpened] = React.useState<ReadonlyMap<string, OpenedBatch>>(() => new Map());
+
+    const retained = React.useMemo(() => {
+        const names = new Map<string, OpenedLabels>();
+        for (const [scopeKey, batch] of batchesRef.current) {
+            const previous = opened.get(scopeKey);
+            if (previous) names.set(scopeKey, previous.key === batch.key
+                ? previous.values : retainOpenedLabels(batch.requestKeys, previous));
+        }
+        return names;
+    }, [key, opened]);
+
+    React.useEffect(() => {
+        const batches = batchesRef.current;
+        const resumed = enabled && !wasEnabled.current;
+        wasEnabled.current = enabled;
+        if ([...opened.keys()].some(scopeKey => !batches.has(scopeKey))) {
+            setOpened(previous => new Map([...previous].filter(([scopeKey]) => batches.has(scopeKey))));
+        }
+        if (!enabled || batches.size === 0) return;
+
+        const abort = new AbortController();
+        for (const [scopeKey, batch] of batches) {
+            if (!resumed && opened.get(scopeKey)?.key === batch.key) continue;
+            const unchanged = retained.get(scopeKey) ?? EMPTY_OPENED_LABELS;
+            const pending = batch.requests.filter(request => !Object.hasOwn(unchanged, request.key) || unchanged[request.key] === null);
+            const publish = (values: OpenedLabels) => {
+                if (abort.signal.aborted) return;
+                setOpened(previous => new Map(previous).set(scopeKey, {
+                    key: batch.key, requestKeys: batch.requestKeys, values,
+                }));
+            };
+            if (pending.length === 0) {
+                publish(unchanged);
+                continue;
+            }
+            void openPrivateLabelBatch(batch.scope, pending, abort.signal).then(
+                values => publish({
+                    ...unchanged,
+                    ...Object.fromEntries(pending.map((request, index) => [request.key, values[index] ?? null])),
+                }),
+                () => publish(EMPTY_OPENED_LABELS),
+            );
+        }
+        return () => abort.abort();
+    }, [key, enabled]);
+
+    return retained;
+}
+
 export function useOpenedPrivateLabels(params: Readonly<{
     scope: ServerAccountScope | null;
     requests: readonly PrivateLabelOpenRequestV1[];
     enabled?: boolean;
-}>): Readonly<Record<string, string | null>> {
-    const scopeKey = params.scope ? `${params.scope.serverId}:${params.scope.accountId}` : '';
-    const requests = params.requests.map(request => ({ request, key: requestKey(request) }));
-    const key = JSON.stringify(requests.map(request => request.key));
-    const requestsRef = React.useRef(requests);
-    requestsRef.current = requests;
-    const [opened, setOpened] = React.useState<Readonly<{
-        scopeKey: string;
-        key: string;
-        requestKeys: ReadonlyMap<string, string>;
-        values: Readonly<Record<string, string | null>>;
-    }> | null>(null);
-    // A replacement withdraws its own old label immediately. Unchanged requests
-    // retain their already-opened values under the same scope and privacy arm.
-    const retained = opened?.scopeKey === scopeKey
-        ? opened.key === key ? opened.values : Object.fromEntries(requests
-            .filter(({ request, key }) => opened.requestKeys.get(request.key) === key)
-            .map(({ request }) => [request.key, opened.values[request.key] ?? null]))
-        : EMPTY_OPENED_LABELS;
-
-    React.useEffect(() => {
+}>): OpenedLabels {
+    const requests = React.useMemo(() => {
         const scope = params.scope;
-        if (!scope || params.enabled === false || requestsRef.current.length === 0) return;
-        const abort = new AbortController();
-        const client = createPrivateLabelClient(scope);
-        const requests = requestsRef.current;
-        const pending = requests.filter(({ request, key }) => opened?.scopeKey !== scopeKey
-            || opened.requestKeys.get(request.key) !== key
-            || opened.values[request.key] === null);
-        void Promise.all(pending.map(async ({ request }): Promise<readonly [string, string | null]> => {
-            try {
-                return [request.key, await client.open({
-                    binding: request.binding,
-                    label: request.label,
-                    readPolicy: request.readPolicy,
-                    signal: abort.signal,
-                })];
-            } catch (error) {
-                // Account custody withdraws the whole captured batch immediately;
-                // an ordinary label failure leaves its unchanged siblings intact.
-                if (isPrivateLabelLifecycleFailureV1(error, abort.signal)) throw error;
-                return [request.key, null];
-            }
-        })).then((entries) => {
-            if (abort.signal.aborted) return;
-            setOpened({ scopeKey, key, requestKeys: new Map(requests.map(({ request, key }) => [request.key, key])),
-                values: { ...retained, ...Object.fromEntries(entries) } });
-        }, () => {
-            if (!abort.signal.aborted) setOpened(null);
-        });
-        return () => abort.abort();
-    }, [key, params.enabled, params.scope?.accountId, params.scope?.serverId, scopeKey]);
-
-    return retained;
+        return scope ? params.requests.map(request => ({ ...request, scope })) : [];
+    }, [params.requests, params.scope?.serverId, params.scope?.accountId]);
+    const opened = useScopedOpenedPrivateLabels(requests, params.enabled);
+    return (params.scope ? opened.get(serverAccountScopeKeySuffix(params.scope)) : undefined) ?? EMPTY_OPENED_LABELS;
 }
