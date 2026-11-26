@@ -9,6 +9,7 @@ import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popover
 installPopoverCommonModuleMocks({ reactNative: async () => await vi.importActual('react-native-web') });
 
 const { IconButton } = await import('./IconButton');
+const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 const { Tooltip } = await import('../overlays/Tooltip');
 await import('../overlays/AnchoredTooltip');
 
@@ -110,7 +111,7 @@ it.each(['action', 'help'] as const)('keeps a focused %s tooltip outside a clipp
     }
 });
 
-it('keeps the tooltip away once the button is pressed or its menu is open, until the pointer leaves', async () => {
+it.each(['icon button', 'row action'] as const)('suppresses the %s tooltip after a press and while expanded, until the pointer leaves', async (kind) => {
     vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
     vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
     window.dispatchEvent(new Event('resize'));
@@ -130,8 +131,13 @@ it('keeps the tooltip away once the button is pressed or its menu is open, until
         window.PointerEvent != null ? `pointer${type}` : `mouse${type}`, { bubbles: true }));
     async function render(expanded: boolean) {
         await act(async () => {
-            root.render(<IconButton testID="more" icon={<span>⋯</span>} accessibilityLabel="Overview actions"
-                tooltip="Overview actions" expanded={expanded} hasPopup="menu" onPress={() => {}} />);
+            root.render(kind === 'icon button'
+                ? <IconButton testID="more" icon={<span>⋯</span>} accessibilityLabel="Overview actions"
+                    tooltip="Overview actions" expanded={expanded} hasPopup="menu" onPress={() => {}} />
+                : <ItemRowActions title="Overview" layoutWidthPx={600} actions={[{
+                    id: 'overview', inlineTestID: 'more', title: 'Actions', accessibilityLabel: 'Overview actions',
+                    icon: <span>⋯</span>, expanded, onPress: () => {},
+                }]} />);
         });
         return container.querySelector<HTMLElement>('[data-testid="more"]')!;
     }
@@ -139,6 +145,7 @@ it('keeps the tooltip away once the button is pressed or its menu is open, until
         let button = await render(false);
         await act(async () => { hover(button, 'enter'); });
         await vi.waitFor(() => expect(tooltip()).not.toBeNull());
+        expect(tooltip()?.textContent).toBe(button.getAttribute('aria-label'));
         // A press opens the menu: the tooltip leaves with the press and stays away while the menu is open.
         await act(async () => {
             button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));

@@ -111,6 +111,8 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
         const next = Math.round(x + width);
         setClusterEndPx((current) => (current === next ? current : next));
     }, []);
+    const backLabel = t('common.previous');
+    const forwardLabel = t('common.next');
     const toggleLabel = props.columnVisible ? t('common.collapse') : t('common.expand');
     return (
         <View {...dragProps} testID="app-shell-title-strip" dataSet={themeSurfaceDataSet('sidebar', 'header', 'default')}
@@ -132,7 +134,8 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                     variant="plain"
                     size={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX}
                     interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
-                    accessibilityLabel={t('common.previous')}
+                    accessibilityLabel={backLabel}
+                    tooltip={backLabel}
                     disabled={!(props.navigation?.canGoBack ?? history.canNavigateBack)}
                     icon={<ChromeGlyph name="arrow-left" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} />}
                     onPress={back}
@@ -142,7 +145,8 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
                     variant="plain"
                     size={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_TARGET_SIZE_PX}
                     interactiveTargetGapPx={TITLE_STRIP_CONTROL_GAP_PX}
-                    accessibilityLabel={t('common.next')}
+                    accessibilityLabel={forwardLabel}
+                    tooltip={forwardLabel}
                     disabled={!(props.navigation?.canGoForward ?? history.canNavigateForward)}
                     icon={<ChromeGlyph name="arrow-right" size={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX} />}
                     onPress={forward}

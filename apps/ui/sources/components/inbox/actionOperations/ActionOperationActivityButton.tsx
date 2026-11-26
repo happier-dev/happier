@@ -73,6 +73,7 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
     const visible = props.hasAttention || open;
     const handleRequestClose = React.useCallback(() => setOpen(false), []);
     if (!visible) return null;
+    const label = t('inbox.updates');
 
     return (
         <View ref={anchorRef} collapsable={false} style={styles.anchor}>
@@ -80,7 +81,8 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                 testID={props.testID ?? 'action-operation-activity-button'}
                 variant="plain"
                 size={props.buttonSize}
-                accessibilityLabel={t('inbox.updates')}
+                accessibilityLabel={label}
+                tooltip={label}
                 expanded={open}
                 interactiveTargetGapPx={props.interactiveTargetGapPx}
                 onPress={() => {

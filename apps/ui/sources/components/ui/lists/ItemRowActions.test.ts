@@ -3,6 +3,7 @@ import React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
 
@@ -280,9 +281,7 @@ describe('ItemRowActions', () => {
             }],
         }));
 
-        expect(screen.findByTestId('inbox')?.props.accessibilityState).toEqual({
-            expanded: true,
-        });
+        expect(screen.findByTestId('inbox')?.props['aria-expanded']).toBe(true);
     });
 
     it('exposes an applied inline choice as a pressed button on web', async () => {
@@ -301,9 +300,6 @@ describe('ItemRowActions', () => {
         }));
 
         expect(screen.findByTestId('width-compact')?.props['aria-pressed']).toBe(true);
-        expect(screen.findByTestId('width-compact')?.props.accessibilityState).toMatchObject({
-            selected: true,
-        });
     });
 
     it('invokes overflow actions even when InteractionManager does not run callbacks', async () => {
@@ -319,18 +315,14 @@ describe('ItemRowActions', () => {
             ],
         }));
 
-        expect(screen.findByTestId('row-actions-trigger')?.props.accessibilityState).toEqual({
-            expanded: false,
-        });
+        expect(screen.findByTestId('row-actions-trigger')?.props['aria-expanded']).toBe(false);
         expect(screen.findAllByTestId('edit')).toHaveLength(0);
 
         act(() => {
             screen.pressByTestId('row-actions-trigger');
         });
 
-        expect(screen.findByTestId('row-actions-trigger')?.props.accessibilityState).toEqual({
-            expanded: true,
-        });
+        expect(screen.findByTestId('row-actions-trigger')?.props['aria-expanded']).toBe(true);
         expect(screen.findByTestId('edit')).toBeTruthy();
         expect(screen.findAllByTestId('edit').length).toBeGreaterThan(0);
 
@@ -610,16 +602,14 @@ describe('ItemRowActions', () => {
         const action = screen.findByTestId('disable-plugin');
         expect(action).toBeTruthy();
         expect(typeof action?.props.style).toBe('function');
-        const flatten = (style: unknown) => (Array.isArray(style)
-            ? Object.assign({}, ...style.filter(Boolean))
-            : (style ?? {})) as Record<string, unknown>;
+        const base = readHitArea(action!).drawn;
         (globalThis as { document?: unknown }).document = documentInput.document;
         const focusedButton = document.createElement('button');
         document.body.append(focusedButton);
         focusedButton.focus();
         documentInput.document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-        const base = flatten(action!.props.style({ pressed: false, focused: false }));
-        const focused = flatten(action!.props.style({ pressed: false, focused: true }));
+        await act(async () => { action!.props.onFocus({ target: focusedButton }); });
+        const focused = Object.assign({}, ...screen.findByTestId('disable-plugin')!.props.style({ pressed: false }).flat(Infinity));
         focusedButton.remove();
 
         // The drawn control is the whole box; its hit area belongs to the shared owner.
@@ -637,9 +627,6 @@ describe('ItemRowActions', () => {
         const { Platform } = await import('react-native');
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const previousPlatform = Platform.OS;
-        const flatten = (style: unknown) => (Array.isArray(style)
-            ? Object.assign({}, ...style.filter(Boolean))
-            : (style ?? {})) as Record<string, unknown>;
         const DRAWN_SIZE = 32;
         const ROW_GAP = 4;
 
@@ -669,18 +656,11 @@ describe('ItemRowActions', () => {
                 for (const inlineTestID of testIDs) {
                     const action = screen.findByTestId(inlineTestID);
                     expect(action, inlineTestID).toBeTruthy();
-                    const box = flatten(action!.props.style({ pressed: false, focused: false }));
-                    // 1. The row's layout footprint is the drawn control.
-                    expect(Number(box.width), `${inlineTestID} layout width`).toBe(DRAWN_SIZE);
-                    expect(Number(box.height), `${inlineTestID} layout height`).toBe(DRAWN_SIZE);
-                    expect(box.marginHorizontal ?? 0, `${inlineTestID} no compensating margin`).toBe(0);
-
-                    // 2. Vertically the hit area takes the whole platform target.
-                    const slop = action!.props.hitSlop as Record<string, number>;
-                    expect(DRAWN_SIZE + slop.top + slop.bottom, `${inlineTestID} hit height`).toBe(platform.target);
-                    // 3. Sideways it reaches half the gap, so adjacent targets tile and never overlap.
-                    expect(slop.left + slop.right, `${inlineTestID} overlap`).toBeLessThanOrEqual(ROW_GAP);
-                    expect(DRAWN_SIZE + slop.left + slop.right, `${inlineTestID} SC 2.5.8`).toBeGreaterThanOrEqual(24);
+                    const hit = readHitArea(action!);
+                    expect(hit.drawn, `${inlineTestID} drawn box`).toEqual({ width: DRAWN_SIZE, height: DRAWN_SIZE });
+                    expect(hit.height, `${inlineTestID} hit height`).toBe(platform.target);
+                    expect(hit.insets.left + hit.insets.right, `${inlineTestID} overlap`).toBeLessThanOrEqual(ROW_GAP);
+                    expect(hit.width, `${inlineTestID} SC 2.5.8`).toBeGreaterThanOrEqual(24);
                 }
                 await screen.unmount();
             }

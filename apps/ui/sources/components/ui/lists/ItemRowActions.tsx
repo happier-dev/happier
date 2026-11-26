@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Pressable, type GestureResponderEvent, Platform } from 'react-native';
+import { View, type GestureResponderEvent, Platform } from 'react-native';
 import { usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ITEM_ROW_ACTIONS_COMPACT_THRESHOLD_PX, type ItemAction } from '@/components/ui/lists/itemActions';
@@ -11,7 +11,8 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
-import { resolveHappierFocusRingVisible, useHappierHitArea, useHappierItemOverflowState } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, type HappierPressableProps, useHappierItemOverflowState } from '@happier-dev/plugin-ui/presentation';
+import { useActionTooltip, WebActionTooltip } from '@/components/ui/buttons/ActionTooltip';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
@@ -143,12 +144,14 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     const { open: showOverflow, setOpen: setShowOverflow } = props.overflow;
     const overflowAnchorRef = React.useRef<View>(null);
     const requestPopoverCloseRef = React.useRef<PopoverRenderProps['requestClose']>(() => setShowOverflow(false));
-    const onOverflowTriggerKeyDown = React.useCallback((event: OverflowTriggerKeyEvent) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key === 'Enter' || event.key === ' ') setShowOverflow(true);
-        else if (!props.onOverflowTriggerKeyDown?.(event.key)) return;
-        event.preventDefault();
-        event.stopPropagation();
+    const handleOverflowTriggerKey = React.useCallback((key: string, event: unknown) => {
+        const { target, currentTarget } = event as OverflowTriggerKeyEvent;
+        if (target !== currentTarget) return false;
+        if (key === 'Enter' || key === ' ') {
+            setShowOverflow(true);
+            return true;
+        }
+        return props.onOverflowTriggerKeyDown?.(key) === true;
     }, [props.onOverflowTriggerKeyDown, setShowOverflow]);
 
     const compactIds = React.useMemo(() => new Set(props.compactActionIds ?? []), [props.compactActionIds]);
@@ -251,10 +254,6 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
         // The ring follows the drawn control.
         borderRadius: actionControlSize / 2,
     }), [actionControlSize]);
-    const actionHitArea = useHappierHitArea({
-        restingStyle: () => actionControlFrame,
-        hitReach: { left: gap / 2, right: gap / 2 },
-    });
     // An anchored ⋯ menu is non-blocking (DESIGN.md: never dim the world for parallel work; lab
     // wgmenu M): it opens below its trigger with its trailing edge on the trigger's, flips above near
     // the window's foot, and leaves the page sharp. An outside tap still closes it.
@@ -282,42 +281,23 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                 : action.icon;
 
         return (
-            <Pressable
+            <RowActionControl
                 key={action.id}
                 testID={action.inlineTestID}
                 disabled={action.disabled || !action.onPress}
-                hitSlop={actionHitArea.hitSlop}
-                onPressIn={() => props.onActionPressIn?.()}
-                onPress={(e: GestureResponderEvent) => {
-                    e?.stopPropagation?.();
-                    action.onPress?.(e);
-                }}
-                style={(interactionState) => {
-                    const webState = interactionState as typeof interactionState & { focused?: boolean };
-                    return [
-                        styles.actionControl,
-                        actionControlFrame,
-                        actionFocusRing(webState.focused, theme.colors.border.focus),
-                    ];
-                }}
-                accessibilityRole="button"
+                frame={actionControlFrame}
+                gap={gap}
+                focusColor={theme.colors.border.focus}
+                onPressIn={props.onActionPressIn}
+                onPress={(event) => action.onPress?.(event as GestureResponderEvent | undefined)}
                 accessibilityLabel={action.accessibilityLabel ?? action.title}
-                accessibilityState={{
-                    ...(action.disabled || !action.onPress ? { disabled: true } : null),
-                    ...(action.expanded !== undefined ? { expanded: action.expanded } : null),
-                    ...(action.selected !== undefined ? { selected: action.selected } : null),
-                }}
-                {...(Platform.OS === 'web' && action.selected !== undefined
-                    ? { 'aria-pressed': action.selected }
-                    : {})}
+                expanded={action.expanded}
+                selected={action.selected}
             >
-                {actionHitArea.frame}
-                {normalizeNodeForView(
-                    iconNode,
-                )}
-            </Pressable>
+                {normalizeNodeForView(iconNode)}
+            </RowActionControl>
         );
-    }, [actionControlFrame, actionHitArea, iconSize, props, theme.colors.border.focus, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
+    }, [actionControlFrame, gap, iconSize, props.onActionPressIn, theme.colors.border.focus, theme.colors.button.secondary.tint, theme.colors.state.danger.foreground]);
 
     const renderOverflow = React.useCallback(() => {
         // A caller can name the object its menu governs. Otherwise a frame names its own trigger,
@@ -345,44 +325,33 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                             testID: props.overflowTriggerTestID,
                             accessibilityLabel,
                             accessibilityHint,
-                            ...(Platform.OS === 'web' ? { onKeyDown: onOverflowTriggerKeyDown } : {}),
+                            ...(Platform.OS === 'web' ? { onKeyDown: (event: OverflowTriggerKeyEvent) => {
+                                if (!handleOverflowTriggerKey(event.key, event)) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                            } } : {}),
                         })
                         : (
-                            <Pressable
-                                ref={(target) => props.onOverflowTriggerFocusTargetChange?.(target)}
+                            <RowActionControl
+                                controlRef={props.onOverflowTriggerFocusTargetChange}
                                 testID={props.overflowTriggerTestID}
-                                hitSlop={actionHitArea.hitSlop}
-                                style={(interactionState) => {
-                                    const webState = interactionState as typeof interactionState & { focused?: boolean };
-                                    return [
-                                        styles.actionControl,
-                                        actionControlFrame,
-                                        showOverflow && !props.renderOverflowSurface ? { opacity: 0 } : null,
-                                        actionFocusRing(webState.focused, theme.colors.border.focus),
-                                    ];
-                                }}
-                                onPressIn={() => props.onActionPressIn?.()}
-                                onPress={(e: GestureResponderEvent) => {
-                                    e?.stopPropagation?.();
-                                    toggleOverflow();
-                                }}
-                                accessibilityRole="button"
+                                frame={actionControlFrame}
+                                gap={gap}
+                                focusColor={theme.colors.border.focus}
+                                visuallyHidden={showOverflow && !props.renderOverflowSurface}
+                                onPressIn={props.onActionPressIn}
+                                onPress={toggleOverflow}
                                 accessibilityLabel={accessibilityLabel}
                                 accessibilityHint={accessibilityHint}
-                                accessibilityState={{ expanded: showOverflow }}
-                                {...(Platform.OS === 'web' ? { onKeyDown: onOverflowTriggerKeyDown } : {})}
-                                // @ts-expect-error - react-native types do not model the web-only `title` attribute; RN Web forwards it.
-                                title={accessibilityLabel}
+                                expanded={showOverflow}
+                                onKeyDown={handleOverflowTriggerKey}
                             >
-                                {actionHitArea.frame}
-                                {normalizeNodeForView(
-                                    <Icon
-                                        name="dots-three"
-                                        size={iconSize + 2}
-                                        color={theme.colors.button.secondary.tint}
-                                    />,
-                                )}
-                            </Pressable>
+                                <Icon
+                                    name="dots-three"
+                                    size={iconSize + 2}
+                                    color={theme.colors.button.secondary.tint}
+                                />
+                            </RowActionControl>
                         )}
                 </View>
 
@@ -422,7 +391,7 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
                 ) : null}
             </View>
         );
-    }, [actionControlFrame, actionHitArea, iconSize, nameFrameOptions, onOverflowTriggerKeyDown, overflowActionSections, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
+    }, [actionControlFrame, gap, handleOverflowTriggerKey, iconSize, nameFrameOptions, overflowActionSections, overflowPlacement, overflowPortal, props, showOverflow, theme.colors.border.focus, theme.colors.button.secondary.tint]);
 
     return (
         <View style={[styles.container, { gap }]}>
@@ -465,12 +434,54 @@ function ItemRowActionsContent(props: ItemRowActionsContentProps) {
     );
 }
 
-/**
- * Inset: the action frames grow into the row's target band and meet their neighbours edge to edge,
- * so an outset ring would overlap the next action and the next row.
- */
-function actionFocusRing(focused: boolean | undefined, color: string) {
-    return focusRingStyle({ focused: resolveHappierFocusRingVisible(focused), color, placement: 'inset' });
+type RowActionControlProps = Pick<HappierPressableProps,
+    'testID' | 'disabled' | 'selected' | 'expanded' | 'accessibilityHint' | 'controlRef' | 'onKeyDown' | 'onPress' | 'onPressIn'
+> & Readonly<{
+    accessibilityLabel: string;
+    frame: Readonly<{ width: number; height: number; borderRadius: number }>;
+    gap: number;
+    focusColor: string;
+    visuallyHidden?: boolean;
+    children: React.ReactNode;
+}>;
+
+/** Keep the row's circular inset ring and gap-bounded press frame. */
+function RowActionControl({ frame, gap, focusColor, visuallyHidden, children, ...props }: RowActionControlProps) {
+    const tooltip = useActionTooltip(props.expanded);
+    return (
+        <HappierPressable
+            {...props}
+            accessibilityRole="button"
+            hitReach={{ left: gap / 2, right: gap / 2 }}
+            style={({ focused }) => [
+                stylesheet.actionControl,
+                frame,
+                visuallyHidden ? { opacity: 0 } : null,
+                focusRingStyle({ focused, color: focusColor, placement: 'inset' }),
+            ]}
+            onPress={(event) => {
+                event?.stopPropagation?.();
+                props.onPress(event);
+            }}
+            onPressIn={(event) => {
+                if (Platform.OS === 'web') tooltip.onPressIn();
+                props.onPressIn?.(event);
+            }}
+            onHoverChange={(hovered) => { if (!hovered) tooltip.onHoverOut(); }}
+            overlay={Platform.OS === 'web' ? ({ hovered, focused }) => (
+                tooltip.isVisible({ hovered, focused }) ? (
+                    <WebActionTooltip
+                        activationKey={`${hovered}:${focused}`}
+                        size={frame.width}
+                        label={props.accessibilityLabel}
+                        testID={props.testID ? `${props.testID}-tooltip` : undefined}
+                    />
+                ) : null
+            ) : undefined}
+        >
+            {children}
+        </HappierPressable>
+    );
 }
 
 const stylesheet = StyleSheet.create({

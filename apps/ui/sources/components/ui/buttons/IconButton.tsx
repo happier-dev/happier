@@ -22,7 +22,7 @@ import { ChromeGlyphEmphasisContext } from '@/components/ui/icons/chromeGlyphInk
 import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
 import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 
-import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
+import { useActionTooltip, WebActionTooltip } from './ActionTooltip';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 
 const DEFAULT_SIZE = HAPPIER_ICON_BUTTON_SIZE;
@@ -279,22 +279,18 @@ export function IconButton(props: Readonly<{
         : props.tooltip;
     const richTooltipContent = props.disabled === true && props.disabledReason ? undefined : props.tooltipContent;
     const hasTooltip = richTooltipContent != null || (tooltipContent != null && tooltipContent.length > 0);
-    const tooltipAnchorRef = React.useRef<View | null>(null);
-    // A press answers the pointer: its tooltip steps aside until the pointer leaves, and stays away
-    // while the menu or popover the button opened is showing.
-    const [pressedSinceHover, setPressedSinceHover] = React.useState(false);
+    const { isVisible: isTooltipVisible, onPressIn: suppressTooltip, onHoverOut: resetTooltip } = useActionTooltip(props.expanded, props.tooltipHidden);
     const onPressIn = props.onPressIn;
     const handlePressIn = React.useCallback((event: Parameters<NonNullable<typeof onPressIn>>[0]) => {
-        setPressedSinceHover(true);
+        suppressTooltip();
         onPressIn?.(event);
-    }, [onPressIn]);
+    }, [onPressIn, suppressTooltip]);
     const onHoverChange = React.useCallback((hovered: boolean) => {
         if (!hovered) {
-            setPressedSinceHover(false);
+            resetTooltip();
             setReasonRevealed(false);
         }
-    }, []);
-    const tooltipQuiet = props.tooltipHidden === true || props.expanded === true || pressedSinceHover;
+    }, [resetTooltip]);
     const descriptionId = React.useId();
     const disabledReason = props.disabled === true ? props.disabledReason : undefined;
     // A disabled button with a reason stays reachable. A pointer already gets the reason on hover and
@@ -350,11 +346,8 @@ export function IconButton(props: Readonly<{
                 chrome(state).frame,
             ]}
             overlay={hasTooltip ? (state) => (
-                showReason || ((state.hovered || state.focused) && !tooltipQuiet) ? (Platform.OS === 'web' ? (
-                    <>
-                        <View ref={tooltipAnchorRef} style={{ pointerEvents: 'none', position: 'absolute', top: 0, left: 0, width: size, height: size }} />
-                        <DeferredAnchoredTooltip activationKey={`${state.hovered}:${state.focused}:${showReason}`} anchorRef={tooltipAnchorRef} placement={props.tooltipPlacement} label={tooltipContent ?? props.accessibilityLabel} content={richTooltipContent} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
-                    </>
+                showReason || isTooltipVisible(state) ? (Platform.OS === 'web' ? (
+                    <WebActionTooltip size={size} activationKey={`${state.hovered}:${state.focused}:${showReason}`} placement={props.tooltipPlacement} label={tooltipContent ?? props.accessibilityLabel} content={richTooltipContent} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
                 ) : (
                     <View style={styles.tooltipWrap}>
                         <View {...{ dataSet: themeSurfaceDataSet('tooltip', 'root') }} testID={props.testID ? `${props.testID}-tooltip` : undefined} style={[styles.tooltip, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tooltip', part: 'root' } : undefined)]}>
