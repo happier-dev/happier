@@ -81,7 +81,9 @@ export type ProjectSetupTrustClientInput = Readonly<{
     signal?: AbortSignal;
 }>;
 export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInput) {
-    const baseUrl = input.serverHttpBaseUrl.replace(/\/$/u, '');
+    // Keep the signed headers and destination on the same admitted Home transport.
+    const requesterHttp = input.authorization?.requesterHttpProjection;
+    const baseUrl = (requesterHttp?.serverHttpBaseUrl ?? input.serverHttpBaseUrl).replace(/\/$/u, '');
     const options = {
         headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials?.token ?? ''}` },
         validateStatus: () => true,
@@ -92,10 +94,9 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
             return;
         }
         const account = input.authorization.requesterAccountProjection;
-        const http = input.authorization.requesterHttpProjection;
-        if (!account || !http || account.accountId !== input.authorization.binding.accountId || account.accountId !== http.accountId
-            || account.serverId !== http.serverId || http.serverHttpBaseUrl.replace(/\/$/u, '') !== baseUrl
-            || !await account.isCurrent() || !await http.isCurrent() || input.signal?.aborted) return fail('project_trust_storage_unavailable');
+        if (!account || !requesterHttp || account.accountId !== input.authorization.binding.accountId || account.accountId !== requesterHttp.accountId
+            || account.serverId !== requesterHttp.serverId || !await account.isCurrent() || !await requesterHttp.isCurrent()
+            || input.signal?.aborted) return fail('project_trust_storage_unavailable');
     }
     async function modeContext() {
         await assertCurrent();
@@ -117,7 +118,7 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
     async function request(operation: 'read' | 'list' | 'mutate', body: unknown, reviewedChild?: ReviewedActionChildHttpProofV1): Promise<unknown> {
         await assertCurrent();
         const path = `${PROJECT_TRUST_ROUTE_V1}/${operation}`;
-        const requesterHeaders = input.authorization ? await input.authorization.requesterHttpProjection!.createRequestHeaders({
+        const requesterHeaders = input.authorization ? await requesterHttp!.createRequestHeaders({
             effectActionId: input.effectActionId ?? input.authorization.binding.actionId, method: 'POST', path, body,
             ...(input.signal ? { signal: input.signal } : {}),
             ...(reviewedChild ? { reviewedChild } : {}),

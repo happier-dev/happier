@@ -45,12 +45,20 @@ import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateResult
   WorkspaceSyncRelationshipsListActionOutputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { ProjectWorkerCopyInspectResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { requireAccountSettingsEncryptionCredentials } from '../../../../apps/cli/src/settings/accountSettings/accountSettingsEncryptionMaterial';
+import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 
 let fixture: ProjectDaemonFixture | undefined;
 let sharedSetupFixture: ProjectDaemonFixture | undefined;
 let sharedSetupHome: Awaited<ReturnType<typeof prepareSharedSetupHome>>;
 let statementCensusPath: string;
 const setupProbeHeader = 'x-happier-test-setup-census';
+const SetupStatementCensusRecord = z.object({ route: z.string(), status: z.number(), signed: z.boolean(), probe: z.optional(z.string()), statements: z.array(z.object({
+  operation: z.string(), relations: z.array(z.string()), rows: z.optional(z.number()),
+})) });
+async function readSetupStatementCensus() {
+  return (await readFile(statementCensusPath, 'utf8')).trim().split('\n')
+    .map(line => SetupStatementCensusRecord.parse(JSON.parse(line)));
+}
 afterEach(async () => {
   if (fixture !== sharedSetupFixture) await fixture?.stop();
   fixture = undefined;
@@ -232,12 +240,6 @@ describe('Team setup A: published Project setup', () => {
   afterAll(async () => { await sharedSetupFixture?.stop(); });
 
   it('TS.A.setupShape holds selected review, publish and accept costs constant on PostgreSQL', async () => {
-    const { z } = await import('@happier-dev/protocol/zodRuntimePolicy');
-    const CensusRecord = z.object({ route: z.string(), status: z.number(), signed: z.boolean(), probe: z.optional(z.string()), statements: z.array(z.object({
-      operation: z.string(), relations: z.array(z.string()), rows: z.optional(z.number()),
-    })) });
-    const readCensus = async () => (await readFile(statementCensusPath, 'utf8')).trim().split('\n')
-      .map(line => CensusRecord.parse(JSON.parse(line)));
     const actionProbe = new AsyncLocalStorage<string>();
     const fetch = globalThis.fetch.bind(globalThis);
     const fixtureOrigins = [sharedSetupHome.home.server.baseUrl, sharedSetupHome.home.actionServerApiUrl]
@@ -253,12 +255,12 @@ describe('Team setup A: published Project setup', () => {
       const current = await startSharedSetupProject({ version: 1, workspace: { setup: Array.from({ length: stepCount },
         (_, index) => ({ kind: 'command' as const, command: `printf %s ${index}` })) } });
       const probe = async <T>(operation: () => Promise<T>) => {
-        const before = (await readCensus()).length;
+        const before = (await readSetupStatementCensus()).length;
         const id = randomUUID();
         const start = performance.now();
         const result = await actionProbe.run(id, operation);
         const milliseconds = Math.round(performance.now() - start);
-        const events = (await readCensus()).slice(before);
+        const events = (await readSetupStatementCensus()).slice(before);
         return { result, events, id, milliseconds };
       };
       const inspect = (execute: PersonAction) => execute('projects.inspect', { workspace: current.opened.workspace,
@@ -421,6 +423,26 @@ describe('Team setup A: published Project setup', () => {
   });
 
   it('TS.A.openApply saves accepted setup privately and requires consent before its native effect', async () => {
+    const { account, enrolled } = sharedSetupHome;
+    const folder = await mkdtemp(join(tmpdir(), 'team-setup-a-open-trust-'));
+    await mkdir(join(folder, '.happier'));
+    await writeFile(join(folder, '.happier', 'project.json'), JSON.stringify({ version: 1,
+      workspace: { setup: [{ kind: 'command', command: 'printf ran > folder-setup-effect' }] } }));
+    expect(await account.executeAsPerson('actions.policy.set', {
+      actionId: 'projects.open', audience: 'cli', mode: 'ask_first',
+    })).toMatchObject({ ok: true, result: { mode: 'ask_first' } });
+    expect(await account.executeAsPerson('actions.policy.set', {
+      actionId: 'projects.prepare', audience: 'cli', mode: 'ask_first',
+    })).toMatchObject({ ok: true, result: { mode: 'ask_first' } });
+    const beforeOpen = (await readSetupStatementCensus()).length;
+    const opened = await account.executeReviewed('projects.open', { ...enrolled.target,
+      source: { kind: 'folder', path: folder }, materialization: { kind: 'attach' } });
+    const trustRequests = (await readSetupStatementCensus()).slice(beforeOpen).filter(request => request.route === 'trust');
+    expect(opened, `Folder Open Trust HTTP statuses: ${trustRequests.map(request => request.status).join(', ')}`)
+      .toMatchObject({ ok: true, result: { kind: 'opened', setup: 'approvalRequired' } });
+    expect(trustRequests.map(({ signed, status }) => ({ signed, status }))).toEqual([{ signed: true, status: 200 }]);
+    await expect(access(join(folder, 'folder-setup-effect'))).rejects.toMatchObject({ code: 'ENOENT' });
+
     const current = await startSharedSetupProject('printf accepted > shared-setup-effect');
     const { descriptor, link, target } = await resolveSharedSetupLink(current);
     expect(target.homeServerIdentityId).toBe(fixture!.serverId);
@@ -454,8 +476,17 @@ describe('Team setup A: published Project setup', () => {
     expect(refusedSignIn).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
     expect(fixture!.takeRequestObservations().filter(request => request.path.startsWith('/v1/projects/sources'))).toEqual([]);
 
-    const applied = await current.account.executeAsPerson('projects.setup.set', { projectRef: current.projectRef, workspace: current.opened.workspace,
-      expectedRevision: current.organizationRevision, intent: { kind: 'accept', sourceId: link.sourceId } });
+    const applied = await current.account.withPersonActionClient(async execute => {
+      const reviewed = await execute('projects.inspect', { workspace: current.opened.workspace,
+        read: { kind: 'editor' }, reviewSharedSetup: { sourceId: link.sourceId } });
+      expect(reviewed).toMatchObject({ ok: true, result: { sharedSetupChange: { kind: 'changed',
+        after: { effectiveManifest: { workspace: { setup: [{ command: 'printf accepted > shared-setup-effect' }] } } },
+      } } });
+      await expect(access(join(current.machine.workspaceDir, 'shared-setup-effect'))).rejects.toMatchObject({ code: 'ENOENT' });
+      fixture!.takeRequestObservations();
+      return execute('projects.setup.set', { projectRef: current.projectRef, workspace: current.opened.workspace,
+        expectedRevision: current.organizationRevision, intent: { kind: 'accept', sourceId: link.sourceId } });
+    });
     expect(applied).toMatchObject({ ok: true, result: { ok: true, row: {
       setupSelection: { sourceId: current.source.id }, setupContent: { artifactId: expect.any(String) },
     } } });

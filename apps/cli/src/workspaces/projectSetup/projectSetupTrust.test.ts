@@ -1,7 +1,12 @@
 import axios from 'axios';
+import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ProjectTrustMutationRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
 import { createProjectSetupTrustClient } from './projectSetupTrust';
 
@@ -11,6 +16,38 @@ describe('approving-Account Project setup trust', () => {
     const grant = { project, reviewedEffectDigest: 'effect', approvedAtMs: 1 };
     const baseUrl = 'https://requester.example';
     const decision = { ...grant, expectedRevision: 'absent' as const, authority: 'present_user' as const, currentEffectDigest: 'effect' };
+
+    it('reads passive Open consent on the admitted Home carrier after its origin changes', async () => {
+        const serverId = 'srv_trust_open_home';
+        const originalOrigin = 'https://home.example';
+        const currentOrigin = 'http://127.0.0.1:33129';
+        await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl: originalOrigin });
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-open-root', binding: {
+            accountId: 'requester', custodianAccountId: 'requester',
+            authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+            serverIdentityId: serverId, actionId: 'projects.open', machineId: 'machine', installationId: 'installation',
+            requestId: 'open-request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+        } });
+        Object.defineProperty(root, 'requesterAccountProjection', { value: {
+            accountId: 'requester', serverId, accountEncryptionMode: 'plain',
+            projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: size => new Uint8Array(size) }),
+            resolveMachineContentEncryptionContext: () => ({ encryptionMode: 'plain' }), isCurrent: async () => true,
+        } });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: currentOrigin, target: root.binding.target,
+            installationId: 'installation', privateKey: nacl.sign.keyPair().secretKey, rootAdmitted: true });
+        if (!authorization) throw new Error('Expected the admitted Open requester projection');
+        const qualifiedProject = { ...project, serverId };
+        const read = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            expect(url).toBe(`${currentOrigin}/v1/account/project-trust/read`);
+            expect(body).toEqual({ project: qualifiedProject });
+            return { status: 200, data: { status: 'absent' } };
+        });
+
+        await expect(createProjectSetupTrustClient({ authorization, serverHttpBaseUrl: originalOrigin })
+            .resolveConsent(qualifiedProject, 'effect')).resolves.toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
+        expect(read).toHaveBeenCalledOnce();
+    });
 
     it('replaces one current Project grant and forgets only the selected Project through row CAS, with no Settings write', async () => {
         let content: unknown = null;
