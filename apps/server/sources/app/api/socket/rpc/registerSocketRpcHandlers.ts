@@ -2415,7 +2415,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 authorization,
                 ...(machineAdmission ? { machineAdmission } : {}),
                 ...(disconnectedMachineDiagnostic ? { disconnectedMachineDiagnostic } : {}),
-                ...(workspaceSyncSourceWriterTargetRouting ? { receivingMachineAdmission } : {}),
+                ...(receivingMachineAdmission ? { receivingMachineAdmission } : {}),
                 ...(protectedRawSession ? { createMachineAdmission: protectedRawSession.createMachineAdmission } : {}),
                 ...(transferRouting ? { transferRouting } : {}),
                 ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),
