@@ -24,6 +24,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
 import { POPOVER_PREFERRED_ROOM_PX } from '@/components/ui/popover/popoverPreferredRoom';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { SheetDismissProvider, useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
 import { INSPECTOR_SELF_CHECK_ACTION_ID } from '../../../../../../packages/plugins/inspector/src/manifest';
 import { renderSurface as renderInspectorSurface } from '../../../../../../packages/plugins/inspector/src/ui/renderSurface';
 
@@ -357,6 +359,25 @@ function popoverElementProps(element: React.ReactNode): Record<string, unknown> 
 }
 
 describe('plugin private presentation carrier in BaseModal', () => {
+    it.each([false, true])('reports bottom-sheet placement %s when dismissal is unavailable', async (isBottomSheet) => {
+        const host = createPluginUiPrivatePresentationHost(undefined);
+        const hook = await renderHook(() => ({
+            phoneSheet: host.useModalCardPhoneSheet(),
+            dismiss: useSheetDismiss(),
+        }), {
+            wrapper: ({ children }) => (
+                <SheetDismissProvider isBottomSheet={isBottomSheet} onDismiss={null}>
+                    {children}
+                </SheetDismissProvider>
+            ),
+        });
+        try {
+            expect(hook.getCurrent()).toEqual({ phoneSheet: isBottomSheet, dismiss: null });
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('projects semantic overlay sizing onto the incumbent Popover portal contract', () => {
         const host = createPluginUiPrivatePresentationHost(undefined);
         const renderPresentation = (presentation: 'popover' | 'menu' | 'dropdown' | 'context', width?: 'anchor' | 'content') => {

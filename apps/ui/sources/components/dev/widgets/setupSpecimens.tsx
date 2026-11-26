@@ -213,7 +213,7 @@ function HomeAdd(props: Readonly<{ phone: boolean; entry?: string }>) {
     return props.phone ? (
         // The phone's bottom sheet: the same card frame `WidgetSheetShell` opens.
         <View style={[stylesheet.phone, { height: 760, justifyContent: 'flex-end' }]}>
-            <SheetDismissProvider onDismiss={NOOP}>
+            <SheetDismissProvider isBottomSheet onDismiss={NOOP}>
                 <ModalCardFrame header="none" title={t('widgetAdd.homeTitle')} presentation="sheet" testID="specimen-add-home.sheet">{panel}</ModalCardFrame>
             </SheetDismissProvider>
         </View>

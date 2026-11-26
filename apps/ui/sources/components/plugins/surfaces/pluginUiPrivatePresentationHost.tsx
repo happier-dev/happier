@@ -124,7 +124,7 @@ import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/Keyboard
 import { PageAsideColumns } from '@/components/ui/layout/PageAsideColumns';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
-import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
+import { useIsBottomSheet } from '@/modal/components/card/sheetDragDismiss';
 import type { BotFaceProps, PageAsideColumnsProps, PagePinnedBarProps, KeyboardStickyFooterProps } from '@happier-dev/plugin-ui/components';
 import type { ExecutableParticipantPickerProps, SavedSecretChoiceListProps, SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
 import type { ConnectedAccountPurposeTargetChooserProps } from '@happier-dev/plugin-ui/components';
@@ -520,7 +520,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
         return <HorizontalScrollEdgeMask {...input} />;
     },
     useModalCardPhoneSheet() {
-        return useSheetDismiss() !== null;
+        return useIsBottomSheet();
     },
     useModalCardFooterSlot() {
         return React.useContext(PluginModalCardFooterSlotContext);

@@ -304,7 +304,7 @@ function SavedGroupAdd(
   );
   return props.phone ? (
     <View style={{ width: 390, height: 760, justifyContent: 'flex-end' }}>
-      <SheetDismissProvider onDismiss={NOOP}>
+      <SheetDismissProvider isBottomSheet onDismiss={NOOP}>
         <ModalCardFrame
           header="none"
           title={t('widgetAdd.homeTitle')}

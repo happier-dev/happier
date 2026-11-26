@@ -95,7 +95,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 import { readMountedComposerPresentationSnapshot, requestRegisteredComposerFocus, requestRegisteredComposerSubmit } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
-import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
+import { useIsBottomSheet } from '@/modal/components/card/sheetDragDismiss';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -1002,7 +1002,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
 
     const sheetHosted = props.sheet !== undefined && intent === 'review';
     // A phone sheet's footer holds only its actions, so the Machine stays in the body there.
-    const phoneSheet = useSheetDismiss() !== null;
+    const phoneSheet = useIsBottomSheet();
     const startChips = React.useMemo<ReadonlyArray<AgentInputExtraActionChip>>(() => {
         const chips: AgentInputExtraActionChip[] = [];
         const disabled = !editable;
