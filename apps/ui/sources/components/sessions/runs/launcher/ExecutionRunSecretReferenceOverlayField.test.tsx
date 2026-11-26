@@ -155,6 +155,24 @@ describe('ExecutionRunSecretReferenceOverlayField', () => {
         expect(screen.getTextContent()).not.toContain('temporarily_unavailable');
     });
 
+    it('reopens a retained reviewer Secret selection without replacing it with the Profile default', async () => {
+        const { entry, screen } = await setup();
+        await screen.unmount();
+        const overlay = { v: 1 as const, bindings: { OPENAI_API_KEY: { ref: entry.ref, revision: entry.revision } } };
+        const onChange = vi.fn();
+        const render = (initialOverlay: typeof overlay | undefined) => <ExecutionRunSecretReferenceOverlayField profile={profile}
+            machineId={null} serverId={home!.scope.serverId} accountScope={home!.scope}
+            defaultBindings={null} personalSecrets={[]} sharedEnabled editable initialOverlay={initialOverlay} onChange={onChange} />;
+        const reopened = await renderScreen(render(overlay));
+        await vi.waitFor(() => expect(onChange).toHaveBeenLastCalledWith({
+            readiness: { ok: true, secretReferenceOverlay: overlay }, overlay,
+        }));
+        expect(reopened.getTextContent()).toContain(entry.name);
+        expect(reopened.getTextContent()).not.toContain(entry.ref);
+        await reopened.update(render(undefined));
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: false, reason: 'secret_requirement_unsatisfied' } });
+    });
+
     it('uses the Connect presenter on wide layouts and returns only the exact reference', async () => {
         viewport.width = 1200;
         const { entry, onChange, screen } = await setup();

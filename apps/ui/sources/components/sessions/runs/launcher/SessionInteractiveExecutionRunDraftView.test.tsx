@@ -2699,14 +2699,28 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         secretAvailable = true;
         publishProfile(profile);
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, metadata: { ...state.sessions.session_1!.metadata!, profileId: 'work' } } } }));
-        await mount({ intent: 'review', onRunStarted: vi.fn(), comparisonReview: { cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: capturedWorkingComparisonId, scopeLabel: 'Pending changes', defaultWalkthrough: false } });
+        const secretReferenceOverlay = { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: secretRef, revision: 1 } } };
+        const props = { intent: 'review' as const, onRunStarted: vi.fn(), comparisonReview: { cwd: '/repo',
+            comparison: { kind: 'workingTree' as const }, comparisonId: capturedWorkingComparisonId, scopeLabel: 'Pending changes', defaultWalkthrough: false } };
+        await mount(props);
         await reviewers(['claude']);
         await settle();
+        await screen.pressByTestIdAsync('review-start-advanced:header');
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
         const onResult = record(record(modal.show.mock.calls.at(-1)?.[0]).props).onResult as (value: unknown) => void;
         await act(async () => onResult({ kind: 'selected', secretRef }));
         await settle();
+        const draftKey = composer().launcherDraftKey;
+        if (!draftKey) throw new Error('Expected a retained Review draft');
+        await waitFor(() => expect(getSessionDraftDocumentField(getSessionDraftSnapshot(
+            { serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' })?.document ?? null,
+            executionRunLauncherDraftFieldPath(draftKey, 'selection'))?.value).toMatchObject({ actionInput: { reviewers: [
+                { kind: 'engine', engineId: 'claude', secretReferenceOverlay },
+            ] } }));
+        await screen.unmount();
+        await mount(props);
+        await screen.pressByTestIdAsync('review-start-advanced:header');
+        await waitFor(() => expect(screen.getTextContent()).toContain('Personal secret'));
         await send();
         await settle();
         expect(emittedStarts).toEqual([]);

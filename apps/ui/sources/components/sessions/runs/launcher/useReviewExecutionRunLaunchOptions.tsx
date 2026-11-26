@@ -2,6 +2,7 @@ import * as React from 'react';
 import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import type { PluginUiSelectActionInputHostActionV1, PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { SessionModelPicker, type SessionModelPickerProps } from '@/components/sessions/modelPicker/SessionModelPicker';
@@ -9,6 +10,7 @@ import { useExactModelChoice } from '@/components/sessions/modelPicker/useExactM
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 import { ExecutionRunSecretReferenceOverlayField, resolveExecutionRunSessionLaunchProfile, type ExecutionRunSecretReferenceOverlayState } from './ExecutionRunSecretReferenceOverlayField';
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
@@ -73,6 +75,20 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
     const profiles = useHomeAiLaunchProfiles(accountBinding?.scope ?? null);
     const profile = React.useMemo(() => resolveExecutionRunSessionLaunchProfile(session?.metadata, profiles), [session?.metadata, profiles]);
     const defaultSecretBindings = profile?.secretBindings ?? null;
+    const initialSecretOverlay = React.useMemo(() => {
+        const parsed = SecretReferenceOverlayV1Schema.safeParse(launchInput.secretReferenceOverlay);
+        return parsed.success ? parsed.data : undefined;
+    }, [launchInput.secretReferenceOverlay]);
+    const onSecretChange = React.useCallback((state: ExecutionRunSecretReferenceOverlayState) => {
+        setSecretState(previous => retainDeep(previous, state));
+        if (!profile || !state.readiness.ok) return;
+        setLaunchInput(previous => {
+            const next = { ...previous };
+            if (state.overlay) next.secretReferenceOverlay = state.overlay;
+            else delete next.secretReferenceOverlay;
+            return retainDeep(previous, next);
+        });
+    }, [profile, setLaunchInput]);
     const chosenBackend = params.selectedBackendChoice;
     const teamCredential = useExecutionRunTeamCredentialModel({ sessionId: params.sessionId, serverId: params.serverId,
         machineId,
@@ -111,7 +127,8 @@ export function useReviewExecutionRunLaunchOptions(params: Readonly<{
     const controls = <>
         <ExecutionRunSecretReferenceOverlayField profile={profile} machineId={machineId} serverId={params.serverId}
             accountScope={accountBinding?.scope ?? null} defaultBindings={defaultSecretBindings}
-            personalSecrets={settings.secrets} sharedEnabled={sharedSecrets} editable={!params.busy} onChange={setSecretState} />
+            personalSecrets={settings.secrets} sharedEnabled={sharedSecrets} editable={!params.busy}
+            initialOverlay={initialSecretOverlay} onChange={onSecretChange} />
     </>;
     return { controls, modelChoice, teamCredential, secretState };
 }

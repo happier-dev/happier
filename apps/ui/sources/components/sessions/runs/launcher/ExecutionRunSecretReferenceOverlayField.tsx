@@ -15,6 +15,7 @@ import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { projectAiLaunchProfileForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { t } from '@/text';
@@ -65,6 +66,7 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
     personalSecrets: readonly SavedSecret[];
     sharedEnabled: boolean;
     editable: boolean;
+    initialOverlay?: SecretReferenceOverlayV1;
     onChange: (state: ExecutionRunSecretReferenceOverlayState) => void;
 }>) => {
     const { theme } = useUnistyles();
@@ -83,11 +85,17 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
         ttlMs: 2 * 60_000,
         serverId: props.serverId,
     });
-    const [selectedSecretIds, setSelectedSecretIds] = React.useState<Readonly<Record<string, string | null>>>({});
+    const initialSecretIds = React.useMemo(() => Object.fromEntries(
+        Object.entries(props.initialOverlay?.bindings ?? {}).map(([name, binding]) => [name, binding.ref]),
+    ), [props.initialOverlay]);
+    const [selectedSecretIds, setSelectedSecretIds] = React.useState<Readonly<Record<string, string | null>>>(initialSecretIds);
     const [inlineConnect, setInlineConnect] = React.useState<Readonly<{ name: string; request: ConnectSheetKeyRequest }> | null>(null);
 
     React.useEffect(() => {
-        setSelectedSecretIds({});
+        setSelectedSecretIds(previous => retainDeep(previous, initialSecretIds));
+    }, [initialSecretIds, props.profile?.id]);
+
+    React.useEffect(() => {
         setInlineConnect(null);
     }, [props.profile?.id]);
 
