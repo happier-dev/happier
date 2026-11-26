@@ -1957,6 +1957,88 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('2493');
   });
 
+  it('explains Work that cannot be attributed when the recorded usage has a Session and no turn', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', metric: 'cost' });
+    const unassigned: UsageWorkContribution = { ...contribution('pi-session-stats', 's1', null),
+      source: 'pi-session-stats', eventCount: 1, tokens: { ...tokens, input: 18_210, total: 18_214 },
+      cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' } };
+    const result = resolveUsagePageAggregation({
+      queries: [sessionQuery],
+      accounting: [{ query: sessionQuery, status: 'available', asOfMs: 1000,
+        value: { ...slice.accounting!, contributions: [unassigned], breakdowns: {},
+          totals: { eventCount: 1, tokens: unassigned.tokens, cost: unassigned.cost } } }],
+      work: [{ query: sessionQuery, status: 'unknown', asOfMs: 1000 }],
+      nowMs: 1000,
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    expect(result.work?.allocations).toEqual([expect.objectContaining({ reason: 'missing_turn' })]);
+    expect(result.workSummary?.mergedPrCount).toBeUndefined();
+
+    const page = (state: UsageQueryResultSlice) => {
+      const body = { ...props, slice: state, query: sessionQuery };
+      return <>
+        <UsageProjectLedgerWidget {...body} query={{ ...sessionQuery, metric: 'tokens' }} id="usage_project_ledger" testID="ledger" />
+        <UsageOutcomesWidget {...body} id="usage_outcomes" testID="cost" />
+        <UsageOutcomesWidget {...body} id="usage_outcomes" testID="shipped" presentation={{ style: 'shipped' }} />
+      </>;
+    };
+    const screen = await renderScreen(page(result));
+    const reason = t('usage.board.work.reason_missing_turn');
+    expect.soft(screen.getTextContent()).toContain(reason);
+    expect.soft(screen.getTextContent()).not.toContain(t('usage.board.work.workUnavailableTitle'));
+    expect.soft(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(reason);
+    expect.soft(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'cost.workUnavailable')?.props.reason).toContain(reason);
+    expect.soft(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'shipped.unavailable')?.props.reason).toBe(reason);
+
+    expect.soft(screen.getTextContent()).not.toContain(t('usage.board.page.workNotRead'));
+
+    const accounting = [{ query: sessionQuery, status: 'available' as const, asOfMs: 1000,
+      value: { ...result.accounting!, contributions: [{ ...unassigned, turnId: 't1' }] } }];
+    const withoutEvidence = (work?: { query: typeof sessionQuery; status: UsageQueryResultSlice['sources'][number]['status'];
+      errorCode?: string; pullRequestReadSessions?: string[]; evidence?: [] }) => resolveUsagePageAggregation({
+      queries: [sessionQuery], accounting, work: work ? [work] : [], nowMs: 1000,
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    const stateCard = (id: string) => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === id);
+    const noEvidence = t('usage.board.work.reason_missing_evidence');
+    for (const [status, unread] of [
+      ['not_loaded', withoutEvidence()],
+      ['pending', withoutEvidence({ query: sessionQuery, status: 'pending' })],
+    ] as const) {
+      expect(unread.work?.allocations[0]?.reason).toBe('missing_evidence');
+      expect(unread.sources.find(source => source.source === 'work')?.status).toBe(status);
+      await screen.update(page(unread));
+      expect.soft(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnavailableTitle'));
+      expect.soft(screen.getTextContent()).not.toContain(t('usage.board.page.workNotRead'));
+      expect.soft(screen.getTextContent()).not.toContain(noEvidence);
+      expect(screen.findByTestId('cost.loading')).toBeTruthy();
+      expect(screen.findByTestId('shipped.loading')).toBeTruthy();
+    }
+
+    await screen.update(page(withoutEvidence({ query: sessionQuery, status: 'error', errorCode: 'work_evidence_failed' })));
+    expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.page.workNotRead'));
+    expect(stateCard('cost.workUnavailable')?.props.title).toBe(t('usage.board.page.workNotRead'));
+    expect(stateCard('shipped.unavailable')).toBeTruthy();
+    expect.soft(screen.getTextContent()).not.toContain(noEvidence);
+    expect(screen.getTextContent()).not.toContain(t('usage.board.work.workUnavailableTitle'));
+
+    await screen.update(page(withoutEvidence({ query: sessionQuery, status: 'available', pullRequestReadSessions: ['s1'], evidence: [] })));
+    expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(noEvidence);
+    expect(stateCard('cost.noPrs')?.props.reason).toBe(noEvidence);
+    expect(stateCard('shipped.empty')?.props.reason).toBe(noEvidence);
+
+    const linked = evidence('s1', 't1', 2493);
+    const witnessed = resolveUsagePageAggregation({
+      queries: [sessionQuery],
+      accounting: [{ query: sessionQuery, status: 'available', asOfMs: 1000,
+        value: { ...result.accounting!, contributions: [{ ...unassigned, turnId: 't1' }] } }],
+      work: [{ query: sessionQuery, status: 'available', asOfMs: 1000, pullRequestReadSessions: ['s1'],
+        evidence: [{ ...linked, pullRequest: { ...linked.pullRequest, mergedAtMs: 500 } }] }],
+      nowMs: 1000,
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    await screen.update(page(witnessed));
+    expect(screen.getTextContent()).toContain(linked.pullRequest.title);
+    expect(screen.findByTestId('shipped.shippedChart')).toBeTruthy();
+  });
+
   it.each(['open', 'merged'] as const)('keeps a known %s PR without counting unread merges or claiming no links in the ledger', async state => {
     const witness = evidence('s1', 't1', 2493);
     const witnessedWork = allocateFixtureWork({ contributions, evidence: [
@@ -2371,7 +2453,7 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
   const workStates = [
     { state: 'reading', source: { source: 'work', status: 'pending' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
     { state: 'partly read', source: offline, footer: () => `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadUnreachable', { count: 1011, formattedCount: (1011).toLocaleString(getPreferredLanguage()) })}` },
-    { state: 'failed', source: { source: 'work', status: 'error', errorCode: 'work_evidence_failed' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
+    { state: 'failed', source: { source: 'work', status: 'error', errorCode: 'work_evidence_failed' } as const, footer: () => t('usage.board.page.workNotRead') },
   ];
   const unreadSlice = (source: UsageQueryResultSlice['sources'][number]): UsageQueryResultSlice => ({ ...slice,
     workSummary: projectUsageWorkSummary(work.outcomes, false, { work: work, contributions: fixtureContributions(work) }),

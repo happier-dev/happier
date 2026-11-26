@@ -29,14 +29,15 @@ import type {
   UsageWorkBranchRow,
   UsageWorkIdentities,
   UsageWorkProjectRow,
-  UsageWorkUnallocatedReason,
 } from './usageWorkPresentation';
 import {
+  USAGE_WORK_UNALLOCATED_REASONS,
   UsageWorkDisclosure,
   UsageWorkMarks,
   UsageWorkRowLead,
   UsageWorkSectionTitle,
   UsageWorkSessionRows,
+  usageWorkAllocationReasonLabel,
   usageWorkBranchName,
   usageWorkPullRequestState,
   usageWorkPullRequestTitle,
@@ -46,13 +47,6 @@ import {
   usageWorkRetainedChangeLine,
   useUsageWorkDisclosures,
 } from './UsageWorkParts';
-
-const REASONS: readonly UsageWorkUnallocatedReason[] = [
-  'missing_evidence',
-  'missing_turn',
-  'ambiguous_outcome',
-  'uncertain_writers',
-];
 
 /**
  * Projects by what their spend bought. A project opens in place into its linked PRs, its witnessed
@@ -151,7 +145,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     fontSize: rowMetrics.title.fontSize,
     lineHeight: rowMetrics.title.lineHeight,
   };
-  const reasons = REASONS.filter(
+  const reasons = USAGE_WORK_UNALLOCATED_REASONS.filter(
     (reason) =>
       summary.unallocatedByReason[reason] === null || (summary.unallocatedByReason[reason] ?? 0) > 0,
   );
@@ -162,7 +156,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   const showAllocationParts = allocationRead && !noneLinked;
   // An unread or partly read set of links is said once, here at the total, with the owner's cause; never on a row.
   const allocationStatus = !allocationRead ? [linksNotice.title, linksNotice.cause, linksReadAt].filter(Boolean).join(' · ')
-    : noneLinked ? [t('usage.board.work.noneLinked'), linksReadAt].filter(Boolean).join(' · ') : null;
+    : noneLinked ? [t('usage.board.work.noneLinked'), linksNotice.cause, linksReadAt].filter(Boolean).join(' · ') : null;
   // A read set of links still says when it was read, in the total's one quiet line (J-A35).
   const totalNote = [linksReadAt, summary.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ');
   const totalNoteText = totalNote ? `${totalNote.charAt(0).toLocaleUpperCase()}${totalNote.slice(1)}` : null;
@@ -181,7 +175,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     datum(t('usage.board.work.allProjects'), summary.total),
     ...(!showAllocationParts ? [] : [datum(t('usage.board.work.linkedToPrs'), summary.allocated, summary.allocatedBasis),
       datum(t('usage.board.work.notLinked'), summary.unallocated, summary.unallocatedBasis),
-      ...reasons.map(reason => datum(t(`usage.board.work.reason_${reason}`), summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason]))]),
+      ...reasons.map(reason => datum(usageWorkAllocationReasonLabel(reason), summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason]))]),
   ]);
   const withConservationDetail = (visual: React.ReactNode) => conservationDatum
     ? <ChartDatum datum={conservationDatum} testID={`${props.testID}.conservation.detail`}>{visual}</ChartDatum> : visual;
@@ -514,7 +508,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               unallocated: format(summary.unallocated, summary.unallocatedBasis),
             }),
             ...reasons.map(reason =>
-              `${format(summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason])} ${t(`usage.board.work.reason_${reason}`)}`),
+              `${format(summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason])} ${usageWorkAllocationReasonLabel(reason)}`),
           ]),
         ].join(', ')}
       >
@@ -529,7 +523,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               </View>
             ) : null}
             <Text style={[styles.reasonLabel, caption]}>
-              {[allocationStatus, ...(allocationRead && reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
+              {[allocationStatus,
                 ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
             </Text>
           </>
@@ -551,7 +545,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             {reasons.map((reason) => (
               <View key={reason} style={[styles.line, styles.reason]}>
                 <Text style={[styles.reasonLabel, caption]}>
-                  {t(`usage.board.work.reason_${reason}`)}
+                  {usageWorkAllocationReasonLabel(reason)}
                 </Text>
                 <Text style={[styles.reasonValue, caption]}>
                   {format(summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason])}

@@ -45,6 +45,7 @@ import {
 import {
   UsageWorkMarks,
   UsageWorkSectionTitle,
+  usageWorkAllocationReasonLabel,
   usageWorkBranchName,
   usageWorkPullRequestState,
   usageWorkPullRequestTitle,
@@ -151,7 +152,7 @@ export function UsageWorkAutopsy(
       return `${usageWorkPullRequestTitle(turn.outcome.pullRequest)} · ${usageWorkPullRequestState(turn.outcome.pullRequest)}`;
     if ((autopsy?.outcomes.length ?? 0) === 0) return '';
     const reason = turn.reason === 'allocated' ? 'missing_evidence' : turn.reason;
-    return t(`usage.board.work.reason_${reason === 'missing_evidence' && turn.commits.length > 0 ? 'missing_pr' : reason}`);
+    return usageWorkAllocationReasonLabel(reason === 'missing_evidence' && turn.commits.length > 0 ? 'missing_pr' : reason);
   };
 
   const phases = props.slice.howYouWork?.intervals;
@@ -237,7 +238,7 @@ export function UsageWorkAutopsy(
   const largest = ordinals.size > 1 && ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
   const largestShare = largest && amount ? Math.round((largest.amount! / amount) * 100) : null;
   // The no-turn row is a row title: it opens with a capital like "Turn 1".
-  const missingTurn = t('usage.board.work.reason_missing_turn');
+  const missingTurn = usageWorkAllocationReasonLabel('missing_turn');
   const missingTurnTitle = `${missingTurn.charAt(0).toLocaleUpperCase()}${missingTurn.slice(1)}`;
   // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).
   const shownTurns = leadingUsageRows(ranked, turnsExpanded);

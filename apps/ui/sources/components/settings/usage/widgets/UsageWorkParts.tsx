@@ -13,6 +13,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, readUsageWorkReadAsOfMs, useUsagePluginTheme } from './usageBodyKit';
 import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import { UsageWorkProjectionSchema } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
 import { usageTokensFromPartsNote } from '../usageCostPresentation';
@@ -23,6 +24,7 @@ import type {
   UsageWorkSessionRow,
   UsageWorkSummary,
   UsageWorkRetainedChange,
+  UsageWorkUnallocatedReason,
   UsageWorkMoneyBasis,
 } from './usageWorkPresentation';
 
@@ -48,20 +50,44 @@ export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedC
   }).join(' · ');
 }
 
-/** Present the Work owner's unread counts. The page header owns the Retry for a retryable gap (ruling 11-25). */
+export const USAGE_WORK_UNALLOCATED_REASONS = UsageWorkProjectionSchema.shape.allocations._zod.def.element
+  .shape.reason.options.filter(reason => reason !== 'allocated');
+
+export function usageWorkAllocationReasonLabel(reason: UsageWorkUnallocatedReason | 'missing_pr'): string {
+  return t(`usage.board.work.reason_${reason}`);
+}
+
+/** Name the Work owner's settled gaps and the allocation reasons behind an answer with no linked outcomes. */
 export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null }> {
   const source = slice.sources.find(row => row.source === 'work');
-  if (source?.status !== 'partial' || readUsageWorkOutcomesEvidence(slice, 'work') === 'observed') {
-    return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+  const coverage = readUsageWorkOutcomesEvidence(slice, 'work');
+  if (coverage === 'reading') return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+
+  const attribution: string[] = [];
+  if (slice.work && slice.work.outcomes.length === 0) {
+    const reasons = new Set(slice.work.allocations.map(row => row.reason));
+    for (const reason of USAGE_WORK_UNALLOCATED_REASONS) {
+      // An empty witness set also comes from reads that could not run.
+      if (reason === 'missing_evidence' && coverage !== 'observed' && source?.status !== 'available') continue;
+      if (reasons.has(reason)) attribution.push(usageWorkAllocationReasonLabel(reason));
+    }
+  }
+  if (source?.status !== 'partial' || coverage === 'observed') {
+    const failed = source?.status === 'error' || source?.status === 'stale' || source?.status === 'unsupported'
+      || source?.errorCode !== undefined || source?.unreadSessions !== undefined;
+    return {
+      title: failed ? t('usage.board.page.workNotRead') : t('usage.board.work.notLinked'),
+      cause: attribution.join(' · ') || null,
+    };
   }
   const unread = source.unreadSessions ?? {};
   const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
   const formatCount = (count: number) => ({ count, formattedCount: count.toLocaleString(getPreferredLanguage()) });
-  const unreadOther = other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null;
   const cause = [
     unread.machine_unavailable ? t('usage.board.work.workUnreadUnreachable', formatCount(unread.machine_unavailable))
       : source.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
-    unreadOther,
+    other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null,
+    ...attribution,
   ].filter(Boolean).join(' · ');
   return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
 }

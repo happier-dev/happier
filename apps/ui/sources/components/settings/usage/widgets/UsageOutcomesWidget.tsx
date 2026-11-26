@@ -93,6 +93,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
         reason={t('usage.board.work.emptyReason')}
       />
     );
+  const { cause } = usageWorkLinksNotice(props.slice);
   return (
     <View style={styles.body} testID={`${props.testID}.outcomes`}>
       {/* The measured-empty caption and the existing quiet line stay in the same slots. */}
@@ -100,7 +101,7 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
         testID={`${props.testID}.noPrs`}
         replacesContent={false}
         title={t('usage.board.work.noPrsTitle')}
-        reason={t('usage.board.work.noPrsReason')}
+        reason={cause ?? t('usage.board.work.noPrsReason')}
       />
       <UsageCoverageLine
         slice={props.slice}
@@ -249,7 +250,7 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
         {fromPartsNote ? <UsageBodyNote testID={`${props.testID}.fromParts`}>{fromPartsNote}</UsageBodyNote> : null}
       </>}
       empty={<UsageBodyInsufficient testID={`${props.testID}.noPrs`} replacesContent={false}
-        title={t('usage.board.work.noPrsTitle')} reason={t('usage.board.work.noPrsReason')} />}
+        title={t('usage.board.work.noPrsTitle')} reason={usageWorkLinksNotice(props.slice).cause ?? t('usage.board.work.noPrsReason')} />}
       coverage={<UsageCoverageLine
         slice={props.slice}
         sources={['work']}

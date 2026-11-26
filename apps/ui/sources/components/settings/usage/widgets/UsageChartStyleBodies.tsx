@@ -27,6 +27,7 @@ import {
 } from './usageChartModels';
 import { readUsageChartSources } from './usageSourceSelection';
 import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
+import { usageWorkLinksNotice } from './UsageWorkParts';
 
 export type UsageChartStyleBodyProps = UsageBodyProps;
 
@@ -297,9 +298,10 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   if (!model || model.total === 0) {
     const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
     if (evidence === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
+    const { cause } = usageWorkLinksNotice(props.slice);
     if (evidence === 'unavailable' || evidence === 'partial')
-      return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} />;
-    return <UsageBodyInsufficient testID={`${props.testID}.empty`} title={t('usage.board.charts.shippedEmptyTitle')} reason={t('usage.board.charts.shippedEmptyReason')} />;
+      return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} reason={cause ?? undefined} />;
+    return <UsageBodyInsufficient testID={`${props.testID}.empty`} title={t('usage.board.charts.shippedEmptyTitle')} reason={cause ?? t('usage.board.charts.shippedEmptyReason')} />;
   }
   return <View style={{ gap: 12 }} testID={`${props.testID}.shipped`}>
     <UsageShipped theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.shippedChart`}
