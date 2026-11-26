@@ -14,6 +14,7 @@ import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessi
 import { areSessionCapabilitySelectionsEquivalentV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { formatWorkflowStepSessionTitle } from '@happier-dev/protocol/workflows/workflowStepLabel';
+import type { SessionInputAttention } from '@/session/services/sessionInputAttention';
 import { cancelSessionInput } from '@/session/services/cancelSessionInput';
 import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { CreateSpawnedSessionParams } from '@/session/services/createSpawnedSession';
@@ -670,8 +671,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
     ...deps.sessionInput,
   };
   return async (params) => {
-    const observeAttention = (sessionId: string, localInputId: string) => (attentionRequired: boolean) =>
-      params.onExecutionObservation?.({ execution: { kind: 'session', sessionId, localInputId }, attentionRequired }) ?? Promise.resolve();
+    const observeAttention = (sessionId: string, localInputId: string) => (sessionInputAttention: SessionInputAttention) =>
+      params.onExecutionObservation?.({ execution: { kind: 'session', sessionId, localInputId }, sessionInputAttention }) ?? Promise.resolve();
     const originInput = params.conversationBinding?.kind === 'origin_session'
       || params.execution.conversation?.kind === 'origin_session'
       || (isPreparedWorkflowSessionConversation(params.preparedStep) && params.preparedStep.inputPath === 'origin_session');

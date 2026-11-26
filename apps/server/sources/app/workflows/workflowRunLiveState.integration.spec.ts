@@ -243,6 +243,20 @@ describe("workflow Run live state", () => {
         expect(await service.listWorkflowRuns({ ...request, attention: undefined })).not.toHaveProperty("heldProgressByRunId");
         expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
             .toMatchObject({ run: { heldCount: 0 }, heldProgress: null });
+
+        // The Home can index an approval wait, but only the authorized reader
+        // can distinguish a child permission from other sealed approvals.
+        const pending = ids.slice(3);
+        await db.workflowRunInvocation.updateMany({ where: { id: { in: pending } }, data: { lifecycle: "waiting_for_approval" } });
+        const approvalCandidates = pending.map(id => ({ index: { id, lifecycle: "waiting_for_approval" } }));
+        expect(await service.getWorkflowRun({ accountId: seeded.accountId, runId: input.runId }))
+            .toMatchObject({ run: { heldCount: 0 }, heldProgress: approvalCandidates });
+        expect(await service.listWorkflowRuns(request)).toMatchObject({ heldProgressByRunId: { [input.runId]: approvalCandidates } });
+        const denied = { accountId: stranger.accountId, runId: input.runId };
+        await expect(service.getWorkflowRunInvocation({ ...denied, invocationId: pending[0]! })).rejects.toMatchObject({ code: "run_not_found" });
+        await expect(service.getWorkflowRun(denied)).rejects.toMatchObject({ code: "run_not_found" });
+        expect(await service.listWorkflowRuns({ ...request, accountId: stranger.accountId }))
+            .toMatchObject({ runs: [], heldProgressByRunId: {} });
     });
 
     it("keeps Needs-you membership actionable and consistent across list, detail, wait and definition summaries", async () => {

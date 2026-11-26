@@ -7248,6 +7248,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -7743,6 +7750,13 @@ export type WorkflowsActionResultById = {
                 heldStep?: null | undefined | {
                     invocationId: string;
                     label: string;
+                    kind?: 'waiting_for_review' | undefined;
+                    laneLabel?: string | undefined;
+                } | {
+                    kind: 'child_session_permission';
+                    invocationId: string;
+                    label: string;
+                    sessionId: string;
                     laneLabel?: string | undefined;
                 };
                 heldCount?: number | undefined;
@@ -8307,6 +8321,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -8908,6 +8929,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -13792,6 +13820,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -14287,6 +14322,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -14781,6 +14823,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -15276,6 +15325,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -15771,6 +15827,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -16270,6 +16333,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -16764,6 +16834,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -17258,6 +17335,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -18026,6 +18110,7 @@ export type WorkflowsActionResultById = {
                 };
                 resultContract?: JsonValue | undefined;
                 execution?: WorkflowsActionExecution2;
+                sessionPermissionPending?: boolean | undefined;
                 sharedConversationInvocationRecordId?: undefined | {
                     session?: string | undefined;
                     detached_run?: string | undefined;
@@ -18795,6 +18880,7 @@ export type WorkflowsActionResultById = {
                 };
                 resultContract?: JsonValue | undefined;
                 execution?: WorkflowsActionExecution2;
+                sessionPermissionPending?: boolean | undefined;
                 sharedConversationInvocationRecordId?: undefined | {
                     session?: string | undefined;
                     detached_run?: string | undefined;
@@ -19313,6 +19399,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;
@@ -20083,6 +20176,7 @@ export type WorkflowsActionResultById = {
                 };
                 resultContract?: JsonValue | undefined;
                 execution?: WorkflowsActionExecution2;
+                sessionPermissionPending?: boolean | undefined;
                 sharedConversationInvocationRecordId?: undefined | {
                     session?: string | undefined;
                     detached_run?: string | undefined;
@@ -20601,6 +20695,13 @@ export type WorkflowsActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;

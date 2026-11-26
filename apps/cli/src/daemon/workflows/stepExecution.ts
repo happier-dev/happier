@@ -1,3 +1,4 @@
+import type { SessionInputAttention } from '@/session/services/sessionInputAttention';
 import type { StoredCredentials } from '@/persistence';
 import type { ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -339,7 +340,7 @@ export async function observeWorkflowSessionInputResult(params: Readonly<{
   observeReply?: boolean;
   beforeInputObservation?: () => Promise<void>;
   onInputMaterialized?: (acceptedAtMs: number) => Promise<void>;
-  onAttentionRequired?: (required: boolean) => Promise<void>;
+  onAttentionRequired?: (attention: SessionInputAttention) => Promise<void>;
   signal?: AbortSignal;
 }>): Promise<WaitForSessionInputReplyResult> {
   const observation: SessionInputResultObservationV1 = params.snapshotAtMs !== undefined

@@ -72,6 +72,22 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
 }
 
 describe('attention partial count truth', () => {
+    it('opens the child Session from an exact permission hold before invocation history loads', async () => {
+        const onOpenSession = vi.fn();
+        const onSelectInvocation = vi.fn();
+        const screen = await renderContent({
+            run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', heldStep: {
+                kind: 'child_session_permission', invocationId: 'inv-a', label: 'Check the code', sessionId: 'child-session',
+            } }),
+            onOpenSession,
+            onSelectInvocation,
+        });
+        expect(screen.getTextContent()).toContain('workflows.run.attentionWaitRow:{"step":"Check the code"}');
+        await screen.pressByTestIdAsync('workflow-run-needs-you-inv-a');
+        expect(onOpenSession).toHaveBeenCalledWith('child-session');
+        expect(onSelectInvocation).not.toHaveBeenCalled();
+    });
+
     it('labels a still-paged attention window as loaded, never exact remaining', async () => {
         const screen = await renderContent({
             run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),

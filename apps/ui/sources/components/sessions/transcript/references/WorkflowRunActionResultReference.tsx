@@ -21,6 +21,7 @@ import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflo
 import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { useSaveRunAsWorkflow } from '@/components/workflows/run/useSaveRunAsWorkflow';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { Typography } from '@/constants/Typography';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ToolCall } from "@happier-dev/session-core/messages";
@@ -151,10 +152,18 @@ function MountedWorkflowRunReference(props: Readonly<{
     };
     const needsReview = status?.bucket === 'needs_you';
     const pointer = notice?.transcriptPointer;
-    const reviewInvocationId = summary?.heldStep?.invocationId
+    const held = summary?.heldStep;
+    const permission = held?.kind === 'child_session_permission' ? held : null;
+    const reviewInvocationId = (permission === null ? held?.invocationId : undefined)
         ?? (notice?.wake === 'needs_you' && pointer?.kind === 'workflow_run' && pointer.runId === runId
             ? pointer.invocationRecordId : undefined);
     const review = (): void => {
+        if (permission !== null) {
+            navigateWithBlurOnWeb(() => transcriptSource.navigate?.(buildScopedSessionRouteHref({
+                sessionId: permission.sessionId, serverId: props.serverId,
+            })));
+            return;
+        }
         if (!reviewInvocationId) {
             open();
             return;
@@ -196,7 +205,7 @@ function MountedWorkflowRunReference(props: Readonly<{
                         {sourceless && summary ? <SaveRunAsWorkflowAction runId={runId} serverId={props.serverId} /> : null}
                         {needsReview
                             ? <RoundButton testID={`transcript-workflow-run-${runId}-review`} size="small" display="default"
-                                title={t('inbox.work.rows.review')} onPress={review} />
+                                title={permission === null ? t('inbox.work.rows.review') : t('runs.openSession')} onPress={review} />
                             : <RoundButton testID={`transcript-workflow-run-${runId}-open`} size="small" display="secondary"
                                 title={t('workflows.run.open')} accessibilityLabel={[t('workflows.run.open'), title].join(', ')} onPress={open} />}
                     </>

@@ -27,7 +27,7 @@ export type InboxPullRequestLink = Readonly<{
 }>;
 
 /** What a held Run's named step needs from the person; a review hold is the Run's `heldStep`. */
-export type InboxHeldStepNeed = 'review' | 'approval';
+export type InboxHeldStepNeed = 'review' | 'approval' | 'child_session_permission';
 
 /**
  * The step a Run waits on, read from its own summary: the list host's review hold, otherwise the first
@@ -35,7 +35,8 @@ export type InboxHeldStepNeed = 'review' | 'approval';
  */
 function readHeldStep(summary: WorkflowRunRow['summary']): Readonly<{ label: string; laneLabel: string | null; need: InboxHeldStepNeed }> | null {
     const held = summary?.heldStep;
-    if (held) return { label: held.label, laneLabel: held.laneLabel ?? null, need: 'review' };
+    if (held) return { label: held.label, laneLabel: held.laneLabel ?? null,
+        need: held.kind === 'child_session_permission' ? held.kind : 'review' };
     const approval = summary?.stepProgress?.destinations?.find(destination =>
         destination.observation?.lifecycle === 'waiting_for_approval' && destination.name);
     return approval?.name ? { label: approval.name, laneLabel: null, need: 'approval' } : null;

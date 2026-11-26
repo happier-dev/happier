@@ -8,6 +8,7 @@ import { isAgentStartActionV1, resolveActionAgentStartRequestsV1 } from '@happie
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
+import type { SessionInputAttention } from '@/session/services/sessionInputAttention';
 import type { WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowBlock, WorkflowAcceptedAuthorizationV1, WorkflowCheckpointEnvelopeV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1, WorkflowFinalResultV1, WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowContainerProgressV1, WorkflowContainerResultSelectorV1, WorkflowInvocationFrameV1, WorkflowLoopSourceSelectionV1, WorkflowLoopOutcomeV1, WorkflowRunExecutionTargetV1, WorkflowProgressEnvelopeV1, WorkflowUsageV1, WorkflowStep, WorkflowWaitLeafV1, WorkflowActionLeafV1, WorkflowNestedLeafV1, WorkflowStepExecutionSelection, WorkflowValueReference, WorkflowWorkspaceDescriptorV1, WorkflowWorkspaceProgressV1, WorkflowWorkspaceResolutionV1 } from '@happier-dev/protocol/workflows';
 import { workflowBlockOrdinalV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { randomUUID } from 'node:crypto';
@@ -108,6 +109,7 @@ export type WorkflowCoordinatorInvocation = Readonly<{
   failureCause?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['failureCause'];
   runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1'];
   validationIssues?: WorkflowProgressEnvelopeV1['validationIssues'];
+  sessionPermissionPending?: boolean;
   execution?: WorkflowProgressEnvelopeV1['execution'];
   sharedConversationInvocationRecordId?: WorkflowProgressEnvelopeV1['sharedConversationInvocationRecordId'];
   observationDeadline?: WorkflowProgressEnvelopeV1['observationDeadline'];
@@ -158,6 +160,7 @@ export type WorkflowCoordinatorStore = Readonly<{
     usage?: WorkflowUsageV1;
     /** Private invocation-scoped request state; never a selected step result. */
     interaction?: WorkflowJsonValue;
+    sessionPermissionPending?: boolean;
     reason?: string;
     reasonMessage?: string;
     reasonDetails?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['details'];
@@ -250,7 +253,7 @@ export type WorkflowStepExecutor = (params: Readonly<{
     usage?: WorkflowUsageV1;
   }> | Readonly<{
     execution: Extract<NonNullable<WorkflowProgressEnvelopeV1['execution']>, { kind: 'session' }>;
-    attentionRequired: boolean;
+    sessionInputAttention: SessionInputAttention;
   }>) => Promise<void>;
   signal?: AbortSignal;
 }>) => Promise<WorkflowStepExecutionResult>;
@@ -2763,7 +2766,7 @@ async function executeStepBlock(
       },
       onExecutionObservation: async (observation) => {
         const currentExecution = durableExecution;
-        if ('attentionRequired' in observation) {
+        if ('sessionInputAttention' in observation) {
           if (currentExecution?.kind !== 'session'
             || currentExecution.sessionId !== observation.execution.sessionId
             || currentExecution.localInputId !== observation.execution.localInputId) {
@@ -2772,9 +2775,11 @@ async function executeStepBlock(
           const current = await context.deps.store.read(key);
           if (!current || current.lifecycle !== 'running' && current.lifecycle !== 'waiting_for_approval'
             || context.signal?.aborted) return;
-          const lifecycle = observation.attentionRequired ? 'waiting_for_approval' : 'running';
-          if (current.lifecycle === lifecycle) return;
-          await context.deps.store.commitFact({ key, lifecycle });
+          const lifecycle = observation.sessionInputAttention === null ? 'running' : 'waiting_for_approval';
+          const sessionPermissionPending = observation.sessionInputAttention === 'permission';
+          const permissionChanged = (current.sessionPermissionPending === true) !== sessionPermissionPending;
+          if (current.lifecycle === lifecycle && !permissionChanged) return;
+          await context.deps.store.commitFact({ key, lifecycle, ...(permissionChanged ? { sessionPermissionPending } : {}) });
           return;
         }
         if (observation.execution.kind === 'action') {

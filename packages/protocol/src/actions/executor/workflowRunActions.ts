@@ -840,10 +840,25 @@ function projectHeldStep(
   enc: WorkflowRunEncryptionV1,
   resolveContext: (path: WorkflowProgressEnvelopeV1['invocationPath']) => ReturnType<typeof summarizedStepContext>,
 ): NonNullable<WorkflowRunSummaryV1['heldStep']> | null {
+  for (const candidate of Array.isArray(raw) ? raw : [raw]) {
+    const held = openHeldStep(candidate, runId, accountId, enc, resolveContext);
+    if (held) return held;
+  }
+  return null;
+}
+
+function openHeldStep(
+  raw: unknown,
+  runId: string,
+  accountId: string,
+  enc: WorkflowRunEncryptionV1,
+  resolveContext: (path: WorkflowProgressEnvelopeV1['invocationPath']) => ReturnType<typeof summarizedStepContext>,
+): NonNullable<WorkflowRunSummaryV1['heldStep']> | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const fact = record(raw);
   const parsed = WorkflowRunInvocationIndexV1Schema.safeParse(fact.index);
-  if (!parsed.success || parsed.data.runId !== runId || parsed.data.lifecycle !== 'waiting_for_review') return null;
+  if (!parsed.success || parsed.data.runId !== runId
+    || (parsed.data.lifecycle !== 'waiting_for_review' && parsed.data.lifecycle !== 'waiting_for_approval')) return null;
   const index = parsed.data;
   const progress = openWorkflowProgressStoredEnvelopeV1({ ...openMode(enc),
     binding: { v: 1, purpose: 'invocation_progress', accountId, runId,
@@ -851,10 +866,15 @@ function projectHeldStep(
       memberOrdinal: index.memberOrdinal, attempt: index.attempt },
     envelope: typeof fact.contentEnvelope === 'string' ? parseWorkflowStoredContentEnvelopeV1(fact.contentEnvelope) : null });
   if (progress.kind !== 'available') return null;
+  const execution = progress.content.execution;
+  const permissionSessionId = index.lifecycle === 'waiting_for_approval'
+    && progress.content.sessionPermissionPending === true && execution?.kind === 'session' ? execution.sessionId : null;
+  if (index.lifecycle === 'waiting_for_approval' && permissionSessionId === null) return null;
   const authored = resolveContext(progress.content.invocationPath);
   const label = (authored.block?.kind === progress.content.blockKind ? authored.block.name?.trim() : undefined)
     || progress.content.blockKind;
-  return { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
+  const step = { invocationId: index.id, label, ...(authored.laneLabel ? { laneLabel: authored.laneLabel } : {}) };
+  return permissionSessionId === null ? step : { ...step, kind: 'child_session_permission', sessionId: permissionSessionId };
 }
 
 export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActionDeps): WorkflowRunActionOwner & Readonly<{

@@ -70,7 +70,7 @@ import {
 } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById, fetchSessionTurnsProjection, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
-import { createSessionInputAttentionObserver } from './sessionInputAttention';
+import { createSessionInputAttentionObserver, type SessionInputAttention } from './sessionInputAttention';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { openSessionEventSource, waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
@@ -208,7 +208,7 @@ export type WaitForSessionInputResultParams = Readonly<{
   /** The input owner's committed transcript timestamp is the accepted fact. */
   onInputMaterialized?: (acceptedAtMs: number) => Promise<void>;
   /** Live Session request attention while observing this admitted input. */
-  onAttentionRequired?: (required: boolean) => Promise<void>;
+  onAttentionRequired?: (attention: SessionInputAttention) => Promise<void>;
 }> & (
   | Readonly<{
       /** Incumbent bounded observer contract retained for Automation V1. */
@@ -764,7 +764,7 @@ type AssistantCompletionObservationParams = Readonly<{
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
   initialSession?: RawSessionRecord;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
-  onAttentionRequired?: (required: boolean) => Promise<void>;
+  onAttentionRequired?: (attention: SessionInputAttention) => Promise<void>;
 }>;
 type RunReplyRefusal = NonNullable<ReturnType<typeof readExecutionRunReplyRefusal>>;
 type ReplyObservation = Readonly<{

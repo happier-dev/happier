@@ -187,7 +187,7 @@ it('pushes a native tool approval and its decision into the Workflow Run attenti
     if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
       id: sessionId, encryptionMode: 'plain', metadata: '{}',
       pendingPermissionRequestCount: deriveActivitySummaryFromAgentState(agentState).pendingPermissionRequestCount,
-      pendingUserActionRequestCount: 0 }) } };
+      pendingUserActionRequestCount: deriveActivitySummaryFromAgentState(agentState).pendingUserActionRequestCount }) } };
     if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: 'available', progress: {
       v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: turnId } } };
     const input = { id: 'input-row', localId, seq: 1, createdAt: 1, updatedAt: 1, content: { t: 'plain', v: {
@@ -229,10 +229,20 @@ it('pushes a native tool approval and its decision into the Workflow Run attenti
     const push = () => socket.emit('update', { id: 'approval-update', seq: 1, createdAt: 2,
       body: { t: 'update-session', id: sessionId,
         pendingPermissionRequestCount: deriveActivitySummaryFromAgentState(agentState).pendingPermissionRequestCount,
-        pendingUserActionRequestCount: 0 } });
+        pendingUserActionRequestCount: deriveActivitySummaryFromAgentState(agentState).pendingUserActionRequestCount } });
     const approval = { tool: 'Bash', kind: 'permission' as const, arguments: { command: 'pwd' }, createdAt: 2, turnId };
     agentState = { requests: { 'exec-native': approval } }; push();
     await vi.waitFor(() => expect(stored.run()).toMatchObject({ state: 'running', attentionRequired: true, invocationAttentionRequired: true }));
+    const readPermissionAttention = () => {
+      const leaf = stored.rowById(invocationRecordId)!;
+      const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', envelope: JSON.parse(leaf.contentEnvelope),
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: invocationRecordId,
+          sequence: leaf.index.sequence, parentRecordId: leaf.index.parentRecordId, memberOrdinal: leaf.index.memberOrdinal,
+          attempt: leaf.index.attempt } });
+      if (opened.kind !== 'available') throw new Error(opened.kind);
+      return opened.content;
+    };
+    expect(readPermissionAttention()).toMatchObject({ sessionPermissionPending: true, execution: { kind: 'session', sessionId } });
     const attentionRevision = stored.run().revision;
     controller.abort('workflow_runtime_interrupted');
     await running.catch(error => { if (!(error instanceof WorkflowRuntimeInterruption)) throw error; });
@@ -252,6 +262,17 @@ it('pushes a native tool approval and its decision into the Workflow Run attenti
     } }; push();
     await vi.waitFor(() => expect(stored.run()).toMatchObject({ state: 'running', attentionRequired: false, invocationAttentionRequired: false }));
     expect(stored.run().revision).toBe(attentionRevision + 1);
+    expect(readPermissionAttention().sessionPermissionPending).not.toBe(true);
+    expect(snapshotReads()).toBe(beforePushReads);
+    // A question keeps the invocation in attention, while the settled permission stops being actionable.
+    agentState = { requests: { 'exec-native': approval, question: { ...approval, kind: 'user_action' } } }; push();
+    await vi.waitFor(() => expect(readPermissionAttention().sessionPermissionPending).toBe(true));
+    agentState = { ...agentState, completedRequests: { 'exec-native': { ...approval, status: 'approved', completedAt: 3 } } }; push();
+    await vi.waitFor(() => expect(readPermissionAttention().sessionPermissionPending).toBe(false));
+    expect(stored.run().invocationAttentionRequired).toBe(true);
+    agentState = { requests: {} }; push();
+    await vi.waitFor(() => expect(stored.run().invocationAttentionRequired).toBe(false));
+    expect(snapshotReads()).toBe(beforePushReads);
     // Recover both edges when the socket missed the native request/decision.
     agentState = { requests: { 'exec-native': approval } };
     socket.emit('connect');

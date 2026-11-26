@@ -187,7 +187,9 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         // History compares revisions (an edit); any other Run row names who set it up.
         wording: props.inTriggerHistory === true ? 'edited' : 'setUp',
         profile: props.sourceProfile === undefined ? cachedSourceProfile : props.sourceProfile });
-    const heldInvocationId = summary?.heldStep?.invocationId;
+    const held = summary?.heldStep;
+    // This row's request peek is for Workflow reviews. Child permissions are decided in the Session.
+    const heldInvocationId = held?.kind === 'child_session_permission' ? undefined : held?.invocationId;
     const requestRef = React.useMemo<CollectionRequestRef | null>(() => heldInvocationId ? {
         kind: 'workflow_hold', serverId: props.serverId, runId: props.runId, invocationRecordId: heldInvocationId,
     } : null, [heldInvocationId, props.runId, props.serverId]);

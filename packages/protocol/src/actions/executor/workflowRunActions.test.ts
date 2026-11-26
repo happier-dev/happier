@@ -2635,6 +2635,40 @@ describe('shared Account workflow run owner', () => {
     expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
       .toMatchObject({ runs: [{ heldStep: undefined }] });
   });
+  it('opens only the bound child permission hold on exact reads and attention pages', async () => {
+    const snapshot = runSnapshot();
+    const sessionId = 'child-session';
+    const index = { id: 'held-child', runId, sequence: '4', parentRecordId: 'root-frame', memberOrdinal: '0', attempt: '0',
+      contentRevision: '7', lifecycle: 'waiting_for_approval' as const, createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt };
+    const contentEnvelope = (pending: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+        recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId, memberOrdinal: index.memberOrdinal, attempt: index.attempt },
+      progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: '0', logicalInvocationRecordId: index.id,
+        invocationPath: { blockId: 'work', scope: [] }, execution: { kind: 'session', sessionId, localInputId: 'local-input' },
+        ...pending ? { sessionPermissionPending: true } : {} },
+    }));
+    let first: unknown = [];
+    const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') return { ...snapshot, heldProgress: first };
+      if (operation.operation !== 'list') throw new Error('attention_must_not_read_per_run_detail_or_session');
+      return { runs: [snapshot.run], acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
+        keyCensusByRunId: { [runId]: snapshot.keyCensus }, heldProgressByRunId: { [runId]: first } };
+    } }));
+    const expected = { kind: 'child_session_permission', sessionId, invocationId: index.id, label: 'step' };
+    const get = async () => WorkflowRunGetResultV1Schema.parse(await owner.execute({
+      actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context: {},
+    })).run.heldStep;
+    const list = async () => owner.execute({ actionId: 'workflow.run.list', input: { attention: 'required' }, context: {} });
+    first = [{ index, contentEnvelope: contentEnvelope(false) }, { index, contentEnvelope: contentEnvelope(true) }];
+    expect(await get()).toEqual(expected);
+    expect(await list()).toMatchObject({ runs: [{ heldStep: expected }] });
+    for (const unavailable of [{ ...index, lifecycle: 'running' }, { ...index, id: 'unbound-invocation' }, { ...index, runId: 'other-run' }]) {
+      first = [{ index: unavailable, contentEnvelope: contentEnvelope(true) }];
+      expect(await get()).toBeNull();
+      expect(await list()).toMatchObject({ runs: [{ heldStep: null }] });
+    }
+  });
+
   it.each(['workspace_unavailable', 'workspace_conflict', 'committed_revision_unavailable'] as const)(
     'preserves the workspace preparation refusal %s before admission', async (code) => {
     const owner = createWorkflowAccountRunActionOwner({

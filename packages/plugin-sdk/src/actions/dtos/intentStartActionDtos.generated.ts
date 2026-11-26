@@ -7044,6 +7044,13 @@ export type IntentStartActionResultById = {
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
+                kind?: 'waiting_for_review' | undefined;
+                laneLabel?: string | undefined;
+            } | {
+                kind: 'child_session_permission';
+                invocationId: string;
+                label: string;
+                sessionId: string;
                 laneLabel?: string | undefined;
             };
             heldCount?: number | undefined;

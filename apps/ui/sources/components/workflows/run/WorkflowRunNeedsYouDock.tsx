@@ -22,6 +22,7 @@ export function WorkflowRunNeedsYouDock(
     count: number;
     steps: readonly string[];
     onReview: (event?: unknown) => void;
+    actionLabel?: string;
     onHeight: (heightPx: number) => void;
     /** Review is filled only when the page has no other primary (one primary per page). */
     primary: boolean;
@@ -70,7 +71,7 @@ export function WorkflowRunNeedsYouDock(
             testID={`${props.testIDPrefix}-review`}
             tone={props.primary ? 'primary' : 'default'}
             size="md"
-            label={t('workflows.run.review')}
+            label={props.actionLabel ?? t('workflows.run.review')}
             onPress={props.onReview}
           />
         </GlassPanel>

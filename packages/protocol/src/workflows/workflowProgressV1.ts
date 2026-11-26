@@ -226,11 +226,22 @@ export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   /** Opened root progress. Null clears the wait; omission supplies no root observation. */
   startWaitReason: z.optional(z.nullable(z.literal(WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1))),
   /** Authorized attention-list projection; null clears a hold, omission preserves a prior observation. */
-  heldStep: z.optional(z.nullable(z.strictObject({
-    invocationId: WorkflowInvocationRecordIdSchema,
-    label: z.string().check(z.minLength(1)),
-    laneLabel: z.optional(z.string().check(z.minLength(1))),
-  }))),
+  heldStep: z.optional(z.nullable(z.union([
+    z.strictObject({
+      // Existing review holds have no discriminator on the wire.
+      kind: z.optional(z.literal('waiting_for_review')),
+      invocationId: WorkflowInvocationRecordIdSchema,
+      label: z.string().check(z.minLength(1)),
+      laneLabel: z.optional(z.string().check(z.minLength(1))),
+    }),
+    z.strictObject({
+      kind: z.literal('child_session_permission'),
+      invocationId: WorkflowInvocationRecordIdSchema,
+      label: z.string().check(z.minLength(1)),
+      laneLabel: z.optional(z.string().check(z.minLength(1))),
+      sessionId: preservedBoundedNfcString(191, 'Session ids'),
+    }),
+  ]))),
   /** Server-indexed current review holds; omission means the operation did not read the count. */
   heldCount: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())),
   /** Opened by the authorized list host; null is unreadable, omission is an operation that did not open it. */
@@ -657,6 +668,8 @@ export const WorkflowProgressEnvelopeV1Schema = lazyZodSchema(() => z.strictObje
   containerResult: z.optional(WorkflowContainerResultSelectorV1Schema),
   resultContract: zMini.optional(StrictJsonValueSchema),
   execution: z.optional(WorkflowExecutionCorrespondenceV1Schema),
+  /** Content-free observation from the admitted Session input. */
+  sessionPermissionPending: z.optional(z.boolean()),
   /** Exact admitted leaf rows; conversation targets and workspace stay leaf-owned. */
   sharedConversationInvocationRecordId: z.optional(z.strictObject({
     session: zMini.optional(WorkflowInvocationRecordIdSchema),
@@ -764,6 +777,7 @@ export const WorkflowInvocationFactV1Schema = lazyZodSchema(() => z.strictObject
   failureCause: z.optional(ActionFailureCauseV1Schema),
   reasonDetails: z.optional(WorkflowConversationUnavailableDetailsV1Schema),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
+  sessionPermissionPending: z.optional(z.boolean()),
   execution: z.optional(WorkflowExecutionCorrespondenceV1Schema),
   sharedConversationInvocationRecordId: z.optional(z.strictObject({
     session: zMini.optional(WorkflowInvocationRecordIdSchema), detached_run: zMini.optional(WorkflowInvocationRecordIdSchema),
@@ -808,6 +822,8 @@ export function applyWorkflowInvocationFactV1(
   const wasTerminal = observation && (observation.previousLifecycle === 'completed' || observation.previousLifecycle === 'failed' || observation.previousLifecycle === 'cancelled');
   return WorkflowProgressEnvelopeV1Schema.parse({
     ...currentProgress, ...definedFields,
+    ...(observation && observation.lifecycle !== 'waiting_for_approval' && currentProgress.sessionPermissionPending
+      ? { sessionPermissionPending: false } : {}),
     ...(timing ? { timing: { ...timing, ...(observedAt !== undefined && terminal && !wasTerminal && timing.finishedAt === undefined
       ? { finishedAt: observedAt } : {}) } } : {}),
     ...(resultProvenance !== undefined ? { resultProvenance: mergeWorkflowResultProvenanceV1(currentProgress.resultProvenance, resultProvenance) } : {}),

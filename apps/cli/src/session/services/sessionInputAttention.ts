@@ -2,6 +2,8 @@ import type { UpdateContainer } from '@happier-dev/protocol/updates';
 import { readSessionProjectedPendingRequestCount } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
+export type SessionInputAttention = 'permission' | 'user_action' | null;
+
 /** Consume request-count pushes on the input observer's existing socket. */
 export function createSessionInputAttentionObserver(params: Readonly<{
   token: string;
@@ -10,14 +12,14 @@ export function createSessionInputAttentionObserver(params: Readonly<{
   signal?: AbortSignal;
   serverFeaturesSnapshot?: Parameters<typeof fetchSessionById>[0]['serverFeaturesSnapshot'];
   resolveAuthorizationHeaders?: Parameters<typeof fetchSessionById>[0]['resolveAuthorizationHeaders'];
-  onAttentionRequired: (required: boolean) => Promise<void>;
+  onAttentionRequired: (attention: SessionInputAttention) => Promise<void>;
 }>) {
   let pendingRequests = {
     pendingPermissionRequestCount: params.initialSession?.pendingPermissionRequestCount,
     pendingUserActionRequestCount: params.initialSession?.pendingUserActionRequestCount,
   };
   let refresh = false;
-  let published: boolean | undefined;
+  let published: SessionInputAttention | undefined;
   return {
     onSessionUpdate(body: Extract<UpdateContainer['body'], { t: 'update-session' }>) {
       if (body.pendingPermissionRequestCount === undefined && body.pendingUserActionRequestCount === undefined) return;
@@ -44,9 +46,12 @@ export function createSessionInputAttentionObserver(params: Readonly<{
         } catch { refresh = true; }
       }
       const count = readSessionProjectedPendingRequestCount(pendingRequests);
-      if (count !== null && (count > 0) !== published) {
-        await params.onAttentionRequired(count > 0);
-        published = count > 0;
+      if (count === null) return;
+      const attention = (pendingRequests.pendingPermissionRequestCount ?? 0) > 0 ? 'permission'
+        : count > 0 ? 'user_action' : null;
+      if (attention !== published) {
+        await params.onAttentionRequired(attention);
+        published = attention;
       }
     },
   };

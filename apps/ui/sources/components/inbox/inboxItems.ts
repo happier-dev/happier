@@ -256,8 +256,11 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
                     ...(onceDelivery ? { onceDelivery } : {}) } });
         } else if (item.kind === 'workflow_run') {
             if (!input.workflowServerId) continue;
-            const focus = { kind: 'workflow_run', id: item.runId, serverId: input.workflowServerId } as const;
             const summary = item.row.summary;
+            const held = summary?.heldStep;
+            const focus = held?.kind === 'child_session_permission'
+                ? { kind: 'session', id: held.sessionId, serverId: input.workflowServerId } as const
+                : { kind: 'workflow_run', id: item.runId, serverId: input.workflowServerId } as const;
             const workStatus = summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null;
             const type = workStatus?.attentionType ?? 'update';
             const view = inboxItemView(type);

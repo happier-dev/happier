@@ -378,6 +378,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       ...(progress.reason?.runtimeIssueV1 ? { runtimeIssueV1: progress.reason.runtimeIssueV1 } : {}),
       ...(progress.validationIssues ? { validationIssues: progress.validationIssues } : {}),
       ...(progress.execution ? { execution: progress.execution } : {}),
+      ...(progress.sessionPermissionPending ? { sessionPermissionPending: true } : {}),
       ...(progress.sharedConversationInvocationRecordId ? { sharedConversationInvocationRecordId: progress.sharedConversationInvocationRecordId } : {}),
       ...(progress.observationDeadline ? { observationDeadline: progress.observationDeadline } : {}),
       ...(progress.input === undefined ? {} : { input: WorkflowAuthoredInputV1Schema.parse(progress.input) }),
@@ -1285,7 +1286,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
     const attempt = (BigInt(index.attempt) + 1n).toString();
     const { review: _review, result: _result, reason: _reason, execution: _execution,
       timing: _timing, loopProgress: _loopProgress,
-      observationDeadline: _deadline, usage: _usage, interaction: _interaction, ...retained } = persisted.progress;
+      observationDeadline: _deadline, usage: _usage, interaction: _interaction, sessionPermissionPending: _sessionPermissionPending, ...retained } = persisted.progress;
     const progress = WorkflowProgressEnvelopeV1Schema.parse({ ...retained, attempt,
       input: StrictJsonValueSchema.parse(input), previousAttemptRecordId: index.id,
       recovery: { conversation: 'same_conversation', input: { kind: 'replacement', value: input } } });

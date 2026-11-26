@@ -84,12 +84,20 @@ function InboxWorkflowRunRow(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const { item, serverId } = props;
+    const held = item.row.summary?.heldStep;
+    const permissionSessionId = held?.kind === 'child_session_permission' ? held.sessionId : null;
     const pending = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => { pending.current?.abort(); pending.current = null; }, [item.runId, serverId]);
     const open = async () => {
         if (pending.current !== null) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !selectActiveServerAccountScopeForServer(lifetime.scope, serverId)) return;
+        if (permissionSessionId !== null) {
+            const focus: InboxItemFocus = { kind: 'session', id: permissionSessionId, serverId: lifetime.scope.serverId };
+            if (props.onSelectItem) props.onSelectItem(focus);
+            else props.navigate(resolveInboxItemPageRoute(focus));
+            return;
+        }
         const controller = new AbortController();
         pending.current = controller;
         const retirement = lifetime.onRetire(() => controller.abort());
@@ -141,7 +149,7 @@ function InboxWorkflowRunRow(props: Readonly<{
                 ? <Icon name={settledMarker.icon} size={18} color={theme.colors.text.secondary} />
                 : <Icon name="hand" size={18} color={theme.colors.text.secondary} />}
         trailingAccessory={props.showReview ? <RoundButton testID={`inbox.run.${item.runId}.review`}
-            size="small" display="secondary" title={settled ? t('inbox.work.groups.openRun') : t('inbox.work.rows.review')} action={open} /> : undefined}
+            size="small" display="secondary" title={settled ? t('inbox.work.groups.openRun') : permissionSessionId !== null ? t('runs.openSession') : t('inbox.work.rows.review')} action={open} /> : undefined}
         onPress={() => { void open(); }} />;
 }
 

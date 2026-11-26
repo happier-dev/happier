@@ -690,11 +690,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             })),
         [structureProjector, structureProgressById, props.invocationStructure, props.invocations],
     );
+    const held = props.run.heldStep;
+    const permissionHold = held?.kind === 'child_session_permission' ? held : null;
     const attentionRows = React.useMemo(
         () => props.invocations.filter((entry) => isWorkflowAttentionInvocation(entry.lifecycle, derivedStructure.get(entry.id)?.coverageKind, props.run.state, props.cancelRequested)),
         [derivedStructure, props.invocations, props.run.state, props.cancelRequested],
     );
-    const attentionCount = attentionRows.length;
+    const attentionCount = attentionRows.length + (permissionHold && !attentionRows.some(row => row.id === permissionHold.invocationId) ? 1 : 0);
     const approvalPresentation = React.useMemo(() => selectWorkflowRunApprovalPresentation({
         requests: props.publicationRequests ?? [], waitingInvocations: attentionRows,
         progressByInvocationId: structureProgressById,
@@ -707,6 +709,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         const byNode = new Map<string, IndexRow>();
         const occurrenceOf = (invocation: WorkflowRunInvocationIndexV1) => derivedStructure.get(invocation.id)?.occurrence ?? [];
         for (const invocation of attentionRows) {
+            if (invocation.id === permissionHold?.invocationId) continue;
             const nodeId = derivedStructure.get(invocation.id)?.nodeId ?? null;
             const repeated = occurrenceOf(invocation).some((coordinate) => coordinate.kind === 'item' || coordinate.kind === 'iteration');
             // Distinct approval decisions each keep their exact Open request entry.
@@ -726,7 +729,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             row.invocation = row.members[0] ?? row.invocation;
         }
         return rows;
-    }, [attentionRows, derivedStructure, approvalPresentation.byInvocationId]);
+    }, [attentionRows, derivedStructure, approvalPresentation.byInvocationId, permissionHold?.invocationId]);
     /**
      * Activity lists the work inside the Run. The Run's own root row repeats what the header and
      * outcome already say, and Map and Steps never show it either.
@@ -927,7 +930,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // One primary per view: while a hold is open beside the Run, its own card carries the primary,
     // so the index's Review stays bordered; with nothing open, the first hold is the page's next step.
     // A phone page keeps what needs you in a dock in thumb reach instead of a section above the Map (phone-P1).
-    const phoneDock = phone && props.embedded !== true && attentionIndexRows.length > 0;
+    const phoneDock = phone && props.embedded !== true && (attentionIndexRows.length > 0
+        || permissionHold !== null && props.onOpenSession !== undefined);
     const [dockHeightPx, setDockHeightPx] = React.useState(0);
     // The page ends above the phone's floating bottom chrome instead of under it.
     const chromeClearance = useFloatingChromeClearance();
@@ -1551,7 +1555,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 </View>
             </View>
 
-            {attentionRows.length === 0 || phoneDock ? null : (
+            {attentionCount === 0 || phoneDock ? null : (
                 <View
                     testID={`${testIDPrefix}-needs-you`}
                     style={[styles.section, pageSectionStyle, phone ? null : styles.onTitleEdge]}
@@ -1572,6 +1576,22 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                         run-A): the amber stays on the hand, the held step on the Map and the review card. */}
                     <ListPresentationProvider value="page" pageInsets="contained">
                         <ItemGroup header="none" constrainToContentWidth={false}>
+                            {permissionHold ? (
+                                <Item
+                                    title={t('workflows.run.attentionWaitRow', { step: permissionHold.label })}
+                                    subtitle={permissionHold.laneLabel}
+                                    icon={<Icon name="hand" size={ICON_SIZE.sm} color={theme.colors.state.warning.foreground} />}
+                                    showChevron={false}
+                                    rightElement={props.onOpenSession === undefined ? undefined : (
+                                        <ToolbarButton
+                                            testID={`${testIDPrefix}-needs-you-${permissionHold.invocationId}`}
+                                            onPress={() => props.onOpenSession?.(permissionHold.sessionId)}
+                                            label={t('runs.openSession')}
+                                            size="md"
+                                        />
+                                    )}
+                                />
+                            ) : null}
                             {attentionIndexRows.map(({ invocation, members }) => {
                                 const request = approvalPresentation.byInvocationId.get(invocation.id);
                                 if (request && props.onOpenPublicationRequest) return (
@@ -2129,9 +2149,15 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
     const dockStep = attentionIndexRows[0]?.invocation;
     const main = <View style={[styles.outline, maxWidthStyle]}>{outline}
-        {phoneDock && dockStep !== undefined ? <WorkflowRunNeedsYouDock testIDPrefix={`${testIDPrefix}-needs-you-dock`}
-            count={attentionIndexRows.length} steps={attentionIndexRows.map(({ invocation }) => invocationLabel(invocation)).filter((label): label is string => label !== null)}
-            onReview={(event) => selectInvocation(dockStep.id, event)} onHeight={setDockHeightPx} primary={primaryAction === null} /> : null}
+        {phoneDock ? <WorkflowRunNeedsYouDock testIDPrefix={`${testIDPrefix}-needs-you-dock`}
+            count={attentionIndexRows.length + (permissionHold === null ? 0 : 1)}
+            steps={[...(permissionHold === null ? [] : [permissionHold.label]),
+                ...attentionIndexRows.map(({ invocation }) => invocationLabel(invocation)).filter((label): label is string => label !== null)]}
+            actionLabel={permissionHold !== null && props.onOpenSession ? t('runs.openSession') : undefined}
+            onReview={(event) => {
+                if (permissionHold !== null && props.onOpenSession) props.onOpenSession(permissionHold.sessionId);
+                else if (dockStep) selectInvocation(dockStep.id, event);
+            }} onHeight={setDockHeightPx} primary={primaryAction === null} /> : null}
     </View>;
     // The detail renders beside whichever presentation shows it, at the one position every presentation shares.
     const withRetainedInspector = (content: React.ReactNode, presented: boolean) => <>
