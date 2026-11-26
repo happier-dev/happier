@@ -123,7 +123,7 @@ describe('core e2e: execution runs (review) supports triage updates', () => {
         encryptionVariant: content.selectedUsesDataKeyVariant ? 'dataKey' : 'legacy' }, content: value,
     }));
     const act = async (actionId: 'execution.run.start' | 'execution.run.get' | 'execution.run.action', input: unknown) => {
-      const result = await actions.execute(actionId, input, { sessionId });
+      const result = await actions.execute(actionId, input, { defaultSessionId: sessionId });
       if (!result.ok) throw new Error(JSON.stringify(result));
       return result.result;
     };
