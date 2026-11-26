@@ -4,8 +4,7 @@ import type { TriageProjectCandidateV1 } from './launchPlacement.js';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import type { TriageActionResolutionHostV1 } from './actionResolution.js';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
-import { deploymentRevisionShortLabelV1 } from '@happier-dev/deployment-protocol/v1';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/deployment-protocol/v1';
+import { deploymentReceiptTitleV1, deploymentRevisionShortLabelV1, readDeploymentFailureRecoveryV1 } from '@happier-dev/deployment-protocol/v1';
 import {
     ProtocolArtifactGetOutputV1Schema,
     ProtocolServiceHealthNoticeSourceV1Schema, ProtocolServiceHealthNoticePageV1Schema,
@@ -134,8 +133,7 @@ async function readFailureSubject(
         return true;
     };
     let reference: { actionId: string; input: JsonReadInput; retained?: object };
-    // The receipt's own title for the composer chip, as its page says it; unknown → the generic reference label.
-    let receiptTitle: string | undefined;
+    let evidenceLabel = 'Failure reference';
     let receiptFailure: NonNullable<Extract<PluginActionResultById['deployments.receipts.get'], { ok: true }>['investigation']>['failure'];
     switch (subject.kind) {
         case 'workflowRun': {
@@ -151,6 +149,7 @@ async function readFailureSubject(
                 state: result.run.state, revision: result.run.revision,
                 createdAt: result.run.createdAt, finishedAt: result.run.finishedAt,
             } };
+            evidenceLabel = 'Workflow Run reference';
             break;
         }
         case 'deploymentReceipt': {
@@ -163,8 +162,9 @@ async function readFailureSubject(
             const receipt = result.deployment;
             if (signal.aborted) return null;
             const source = result.investigation?.source;
+            const revision = result.investigation?.sourceLabel;
             receiptFailure = result.investigation?.failure;
-            receiptTitle = failedReceiptTitle(receipt.operation, receipt.state, source ? deploymentRevisionShortLabelV1(source) : undefined);
+            evidenceLabel = deploymentReceiptTitleV1(receipt, revision ? deploymentRevisionShortLabelV1(revision) : null);
             reference = { actionId: 'deployments.receipts.get', input: address, retained: {
                 state: receipt.state, receiptRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
                 requestedAtMs: receipt.requestedAtMs, startedAtMs: receipt.startedAtMs, settledAtMs: receipt.settledAtMs,
@@ -211,6 +211,7 @@ async function readFailureSubject(
             if (!await environmentPlacement(subject.environmentId)) return null;
             if (subject.readiness && subject.readiness.projectId !== projectSourceId) return null;
             reference = { actionId: 'deployments.environments.get', input: { serverId, environmentId: subject.environmentId } };
+            evidenceLabel = 'Environment reference';
             break;
         }
     }
@@ -219,22 +220,11 @@ async function readFailureSubject(
         selected ? undefined : projectSourceId, signal);
     if (!placement) return null;
     return { ...placement,
-        evidence: { source: { kind: 'alert' as const, label: subject.kind === 'deploymentEnvironment' ? 'Environment reference'
-            : subject.kind === 'deploymentReceipt' ? receiptTitle ?? 'Deployment reference'
-                : subject.kind === 'workflowRun' ? 'Workflow Run reference' : 'Failure reference' }, author: { kind: 'process' as const },
+        evidence: { source: { kind: 'alert' as const, label: evidenceLabel }, author: { kind: 'process' as const },
             text: JSON.stringify({ subject, ...(receiptFailure ? {
                 failureCause: receiptFailure.failureCause,
                 recovery: readDeploymentFailureRecoveryV1(receiptFailure.code, receiptFailure),
             } : {}), read: reference }) } };
-}
-
-/**
- * A failed receipt's title in the receipt page's words ("Deploy of 302cf72 failed"). Investigation only starts from a
- * failed receipt, so only that state is named; anything else keeps the generic reference label.
- */
-function failedReceiptTitle(operation: string | undefined, state: string, revision: string | undefined): string | undefined {
-    if (state !== 'failed' || !revision) return undefined;
-    return operation === 'rollback' ? `Rollback to ${revision} failed` : operation === 'deploy' ? `Deploy of ${revision} failed` : undefined;
 }
 
 /** Subject identity chooses the controller and its accepted Source folders once.

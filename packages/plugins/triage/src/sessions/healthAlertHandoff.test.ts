@@ -7,7 +7,7 @@ import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testin
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { readTriageHealthAlertHandoffV1 } from './healthAlertHandoff.js';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { readDeploymentReceiptActionFactsV1 } from '@happier-dev/deployments/contracts/v1';
 
 function receiptFixture(
     sourceIntent: NonNullable<DeploymentContentV1['sourceIntent']>,
@@ -27,6 +27,14 @@ function receiptFixture(
         revision: { headerVersion: deployment.contentHeaderVersion, bodyVersion: deployment.contentBodyVersion },
         seq: 1, createdAt: 1, updatedAt: 1,
     } };
+}
+
+function readReceiptFixture(receipt: ReturnType<typeof receiptFixture>, investigation: boolean) {
+    const { deployment, content } = receipt;
+    const result = { ok: true as const, deployment };
+    return investigation ? readDeploymentReceiptActionFactsV1(result, {
+        deploymentId: deployment.id, environmentId: deployment.environmentId, projection: 'investigation',
+    }, async () => ({ deployment, content })) : result;
 }
 
 describe('owned historical health evidence with current read admission', () => {
@@ -133,9 +141,8 @@ describe('typed failure subjects through the existing investigation owner', () =
                     acceptedContext: { workspaceTarget: { project: { machineId: 'machine-a', workspaceRefId: 'workspace-a',
                         directory: '/project', checkoutRootPath: '/project' } } },
                     result: 'PRIVATE LOG MUST NOT BE COPIED' };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: receipt.deployment,
-                    ...(input && typeof input === 'object' && !Array.isArray(input) && input.projection === 'investigation'
-                        ? { investigation: projectDeploymentReceiptInvestigationV1(receipt.content) } : {}) };
+                if (id === 'deployments.receipts.get') return readReceiptFixture(receipt,
+                    input !== null && typeof input === 'object' && !Array.isArray(input) && input.projection === 'investigation');
                 if (id === 'artifact.get') {
                     const result = await artifactExecutor.execute('artifact.get', input, {
                         surface: 'ui', authority: 'present_user', runtimeAccountId: 'account-a', serverId: 'server-a',
@@ -229,18 +236,22 @@ describe('typed failure subjects through the existing investigation owner', () =
 });
 
 describe('a failed receipt names itself the way its page does (D4c)', () => {
-    it.each(['current', 'missing'] as const)(
-        'labels a stored Compose source from native receipt evidence (%s)', async state => {
+    it.each([
+        ['deploy', true, 'Deploy of 302cf72 failed'],
+        ['rollback', true, 'Rollback to 302cf72 failed'],
+        ['promote', true, 'Promotion of 302cf72 failed'],
+        ['teardown', true, 'Couldn’t remove 302cf72'],
+        ['deploy', false, 'Failed'],
+    ] as const)('labels a failed %s from native receipt evidence (revision %s)', async (operation, hasInvestigation, label) => {
         const subject = { kind: 'deploymentReceipt', serverId: 'server-a', environmentId: 'environment', deploymentId: 'deployment-s' };
         const receipt = receiptFixture({ kind: 'stored', contentRevision: 2,
             composeDigest: `sha256:302cf72${'0'.repeat(57)}`, document: 'services: {}', profiles: [], services: [] },
-        { id: subject.deploymentId, environmentId: subject.environmentId });
+        { id: subject.deploymentId, environmentId: subject.environmentId, operation });
         const host = {
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             executeAction: async (id: string) => {
                 if (id === 'projects.list') return { items: [], truncated: false };
-                if (id === 'deployments.receipts.get') return { ok: true, deployment: receipt.deployment,
-                    ...(state === 'current' ? { investigation: projectDeploymentReceiptInvestigationV1(receipt.content) } : {}) };
+                if (id === 'deployments.receipts.get') return readReceiptFixture(receipt, hasInvestigation);
                 if (id === 'deployments.environments.get') return { ok: true, environment: { id: 'environment',
                     serverId: 'server-a', projectSourceId: 'project', runtimeTargetLinkId: 'link', controllerMachineId: 'machine-a' }, targetLinks: [] };
                 throw new Error(`Unexpected read ${id}`);
@@ -250,9 +261,8 @@ describe('a failed receipt names itself the way its page does (D4c)', () => {
             context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
             sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured' });
         const result = await readTriageHealthAlertHandoffV1(host, handoff, new AbortController().signal);
-        expect(result?.kind === 'ready' && result.evidence.source.label)
-            .toBe(state === 'current' ? 'Deploy of 302cf72 failed' : 'Deployment reference');
-        if (state !== 'current') {
+        expect(result?.kind === 'ready' && result.evidence.source.label).toBe(label);
+        if (!hasInvestigation) {
             const evidence = result?.kind === 'ready' ? JSON.parse(result.evidence.text) : null;
             expect(evidence).not.toHaveProperty('failureCause');
             expect(evidence).not.toHaveProperty('recovery');
