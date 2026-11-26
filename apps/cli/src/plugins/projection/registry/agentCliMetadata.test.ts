@@ -17,6 +17,7 @@ import { activatePluginRuntimeRegistry } from '@/plugins/runtime/lifecycle/manag
 import { projectActivatedAgentContributions } from '@/plugins/runtime/composition/activatedContributions';
 import { createBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
 import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 
 function metadata(params: Readonly<{
   environmentVariables?: readonly string[];
@@ -57,7 +58,8 @@ describe('native Agent CLI auth metadata', () => {
     const pluginRootPath = resolve('../../packages/plugins/muse');
     const loaded = { pluginId: manifest.id, manifest, pluginRootPath,
         manifestPath: join(pluginRootPath, 'plugin.json'), daemonEntryPath: '@happier-dev/plugins-muse',
-        devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@happier-dev/plugins-muse' } } as const;
+        devDaemonEntryPath: null, sourceSpec: { kind: 'bundled', locator: '@happier-dev/plugins-muse',
+          trustPolicy: 'local_trusted', installPolicy: 'copy' } } satisfies LoadedPlugin;
     const base = createResolvedContributionRegistry(projectLoadedPluginContributes({
       loadResult: { loadedPlugins: [loaded],
       diagnosticsByPluginId: {} }, provenance: 'first_party',
@@ -74,7 +76,7 @@ describe('native Agent CLI auth metadata', () => {
     });
     try {
       const entry = projectActivatedAgentContributions(base, activated, () => true).agents[0]?.catalogEntry;
-      expect({ nativeHome: entry?.connectedAccountNativeHome, diagnostics: activated.diagnosticsByPluginId })
+      expect({ nativeHome: entry?.connectedAccountNativeHome, diagnostics: activated.pluginDiagnosticsByPluginId })
         .toMatchObject({ nativeHome: MUSE_NATIVE_HOME });
       const spec = await entry?.getCliAuthSpec?.();
       const home = join(directory, 'session-home');

@@ -71,7 +71,7 @@ export function carriesNonLocalRequesterAuthority(context: Readonly<{
 
 /** Only work for this runtime's own Account can borrow its local credentials. */
 export async function canUseLocalRuntimeAccount(
-  context: ActionExecutorContext | undefined,
+  context: (ActionExecutorContext & Pick<RpcHandlerContext, 'callerInputAuthorization'>) | undefined,
   localAccountId: string | null,
   serverId?: string,
 ): Promise<boolean> {
