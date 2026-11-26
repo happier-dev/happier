@@ -77,10 +77,13 @@ describe('native inventory failure through capability RPC and the CLI Action', (
       createExecutorFn: () => ({ ...executor, resolveSessionTarget: unavailable }),
     });
     expect(process.exitCode).toBe(1);
+    const failureCause = { phase: 'client_start', failureReason: 'unknown', actionCause: {
+      phase: 'capabilities.invoke', errorClass: 'Error', errorCode: kind === 'provider' ? code : null, httpStatus: null,
+    }, ...(kind === 'provider' ? { providerErrorCode: code } : {}) };
     expect(JSON.parse(output)).toMatchObject({ ok: false, kind: 'actions_invoke', error: { code, message: code,
-      ...(kind === 'provider' ? { details: { retryable: false } } : {}),
+      details: { failureCause, ...(kind === 'provider' ? { retryable: false } : {}) },
     } });
-    expect(responses).toEqual([{ ok: false, error: { code, message: code,
+    expect(responses).toEqual([{ ok: false, error: { code, message: code, failureCause,
       ...(kind === 'provider' ? { retryable: false } : {}),
     } }]);
     expect(completion.mock.calls).toEqual([['[RPC] Request completed', expect.objectContaining({
