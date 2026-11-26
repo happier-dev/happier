@@ -163,8 +163,11 @@ their own credential out of service. Every other custodian change (adding or reo
 routes, another source or broker location, and the saved-resource test) is current
 consent: the custodian may offer credentials in the unarchived Team and satisfies its
 authentication policy. Suspending or removing the custodian's membership advances the
-authority revision of the resources they offer, and an authority change wakes vendor-native
-controllers as resource deletion does.
+authority revision of the resources they offer, so the next broker or vendor-native
+admission against them refuses. An authority-changing resource update, an audience change
+and deletion also wake the vendor-native controllers serving the resource. Membership,
+Group and Team withdrawal advance the revision without that wake, so an installed
+vendor-native rule stays until its controller next recomputes its policy.
 
 The initiator may be a foreign-owned Machine on which the recipient has current
 Machine Use admission and the exact Session/AccessKey binding. The Machine grant
