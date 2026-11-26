@@ -1,3 +1,4 @@
+import { readString } from '@happier-dev/plugin-sdk';
 import type { AgentSessionRuntimeEvent, UsageObservationTokens } from '@happier-dev/plugin-sdk/agents/runtime';
 import { normalizePiPaidUsage } from '../../usage/paidUsage.js';
 
@@ -11,6 +12,32 @@ function readNonNegativeInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.trunc(value)
     : null;
+}
+
+export function projectPiAssistantUsage(params: Readonly<{
+  record: Readonly<Record<string, unknown>>;
+  turnId: string;
+  observedAtMs: number;
+}>): Omit<Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>, 'sequence' | 'sessionId'> | null {
+  const { record } = params;
+  const nativeSessionId = readString(record.nativeSessionId);
+  const inferenceId = readString(record.inferenceId);
+  if (!nativeSessionId || !inferenceId) return null;
+  const paid = normalizePiPaidUsage(record.usage, record.stopReason);
+  if (!paid || !paid.cost && Object.values(paid.tokens).every(value => value === null)) return null;
+  const modelId = readString(record.model);
+  return {
+    kind: 'usage-observed',
+    turnId: params.turnId,
+    emittedAtMs: readNonNegativeInteger(record.timestamp) ?? params.observedAtMs,
+    observationId: `pi-assistant:${nativeSessionId}:${inferenceId}`,
+    source: 'pi-assistant-usage',
+    scope: 'turn_delta',
+    ...(modelId ? { modelId } : {}),
+    tokens: paid.tokens,
+    ...(paid.cost ? { cost: paid.cost } : {}),
+    accounting: { nativeSessionId, inferenceId, inputIncludesCache: false, outputIncludesReasoning: true },
+  };
 }
 
 export function createPiSessionStatsUsageProjector() {

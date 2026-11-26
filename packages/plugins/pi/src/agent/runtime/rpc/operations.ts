@@ -72,7 +72,7 @@ import {
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
 import { readPiNoToolsRefusal, resolvePiEffectiveLaunchPermissionPolicy } from './permissions.js';
 import { createPiSessionModelsSource } from '../modelsSource.js';
-import { createPiSessionStatsUsageProjector } from './usage.js';
+import { createPiSessionStatsUsageProjector, projectPiAssistantUsage } from './usage.js';
 import { AGENT_DEFINITION } from '../../definition.js';
 import {
   buildPiExtensionUiQuestionRequest,
@@ -82,7 +82,7 @@ import {
   type PiBlockingExtensionUiRequest,
   type PiExtensionUiResponse,
 } from './extensionUi.js';
-import { PI_MCP_APPROVAL_CALL_PREFIX, PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE, PI_MCP_DELIVERY_RECORD_TYPE } from '../../tools/extensionSource.js';
+import { PI_ASSISTANT_USAGE_RECORD_TYPE, PI_MCP_APPROVAL_CALL_PREFIX, PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE, PI_MCP_DELIVERY_RECORD_TYPE } from '../../tools/extensionSource.js';
 import { preparePiHappierToolsExtension, type PreparedPiHappierToolsExtension } from '../../tools/assets.js';
 
 const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
@@ -526,7 +526,7 @@ function createPiExecSpec(
 const PI_TURN_OUTPUT_RECORD_TYPES: ReadonlySet<string | null> = new Set([
   'message_start', 'message_update', 'message_end',
   'tool_execution_start', 'tool_execution_update', 'tool_execution_end',
-  'turn_end', 'agent_end',
+  PI_ASSISTANT_USAGE_RECORD_TYPE, 'turn_end', 'agent_end',
 ]);
 
 function createRuntimeOperations(params: Readonly<{
@@ -540,6 +540,7 @@ function createRuntimeOperations(params: Readonly<{
   refreshCommands?: () => void;
   refreshModels?: () => void;
   observeUsage?: (promptCacheLastUseAtMs?: number) => void;
+  observeAssistantUsage?: (record: Readonly<Record<string, unknown>>, turnId: string, observedAtMs: number) => void;
   mcpServerNames?: readonly string[];
   cancelBlockingExtensionUiRequests: () => Promise<void>;
   adoptsHeldAgent?: boolean;
@@ -804,6 +805,10 @@ function createRuntimeOperations(params: Readonly<{
       activeTurnJoinedInProgress = true;
     }
     const turn = activeTurn;
+    if (type === PI_ASSISTANT_USAGE_RECORD_TYPE) {
+      if (turn) params.observeAssistantUsage?.(record, turn.turnId, observedAtMs);
+      return;
+    }
     if (turn && type === PI_MCP_DELIVERY_RECORD_TYPE) {
       if (!Array.isArray(record.tools) || !record.tools.every((name): name is string => typeof name === 'string')) {
         nativeMcpInventoryIncomplete = true;
@@ -1904,7 +1909,10 @@ async function createPiConversationRuntimeOperations(
       return availableCommandsKnown && availableExtensionCommandNames.has(name);
     },
     refreshCommands: () => { void refreshAvailableCommands(); },
-    ...(happierSessionId ? { observeUsage(promptCacheLastUseAtMs?: number) {
+    ...(happierSessionId ? { observeAssistantUsage(record, turnId, observedAtMs) {
+      const event = projectPiAssistantUsage({ record, turnId, observedAtMs });
+      if (event) publishRuntimeEvent(event);
+    }, observeUsage(promptCacheLastUseAtMs?: number) {
       usageObservationChain = usageObservationChain.then(async () => {
         const response = await rpc.send({ type: 'get_session_stats' }, 30_000);
         const observedAtMs = Date.now();

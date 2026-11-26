@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildPiHappierToolsExtensionSource,
+  PI_ASSISTANT_USAGE_RECORD_TYPE,
   PI_HAPPIER_TOOLS_CONFIG_FLAG,
 } from './extensionSource.js';
 import { preparePiHappierToolsExtension } from './assets.js';
@@ -71,6 +72,16 @@ describe('Pi Happier tools extension', () => {
     const agentDir = join(root, 'agent');
     const prepared = await preparePiHappierToolsExtension({ directory: root });
     let session: Awaited<ReturnType<typeof pi.createAgentSession>>['session'] | undefined;
+    const usageRecords: unknown[] = [];
+    const writeSync = fs.writeSync;
+    const usageBoundary = vi.spyOn(fs, 'writeSync').mockImplementation((...args) => {
+      const [fd, data] = args;
+      if (fd === 1 && typeof data === 'string' && data.startsWith(`{"type":"${PI_ASSISTANT_USAGE_RECORD_TYPE}"`)) {
+        usageRecords.push(JSON.parse(data));
+        return Buffer.byteLength(data);
+      }
+      return Reflect.apply(writeSync, fs, args);
+    });
     try {
       const userExtensionPath = join(agentDir, 'extensions', 'user.js');
       mkdirSync(join(agentDir, 'extensions'), { recursive: true });
@@ -121,9 +132,21 @@ describe('Pi Happier tools extension', () => {
       ]);
       expect(events).toEqual(['input', 'input']);
       await session.sendUserMessage('transform me');
+      const sessionManager = session.sessionManager;
+      const assistantEntries = sessionManager.getEntries().filter(entry =>
+        entry.type === 'message' && entry.message.role === 'assistant');
+      expect(assistantEntries).toHaveLength(3);
+      expect(usageRecords).toEqual(assistantEntries.map(entry => expect.objectContaining({
+        type: PI_ASSISTANT_USAGE_RECORD_TYPE,
+        nativeSessionId: sessionManager.getSessionId(),
+        inferenceId: entry.id,
+        model: model.id,
+        usage: expect.objectContaining({ totalTokens: 0 }),
+      })));
       expect(observations.at(-1)).toEqual({ type: 'happy-pi-user-input', text: 'transform me' });
       expect(events).toEqual(['input', 'input', 'input', 'start', 'transformed by discovered extension']);
     } finally {
+      usageBoundary.mockRestore();
       session?.dispose();
       await prepared.dispose();
       rmSync(root, { recursive: true, force: true });

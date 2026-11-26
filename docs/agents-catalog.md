@@ -952,6 +952,13 @@ rows. The CLI usage publisher returns a sent, skipped, or failed result and logs
 sanitized warnings for transport failures, including a disconnected legacy transport.
 It does not retain a retry outbox.
 
+Pi reports each completed assistant response against its active Happier turn.
+The live observation uses Pi's persisted message entry ID, which the native
+usage importer also uses. A turn that makes several model calls can therefore
+carry several usage observations. Session stats keep their cumulative scope
+and supply context and any history that the runtime did not witness, including
+usage before a resume.
+
 Claude's foreground assistant usage carries the explicit request turn from
 its SDK or unified terminal operation through the native runtime event and
 Session usage publisher. Historical replay, unbound sidechains and whole-Session

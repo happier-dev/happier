@@ -37,6 +37,7 @@ import {
 } from '../../auth/services/requestAuth/index.js';
 import { buildPiCompletedContextCompactionPayload, type PiRuntimeEvent } from './events.js';
 import { createPiExecutionRunConversation, createPiRuntimeOperations } from './operations.js';
+import { PI_ASSISTANT_USAGE_RECORD_TYPE } from '../../tools/extensionSource.js';
 import recordedMcp from '../../transcripts/__fixtures__/pi-rpc-mcp-0.82.1.json';
 import recordedDelivery from '../../transcripts/__fixtures__/pi-rpc-mcp-delivery-0.82.1.json';
 
@@ -2027,48 +2028,95 @@ describe('createPiRuntimeOperations', () => {
     await runtime.dispose();
   });
 
-  it('publishes paid session stats through the canonical ingest request boundary', async () => {
-    const capture: Capture = { specs: [], written: [], sessionStats: {
-      sessionId: 'native-pi-paid',
-      tokens: { input: 3305, output: 4, cacheRead: 0, cacheWrite: 0, total: 3309 },
-      contextUsage: { tokens: 3309, contextWindow: 1047576 },
-      cost: 0,
-    } };
-    const runtime = await createRuntime(capture);
-    const events: AgentSessionRuntimeEvent[] = [];
-    const invariant = createAgentSessionTurnInvariant({ sessionId: 'happier-session-1' });
-    const rejected: unknown[] = [];
-    runtime.watch((event) => {
-      const result = invariant.observe(event);
-      if (result.status === 'rejected') rejected.push(result.diagnostic);
-      else if (result.status === 'accepted') events.push(result.event);
+  it('attributes live Pi usage to two successive Happier turns and a resumed turn', async () => {
+    const nativeSessionId = 'pi-provider-session-1';
+    const assistantEnd = (input: number) => ({
+      type: 'message_end',
+      message: { role: 'assistant', model: 'openai/gpt-4.1-mini',
+        content: [{ type: 'text', text: 'done' }],
+        usage: { input, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: input + 4 } },
     });
-    try {
-      const prompt = sendPrompt(runtime, 'hello');
-      await waitForWrittenCount(capture, 1);
-      await ackLastCommand(capture);
-      await prompt;
-      await emit(capture, { type: 'message_end', message: { role: 'assistant', model: 'openai/gpt-4.1-mini',
-        usage: { input: 3305, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 3309 } } });
-      await emit(capture, { type: 'agent_end', willRetry: false });
-      await vi.waitFor(() => expect(events.some(event => event.kind === 'usage-observed') || rejected.length > 0).toBe(true));
-      expect(rejected).toEqual([]);
-      const event = parseEvents(events).find(event => event.kind === 'usage-observed');
-      if (!event || event.kind !== 'usage-observed') throw new Error('Missing Pi usage');
-      const request = buildUsageEventIngestRequest({
-        sessionId: event.sessionId, observedAt: event.emittedAtMs,
-        turnId: event.turnId, externalKey: event.observationId,
-        observation: toNativeAgentUsageObservation(event, 'pi'),
-        metadata: buildNativeAgentUsageAccountingMetadata(event),
+    const stats = (input: number, output: number) => ({
+      sessionId: nativeSessionId,
+      tokens: { input, output, cacheRead: 0, cacheWrite: 0, total: input + output },
+      contextUsage: { tokens: input + output, contextWindow: 1047576 },
+      cost: 0,
+    });
+
+    async function runTurns(capture: Capture, turns: Array<{
+      id: string; inputs: number[]; stats: ReturnType<typeof stats>;
+    }>) {
+      const runtime = await createRuntime(capture);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const invariant = createAgentSessionTurnInvariant({ sessionId: 'happier-session-1' });
+      const rejected: unknown[] = [];
+      runtime.watch((event) => {
+        const result = invariant.observe(event);
+        if (result.status === 'rejected') rejected.push(result.diagnostic);
+        else if (result.status === 'accepted') events.push(result.event);
       });
-      expect(request).toMatchObject({ sessionId: 'happier-session-1',
-        scope: 'session_cumulative', modelId: 'openai/gpt-4.1-mini', tokens: { total: 3309, reasoning: 0 },
-        metadata: { usageAccounting: { nativeSessionId: 'native-pi-paid', historyComplete: true } },
-      });
-      expect(capture.sessionStatsRequestCount).toBe(1);
-    } finally {
-      await runtime.dispose();
+      try {
+        for (const [index, turn] of turns.entries()) {
+          capture.sessionStats = turn.stats;
+          const prompt = sendPrompt(runtime, 'hello', {
+            inputIds: [`input-${turn.id}`],
+            delivery: { kind: 'newTurn', turnId: turn.id },
+          });
+          await waitForWrittenCount(capture, index + 1);
+          await emit(capture, { type: 'agent_start' });
+          for (const input of turn.inputs) {
+            const record = assistantEnd(input);
+            await emit(capture, record);
+            await emit(capture, { ...record, type: 'turn_end' });
+          }
+          for (const [call, input] of turn.inputs.entries()) {
+            const { model, usage } = assistantEnd(input).message;
+            await emit(capture, { type: PI_ASSISTANT_USAGE_RECORD_TYPE, nativeSessionId,
+              inferenceId: `${turn.id}-${call}`, model, usage, timestamp: 100 + call });
+          }
+          await emit(capture, { type: 'agent_end', willRetry: false });
+          await ackLastCommand(capture);
+          await expect(prompt).resolves.toEqual({ status: 'admitted' });
+          await vi.waitFor(() => expect(events.filter(e =>
+            e.kind === 'usage-observed' && e.scope === 'session_cumulative')).toHaveLength(index + 1));
+        }
+        expect(rejected).toEqual([]);
+        expect(capture.sessionStatsRequestCount).toBe(turns.length);
+        return parseEvents(events).filter(e => e.kind === 'usage-observed').map(event =>
+          buildUsageEventIngestRequest({
+            sessionId: event.sessionId, observedAt: event.emittedAtMs,
+            turnId: event.turnId, externalKey: event.observationId,
+            observation: toNativeAgentUsageObservation(event, 'pi'),
+            metadata: buildNativeAgentUsageAccountingMetadata(event),
+          }));
+      } finally {
+        await runtime.dispose();
+      }
     }
+
+    const fresh = await runTurns({ specs: [], written: [] }, [
+      { id: 'first', inputs: [3305, 90], stats: stats(3395, 8) },
+      { id: 'second', inputs: [80], stats: stats(3475, 12) },
+    ]);
+    const resumed = await runTurns({ specs: [], written: [], initialRecords: [assistantEnd(3475)] }, [
+      { id: 'resumed', inputs: [50], stats: stats(3525, 16) },
+    ]);
+
+    expect([...fresh, ...resumed].filter(e => e.scope === 'turn_delta')).toMatchObject([
+      { turnId: 'first', tokens: { total: 3309, reasoning: 0 },
+        modelId: 'openai/gpt-4.1-mini', metadata: { usageAccounting: { nativeSessionId, inferenceId: 'first-0' } } },
+      { turnId: 'first', tokens: { total: 94 } },
+      { turnId: 'second', tokens: { total: 84 } },
+      { turnId: 'resumed', tokens: { total: 54 } },
+    ]);
+    expect(fresh.filter(e => e.scope === 'session_cumulative')).toMatchObject([
+      { turnId: null, tokens: { total: 3403 }, modelId: 'openai/gpt-4.1-mini',
+        metadata: { usageAccounting: { nativeSessionId, historyComplete: true } } },
+      { turnId: null, tokens: { total: 3487 } },
+    ]);
+    expect(resumed.filter(e => e.scope === 'session_cumulative')).toMatchObject([
+      { turnId: null, tokens: { total: 3541 }, metadata: { usageAccounting: { historyComplete: false } } },
+    ]);
   });
 
   it('gives each fetched usage snapshot a distinct identity after reopening the same Session', async () => {

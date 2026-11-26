@@ -4,6 +4,7 @@ export const PI_HAPPIER_TOOLS_CONFIG_FLAG = 'happier-tools-config';
 export const PI_MCP_APPROVAL_CALL_PREFIX = 'happier:mcp-approval:';
 export const PI_MCP_DELIVERY_RECORD_TYPE = 'happier-pi-mcp-delivery';
 export const PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE = 'happier-pi-mcp-capability-notice';
+export const PI_ASSISTANT_USAGE_RECORD_TYPE = 'happier-pi-assistant-usage';
 export const PI_USER_INPUT_NOTIFICATION_TYPE = 'happy-pi-user-input';
 
 export function buildPiHappierToolsExtensionSource(): string {
@@ -17,6 +18,7 @@ const CONFIG_FLAG = ${JSON.stringify(PI_HAPPIER_TOOLS_CONFIG_FLAG)};
 const MCP_APPROVAL_CALL_PREFIX = ${JSON.stringify(PI_MCP_APPROVAL_CALL_PREFIX)};
 const MCP_DELIVERY_RECORD_TYPE = ${JSON.stringify(PI_MCP_DELIVERY_RECORD_TYPE)};
 const MCP_CAPABILITY_NOTICE_RECORD_TYPE = ${JSON.stringify(PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE)};
+const ASSISTANT_USAGE_RECORD_TYPE = ${JSON.stringify(PI_ASSISTANT_USAGE_RECORD_TYPE)};
 const USER_INPUT_NOTIFICATION_TYPE = ${JSON.stringify(PI_USER_INPUT_NOTIFICATION_TYPE)};
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
 const TOOL_OUTPUT_MAX_LINES = 2000;
@@ -266,6 +268,23 @@ export default function happierPiToolsExtension(pi) {
       if (event.source === "extension" && typeof event.text === "string" && event.text.length > 0) {
         ctx.ui.notify(JSON.stringify({ type: USER_INPUT_NOTIFICATION_TYPE, text: event.text }));
       }
+    });
+    pi.on("agent_end", (event, ctx) => {
+      // Pi appends each completed message before agent_end. Match this run's
+      // assistant objects to the persisted entries used by native accounting.
+      // Stop at the first older assistant, and never read the whole history.
+      const pending = new Set(event.messages.filter(message => message.role === "assistant" && message.usage));
+      const manager = ctx.sessionManager;
+      const records = [];
+      for (let entry = manager.getLeafEntry(); pending.size && entry;
+        entry = entry.parentId ? manager.getEntry(entry.parentId) : undefined) {
+        if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+        if (!pending.delete(entry.message)) break;
+        const { usage, model, stopReason, timestamp } = entry.message;
+        records.push({ type: ASSISTANT_USAGE_RECORD_TYPE, nativeSessionId: manager.getSessionId(),
+          inferenceId: entry.id, usage, model, stopReason, timestamp });
+      }
+      for (const record of records.reverse()) fs.writeSync(1, JSON.stringify(record) + "\\n");
     });
     pi.on("before_agent_start", (event, ctx) => {
       const restricted = Array.isArray(config.nativeTools);
