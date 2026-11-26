@@ -88,3 +88,50 @@ test('public touched entry reports real compiler errors only against the explici
   assert.match(incomplete.stderr, /no complete package diagnostic result/u);
   assert.ok(!incomplete.stdout.includes('added: 0'), 'a failed launch must never become a zero delta');
 });
+
+test('public touched entry retains the missing preparation input while redacting its failure detail', async t => {
+  const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+  const temporary = join(repoRoot, '.project/tmp');
+  await mkdir(temporary, { recursive: true });
+  const cwd = await mkdtemp(join(temporary, 'touched-preparation-failure-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const packagePath = relative(repoRoot, cwd).replaceAll('\\', '/');
+  const baseline = join(cwd, 'baseline.locs');
+  const missing = join(cwd, 'missing-declaration.d.ts');
+  await writeFile(baseline, '');
+  await writeFile(join(cwd, 'touched.ts'), 'export const value = 1;\n');
+  await writeFile(join(cwd, 'package.json'), JSON.stringify({ name: basename(cwd), private: true,
+    scripts: { typecheck: 'node failure.mjs' } }));
+  // The package process is the real wrapper boundary; its owner emits the same typed OS failure.
+  await writeFile(join(cwd, 'failure.mjs'), `
+    import { readFile } from 'node:fs/promises';
+    import { typecheckDiagnosticFailureIdentifier, typecheckFailureDetail } from '../../../scripts/workspaces/typecheckDiagnostics.mjs';
+    try { await readFile(${JSON.stringify(missing)}); }
+    catch (error) {
+      error.cause = new Error('HAPPIER_TEST_SECRET=' + process.env.HAPPIER_TEST_SECRET);
+      console.error('[typecheck-failure] ' + typecheckDiagnosticFailureIdentifier(error, 'declaration-preparation'));
+      console.error('[typecheck-failure-detail] ' + JSON.stringify(typecheckFailureDetail(error)));
+      console.error('unrelated source fixture prose');
+      process.exitCode = 1;
+    }
+  `);
+  const secret = 'private-preparation-fixture-value';
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./typecheckTouched.mjs', import.meta.url)),
+    '--baseline', baseline, packagePath, `${packagePath}/touched.ts`], { cwd: repoRoot,
+    env: { ...process.env, HAPPIER_TEST_SECRET: secret }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const status = await new Promise((resolveResult, reject) => {
+    child.once('error', reject);
+    child.once('close', resolveResult);
+  });
+  assert.equal(status, 2, stderr);
+  assert.match(stderr, /declaration-preparation:ENOENT/u);
+  assert.ok(stderr.includes(missing), 'the exact missing producer input must survive the wrapper');
+  assert.match(stderr, /\[typecheck-failure-detail\]/u);
+  assert.match(stderr, /<redacted>/u);
+  assert.equal(stderr.includes(secret), false);
+  assert.equal(stderr.includes('unrelated source fixture prose'), false);
+  assert.equal(stdout.includes('added: 0'), false);
+});

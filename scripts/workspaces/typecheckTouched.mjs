@@ -14,7 +14,7 @@ const location = /^(.+):(\d+):TS(\d+)$/u;
 const marker = '[typecheck-locations] ';
 // Compiler prose can quote source fixtures. Retain only executor, package-manager
 // and runner reason lines, using the process owner's redaction and tail budget.
-const executorReason = /^(?:\[typecheck-(?:failure|delta)\]|\[typecheck-inputs\] unavailable:|(?:ERR_PNPM_[A-Z_]+|\[?ELIFECYCLE\]?)(?:[:\s]|$)|\[(?:preferred-execution|execution-host)\]|HSTACK_[A-Z_]+(?:[:\s]|$)|(?:ssh(?:_[a-z_]+)?|client_loop|kex_exchange_identification|packet_write_wait|mux_client_[a-z_]+|hstack-dev-target-control):|(?:Shared connection|Connection) to |Connection (?:reset |closed )|Read from remote host |Received disconnect from |Disconnected from |Timeout, server )/u;
+const executorReason = /^(?:\[typecheck-(?:failure(?:-detail)?|delta)\]|\[typecheck-inputs\] unavailable:|(?:ERR_PNPM_[A-Z_]+|\[?ELIFECYCLE\]?)(?:[:\s]|$)|\[(?:preferred-execution|execution-host)\]|HSTACK_[A-Z_]+(?:[:\s]|$)|(?:ssh(?:_[a-z_]+)?|client_loop|kex_exchange_identification|packet_write_wait|mux_client_[a-z_]+|hstack-dev-target-control):|(?:Shared connection|Connection) to |Connection (?:reset |closed )|Read from remote host |Received disconnect from |Disconnected from |Timeout, server )/u;
 
 export function buildTypecheckDispatchIdentity({ packagePath, paths, baselinePath }) {
   return createHash('sha256').update(JSON.stringify({
