@@ -1,3 +1,4 @@
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import * as React from 'react';
 import type { WorkspaceSyncPersistentModeV1, WorkspaceSyncDestinationIntentV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { evaluateSessionHandoffWorkspaceTransferSourcePathSafety } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
@@ -451,6 +452,35 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         }
     }, [binding, blockedReason, busy, confirmAndApprove, contentSelection, destinationIntent, existing, hub, includeIgnoredMode, inspectRequired, materializedSource, mode, patternsDraft, pendingApprovalId, phase, placement, props, resolvedPath, selectedMachine]);
 
+    const changeTargetPath = (path: string) => { setTargetPath(path); invalidateDraft(); };
+    const changeContentSelection = (value: 'git_worktree' | 'all_files') => { setContentSelection(value); invalidateDraft(); };
+    const changeIgnoredMode = (value: 'exclude' | 'include_selected') => { setIncludeIgnoredMode(value); invalidateDraft(); };
+    const changePatterns = (value: string) => { setPatternsDraft(value); invalidateDraft(); };
+    const toggleAdvanced = () => setAdvancedExpanded((open) => !open);
+    const draftCommands: CurrentUiContextLocalCommand[] = [
+        { key: 'cancel', title: t(phase === 'linked' ? 'common.done' : 'common.cancel'), invoke: props.onClose },
+        ...(!replacement ? [{ key: 'folder', title: t('settingsSession.handoff.targetBootstrap.title'), invoke: (input: Parameters<CurrentUiContextLocalCommand['invoke']>[0]) => {
+            if (typeof input !== 'string') return false;
+            changeTargetPath(input);
+        } }] : []),
+        { key: 'advanced', title: t('settingsSession.handoff.advanced.title'), invoke: toggleAdvanced },
+    ];
+    if (advancedExpanded) {
+        draftCommands.push({ key: 'content', title: t('settingsSession.handoff.contentSelection.title'), invoke: (input) => {
+            if (input !== 'git_worktree' && input !== 'all_files') return false;
+            changeContentSelection(input);
+        } });
+        draftCommands.push({ key: 'ignored', title: t('settingsSession.handoff.includeIgnoredMode.title'), invoke: (input) => {
+            if (input !== 'exclude' && input !== 'include_selected') return false;
+            changeIgnoredMode(input);
+        } });
+        if (includeIgnoredMode === 'include_selected') draftCommands.push({ key: 'patterns', title: t('settingsSession.handoff.includeIgnoredMode.globsTitle'), invoke: (input) => {
+            if (typeof input !== 'string') return false;
+            changePatterns(input);
+        } });
+    }
+    useCurrentUiContextLocalCommands(draftCommands, { contextKey: JSON.stringify([props.source.serverId, props.source.id, machineId]) });
+
     // The shared short-card footer: a phone sheet's two actions share its footer, and closing is never primary.
     const footer = React.useMemo(() => (
         <ModalCardFooterActions cancel={{ onPress: props.onClose, ...(phase === 'linked' ? { title: t('common.done') } : {}) }}>
@@ -504,8 +534,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                     browseStartPath: targetRoots?.workspaceRoot ?? undefined,
                     serverId: props.source.serverId,
                     machinePlatform: machineMetadataPlatformToTarget(selectedMachine?.metadata?.platform),
-                    onCommit: (path) => { setTargetPath(path); invalidateDraft(); },
-                    onChangeDraftPath: (path) => { setTargetPath(path); invalidateDraft(); },
+                    onCommit: changeTargetPath,
+                    onChangeDraftPath: changeTargetPath,
                     onRequestClose: ignoreClose,
                 }}
                 pathTitle={t('settingsSession.handoff.targetBootstrap.title')}
@@ -539,11 +569,11 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             >
                 <WorkspaceActivationContentPolicyFields
                     contentSelection={contentSelection}
-                    onContentSelectionChange={(value) => { setContentSelection(value); invalidateDraft(); }}
+                    onContentSelectionChange={changeContentSelection}
                     includeIgnoredMode={includeIgnoredMode}
-                    onIncludeIgnoredModeChange={(value) => { setIncludeIgnoredMode(value); invalidateDraft(); }}
+                    onIncludeIgnoredModeChange={changeIgnoredMode}
                     patternsDraft={patternsDraft}
-                    onPatternsDraftChange={(value) => { setPatternsDraft(value); invalidateDraft(); }}
+                    onPatternsDraftChange={changePatterns}
                     testIdPrefix="workspace-sync-add-machine"
                 />
             </ExpandableItem>

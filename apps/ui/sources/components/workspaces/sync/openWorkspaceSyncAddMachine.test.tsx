@@ -235,12 +235,22 @@ afterEach(async () => {
     await workspace.dispose();
 });
 
-async function renderOpenedModal() {
+async function renderOpenedModal(mounted = false) {
     const config = shownModal.mock.calls[0]?.[0];
     expect(config).toBeTruthy();
     const onClose = vi.fn();
     const setChrome = vi.fn();
-    const screen = await renderScreen(React.createElement(config.component, { ...config.props, onClose, setChrome }));
+    if (mounted) {
+        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        publishAppliedActiveServerSnapshot({ serverId: workspace.serverId, serverUrl: 'https://workspace-sync.test', generation: 0 });
+    }
+    const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+    let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+    function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+    const body = React.createElement(config.component, { ...config.props, onClose, setChrome });
+    const screen = await renderScreen(mounted ? <><Observe />{body}</> : body,
+        mounted ? { wrapper: await createMountedCurrentUiContextWrapper() } : undefined);
     const submit = () => {
         const footer = setChrome.mock.lastCall?.[0]?.footer as React.ReactElement<{ children?: React.ReactNode }>;
         const button = React.Children.toArray(footer.props.children).find(child => React.isValidElement(child)
@@ -248,7 +258,7 @@ async function renderOpenedModal() {
         if (!React.isValidElement<{ onPress: () => void; disabled: boolean }>(button)) throw new Error('Expected the Add machine submit control');
         return button;
     };
-    return { config, onClose, screen, submit };
+    return { config, onClose, screen, submit, getReader: () => reader! };
 }
 
 const statusLine = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(SurfaceStateCard)
@@ -279,6 +289,41 @@ async function startAddMachineLink(options: Readonly<{
 }
 
 describe('Project Add machine modal', () => {
+    it('publishes only visible folder/content drafts and cancel, never submit', async () => {
+        owner.openWorkspaceSyncAddMachine(source(), vi.fn());
+        const { screen, onClose, getReader } = await renderOpenedModal(true);
+        try {
+        const reader = getReader();
+        const titles = () => reader.readCurrentUiContext()!.commands.map(command => command.title);
+        expect(titles()).toEqual(['common.cancel', 'settingsSession.handoff.targetBootstrap.title', 'settingsSession.handoff.advanced.title']);
+        const invoke = async (title: string, input?: string) => {
+            const row = reader.readCurrentUiContext()!.commands.find(command => command.title === title)!;
+            const resolved = reader.resolveCurrentUiCommand(row.id)!;
+            if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+            await act(async () => { await resolved.command.invoke({ input, signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+            return row.id;
+        };
+        await chooseTarget(screen);
+        expect(titles()).toEqual(['common.cancel', 'settingsSession.handoff.targetBootstrap.title', 'settingsSession.handoff.advanced.title']);
+        await invoke('settingsSession.handoff.targetBootstrap.title', '/draft-only');
+        expect(screen.findAll(node => node.props?.value === '/draft-only').length).toBeGreaterThan(0);
+        await invoke('settingsSession.handoff.advanced.title');
+        expect(titles()).toEqual(['common.cancel', 'settingsSession.handoff.targetBootstrap.title', 'settingsSession.handoff.advanced.title',
+            'settingsSession.handoff.contentSelection.title', 'settingsSession.handoff.includeIgnoredMode.title']);
+        await invoke('settingsSession.handoff.contentSelection.title', 'all_files');
+        await invoke('settingsSession.handoff.includeIgnoredMode.title', 'include_selected');
+        expect(titles()).toEqual(['common.cancel', 'settingsSession.handoff.targetBootstrap.title', 'settingsSession.handoff.advanced.title',
+            'settingsSession.handoff.contentSelection.title', 'settingsSession.handoff.includeIgnoredMode.title', 'settingsSession.handoff.includeIgnoredMode.globsTitle']);
+        await invoke('settingsSession.handoff.includeIgnoredMode.globsTitle', 'local/**');
+        expect(screen.findAll(node => node.props?.value === 'local/**').length).toBeGreaterThan(0);
+        const cancel = await invoke('common.cancel');
+        expect(onClose).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+        expect(reader.resolveCurrentUiCommand(cancel)).toBeNull();
+        expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['machine-a', 'machine-b'])('withdraws the previous requester root while %s changes isolation policy', async changedMachineId => {
         const incumbent = daemonRpc.getMockImplementation()!;
         let policyReply: ReturnType<typeof deferred<unknown>> | null = null;
