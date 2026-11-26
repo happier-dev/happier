@@ -1,5 +1,5 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginCollectionInvalidation } from '@happier-dev/plugin-sdk/collections';
 import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import {
   MAX_CONVERSATION_RECEIVE_WAIT_MS,
@@ -14,6 +14,8 @@ import { CHANNEL_STATE_INDEX_ID } from './collections.js';
 import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
 import { pollGithubIssueCommentsForChannels } from '../../scm-github/src/observations/githubIssueCommentPollRuntime.js';
+type CollectionListener = (notice: PluginCollectionInvalidation) => void;
+
 function connectionRows(count: number): readonly Readonly<{
   rowId: string;
   revision: number;
@@ -369,7 +371,7 @@ describe('Checkpointed poll supervisor', () => {
     'settles collection_update_required from %s without reads or writes on later wakes', async boundary => {
       vi.useFakeTimers();
       const generation = new AbortController();
-      const listeners: Array<() => void> = [];
+      const listeners: CollectionListener[] = [];
       const logger = { warn: vi.fn() };
       let outdated = true;
       const refusal = new PluginError({ code: 'collection_update_required', retryable: false,
@@ -385,7 +387,7 @@ describe('Checkpointed poll supervisor', () => {
       const context = backgroundContext(generation.signal, undefined, logger);
       const services = { ...context.services, storage: { account: { collection: () => ({
         get, query, put: write, delete: write, batch: write, forget: write,
-        watch: (_request: unknown, notify: () => void) => { listeners.push(notify); return { dispose() {} }; },
+        watch: (_request: unknown, notify: CollectionListener) => { listeners.push(notify); return { dispose() {} }; },
       }) } }, events: { ...context.services.events, plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } } } as unknown as PluginServices;
       const supervisor = createIngressSupervisor();
       const running = supervisor.run({ ...context, services });
@@ -396,7 +398,7 @@ describe('Checkpointed poll supervisor', () => {
         // generation's compiled Collection contract current.
         outdated = false;
         for (let pass = 0; pass < 100; pass += 1) {
-          for (const notify of listeners) notify();
+          for (const notify of listeners) notify({ kind: 'changed', changeCursor: 2 });
           await vi.advanceTimersByTimeAsync(1_000);
         }
         expect(get.mock.calls.length + query.mock.calls.length).toBe(reads);
@@ -446,10 +448,10 @@ describe('Checkpointed poll supervisor', () => {
         query: async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
           rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
             : request.prefix?.[1] === 'binding' ? [{ rowId: 'binding-1', revision: bindingRevision,
-              value: { id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1' } }] : [], changeCursor: 1,
+              value: { id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1' } }] : [], changeCursor: bindingRevision,
         }),
-        watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: () => void) => {
-          if (request.prefix?.[1] === 'binding') invalidateBinding = notify;
+        watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: CollectionListener) => {
+          if (request.prefix?.[1] === 'binding') invalidateBinding = () => notify({ kind: 'changed', changeCursor: bindingRevision });
           return { dispose() {} };
         },
       }) } },
@@ -474,6 +476,74 @@ describe('Checkpointed poll supervisor', () => {
     }
   });
 
+  it.each([
+    { kind: 'binding', parked: true },
+    { kind: 'checkpoint', parked: true },
+    { kind: 'checkpoint', parked: false },
+  ] as const)('skips covered $kind hints and consumes a newer full hint immediately (parked: $parked)', async ({ kind, parked }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const generation = new AbortController();
+    let notify: CollectionListener | undefined;
+    let revision = 1;
+    let changeCursor = 10;
+    const query = vi.fn(async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
+      rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
+        : request.prefix?.[1] === kind ? [{ rowId: `${kind}-1`, revision,
+          value: { id: `${kind}-1`, 'record-kind': kind, 'connection-id': 'connection-1' } }] : [],
+      changeCursor,
+    }));
+    const inputReads = () => query.mock.calls.filter(([request]) => request.prefix?.[1] === kind).length;
+    const runPoll = vi.fn<NonNullable<IngressSupervisorOptions['runPoll']>>()
+      .mockResolvedValue({ kind: 'ineligible' });
+    if (parked) runPoll.mockRejectedValueOnce(new PluginError({ code: 'plugin_collection_invalid_value',
+      message: 'Poll input requires repair', retryable: false }));
+    else runPoll.mockResolvedValueOnce({ kind: 'retry', retryAfterMs: 60_000 });
+    const context = backgroundContext(generation.signal);
+    const supervisor = createIngressSupervisor({ runPoll, runDueWork: async () => 0 });
+    const running = supervisor.run({ ...context, services: { ...context.services,
+      storage: { account: { collection: () => ({
+        query,
+        watch: (request: Readonly<{ prefix?: readonly unknown[] }>, listener: NonNullable<typeof notify>) => {
+          if (request.prefix?.[1] === kind) notify = listener;
+          return { dispose() {} };
+        },
+      }) } },
+    } as unknown as PluginServices });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runPoll).toHaveBeenCalledTimes(1);
+      expect(notify).toBeDefined();
+      const startupReads = inputReads();
+      for (const coveredCursor of [8, 9, 10]) {
+        notify?.({ kind: 'changed', changeCursor: coveredCursor });
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+
+      expect.soft(inputReads()).toBe(startupReads);
+      expect(runPoll).toHaveBeenCalledTimes(1);
+      const beforeRepair = inputReads();
+      revision += 1;
+      changeCursor += 1;
+      // The Collection SDK exposes a full invalidation as a content-free changed notice.
+      notify?.({ kind: 'changed', changeCursor });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(inputReads()).toBe(beforeRepair + 1);
+      expect(runPoll).toHaveBeenCalledTimes(parked ? 2 : 1);
+
+      changeCursor = 2;
+      revision += 1;
+      notify?.({ kind: 'reset', changeCursor });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(inputReads()).toBe(beforeRepair + 2);
+    } finally {
+      generation.abort();
+      await running;
+      await supervisor.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it('parks a permanent poll failure for a settled minute and recovers on a Collection change with attributable logs', async () => {
     vi.useFakeTimers();
     const generation = new AbortController();
@@ -492,10 +562,10 @@ describe('Checkpointed poll supervisor', () => {
       query: async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
         rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
           : request.prefix?.[1] === 'checkpoint' ? [{ rowId: 'checkpoint-1', revision: checkpointRevision,
-            value: { id: 'checkpoint-1', 'record-kind': 'checkpoint', 'connection-id': 'connection-1' } }] : [], changeCursor: 1,
+            value: { id: 'checkpoint-1', 'record-kind': 'checkpoint', 'connection-id': 'connection-1' } }] : [], changeCursor: checkpointRevision,
       }),
-      watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: () => void) => {
-        if (request.prefix?.[1] === 'checkpoint') invalidateCheckpoint = notify;
+      watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: CollectionListener) => {
+        if (request.prefix?.[1] === 'checkpoint') invalidateCheckpoint = () => notify({ kind: 'changed', changeCursor: checkpointRevision });
         return { dispose() {} };
       },
     };
@@ -528,7 +598,7 @@ describe('Checkpointed poll supervisor', () => {
   it.each([0, 1])('performs no idle periodic reads with %i enabled socket connections and wakes on collection invalidation', async (count) => {
     vi.useFakeTimers();
     const generation = new AbortController();
-    const listeners: Array<() => void> = [];
+    const listeners: CollectionListener[] = [];
     const value = createCurrentConversationConnectionFixture({
       connectionId: 'connection-1',
       transport: { kind: 'socket' },
@@ -561,7 +631,7 @@ describe('Checkpointed poll supervisor', () => {
     const collection = {
       query,
       get: vi.fn(async (id: string) => count === 1 && id === row.rowId ? row : null),
-      watch: (_request: unknown, listener: () => void) => {
+      watch: (_request: unknown, listener: CollectionListener) => {
         listeners.push(listener);
         return { dispose };
       },
@@ -591,7 +661,7 @@ describe('Checkpointed poll supervisor', () => {
       expect(query).toHaveBeenCalledTimes(initialReads);
       expect(collection.get).toHaveBeenCalledTimes(initialGets);
       expect(listeners.length).toBeGreaterThan(0);
-      for (const notify of listeners) notify();
+      for (const notify of listeners) notify({ kind: 'changed', changeCursor: 2 });
       await vi.advanceTimersByTimeAsync(0);
       expect(query.mock.calls.length).toBeGreaterThan(initialReads);
       expect(emit).toHaveBeenCalledWith('connections-invalidated-v1', {}, { signal: expect.any(AbortSignal) });
@@ -607,7 +677,7 @@ describe('Checkpointed poll supervisor', () => {
   it('preserves connection invalidation while an ineligible poll read is still outstanding', async () => {
     vi.useFakeTimers();
     const generation = new AbortController();
-    const listeners: Array<() => void> = [];
+    const listeners: CollectionListener[] = [];
     const value = createCurrentConversationConnectionFixture({
       connectionId: 'connection-1', transport: { kind: 'socket' }, replayContinuity: 'sessionBound',
       authority: {
@@ -646,7 +716,7 @@ describe('Checkpointed poll supervisor', () => {
         }
         return { rows: request.prefix?.[0] === 'connection' ? [row] : [], changeCursor: 1 };
       },
-      watch: (_request: unknown, notify: () => void) => { listeners.push(notify); return { dispose() {} }; },
+      watch: (_request: unknown, notify: CollectionListener) => { listeners.push(notify); return { dispose() {} }; },
     };
     const context = backgroundContext(generation.signal);
     const supervisor = createIngressSupervisor();
@@ -658,7 +728,7 @@ describe('Checkpointed poll supervisor', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(get).toHaveBeenCalledTimes(1);
       row = { ...row, revision: row.revision + 1 };
-      for (const notify of listeners) notify();
+      for (const notify of listeners) notify({ kind: 'changed', changeCursor: 2 });
       await vi.advanceTimersByTimeAsync(0);
       expect(get).toHaveBeenCalledTimes(1);
       releaseDeadlineQuery?.();

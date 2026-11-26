@@ -1,6 +1,6 @@
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/plugin-sdk/collections';
+import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, type PluginCollectionInvalidation } from '@happier-dev/plugin-sdk/collections';
 import {
   MAX_CONVERSATION_RECEIVE_WAIT_MS,
 } from '@happier-dev/channels-protocol/v1';
@@ -35,6 +35,23 @@ type Clock = Readonly<{
 }>;
 
 type JsonRecord = Readonly<Record<string, JsonValue>>;
+
+type WatchedPollInput = {
+  revision?: string;
+  coveredChangeCursor?: number;
+  pending?: PluginCollectionInvalidation;
+};
+
+function coversPollInputNotice(input: WatchedPollInput, notice: PluginCollectionInvalidation): boolean {
+  return notice.kind === 'changed' && input.coveredChangeCursor !== undefined
+    && notice.changeCursor <= input.coveredChangeCursor;
+}
+
+function takePollInputNotice(input: WatchedPollInput): PluginCollectionInvalidation | undefined {
+  const notice = input.pending;
+  input.pending = undefined;
+  return notice;
+}
 
 export type IngressSupervisorOptions = Readonly<{
   clock?: Clock;
@@ -194,7 +211,7 @@ export function createIngressSupervisor(
     // null parks a permanent boundary failure until stored input changes;
     // Infinity remains an ordinary ineligible connection awaiting its watch.
     const pollDeadlines = new Map<string, { revision: number; deadline: number | null; retryAt?: number; durablePush?: true; desiredKey?: string; thrownFailures?: number; observations: readonly { dispose(): void }[];
-      inputs: Map<'binding' | 'checkpoint', { revision?: string; invalidated: boolean }> }>();
+      inputs: Map<'binding' | 'checkpoint', WatchedPollInput> }>();
     let discoverConnections = true;
     const observations: Array<{ dispose(): void }> = [];
     // The polls this generation started and has not yet seen settle, keyed by
@@ -291,13 +308,21 @@ export function createIngressSupervisor(
                 const unchanged = current !== undefined && (schedule.durablePush
                   ? current.desiredKey === schedule.desiredKey
                   : current.revision === schedule.revision);
-                const inputs = current?.inputs ?? new Map<'binding' | 'checkpoint', { revision?: string; invalidated: boolean }>([
-                  ['binding', { invalidated: true }], ['checkpoint', { invalidated: true }],
+                const inputs = current?.inputs ?? new Map<'binding' | 'checkpoint', WatchedPollInput>([
+                  ['binding', {}], ['checkpoint', {}],
                 ]);
                 const connectionObservations = current?.observations ?? [...inputs].map(([kind, input]) =>
                   collection.watch({ index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
-                    prefix: [connectionId, kind], order: 'asc' }, () => {
-                    input.invalidated = true;
+                    prefix: [connectionId, kind], order: 'asc' }, notice => {
+                    if (notice.kind === 'reset') {
+                      // A restore can rebase the AccountChange cursor backwards.
+                      input.coveredChangeCursor = undefined;
+                    } else if (
+                      coversPollInputNotice(input, notice)
+                      || input.pending?.kind === 'reset'
+                      || (input.pending !== undefined && notice.changeCursor <= input.pending.changeCursor)
+                    ) return;
+                    input.pending = notice;
                     wake.wake();
                   }));
                 const next = unchanged ? current : { ...schedule, inputs, observations: connectionObservations, deadline: 0 };
@@ -307,10 +332,11 @@ export function createIngressSupervisor(
             for (const [connectionId, schedule] of pollDeadlines) {
               let next = schedule;
               for (const [kind, input] of next.inputs) {
-                if (!input.invalidated) continue;
-                input.invalidated = false;
+                const notice = takePollInputNotice(input);
+                if (input.revision !== undefined && (notice === undefined || coversPollInputNotice(input, notice))) continue;
                 const revisions: Array<readonly [string, number]> = [];
                 let cursor: string | undefined;
+                let coveredChangeCursor = Number.POSITIVE_INFINITY;
                 try {
                   do {
                     const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
@@ -318,12 +344,18 @@ export function createIngressSupervisor(
                       ...(cursor === undefined ? {} : { cursor }),
                     }, { signal: supervisorController.signal });
                     for (const row of page.rows) revisions.push([row.rowId, row.revision]);
+                    // Each page is a separate snapshot. A later page can only
+                    // vouch for its own rows, not the ones already traversed.
+                    coveredChangeCursor = Math.min(coveredChangeCursor, page.changeCursor);
                     cursor = page.nextCursor;
                   } while (cursor !== undefined);
                 } catch (error) {
-                  input.invalidated = true;
+                  input.pending ??= notice;
                   throw error;
                 }
+                // A reset delivered during this read still requires a query in
+                // the new cursor domain. Keep it pending for the next wake.
+                if (input.pending?.kind !== 'reset') input.coveredChangeCursor = coveredChangeCursor;
                 const revision = JSON.stringify(revisions);
                 // Watch resets describe delivery continuity, not an input
                 // edit. Only changed stored rows release this connection.
