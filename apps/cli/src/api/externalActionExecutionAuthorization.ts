@@ -2577,12 +2577,14 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
   }
   if (!input.privateKey) return refuse('signing_key_missing');
   if (!input.installationId) return refuse('installation_id_missing');
-  if (!input.context?.externalActionTarget) return refuse('target_missing');
   if (authorization.binding.serverIdentityId !== input.serverIdentityId) return refuse('dependency_home_identity_mismatch');
   const binding = authorization.binding;
+  // The requester bearer is not target-bound: a Session-placed SCM child runs
+  // with its inherited Machine target cleared and still spends this custody.
   const contributed = resolveContributedActionRequesterHttpHeaders({ authorization,
-    effectActionId: input.effectActionId, authority: input.context.authority });
+    effectActionId: input.effectActionId, authority: input.context?.authority });
   if (contributed) return contributed;
+  if (!input.context?.externalActionTarget) return refuse('target_missing');
   if (binding.actionId === 'approval.request.create' && binding.actionId !== input.effectActionId
     && 'authentication' in binding) {
     // The proposal proof remains approval provenance, not an effect credential.

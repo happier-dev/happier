@@ -366,9 +366,15 @@ function executorFailure(
             readExecutionRunStartRunCreation(result.details),
         )
         : result.details;
-    const details = normalizedDetails === undefined
+    // The admitted request id is the caller's correlation for this failure.
+    const correlatedDetails = result.requestId === undefined ? normalizedDetails
+        : normalizedDetails === undefined ? { requestId: result.requestId }
+        : typeof normalizedDetails === 'object' && normalizedDetails !== null && !Array.isArray(normalizedDetails)
+            && !('requestId' in normalizedDetails)
+            ? { ...normalizedDetails, requestId: result.requestId } : normalizedDetails;
+    const details = correlatedDetails === undefined
         ? undefined
-        : StrictJsonValueSchema.safeParse(normalizedDetails);
+        : StrictJsonValueSchema.safeParse(correlatedDetails);
     // The plugin caller receives the same public failure as any other Action caller.
     return new PluginError({
         code: result.errorCode,

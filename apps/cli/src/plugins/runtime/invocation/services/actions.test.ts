@@ -19,6 +19,7 @@ import { PluginError, readPluginErrorRequestIdV1, type JsonValue } from '@happie
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createExternalActionHeaderRefusalError, refuseExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { createHostReviewedChildPortV1, readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -1314,6 +1315,7 @@ describe('plugin invocation ActionsService', () => {
         expect(error).toHaveProperty('details', {
             executionRunStart: { v: 1, runCreation: 'noRunCreated' },
             issues: expect.arrayContaining([expect.objectContaining({ path: ['configOptions', 'reasoning_effort'] })]),
+            requestId: 'automation-run-1:execution.run.start:1',
         });
     });
 
@@ -2199,6 +2201,33 @@ describe('plugin invocation ActionsService', () => {
             expect.anything(),
             expect.objectContaining({ bypassActionInterception: true }),
         );
+    });
+
+    it('carries the admitted request id and typed authorization refusal of a native failure to its plugin caller', async () => {
+        // The permission-grant transport is the substituted network boundary;
+        // the header owner's own refusal projection is the real failure carrier.
+        const actionExecutor = createPermissionActionExecutor(vi.fn(async () => {
+            throw createExternalActionHeaderRefusalError(refuseExternalActionHeaders('target_missing', 'admitted-request-1'));
+        }));
+        const service = createPluginInvocationActionsService({
+            seed: {
+                plugin: { id: 'acme.caller', version: '1.0.0' },
+                resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture('acme.caller').resolveCurrentPluginMaterializationRef,
+                occurrenceId: 'occurrenceId-1', surface: 'ui', session: { id: 'session-7' },
+                signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            },
+            actionExecutor,
+            invokeContributedAction: vi.fn(),
+        });
+
+        const failure = await Reflect.apply(service.execute, service, ['plugins.permissions.grants.request', {
+            capability: 'reviews.comments.write.direct', targetScope: { kind: 'account' },
+            subject: { kind: 'general' }, reason: 'Publish approved review comments directly',
+        }]).catch((error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'action_failed',
+            details: { authorizationRefusalReason: 'target_missing', requestId: 'admitted-request-1' },
+            data: { failureCause: { phase: 'execution_authorization', errorCode: 'target_missing' } } });
+        expect(readPluginErrorRequestIdV1(failure)).toBe('admitted-request-1');
     });
 
     it('binds permission-request identity from the host seed instead of accepting plugin-authored identity', async () => {

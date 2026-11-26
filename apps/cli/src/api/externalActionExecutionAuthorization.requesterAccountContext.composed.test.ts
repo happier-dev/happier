@@ -1178,6 +1178,20 @@ it('spends the same contributed requester custody through CLI and native HTTP po
           externalActionExecutionAuthorization: projected }, daemonToken: 'different-installed-account',
         serverIdentityId: homeIdentityId, installationId: root.binding.installationId, privateKey });
       expect(cli).toMatchObject({ ok: true, headers: { Authorization: `Bearer ${credentials.token}` } });
+      // A Session-placed SCM child (review.start comparison, Triage workspace
+      // verification) runs with the executor's inherited Machine target cleared.
+      // The requester bearer is not target-bound, so the same chooser decides it.
+      const sessionPlaced = (authorization: typeof root) => resolveExternalActionServerRequestHeaders({
+        effectActionId: 'scm.status.snapshot', method: 'GET', path: '/v1/sessions/session-1',
+        context: { surface: 'plugin', authority: 'account_automation', externalActionExecutionAuthorization: authorization },
+        daemonToken: 'different-installed-account', serverIdentityId: homeIdentityId,
+        installationId: root.binding.installationId, privateKey });
+      expect(sessionPlaced(projected)).toMatchObject({ ok: true, headers: { Authorization: `Bearer ${credentials.token}` } });
+      // Without retained requester custody the contribution still refuses with its admitted request id.
+      expect(sessionPlaced(root)).toEqual({ ok: false, reason: 'requester_account_custody_mismatch', requestId: 'health-preview' });
+      // A wire-only contribution never reaches a bearer; it keeps the signed-carrier target refusal.
+      const { authentication: _authentication, ...wireBinding } = root.binding;
+      expect(sessionPlaced({ ...root, binding: wireBinding })).toEqual({ ok: false, reason: 'target_missing', requestId: 'health-preview' });
       const native = await projected.requesterHttpProjection.createRequestHeaders(request);
       expect(native).toEqual({ Authorization: `Bearer ${credentials.token}`,
         [requesterAccountEncryptionMode]: 'plain',
