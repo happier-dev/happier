@@ -11,10 +11,11 @@ import {
   type ReactElement,
   type ReactNode,
 } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 
 import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
 import type { HappierLayoutChangeEvent, HappierPortableStyle, HappierStyleProp } from '../portableTypes.js';
+import { useHappierCollectionDetailWidth } from '../collection/collectionLayout.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_PAGE_METRICS, isHappierSectionActionStacked } from './pageMetrics.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle } from './pageText.js';
@@ -92,12 +93,14 @@ export type HappierPageSectionHeaderProps = Readonly<{
   /** A compact section-level action ("Check now", "Add"), aligned with the title. */
   action?: ReactNode;
   /**
-   * `inline` (default) stays beside the text while its minimum label column fits.
-   * `adaptive` also moves beneath on narrow page widths, preserving the full explanation column.
+   * `inline` (default) stacks under a description at narrow column widths.
+   * `adaptive` also stacks under a title-only heading at narrow widths when the action is labelled.
    * `trailing` never moves: a quiet icon cluster (ⓘ, +) stays at the title line's end in a narrow
    * pane, and the title gives way.
    */
   actionLayout?: 'inline' | 'adaptive' | 'trailing';
+  /** The enclosing page column's width, before this heading draws its own insets. */
+  columnWidthPx?: number;
   /**
    * From the section's own edge to its title — the sheet's inset plus the
    * heading's optical inset — so the title sits on the page title's line.
@@ -153,14 +156,15 @@ const SECTION_ACTION_GAP_PX = 12;
 /**
  * A page section's heading: a sentence-case title with its description above
  * the rows, and an optional section action aligned with the title. The action
- * defaults to staying beside the text while the page label column fits
- * (`isHappierSectionActionStacked`). An adaptive action also follows the wide
- * page-control rule on narrow pages, keeping the explanation's full column.
+ * uses the enclosing column to place described sections on the first frame.
+ * Title-only sections can fit the action against their measured title.
  *
  * Happier core's `ItemGroup` (page presentation) and the public plugin
  * `ItemGroup` both render it.
  */
 export function HappierPageSectionHeader(props: HappierPageSectionHeaderProps) {
+  const detailWidthPx = useHappierCollectionDetailWidth();
+  const { width: windowWidthPx } = useWindowDimensions();
   const [headerWidthPx, setHeaderWidthPx] = useState<number | null>(null);
   const [actionWidthPx, setActionWidthPx] = useState<number | null>(null);
   const [titleWidthPx, setTitleWidthPx] = useState<number | null>(null);
@@ -179,20 +183,25 @@ export function HappierPageSectionHeader(props: HappierPageSectionHeaderProps) {
   }, []);
   const renderText = props.renderText ?? renderDefaultSectionText;
   const hasTitle = props.title !== null && props.title !== undefined && props.title !== false && props.title !== '';
+  const description = renderSectionText(props.description, 'sectionDescription', renderText);
+  const hasDescription = description !== null;
+  const measureFit = !hasDescription && props.actionLayout !== 'trailing';
+  const widthPx = hasDescription
+    ? props.columnWidthPx ?? detailWidthPx ?? windowWidthPx
+    : headerWidthPx;
   const stacked = hasAction && isHappierSectionActionStacked({
-    headerWidthPx: headerWidthPx === null ? null : headerWidthPx - props.insetPx * 2,
+    headerWidthPx: widthPx === null ? null : widthPx - props.insetPx * 2,
     actionWidthPx,
     actionLayout: props.actionLayout,
     gapPx: SECTION_ACTION_GAP_PX,
-    hasDescription: props.description !== null && props.description !== undefined && props.description !== false && props.description !== '',
+    hasDescription,
     titleWidthPx,
   });
   return (
     <View
       testID={props.testID}
-      // Always attached: React Native Web decides whether to observe a view only when it mounts, and a
-      // section's action can arrive after that (a directory's "+ Add source" once its sources load).
-      onLayout={handleLayout}
+      // Title-only headings measure even when the action will arrive later.
+      onLayout={measureFit ? handleLayout : undefined}
       style={[
         {
           flexDirection: 'row',
@@ -214,15 +223,15 @@ export function HappierPageSectionHeader(props: HappierPageSectionHeaderProps) {
       >
         {hasTitle ? (
           // Sized to the title (up to the text column), so a short title is measured at its own width.
-          <View onLayout={handleTitleLayout} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>
+          <View onLayout={measureFit ? handleTitleLayout : undefined} style={{ alignSelf: 'flex-start', maxWidth: '100%' }}>
             {renderSectionText(props.title, 'sectionTitle', renderText)}
           </View>
         ) : null}
-        {renderSectionText(props.description, 'sectionDescription', renderText)}
+        {description}
       </View>
       {hasAction ? (
         <View
-          onLayout={handleActionLayout}
+          onLayout={measureFit ? handleActionLayout : undefined}
           // Beside the text the action is centred on the title's line, so its label reads on the
           // title's line whatever the description below; its own box may reach past that line.
           style={stacked || !hasTitle ? null : { height: HAPPIER_PAGE_TEXT.sectionTitle.lineHeight, justifyContent: 'center' }}

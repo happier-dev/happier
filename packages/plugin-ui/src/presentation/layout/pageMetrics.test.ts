@@ -71,28 +71,10 @@ describe('isHappierSectionActionStacked', () => {
     ).toBe(true);
   });
 
-  it('keeps a lone icon action on the title line of a described phone section', () => {
-    // "Your presets" + its "+" on a 390pt phone: a single icon control is a quiet trailing glyph, not a
-    // labelled action, so it stays at the title line's end instead of dropping onto a line of its own.
-    expect(
-      isHappierSectionActionStacked({
-        headerWidthPx: 358,
-        actionWidthPx: 28,
-        gapPx: 12,
-        actionLayout: 'inline',
-        hasDescription: true,
-      }),
-    ).toBe(false);
-    // An adaptive labelled action on the same phone still moves beneath.
-    expect(
-      isHappierSectionActionStacked({
-        headerWidthPx: 358,
-        actionWidthPx: 132,
-        gapPx: 12,
-        actionLayout: 'adaptive',
-        hasDescription: true,
-      }),
-    ).toBe(true);
+  it('keeps a described phone header stacked when the action reports its width', () => {
+    const phone = { headerWidthPx: 358, gapPx: 12, hasDescription: true };
+    expect(isHappierSectionActionStacked({ ...phone, actionWidthPx: null })).toBe(true);
+    expect(isHappierSectionActionStacked({ ...phone, actionWidthPx: 28 })).toBe(true);
   });
 
   it('keeps a trailing icon cluster on the title line at any width', () => {

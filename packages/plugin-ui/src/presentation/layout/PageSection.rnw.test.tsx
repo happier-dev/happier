@@ -253,7 +253,6 @@ describe('HappierPageSectionHeader action placement', () => {
     <HappierPageSectionHeader
       testID="section-header"
       title="Directory"
-      description="Directory sources keep Team membership and Groups aligned with an external organization."
       action={action}
       actionLayout="inline"
       insetPx={0}
@@ -264,7 +263,7 @@ describe('HappierPageSectionHeader action placement', () => {
     // A directory's "+ Add source" is offered once the sources have loaded, so the header mounts
     // without it. React Native Web decides whether to observe a view's size only at mount, so a
     // header that attached its layout handler with the action would never learn its width and
-    // would keep the action beside a wrapped description on a phone.
+    // would keep a late action beside the title even when they do not fit.
     const observed = new Set<Element>();
     class RecordingResizeObserver {
       observe(node: Element) { observed.add(node); }

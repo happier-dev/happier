@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -44,22 +45,16 @@ async function renderGroup(presentation: 'page' | 'grouped', props: Readonly<{ d
     );
 }
 
-/**
- * The section header and its action, both measured (layout is the platform boundary here): the header is
- * the measured view that lays the text and the action out; the action's own measured wrapper reports its width.
- */
-function measuredSectionHeader(screen: Awaited<ReturnType<typeof renderScreen>>, act: (callback: () => Promise<void>) => Promise<void>) {
-    const measured = () => screen.findAll((node) => typeof node.props?.onLayout === 'function'
-        && node.findAll((child) => child.props?.testID === 'section-action').length > 0);
+function sectionHeader(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const styleOf = (node: { props: { style?: unknown } }) => [node.props.style].flat(Infinity).filter(Boolean) as Array<Record<string, unknown>>;
-    const header = () => measured().find((node) => styleOf(node).some((entry) => entry.flexDirection !== undefined))!;
-    const action = () => measured().find((node) => node !== header()) ?? null;
-    const direction = () => styleOf(header()).reduce<unknown>((current, entry) => entry.flexDirection ?? current, undefined);
-    const layout = async (widths: Readonly<{ header: number; action: number }>) => act(async () => {
-        header().props.onLayout({ nativeEvent: { layout: { width: widths.header, height: 40, x: 0, y: 0 } } });
-        action()?.props.onLayout({ nativeEvent: { layout: { width: widths.action, height: 32, x: 0, y: 0 } } });
-    });
-    return { header, direction, layout };
+    const directionOf = (node: { props: { style?: unknown } }) => styleOf(node)
+        .reduce<unknown>((current, entry) => entry.flexDirection ?? current, undefined);
+    const containsAction = (node: ReactTestInstance) =>
+        node.findAll((child) => child.props?.testID === 'section-action').length > 0;
+    const header = () => screen.findAll((node) => directionOf(node) !== undefined && containsAction(node)).at(-1)!;
+    const action = () => header().findAll((node) => typeof node.props?.onLayout === 'function'
+        && containsAction(node)).at(-1);
+    return { header, action, direction: () => directionOf(header()) };
 }
 
 describe('ItemGroup page presentation', () => {
@@ -99,31 +94,6 @@ describe('ItemGroup page presentation', () => {
         expect(textTransform === undefined || textTransform === 'none').toBe(true);
     });
 
-    it('drops a section action beneath the title and description when the section is too narrow for both', async () => {
-        const { ItemGroup } = await import('./ItemGroup');
-        const { ListPresentationProvider } = await import('./listPresentation');
-        const { PAGE_LIST_METRICS } = await import('./pageListMetrics');
-        const { act } = await import('react-test-renderer');
-        const screen = await renderScreen(
-            <ListPresentationProvider value="page">
-                <ItemGroup
-                    title="Agent"
-                    description="How it appears when you start a session."
-                    action={React.createElement('Action', { testID: 'section-action' })}
-                >
-                    {React.createElement('Text', null, 'ROW')}
-                </ItemGroup>
-            </ListPresentationProvider>,
-        );
-        const { header, direction, layout } = measuredSectionHeader(screen, act);
-
-        await layout({ header: PAGE_LIST_METRICS.rowStackBelowWidthPx + 200, action: 200 });
-        expect(header()).toBeDefined();
-        expect(direction()).toBe('row');
-        await layout({ header: PAGE_LIST_METRICS.rowStackBelowWidthPx - 150, action: 200 });
-        expect(direction()).toBe('column');
-    });
-
     it('keeps a compact section action beside the title on a phone while the title keeps its column', async () => {
         const { ItemGroup } = await import('./ItemGroup');
         const { ListPresentationProvider } = await import('./listPresentation');
@@ -135,7 +105,11 @@ describe('ItemGroup page presentation', () => {
                 </ItemGroup>
             </ListPresentationProvider>,
         );
-        const { direction, layout } = measuredSectionHeader(screen, act);
+        const { direction, header, action } = sectionHeader(screen);
+        const layout = (widths: Readonly<{ header: number; action: number }>) => act(async () => {
+            header().props.onLayout({ nativeEvent: { layout: { width: widths.header, height: 40, x: 0, y: 0 } } });
+            action()?.props.onLayout({ nativeEvent: { layout: { width: widths.action, height: 32, x: 0, y: 0 } } });
+        });
 
         // A 390pt phone: a "Cancel"-sized action leaves the title well over its label column.
         await layout({ header: 358, action: 84 });
@@ -148,24 +122,22 @@ describe('ItemGroup page presentation', () => {
         expect(direction()).toBe('column');
     });
 
-    it('moves an adaptive section action below its explanation on a phone and beside it on desktop', async () => {
+    it.each([
+        { width: 390, direction: 'column' },
+        { width: 720, direction: 'row' },
+    ])('places the adaptive section action on the first frame of a $width px page column', async ({ width, direction }) => {
         const { ItemGroup } = await import('./ItemGroup');
-        const { ListPresentationProvider } = await import('./listPresentation');
-        const { act } = await import('react-test-renderer');
+        const { ListPresentationProvider, PageFrameWidthsContext } = await import('./listPresentation');
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
-                <ItemGroup title="Environment variables" description="Values used when starting a session."
-                    actionLayout="adaptive" action={React.createElement('Action', { testID: 'section-action' })}>
-                    {React.createElement('Text', null, 'ROW')}
-                </ItemGroup>
+                <PageFrameWidthsContext.Provider value={{ outer: 1440, column: width }}>
+                    <ItemGroup title="Environment variables" description="Values used when starting a session."
+                        actionLayout="adaptive" action={React.createElement('Action', { testID: 'section-action' })}>
+                        {React.createElement('Text', null, 'ROW')}
+                    </ItemGroup>
+                </PageFrameWidthsContext.Provider>
             </ListPresentationProvider>,
         );
-        const { direction, layout } = measuredSectionHeader(screen, act);
-
-        // Real source capture: the 390px phone's Add variable action measures 118px.
-        await layout({ header: 390, action: 118 });
-        expect(direction()).toBe('column');
-        await layout({ header: 720, action: 118 });
-        expect(direction()).toBe('row');
+        expect(sectionHeader(screen).direction()).toBe(direction);
     });
 });

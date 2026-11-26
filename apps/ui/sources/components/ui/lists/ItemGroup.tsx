@@ -35,7 +35,7 @@ import {
     ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
-import { BareSectionRowsContext, MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, PageFrameWidthsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { SelectionListOptionPresentationContext } from '@/components/ui/selectionList/SelectionListOptionPresentationContext';
@@ -638,6 +638,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     const presentation = useListPresentation();
     const isPage = presentation === 'page';
+    const pageFrameWidthPx = isPage ? React.use(PageFrameWidthsContext)?.column : undefined;
     // A contained scope (a column or widget body that owns its padding) adds no second inset, page or grouped.
     const contained = usePageListInsets() === 'contained';
     // A page section inside another section (a capture view's banner) stands where that section placed it: it adds no
@@ -793,6 +794,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                         description={typeof description === 'string' ? description : description ? renderPageDescription(description) : undefined}
                         action={action ?? undefined}
                         actionLayout={actionLayout}
+                        columnWidthPx={pageFrameWidthPx}
                         insetPx={contained ? 0
                             : (nested ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12)) + (sidePaneFlat ? 0 : PAGE_LIST_METRICS.headingOpticalInsetPx)}
                         renderText={(input) => input.role === 'sectionTitle'

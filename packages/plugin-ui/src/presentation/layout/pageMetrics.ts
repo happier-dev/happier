@@ -304,12 +304,10 @@ export function resolveHappierPageBackMeasuringLine(input: Readonly<{
 
 /**
  * Whether a section's action drops beneath its title and description. Inline
- * and adaptive actions preserve `sectionTextMinWidthPx`; adaptive actions also
- * follow the existing narrow page-control rule. Until the action is measured it
- * follows that rule too, so the first measured paint is never squeezed. A
- * `trailing` action (a quiet icon cluster) never drops. On a narrow (phone)
- * header a labelled action beside a description drops too: next to wrapped
- * explanation lines it reads as part of the text, not the section's action.
+ * and adaptive actions on title-only sections preserve `sectionTextMinWidthPx`.
+ * A section with a description uses the column's narrow-page rule from the start,
+ * keeping the explanation at full width on a phone. An explicit `trailing` icon
+ * action always stays on the title line.
  */
 export function isHappierSectionActionStacked(input: Readonly<{
   headerWidthPx: number | null;
@@ -327,10 +325,11 @@ export function isHappierSectionActionStacked(input: Readonly<{
   // A trailing icon cluster needs no text column of its own: the title beside it shrinks instead.
   if (input.actionLayout === 'trailing') return false;
   if (typeof headerWidthPx !== 'number' || !Number.isFinite(headerWidthPx) || headerWidthPx <= 0) return false;
+  if (input.hasDescription === true) return isHappierPageRowNarrow(headerWidthPx);
   // A lone icon control (a "+", an ⓘ) is no wider than one control's square: like a trailing cluster it
   // keeps its place at the title line's end, where a labelled action would sit against wrapped lines.
   if (typeof actionWidthPx === 'number' && actionWidthPx > 0 && actionWidthPx <= HAPPIER_PAGE_METRICS.controlHeightPx) return false;
-  if ((input.actionLayout === 'adaptive' || input.hasDescription === true) && isHappierPageRowNarrow(headerWidthPx)) return true;
+  if (input.actionLayout === 'adaptive' && isHappierPageRowNarrow(headerWidthPx)) return true;
   if (typeof actionWidthPx !== 'number' || !Number.isFinite(actionWidthPx) || actionWidthPx <= 0) {
     return isHappierPageRowNarrow(headerWidthPx);
   }
@@ -338,7 +337,7 @@ export function isHappierSectionActionStacked(input: Readonly<{
   if (roomBesideActionPx >= HAPPIER_PAGE_METRICS.sectionTextMinWidthPx) return false;
   // A title that already fills the room beside the action is wrapping there: it keeps the rule above.
   const titleWidthPx = input.titleWidthPx;
-  return !(input.hasDescription !== true && typeof titleWidthPx === 'number' && titleWidthPx > 0
+  return !(typeof titleWidthPx === 'number' && titleWidthPx > 0
     && titleWidthPx < roomBesideActionPx - 0.5);
 }
 
