@@ -75,6 +75,14 @@ it('P4-F6-known-good-stats', async () => {
     expect(DatabaseOperationResultV1Schema.parse(explained.result)).toMatchObject({ ok: true, operation: 'statement.explain' });
     console.info('P4-F6-known-good-stats passed', fixture.runtime);
 
+    const explainMissingRelation = await fixture.executeDatabase(DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
+      DatabaseStatementExplainInputV1Schema.parse({ operation: 'statement.explain', target: targets.selected,
+        statement: { sql: 'SELECT id FROM dbw_f6_missing', parameters: [] }, mode: 'plan', accessMode: 'read' }));
+    if (!explainMissingRelation.ok) throw new Error(`Explain Action refused (${explainMissingRelation.errorCode})`);
+    expect(DatabaseOperationResultV1Schema.parse(explainMissingRelation.result)).toMatchObject({
+      ok: false, status: 'failed', code: 'database_engine_error', cause: { source: 'engine', code: '42P01' },
+    });
+
     // Opening a statement detail must select the native identity, even when
     // its list row came from a different page. A page-only reread loses it.
     const selectedStatement = await read(targets.selected, {
