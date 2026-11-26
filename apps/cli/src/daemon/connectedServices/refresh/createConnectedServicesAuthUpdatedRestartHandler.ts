@@ -141,6 +141,7 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
   binding: ConnectedServiceBindingRef;
   affectedTargets: ReadonlyArray<ConnectedServiceSpawnTargetRef>;
   mutation?: 'replaced' | 'deleted';
+  adapterRestartRequiredPids?: ReadonlySet<number>;
   trigger?: Extract<ConnectedServiceDaemonRestartTrigger, 'refresh_triggered_restart' | 'reconnect_propagation'>;
 }>) => Promise<void> {
   return async (event) => {
@@ -191,34 +192,36 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
         );
       }
       if (params.restartEnabled === false) continue;
-      const descriptor = await params.resolveLifecycleDescriptor(target.agentId);
-      if (!(descriptor.serviceIds as readonly string[]).includes(event.binding.serviceId)) continue;
-      const refreshedCredentialApplication = descriptor.refreshedCredentialApplication;
-      if (refreshedCredentialApplication.mode !== 'restart_required') continue;
-      if ((refreshedCredentialApplication.noRestartRequiredServiceIds ?? []).some((serviceId) => serviceId === event.binding.serviceId)) continue;
-      const callbackConditionalService = (
-        refreshedCredentialApplication.noRestartRequiredWhenAccessTokenCallbackServiceIds ?? []
-      ).some((serviceId) => serviceId === event.binding.serviceId);
-      const accessTokenCallbackActive = target.accessTokenRefresh?.mode === 'daemon_callback'
-        && target.accessTokenRefresh.serviceIds.includes(event.binding.serviceId);
-      if (
-        accessTokenCallbackActive
-        && callbackConditionalService
-      ) {
-        continue;
-      }
-      // Broker-conditional no-restart: skip the restart ONLY when this running target actually holds a
-      // broker binding for the service. A non-brokered shape (e.g. a Pi claude-subscription setup-token
-      // baked as a raw api_key at spawn) has no broker to hot-apply the reconnected credential, so it
-      // falls through to a restart instead of being silently skipped by service id alone.
-      const brokerConditionalServiceId = (refreshedCredentialApplication.noRestartRequiredWhenBrokeredServiceIds ?? [])
-        .find((serviceId) => serviceId === event.binding.serviceId);
-      if (brokerConditionalServiceId) {
-        const brokered = refreshedCredentialApplication.isTargetBrokeredForBinding?.({
-          serviceId: brokerConditionalServiceId,
-          environmentVariables: params.pidToTrackedSession.get(target.pid)?.spawnOptions?.environmentVariables ?? {},
-        }) ?? false;
-        if (brokered) continue;
+      if (!event.adapterRestartRequiredPids?.has(target.pid)) {
+        const descriptor = await params.resolveLifecycleDescriptor(target.agentId);
+        if (!(descriptor.serviceIds as readonly string[]).includes(event.binding.serviceId)) continue;
+        const refreshedCredentialApplication = descriptor.refreshedCredentialApplication;
+        if (refreshedCredentialApplication.mode !== 'restart_required') continue;
+        if ((refreshedCredentialApplication.noRestartRequiredServiceIds ?? []).some((serviceId) => serviceId === event.binding.serviceId)) continue;
+        const callbackConditionalService = (
+          refreshedCredentialApplication.noRestartRequiredWhenAccessTokenCallbackServiceIds ?? []
+        ).some((serviceId) => serviceId === event.binding.serviceId);
+        const accessTokenCallbackActive = target.accessTokenRefresh?.mode === 'daemon_callback'
+          && target.accessTokenRefresh.serviceIds.includes(event.binding.serviceId);
+        if (
+          accessTokenCallbackActive
+          && callbackConditionalService
+        ) {
+          continue;
+        }
+        // Broker-conditional no-restart: skip the restart ONLY when this running target actually holds a
+        // broker binding for the service. A non-brokered shape (e.g. a Pi claude-subscription setup-token
+        // baked as a raw api_key at spawn) has no broker to hot-apply the reconnected credential, so it
+        // falls through to a restart instead of being silently skipped by service id alone.
+        const brokerConditionalServiceId = (refreshedCredentialApplication.noRestartRequiredWhenBrokeredServiceIds ?? [])
+          .find((serviceId) => serviceId === event.binding.serviceId);
+        if (brokerConditionalServiceId) {
+          const brokered = refreshedCredentialApplication.isTargetBrokeredForBinding?.({
+            serviceId: brokerConditionalServiceId,
+            environmentVariables: params.pidToTrackedSession.get(target.pid)?.spawnOptions?.environmentVariables ?? {},
+          }) ?? false;
+          if (brokered) continue;
+        }
       }
       if (!tracked) {
         emitBlocked(target, null, null, 'tracked_session_missing');

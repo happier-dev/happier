@@ -142,6 +142,26 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
     }));
   });
 
+  it('schedules a runtime-directed restart even when the provider default reads credentials live', async () => {
+    const restartRequestedPids = new Set<number>();
+    const tracked = createTrackedSession({ pid: 1, sessionId: 's1' });
+    const handler = createConnectedServicesAuthUpdatedRestartHandler({
+      pidToTrackedSession: new Map([[1, tracked]]),
+      resolveLifecycleDescriptor: async (agentId) => createLifecycleDescriptor(agentId, 'no_restart_required'),
+      resolveProcessGroupPid: (session) => session.pid,
+      requestRestartSignal: createRestartSignalAdapter(restartRequestedPids),
+      restartSignalDelayMs: 250,
+    });
+
+    await handler({
+      binding: { serviceId: 'claude-subscription', profileId: 'work' },
+      affectedTargets: [{ pid: 1, agentId: 'claude' }],
+      adapterRestartRequiredPids: new Set([1]),
+    });
+
+    expect(restartRequestedPids).toEqual(new Set([1]));
+  });
+
   it('stops a live target on credential deletion instead of applying restart policy', async () => {
     const tracked = createTrackedSession({ pid: 1, sessionId: 's1' });
     const requestRestartSignal = createRestartSignalAdapter();

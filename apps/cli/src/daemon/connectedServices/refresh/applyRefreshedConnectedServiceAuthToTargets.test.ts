@@ -49,11 +49,37 @@ describe('applyRefreshedConnectedServiceAuthToTargets', () => {
     expect([...result.appliedRuntimeIdentityKeys]).toEqual(['runtime-hot-applies']);
   });
 
+  it('passes the adapter restart instruction for the exact target while settling an adopted sibling', async () => {
+    const restartTarget = target('needs-restart', 1);
+    const applyAuth = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        errorCode: 'hot_apply_failed',
+        diagnostics: {
+          serviceResultsByServiceId: {
+            'claude-subscription': { status: 'failed', errorCode: 'hot_apply_restart_required' },
+          },
+        },
+      })
+      .mockResolvedValueOnce({ ok: true, action: 'hot_applied' });
+
+    const result = await applyRefreshedConnectedServiceAuthToTargets({
+      event: event([restartTarget, target('hot-applies', 2)]),
+      applyAuth,
+    });
+
+    expect(result.restartTargets).toEqual([{ target: restartTarget, reason: 'adapter_restart_required' }]);
+    expect([...result.appliedRuntimeIdentityKeys]).toEqual(['runtime-hot-applies']);
+  });
+
   it('keeps tolerating a restart that execution policy disallows', async () => {
     const applyAuth = vi.fn().mockResolvedValue({ ok: false, errorCode: 'restart_disallowed_by_execution_policy' });
 
     await expect(applyRefreshedConnectedServiceAuthToTargets({ event: event([target('s1', 1)]), applyAuth }))
-      .resolves.toEqual({ appliedRuntimeIdentityKeys: new Set() });
+      .resolves.toEqual({
+        appliedRuntimeIdentityKeys: new Set(),
+        restartTargets: [{ target: target('s1', 1), reason: 'lifecycle_policy' }],
+      });
   });
 
   it('still fails on a genuine application failure so it is retried', async () => {

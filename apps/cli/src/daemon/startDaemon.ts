@@ -7572,12 +7572,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           return { appliedRuntimeIdentityKeys: new Set<string>() };
         }
 
-        const { appliedRuntimeIdentityKeys } = await applyRefreshedConnectedServiceAuthToTargets({
+        const { appliedRuntimeIdentityKeys, restartTargets } = await applyRefreshedConnectedServiceAuthToTargets({
           event,
           applyAuth: applyRefreshedConnectedServiceAuth,
         });
 
-        await restartAfterAuthUpdated(event);
+        await restartAfterAuthUpdated({
+          ...event,
+          affectedTargets: restartTargets.map(({ target }) => target),
+          adapterRestartRequiredPids: new Set(restartTargets
+            .filter(({ reason }) => reason === 'adapter_restart_required')
+            .map(({ target }) => target.pid)),
+        });
         return { appliedRuntimeIdentityKeys };
       };
       const refreshStartup = startConnectedServiceRefreshStartup({
