@@ -20,7 +20,7 @@ import { createSessionListActionDeps } from '@/session/actions/sessionListAction
 import { openExternalActionRequestV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectDeploymentReadAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAccountMachineKeyFromRecoverySecret, openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createEmptyActionAutomationPort, createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { prepareExternalActionRequesterAccountAuthorization, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
@@ -38,6 +38,7 @@ import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunSt
 import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentPublishPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
+import { DeploymentEnvironmentCreateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { assertDeploymentContentAuthorityForHost } from '@/deployments/deploymentDefinitionAdmission';
 import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
@@ -918,14 +919,15 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const runId = 'installed-run';
     const requestId = `${runId}/invocation/0`;
     const controller = { kind: 'machine' as const, machineId: 'controller' };
-    const input = actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? {
+    const input = actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? DeploymentPublishPrepareInputV1Schema.parse({
       serverId: 'srv_bob_home', machineId: controller.machineId, installationId: 'controller-installation',
       projectSourceId: 'source', sourceRevision: 1, templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
         ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
-    } : { serverId: 'srv_bob_home', projectSourceId: 'source', requestKey: 'preview-pr-1', mode: 'apply',
-      name: 'pr-1', purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', deployerPrincipals: [],
+    }) : DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'srv_bob_home', projectSourceId: 'source', requestKey: 'preview-pr-1',
+      contentArtifactId: 'prepared-environment', contentHeaderVersion: 1, contentBodyVersion: 1,
+      controllerMachineId: controller.machineId, purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', deployerPrincipals: [],
       preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 8, runtimeTargetLinkId: 'runtime-link',
-        pullRequestId: '1', headSha: 'a'.repeat(40) } };
+        pullRequestId: '1' } });
     const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
       executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId,
         authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } } satisfies ActionExecutorContext;
@@ -1030,10 +1032,11 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const runId = 'foreign-run';
     const requestId = `${runId}/invocation/0`;
     const controller = { kind: 'machine' as const, machineId: 'alice-controller' };
-    const input = { serverId: 'srv_bob_home', projectSourceId: 'source', requestKey: 'preview-pr-1', mode: 'apply',
-      name: 'pr-1', purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', deployerPrincipals: [],
+    const input = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'srv_bob_home', projectSourceId: 'source', requestKey: 'preview-pr-1',
+      contentArtifactId: 'prepared-environment', contentHeaderVersion: 1, contentBodyVersion: 1,
+      controllerMachineId: controller.machineId, purpose: 'preview', protection: 'nonProduction', deployerMode: 'managers', deployerPrincipals: [],
       preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 8, runtimeTargetLinkId: 'runtime-link',
-        pullRequestId: '1', headSha: 'a'.repeat(40) } };
+        pullRequestId: '1' } });
     const context = { surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
       executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId,
         authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } } satisfies ActionExecutorContext;
@@ -1247,7 +1250,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     await expect(verifyExternalActionExecutionAuthorizationCurrent({ authorization: nativeAuthorization, effectActionId: nativeAuthorization.binding.actionId,
       target, privateKey: keys.secretKey, installationId: authorization.binding.installationId,
       serverHttpBaseUrl: 'https://home.test' })).rejects.toMatchObject({
-      ok: false, errorCode: 'action_forbidden', error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
+      ok: false, errorCode: code, error: `action_forbidden (home_signed_authorization_rejected:${phase})`,
       failureCause: { phase: `home.authorization.${phase}`, httpStatus: status },
     });
     expect(post).toHaveBeenCalledTimes(1);
@@ -1366,7 +1369,8 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     registerDaemonExternalActionRoute(app, {
       currentMachineId: target.machineId, currentServerId: 'bob-profile',
       verifyPat: createDaemonPatVerifier({ accountId: 'bob', introspect: async () => ({ ok: true, ...principal, expiresAt: null }) }),
-      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew }),
+      executor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
+        actionAutomations: createEmptyActionAutomationPort('bob'), sessionSpawnNew }),
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: accountToken, encryption: null } }),
       mintExecutionAuthorization: request => executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
         ...request, serverHttpBaseUrl: 'https://home.test',
@@ -1721,6 +1725,7 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     });
     let captured: ActionExecutorContext | undefined;
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      actionAutomations: createEmptyActionAutomationPort('bob'),
       notificationsNotifyMe: async (_input, context) => {
         captured = context;
         const projection = context.externalActionExecutionAuthorization?.requesterHttpProjection;
@@ -1757,23 +1762,22 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(network).toHaveBeenCalled();
   });
 
-  it('withholds headers when Home authorization is retired while the currentness response awaits', async () => {
-    let retired = false;
-    vi.spyOn(axios, 'post').mockImplementation(async () => ({ status: retired ? 403 : 200,
-      data: retired ? {} : { ok: true } }));
+  it('withholds headers when cancelled during local currentness without reauthorizing admitted work', async () => {
+    const controller = new AbortController();
+    let cancelDuringCurrentness = false;
+    const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      actionAutomations: createEmptyActionAutomationPort('bob'),
       notificationsNotifyMe: async (_input, context) => {
         const projection = context.externalActionExecutionAuthorization?.requesterHttpProjection;
         expect(projection).toBeDefined();
-        vi.spyOn(axios, 'post').mockImplementation(async () => {
-          const status = retired ? 403 : 200;
-          retired = true;
-          return { status, data: { ok: true } };
-        });
+        cancelDuringCurrentness = true;
+        network.mockClear();
         const headers = await projection!.createRequestHeaders({ effectActionId: 'notifications.notify_me',
           method: 'POST', path: '/v1/projects/account-rows/list', body: {} });
         expect(headers).toBeNull();
         expect(headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBeUndefined();
+        expect(network).not.toHaveBeenCalled();
         return { attemptedChannels: 1, deliveredChannels: 0 };
       },
     });
@@ -1781,11 +1785,16 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       currentMachineId: target.machineId, currentServerId: 'bob-profile', currentServerHttpBaseUrl: 'https://bob-home.test',
       currentInstallationId: 'alice-installation', executionAuthorization: authorization,
       externalActionMachineRequestPrivateKey: keys.secretKey,
+      signal: controller.signal,
+      isInstallationCurrent: async () => {
+        if (cancelDuringCurrentness) controller.abort();
+        return true;
+      },
       verifyExecutionAuthorization: (input) => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
         installationId: 'alice-installation', privateKey: keys.secretKey, serverHttpBaseUrl: 'https://bob-home.test' }),
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'alice-daemon', encryption: null } }), executor,
     });
-    expect(retired).toBe(true);
+    expect(controller.signal.aborted).toBe(true);
   });
 
   it.each(['plain', 'e2ee', 'legacy'] as const)('prepares original %s Account authority through the existing Home minter', async (credentialKind) => {
