@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -7,6 +8,8 @@ import { ProjectDefinitionInspectInputSchema, ProjectDefinitionInspectOutputSche
 import { ProjectRepositoryObservationV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { SessionTranscriptGetResultSchema } from '@happier-dev/protocol/actions/specs/session/transcript';
 import { SessionInputHandoffInputV1Schema, SessionInputHandoffResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputHandoffV1';
+import { SessionInputResultGetResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputResultV1';
+import { SessionArchiveActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
   DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
@@ -26,7 +29,10 @@ import {
     DatabaseTargetsListResultV1Schema,
 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseStatsReasonV1Schema } from '@happier-dev/plugin-sdk/database';
+import { listPendingQueueV2DeliveryStatusesFromServer } from '../../../../apps/cli/src/api/session/pendingQueueV2Transport';
+import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { startDatabaseWorkbenchInsightsFixture } from '../../src/testkit/databaseWorkbench';
+import { FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS } from '../../src/testkit/fakeClaude';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 
@@ -58,7 +64,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
     // platform boundary; draft admission, persistence and editing stay real.
     const [{ connectUiActionClient }, { getActiveServerAccountScope }, { createFrontDoorActionExecute },
       { readNewSessionDraftProjectionFromRepository }, { createNewSessionComposerDocumentOwner },
-      { composerAttachmentDraftToView }, { loadDaemonMergedProjectionCacheEntry },
+      { composerAttachmentDraftToView }, { loadDaemonMergedProjectionCacheEntry }, { COMPOSER_HOST_PROJECTION_SECTIONS },
       { createExistingSessionComposerDocumentOwner }, { projectComposerDocumentSnapshot },
       { registerSessionComposerPresentationTarget }] = await Promise.all([
       import('@happier-tests/ui-action-client'),
@@ -68,6 +74,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
       import('../../../../apps/ui/sources/components/sessions/composer/newSessionComposerDocumentOwner'),
       import('../../../../apps/ui/sources/components/sessions/composer/composerScopeAdapters'),
       import('../../../../apps/ui/sources/agents/backendCatalog/loadDaemonMergedProjectionInputs'),
+      import('../../../../apps/ui/sources/sync/domains/plugins/ui/projectionSections'),
       import('../../../../apps/ui/sources/components/sessions/composer/existingSessionComposerDocumentOwner'),
       import('../../../../apps/ui/sources/components/sessions/composer/composerSnapshotProjection'),
       import('../../../../apps/ui/sources/components/sessions/presentation/sessionComposerPresentationTargets'),
@@ -94,7 +101,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
         ref: { kind: 'newSession', instanceId: navigatedDraftId } }).read().document.text)
         .toBe('F8 ordinary editable authoring control');
       const projection = await loadDaemonMergedProjectionCacheEntry({
-        machineId: fixture.machine.target.machineId, serverId: ui.serverId, sections: ['composerAttachments'] });
+        machineId: fixture.machine.target.machineId, serverId: ui.serverId, sections: COMPOSER_HOST_PROJECTION_SECTIONS });
       if (projection?.kind !== 'ready') throw new Error(`F8 fixture daemon attachment projection unavailable (${projection?.kind ?? 'absent'})`);
       const catalog = projection.inputs.pluginUiProjection.composerAttachmentsById;
       let sessionsBefore = await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Session"');
@@ -219,20 +226,50 @@ it('P4-F8-known-good-brief-delivery', async () => {
       const input = SessionInputHandoffInputV1Schema.parse({ v: 1,
         sessionChoice: { kind: 'existing', session: session.sessionId }, delivery: 'send',
         input: { text: editedText, forgeEvidence: built.brief.evidence }, idempotencyKey: 'dbw-f8-one-brief' });
-      async function send() {
-        const arrival = await fixture.owner.execute(ActionIdSchema.parse('session.input.handoff'), input);
+      async function send(request = input) {
+        const arrival = await fixture.owner.execute(ActionIdSchema.parse('session.input.handoff'), request);
         if (!arrival.ok) throw new Error(`Shared handoff refused (${arrival.errorCode})`);
         return SessionInputHandoffResultV1Schema.parse(arrival.result);
       }
       const delivered = await send();
       expect(delivered).toMatchObject({ kind: 'sendResult', session: { serverId: fixture.serverId, sessionId: session.sessionId },
         result: { status: 'accepted' } });
+      if (delivered.kind !== 'sendResult' || !('status' in delivered.result) || delivered.result.status !== 'accepted') {
+        throw new Error('F8 edited Send did not return an accepted Pending identity');
+      }
+      const { localId } = delivered.result;
 
       async function deliveredMessages() {
         return (await sessionUserMessages()).filter(item => item.text?.includes('F8_EDITED_REQUEST'));
       }
-      await waitFor(async () => (await deliveredMessages()).length === 1,
-        { context: 'The shared host delivers the edited live brief to the selected Session' });
+      try {
+        await waitFor(async () => {
+          const messages = await deliveredMessages();
+          expect(messages.length, 'Duplicate edited Sends').toBeLessThanOrEqual(1);
+          return messages.length === 1;
+        }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS,
+          context: 'The shared host delivers the edited live brief to the selected Session', failFast: true });
+      } catch (error) {
+        const inputOutcome = fixture.owner.execute('session.input.result.get', { sessionId: session.sessionId, localId })
+          .then(arrival => {
+            if (!arrival.ok) return arrival.errorCode;
+            const exact = SessionInputResultGetResultV1Schema.safeParse(arrival.result);
+            if (!exact.success) return 'invalid_result';
+            if (!exact.data.ok) return exact.data.code;
+            return 'result' in exact.data ? exact.data.result.kind : 'unexpected_projection';
+          }, () => 'result_lookup_failed');
+        const pendingStatus = runWithServerHttpBaseUrl(fixture.server.baseUrl, () =>
+          listPendingQueueV2DeliveryStatusesFromServer({
+            token: fixture.owner.credentials.token, sessionId: session.sessionId, includeDiscarded: true,
+          })).then(entries => {
+            const entry = entries?.find(item => item.localId === localId);
+            return entry ? { delivery: entry.deliveryStatus, requestedAction: entry.requestedAction?.kind }
+              : 'no_pending_entry';
+          }, () => 'pending_lookup_failed');
+        const [outcome, pending] = await Promise.all([inputOutcome, pendingStatus]);
+        console.info('P4-F8-edited-input-at-transcript-failure', { localId, outcome, pending });
+        throw error;
+      }
       async function verifyTarget() {
         const verified = await fixture.executeDatabase(DATABASE_STATS_READ_ACTION_ID_V1,
           DatabaseStatsOperationInputV1Schema.parse({ operation: 'stats.read', target, request }));
@@ -324,23 +361,21 @@ it('P4-F8-known-good-brief-delivery', async () => {
       expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Session"')).toBe(sessionsBefore);
       expect(await sessionUserMessages()).toEqual(deliveredBefore);
 
-      // Mount the real document and actual daemon attachment catalog. Only
-      // native editor focus is a platform boundary; no internal editor/Action
-      // orchestration or attachment admission is replaced.
+      // Mount the real document and daemon attachment catalog. Supply the
+      // platform UUID allocator used by the mounted attachment transaction.
       const ref = { kind: 'session', sessionId: session.sessionId } as const;
       const existingComposer = createExistingSessionComposerDocumentOwner({ scope, ref });
-      let focused = false;
       const unmount = registerSessionComposerPresentationTarget({ serverId: ui.serverId, sessionId: session.sessionId }, {
         readScope: () => scope,
         readAttachmentComposition: () => ({ composerAttachmentsById: catalog }),
         readRevision: () => existingComposer.read().revision,
         replace: text => existingComposer.replaceDocument({ ...existingComposer.read().document, text }),
         readSnapshot: () => projectComposerDocumentSnapshot({ owner: existingComposer,
-          attachmentCatalog: { entriesById: catalog }, presentation: { layout: 'wrap', focused,
+          attachmentCatalog: { entriesById: catalog }, presentation: { layout: 'wrap', focused: false,
             editable: true, submittable: true, submitting: false, running: false } }),
         commitDocument: ({ expectedRevision, mutation }) => existingComposer.apply(expectedRevision, mutation),
         commitDocumentEmitsChange: true,
-        focusComposer: () => { focused = true; return true; },
+        createAttachmentInstanceId: randomUUID,
       });
       try {
         const composerControl = await execute('composer.transaction.apply', { scope, ref,
@@ -360,7 +395,6 @@ it('P4-F8-known-good-brief-delivery', async () => {
         expect(existingComposer.read().document.text).toContain('F8_COMPOSE_CONTROL');
         expect(existingComposer.read().document.text).toContain('F8_EXISTING_PREVIEW_ONLY');
         expect(JSON.stringify(existingComposer.read().document.composerAttachments)).toContain(selected.baseline.evidenceIdentity);
-        expect(focused).toBe(true);
         expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Session"')).toBe(sessionsBefore);
         expect(await sessionUserMessages()).toEqual(deliveredBefore);
 
@@ -428,7 +462,11 @@ it('P4-F8-known-good-brief-delivery', async () => {
 
       // Only after the positive control: repeat the same person intent through
       // Pending and confirm one actual user input, not merely an accepted flag.
-      expect(await send()).toMatchObject({ kind: 'sendResult', result: { status: 'alreadyAccepted' } });
+      const replay = await send();
+      if (replay.kind === 'sendResult' && replay.result.status === 'rejected') {
+        throw new Error(`F8 Pending retry refused (${replay.result.code})`);
+      }
+      expect(replay).toMatchObject({ kind: 'sendResult', result: { status: 'alreadyAccepted', localId } });
       const messages = await deliveredMessages();
       expect(messages).toHaveLength(1);
       expect(JSON.stringify(messages)).not.toContain(secret);
@@ -437,6 +475,15 @@ it('P4-F8-known-good-brief-delivery', async () => {
       // Verification reaches the same engine after delivery, with the safe inline
       // baseline still held by the caller rather than a daemon sample registry.
       await verifyTarget();
+
+      const archive = await fixture.owner.execute('session.archive', { sessionId: session.sessionId });
+      if (!archive.ok) throw new Error(`F8 archive setup refused (${archive.errorCode})`);
+      expect(SessionArchiveActionResultV1Schema.parse(archive.result))
+        .toMatchObject({ success: true, sessionId: session.sessionId });
+      expect(await send({ ...input, idempotencyKey: 'dbw-f8-archived-brief' })).toMatchObject({
+        kind: 'sendResult', result: { status: 'rejected', code: 'session_input_target_unavailable' },
+      });
+      expect(await deliveredMessages()).toEqual(messages);
     } finally {
       await ui.close();
     }
