@@ -24,7 +24,8 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     children: ReactNode;
     bootPending?: boolean;
 }>) {
-    const { decision, layoutTarget, recordLayout, release } = opening;
+    const { decision, recordLayout, release } = opening;
+    const acknowledgeContent = opening.decision === 'overlay-eligible' ? opening.acknowledgeContent : undefined;
     const scene = decision === 'in-app' ? opening.scene : null;
     const stage = useStepMotionStage();
     const activePlay = useRef(false);
@@ -124,10 +125,11 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
 
     const onFirstLayout = useCallback((event: LayoutChangeEvent, destinationPose: WelcomePlanetState = 'welcome') => {
         if (!recordLayout(event)) return;
-        if (decision === 'overlay-eligible') {
+        if (acknowledgeContent) {
             transmitted.current = welcome.current;
+            acknowledgeContent(event, welcome.current);
             settle();
-            return welcome.current;
+            return;
         }
         // A desktop main webview commits this layout just before native shows it.
         if (scene && (isDesktopHost() || readHostActivelyViewed())
@@ -144,7 +146,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             return;
         }
         fadeToRest();
-    }, [decision, fadeToRest, recordLayout, scene, settle, skip, stage]);
+    }, [acknowledgeContent, decision, fadeToRest, recordLayout, scene, settle, skip, stage]);
 
     useEffect(() => {
         if (phase !== 'still') return;
@@ -174,8 +176,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
         };
     }, [interrupt, playing, scene, skip]);
 
-    const contentLayout = useMemo(() => phase === 'preparing'
-        ? { target: layoutTarget, onLayout: onFirstLayout } : null, [layoutTarget, onFirstLayout, phase]);
+    const contentLayout = phase === 'preparing' ? onFirstLayout : null;
     // A cold start's Loading planet stays until the opening's first frame (or its Still) is up.
     const waitsForPaint = decision !== 'overlay-eligible' && !destinationPainted;
     useLaunchCurtainHold((decision !== 'overlay-eligible' && phase === 'preparing') || (waitsForPaint && !playing));

@@ -12,6 +12,7 @@ import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/w
 import {
     PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, resolveAndroidNotificationSoundName, } from '@happier-dev/protocol/push/pushNotificationActions';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { isWelcomeRoute } from '@/auth/routing/authRouting';
 import { AuthProvider, ConcurrentSessionCacheRuntime, useAuth } from '@/auth/context/AuthContext';
 import { WebServerOverrideGate } from '@/components/navigation/root/RootLayoutRedirectGate';
 import { OrganizationPolicyDiagnostic } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
@@ -23,7 +24,7 @@ import { HorizontalSafeAreaRoot } from '@/components/navigation/safeArea/Horizon
 import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics';
 import sodium from '@/encryption/libsodium.lib';
-import { View, Platform } from 'react-native';
+import { View, Platform, type LayoutChangeEvent } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
 import { ModalProvider } from '@/modal/ModalProvider';
 import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -101,8 +102,6 @@ import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliary
 import { readBrowserAppWindowRecord, resolveDesktopAppWindowBootCredentials, runDesktopAppWindowBootSequence } from '@/desktop/window/appWindowBoot';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
-import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
-import { useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { resolveFirstOpen } from '@/components/onboarding/firstOpen/resolveFirstOpen';
 import { useFirstOpenBoot } from '@/components/onboarding/firstOpen/useFirstOpenBoot';
 import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
@@ -762,7 +761,7 @@ function AppBoot({ onRestart }: Readonly<{ onRestart: () => void }>) {
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
     const firstOpenSegments = React.useRef(segments);
     firstOpenSegments.current = segments;
-    const { opening, Host: OpeningHost, admitOpening } = useFirstOpenBoot();
+    const { opening, Host: OpeningHost, admitOpening, onShellLayout } = useFirstOpenBoot(isWelcomeRoute(segments));
     // The main web window shows one Loading planet from the HTML shell to the first destination drawn.
     const launchCurtain = primaryRealm && Platform.OS === 'web' && !isFirstOpenPresenter;
     const launchDestinationMounted = useLaunchDestinationBodyMounted();
@@ -897,6 +896,7 @@ function AppBoot({ onRestart }: Readonly<{ onRestart: () => void }>) {
 
     const appShellWithRootDesktopDragSurface = (
         <RootShellChromeFrame
+            onLayout={onShellLayout}
             isAuthenticated={initState?.credentials != null}
             fullChrome={fullChrome}
             isTerminalConnectRoute={isTerminalConnectRoute}
@@ -1003,16 +1003,11 @@ function AppActivityOwner(props: React.PropsWithChildren): React.ReactElement {
 
 /** Breakpoint geometry updates this frame without rebuilding the boot/provider/route tree. */
 function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
+    onLayout?: (event: LayoutChangeEvent) => void;
     isAuthenticated: boolean;
     fullChrome: boolean;
     isTerminalConnectRoute: boolean;
 }>>) {
-    const onContentLayout = useDesktopMainWindowContentReady();
-    const onFirstOpenContent = useFirstOpenContentLayout('shell');
-    const onLayout = React.useCallback((event: Parameters<typeof onContentLayout>[0]) => {
-        const welcome = onFirstOpenContent?.(event);
-        onContentLayout(event, welcome);
-    }, [onContentLayout, onFirstOpenContent]);
     const chromeSafeArea = useChromeSafeAreaInsets();
     const isTablet = useIsTablet();
     const desktopHost = isDesktopHost();
@@ -1022,7 +1017,7 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
         isTablet,
         isTerminalConnectRoute: props.isTerminalConnectRoute,
     });
-    const shell = <View onLayout={onFirstOpenContent ? onLayout : onContentLayout} style={{ flex: 1, position: 'relative' }}>
+    const shell = <View onLayout={props.onLayout} style={{ flex: 1, position: 'relative' }}>
         {chromeHost === 'narrow-desktop-fallback' ? <DesktopFallbackShellChrome chromeSafeArea={chromeSafeArea} /> : null}
         <View style={{ flex: 1 }}>{props.children}</View>
     </View>;

@@ -8,17 +8,11 @@ import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphS
 
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 
-/** Kept with the other channels so the ordinary shell does not import the opening host. */
-export type FirstOpenLayoutTarget = 'shell' | 'workflow';
-type OnFirstOpenLayout = (event: LayoutChangeEvent, destinationPose?: WelcomePlanetState) => WelcomeEntryViewModel | undefined;
-export const FirstOpenContentLayout = createContext<Readonly<{
-    target: FirstOpenLayoutTarget;
-    onLayout: OnFirstOpenLayout;
-}> | null>(null);
+/** The first layout of the destination workflow, whose child has already committed its model. */
+export const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent, destinationPose?: WelcomePlanetState) => void) | null>(null);
 
-export function useFirstOpenContentLayout(target: FirstOpenLayoutTarget): OnFirstOpenLayout | undefined {
-    const layout = useContext(FirstOpenContentLayout);
-    return layout?.target === target ? layout.onLayout : undefined;
+export function useFirstOpenContentLayout() {
+    return useContext(FirstOpenContentLayout);
 }
 
 /** The opening host supplies this channel only while it has a replica to update. */

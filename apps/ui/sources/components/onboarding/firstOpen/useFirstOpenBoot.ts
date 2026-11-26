@@ -3,18 +3,18 @@ import type { LayoutChangeEvent } from 'react-native';
 
 import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
 import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
 import { invokeDesktopHost } from '@/utils/platform/desktopHost';
 
-import type { FirstOpenLayoutTarget } from './FirstOpenWelcomeModelContext';
-import type { FirstOpenDecision } from './resolveFirstOpen';
 import { FirstOpenHost } from './FirstOpenHost';
+import type { FirstOpenDecision } from './resolveFirstOpen';
 
 type SceneModule = typeof import('./FirstOpenScene');
 export type FirstOpenAdmission =
     ({ decision: 'in-app'; scene: SceneModule | null; warmup?: GlyphSurfaceWarmup }
-    | { decision: Exclude<FirstOpenDecision, 'in-app' | 'none'> }) & {
-        layoutTarget: FirstOpenLayoutTarget;
+    | { decision: 'overlay-eligible'; acknowledgeContent: ReturnType<typeof useDesktopMainWindowContentReady> }
+    | { decision: 'reduced' }) & {
         release: () => void;
         recordLayout: (event: LayoutChangeEvent) => boolean;
     };
@@ -30,8 +30,9 @@ export function createFirstOpenLayoutRecorder() {
 }
 
 /** Start optional work with the resolved boot decision while the app continues to its first layout. */
-export function useFirstOpenBoot() {
+export function useFirstOpenBoot(isWelcomeDestination: boolean) {
     const stage = useStepMotionStage();
+    const acknowledgeContent = useDesktopMainWindowContentReady();
     const [opening, setOpening] = useState<FirstOpenAdmission | null>(null);
     const admitOpening = useCallback((decision: FirstOpenDecision, desktopCandidate?: 'overlay' | 'in-app' | null) => {
         if (desktopCandidate) {
@@ -41,8 +42,6 @@ export function useFirstOpenBoot() {
         if (decision === 'none') return;
 
         const recordLayout = createFirstOpenLayoutRecorder();
-        // Desktop acknowledges the shell to show its window. In-app builds need the actual destination.
-        const layoutTarget = decision === 'overlay-eligible' ? 'shell' : 'workflow';
         const releaseBuild = decision === 'in-app' ? stage?.prepareBuild() : undefined;
         let active = true;
         const release = () => {
@@ -54,16 +53,21 @@ export function useFirstOpenBoot() {
                 : current);
         };
         if (decision === 'in-app') {
-            setOpening({ decision, scene: null, layoutTarget, release, recordLayout });
+            setOpening({ decision, scene: null, release, recordLayout });
             const scene = import('./FirstOpenScene');
             const warmup = import('@/components/atmosphere/glyph/GlyphSurface').then(glyph => active ? glyph.warmGlyphSurface() : undefined);
             void Promise.all([scene, warmup]).then(([module, renderer]) => {
-                if (active) setOpening({ decision, scene: module, warmup: renderer, layoutTarget, release, recordLayout });
+                if (active) setOpening({ decision, scene: module, warmup: renderer, release, recordLayout });
             }, () => {});
+        } else if (decision === 'overlay-eligible') {
+            setOpening({ decision, acknowledgeContent, release, recordLayout });
         } else {
-            setOpening({ decision, layoutTarget, release, recordLayout });
+            setOpening({ decision, release, recordLayout });
         }
         return release;
-    }, [stage]);
-    return { opening, Host: FirstOpenHost, admitOpening };
+    }, [acknowledgeContent, stage]);
+    // The shell can lay out while its lazy Welcome route is still mounting. Only the
+    // admitted Welcome acknowledges that launch; another destination uses the shell.
+    const onShellLayout = opening?.decision === 'overlay-eligible' && isWelcomeDestination ? undefined : acknowledgeContent;
+    return { opening, Host: FirstOpenHost, admitOpening, onShellLayout };
 }

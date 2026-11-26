@@ -59,7 +59,7 @@ it.each([
     let commitLayout: () => void = () => { throw new Error('The destination has not mounted'); };
     let readBuildReady = () => false;
     function Destination() {
-        const layout = useFirstOpenContentLayout('workflow');
+        const layout = useFirstOpenContentLayout();
         commitLayout = () => { layout?.({ nativeEvent: { layout: frame } } as Parameters<NonNullable<typeof layout>>[0]); };
         return <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
             <WelcomeDecisionPanel
@@ -87,7 +87,7 @@ it.each([
     function BootFixture() {
         const [mount, setMount] = React.useState(false);
         const [ready, setReady] = React.useState(false);
-        const { opening, Host, admitOpening } = useFirstOpenBoot();
+        const { opening, Host, admitOpening } = useFirstOpenBoot(true);
         const stage = useStepMotionStage();
         readBuildReady = () => stage?.isBuildReady() ?? false;
         onAuthResolved = accountRestored => { releaseOpening = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
@@ -264,7 +264,7 @@ it.each(['paint', 'Escape', 'hide'] as const)('releases the first-open paint hol
     }
     function BootFixture() {
         const [ready, setReady] = React.useState(false);
-        const { opening, Host, admitOpening } = useFirstOpenBoot();
+        const { opening, Host, admitOpening } = useFirstOpenBoot(true);
         React.useEffect(() => {
             releaseOpening = admitOpening(resolveFirstOpen({ accountRestored: false, segments }));
         }, [admitOpening]);

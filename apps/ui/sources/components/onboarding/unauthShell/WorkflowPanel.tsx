@@ -207,7 +207,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         ? { minHeight: welcomeScrollHeight + scrollOverflow }
         : undefined;
     const { onColumnLayout } = props;
-    const onOpeningLayout = useFirstOpenContentLayout('workflow');
+    const onOpeningLayout = useFirstOpenContentLayout();
     const onStepLayout = React.useCallback((event: LayoutChangeEvent) => {
         onColumnLayout?.(event);
         onOpeningLayout?.(event, props.planetState);
