@@ -1,9 +1,58 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildClaudeSubprocessEnv } from '@/backends/claude/spawn/buildClaudeSubprocessEnv';
+import { buildSpawnChildProcessEnv } from './buildSpawnChildProcessEnv';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
 describe('resolveSpawnChildEnvironment (explicit env keys marker)', () => {
+  it.each(['linux', 'win32'] as const)('forwards selected defaults to Claude across sessions on %s', async (platform) => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform });
+    const processEnv = {
+      HAPPIER_SESSION_FORWARD_ENV: ' PLAYWRIGHT_BROWSERS_PATH, MISSING_VAR, * ',
+      [platform === 'win32' ? 'Playwright_Browsers_Path' : 'PLAYWRIGHT_BROWSERS_PATH']: '/machine/browser-cache',
+      PRIVATE_VALUE: 'leave-in-daemon',
+      UNSELECTED: 'leave-in-daemon-too',
+    };
+    const launch = async (profileEnvironmentVariables: Record<string, string>) => {
+      const result = await resolveSpawnChildEnvironment({
+        options: { directory: '.' },
+        profileEnvironmentVariables,
+        daemonSpawnHooks: null,
+        processEnv,
+        logDebug: () => {},
+        logInfo: () => {},
+        logWarn: () => {},
+      });
+      if (!result.ok) throw new Error(result.errorMessage);
+      return buildClaudeSubprocessEnv({
+        baseEnv: buildSpawnChildProcessEnv({ processEnv, extraEnv: result.extraEnvForChild }),
+      });
+    };
+
+    try {
+      const inheritedName = platform === 'win32' ? 'Playwright_Browsers_Path' : 'PLAYWRIGHT_BROWSERS_PATH';
+      const first = await launch({});
+      const second = await launch({});
+      expect(first[inheritedName]).toBe('/machine/browser-cache');
+      expect(second[inheritedName]).toBe(first[inheritedName]);
+      const overridden = await launch({
+        PLAYWRIGHT_BROWSERS_PATH: '/profile/browser-cache',
+        HAPPIER_SESSION_FORWARD_ENV: 'PRIVATE_VALUE',
+      });
+      expect(overridden.PLAYWRIGHT_BROWSERS_PATH).toBe('/profile/browser-cache');
+      const cacheKeys = Object.keys(overridden).filter((key) => key.toUpperCase() === 'PLAYWRIGHT_BROWSERS_PATH');
+      expect(cacheKeys).toEqual(['PLAYWRIGHT_BROWSERS_PATH']);
+      expect(overridden).not.toHaveProperty('PRIVATE_VALUE');
+      expect(overridden).not.toHaveProperty('UNSELECTED');
+      expect(overridden).not.toHaveProperty('MISSING_VAR');
+      expect(overridden).not.toHaveProperty('HAPPIER_SESSION_FORWARD_ENV');
+    } finally {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+    }
+  });
+
   it('exports explicit GUI/auth env keys for downstream strict env filtering', async () => {
     const options = {
       directory: '.',

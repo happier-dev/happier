@@ -153,6 +153,7 @@ describe('buildClaudeUnifiedTerminalSpawn', () => {
     });
     const launch = await readLaunchSpecFromSpawn(spawn);
     const args = launch.args ?? [];
+    expect(args.flatMap((arg, index) => arg === '--model' ? [args[index + 1]] : [])).toEqual([input.model]);
     expect(args.flatMap((arg, index) => arg === '--effort' ? [args[index + 1]] : []))
       .toEqual(input.expected ? [input.expected] : []);
     expect(args).toContain('existing-native-session');

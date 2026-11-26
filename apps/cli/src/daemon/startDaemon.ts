@@ -1836,6 +1836,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         resume: () => void;
       }> | null = null;
       let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
+      let connectedServiceQuotaRuntime: ConnectedServiceQuotasCoordinator | null = null;
       const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
       const connectedServiceRuntimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
       const providerAccountUsageStore = createProviderAccountUsageStore();
@@ -2202,7 +2203,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 	          connectedServiceQuotasLoopHandle = null;
 	        };
 	        const flushConnectedServiceQuotaPersistenceForShutdown = async (): Promise<void> => {
-	          const result = await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(2_000);
+	          const result = await connectedServiceQuotaRuntime?.flushInBandQuotaPersistence(2_000);
           if (!result?.timedOut) return;
           logger.warn('[DAEMON RUN] Connected-service quota persistence did not drain before shutdown', result);
         };
@@ -7339,14 +7340,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         snapshot: input.snapshot,
       }),
       handleConnectedServiceQuotaRecoveryCreditConsume: async (input) => {
-        if (!connectedServiceQuotasCoordinator) {
+        if (!connectedServiceQuotaRuntime) {
           return {
             ok: false as const,
             errorCode: 'connected_service_quota_recovery_credit_unavailable',
             error: 'connected_service_quota_recovery_credit_unavailable',
           };
         }
-        return await connectedServiceQuotasCoordinator.consumeRecoveryCreditForProfile(input);
+        return await connectedServiceQuotaRuntime.consumeRecoveryCreditForProfile(input);
       },
       handleCodexChatGptAuthTokensRefresh: async (input) => {
         if (!connectedServiceRefreshCoordinator) {
@@ -8113,6 +8114,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               now: () => Date.now(),
               randomBytes: (length) => randomBytes(length),
               }),
+              onCoordinatorReady: (coordinator) => { connectedServiceQuotaRuntime = coordinator; },
               startLoop: (coordinator) => {
                 registerCurrentConnectedServiceTrackedSessionTargets();
                 const loopHandle = startConnectedServiceQuotasLoop({
@@ -9130,7 +9132,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         connectedServiceMaterializedHomeCleanupLoopHandle.stop();
         connectedServiceMaterializedHomeCleanupLoopHandle = null;
       }
-      connectedServiceQuotasCoordinator?.dispose();
+      connectedServiceQuotaRuntime?.dispose();
+      connectedServiceQuotaRuntime = null;
       connectedServiceQuotasCoordinator = null;
       providerAccountSettings.stop();
       localServerStormCleanup?.();

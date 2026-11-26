@@ -41,7 +41,7 @@ const staleGroupSource = {
 } satisfies ConnectedServiceUsageSourceV1;
 
 describe('startDaemon provider-account usage startup composition', () => {
-  it('awaits canonical inventory hydration before constructing or starting quota automation', async () => {
+  it('awaits canonical inventory hydration before scheduling automatic quota work', async () => {
     const hydration = deferred<Readonly<{
       refreshSources: ConnectedServiceUsageSourceV1[];
     }>>();
@@ -84,10 +84,10 @@ describe('startDaemon provider-account usage startup composition', () => {
 
     await Promise.resolve();
     expect(order).toEqual([
+      'create-coordinator',
       'readiness',
       'hydrate:openai-codex,claude-subscription',
     ]);
-    expect(createCoordinator).not.toHaveBeenCalled();
     expect(startLoop).not.toHaveBeenCalled();
 
     hydration.resolve({ refreshSources: [staleGroupSource] });
@@ -95,9 +95,9 @@ describe('startDaemon provider-account usage startup composition', () => {
 
     expect(result.status).toBe('active');
     expect(order).toEqual([
+      'create-coordinator',
       'readiness',
       'hydrate:openai-codex,claude-subscription',
-      'create-coordinator',
       'schedule-refresh',
       'start-loop',
     ]);
@@ -105,9 +105,7 @@ describe('startDaemon provider-account usage startup composition', () => {
 
   it('keeps quota automation disabled when authoritative hydration rejects', async () => {
     const hydrationError = new Error('Connected service provider-account usage source changed during hydration');
-    const createCoordinator = vi.fn(() => ({
-      scheduleCurrentSourceRefresh: vi.fn(),
-    }));
+    const scheduleCurrentSourceRefresh = vi.fn();
     const startLoop = vi.fn();
     const onActivationError = vi.fn();
 
@@ -119,7 +117,7 @@ describe('startDaemon provider-account usage startup composition', () => {
       hydrate: async () => {
         throw hydrationError;
       },
-      createCoordinator,
+      createCoordinator: () => ({ scheduleCurrentSourceRefresh }),
       startLoop,
       onActivationError,
     })).resolves.toEqual({
@@ -127,7 +125,7 @@ describe('startDaemon provider-account usage startup composition', () => {
       error: hydrationError,
     });
 
-    expect(createCoordinator).not.toHaveBeenCalled();
+    expect(scheduleCurrentSourceRefresh).not.toHaveBeenCalled();
     expect(startLoop).not.toHaveBeenCalled();
     expect(onActivationError).toHaveBeenCalledWith(hydrationError);
   });

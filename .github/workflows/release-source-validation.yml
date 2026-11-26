@@ -376,9 +376,12 @@ jobs:
           test "$SOURCE_PLAN_RESULT" = success
           if [ "$DRY_RUN" != true ]; then test "$SOURCE_CONTRACTS_RESULT" = success; fi
           if [ "$DRY_RUN" != true ]; then
-            if [ "$WAIVE_CI" != true ]; then test "$CI_RESULT" = success; fi
-            if [ "$RUN_MYSQL" = true ]; then test "$MYSQL_RESULT" = success; fi
-            if [ "$RUN_PLATFORM" = true ]; then test "$PLATFORM_RESULT" = success; fi
+            # waive_ci also skips the source-only MySQL and platform gates; admission records them as waived.
+            if [ "$WAIVE_CI" != true ]; then
+              test "$CI_RESULT" = success
+              if [ "$RUN_MYSQL" = true ]; then test "$MYSQL_RESULT" = success; fi
+              if [ "$RUN_PLATFORM" = true ]; then test "$PLATFORM_RESULT" = success; fi
+            fi
             if [ "$RUN_TRUST_ROOTS" = true ]; then test "$TRUST_ROOTS_RESULT" = success; fi
           fi
           {

@@ -233,6 +233,7 @@ vi.mock('@/sync/sync', () => ({
         decryptSecretValue: vi.fn(),
         refreshAutomations: vi.fn(async () => {}),
         refreshSessions: vi.fn(async () => {}),
+        refreshSessionMessages: vi.fn(async () => {}),
         ensureSessionVisibleForMessageRoute: ensureSessionVisibleForMessageRouteMock,
         refreshMachines: vi.fn(async () => {}),
         acquireUserRequestLease: () => () => {},

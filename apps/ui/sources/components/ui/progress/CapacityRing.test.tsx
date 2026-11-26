@@ -43,6 +43,18 @@ describe('CapacityRing', () => {
         expect(empty.root.findByProps({ testID: 'q' }).props.strokeDashoffset).toBeCloseTo(2 * Math.PI * radius, 5);
     });
 
+    it('anchors a remaining ring at 12 o\'clock so the used part sweeps clockwise like a clock hand', () => {
+        const tree = renderRing(
+            <CapacityRing measures="remaining" size={40} strokeWidth={4} ratio={0.34} color="#0a0" progressTestID="r" />,
+        );
+        const circumference = 2 * Math.PI * ((40 - 4) / 2);
+        // A negative offset skips the used part from 12 o'clock, so the drawn arc ENDS at 12 (left side).
+        expect(tree.root.findByProps({ testID: 'r' }).props.strokeDashoffset).toBeCloseTo(-circumference * 0.66, 5);
+
+        const full = renderRing(<CapacityRing measures="remaining" ratio={1} color="#0a0" progressTestID="f" />);
+        expect(full.root.findByProps({ testID: 'f' }).props.strokeDashoffset).toBeCloseTo(0, 5);
+    });
+
     it('renders one track + one progress arc per concentric ring (outer carries progressTestID)', () => {
         const tree = renderRing(
             <CapacityRing

@@ -22,7 +22,9 @@ async function scrollConnectedTestIdIntoView(
       // Query and scroll in one browser task. Playwright's locator action waits
       // for stability while retaining an element handle, which is unsafe for
       // this intentionally re-rendering/virtualized tree during drag setup.
-      element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      // Keep the drop point inside the viewport, away from the fixed footer
+      // and the edge band that activates drag autoscroll.
+      element.scrollIntoView({ block: 'center', inline: 'nearest' });
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       return document.querySelector<HTMLElement>(selector)?.isConnected === true;
     }, testId);
@@ -160,6 +162,10 @@ async function dispatchSessionTreePointerDrag(page: Page, params: Readonly<{
   await page.mouse.down({ button: 'left' });
   await page.waitForTimeout(35);
   await page.mouse.move(activationPoint.x, activationPoint.y);
+  await page.waitForTimeout(35);
+  // Pan activation starts the gesture; the next move publishes the drag
+  // pointer. Establish it before holding at an autoscroll edge.
+  await page.mouse.move(activationPoint.x, activationPoint.y + (activationPoint.y - sourcePoint.y));
   await page.waitForTimeout(35);
 
   // Revealing/hovering the source can scroll a previously visible target out
