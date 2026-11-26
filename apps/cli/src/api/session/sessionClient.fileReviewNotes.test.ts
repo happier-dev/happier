@@ -10,6 +10,7 @@ import { ApiSessionClient } from './sessionClient';
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import { prepareSessionInputForProviderDispatch } from '@/agent/runtime/turns/prepareSessionInputForProviderDispatch';
 import { FILE_REVIEW_NOTE_KIND, formatFileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
+import { SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1, SessionPendingAdmissionSettlementRequestV1Schema, SessionPendingAdmissionSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingAdmissionSettlementV1';
 import { buildCodexAppServerTurnInput } from '@happier-dev/plugins-codex/agent/runtime/appServer/turnInput';
 import { sendFileReviewNoteToSession } from '@/session/services/sendFileReviewNote';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -59,6 +60,14 @@ describe('file review notes at the provider input boundary', () => {
         let claimed = false;
         const activity = createSessionRuntimeActivityHomeStub({ machineId: 'review-machine' });
         const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+            if (event === SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1) {
+                const request = SessionPendingAdmissionSettlementRequestV1Schema.parse(payload);
+                expect(request).toMatchObject({ sessionId, localId: noteLocalId,
+                    decision: { kind: 'admit', finalContent: storedContent } });
+                return SessionPendingAdmissionSettlementResponseV1Schema.parse({
+                    v: 1, result: { status: 'accepted', localId: request.localId },
+                });
+            }
             if (event === 'pending-materialize-next' && !claimed) {
                 claimed = true;
                 return { ok: true, didMaterialize: true, didWrite: false, localId: noteLocalId,
