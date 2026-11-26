@@ -11,6 +11,9 @@ import { createWorkflowDefinition, updateWorkflowDefinition } from '@/sync/domai
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { workflowEditorSnapshotsEqual } from './useWorkflowEditorHistory';
 
+export type PendingWorkflowDefinitionUpdate = Pick<Parameters<typeof updateWorkflowDefinition>[0], 'definitionId' | 'expectedRevision' | 'metadata'>
+    & Readonly<{ definition: WorkflowDefinitionV1 }>;
+
 export type WorkflowEditorSavedRevision = Pick<Awaited<ReturnType<typeof createWorkflowDefinition>>, 'definitionId' | 'revision'>;
 export type PendingWorkflowDefinitionCreate = Readonly<{
     input: Pick<Parameters<typeof createWorkflowDefinition>[0], 'definitionId' | 'definition' | 'metadata' | 'intendedTriggers'>;
@@ -47,6 +50,7 @@ export async function saveWorkflowEditorDefinition(params: Readonly<{
     caller?: WorkflowActionCallerContext;
     operation?: WorkflowActionOperation;
     isCurrent: () => boolean;
+    trackUpdate?: (pending: PendingWorkflowDefinitionUpdate) => () => void;
     acknowledge: (result: Awaited<ReturnType<typeof createWorkflowDefinition>>, draft: WorkflowEditorDraft,
         description: string, kind: 'created' | 'updated') => void;
 }>): Promise<WorkflowEditorSavedRevision | null> {
@@ -71,11 +75,16 @@ export async function saveWorkflowEditorDefinition(params: Readonly<{
     }
     // Later edits use the ordinary revision writer after rejoining the retained create.
     if (saved !== null && (!workflowEditorSnapshotsEqual(draft, baseline.draft) || description !== baseline.description)) {
-        const result = await updateWorkflowDefinition({ definitionId: saved.definitionId, expectedRevision: saved.revision,
-            definition, metadata, ...intended, ...options });
-        if (!params.isCurrent()) return null;
-        saved = { definitionId: result.definitionId, revision: result.revision };
-        params.acknowledge(result, draft, description, 'updated');
+        const update = { definitionId: saved.definitionId, expectedRevision: saved.revision, definition, metadata };
+        const stopTracking = params.trackUpdate?.(update);
+        try {
+            const result = await updateWorkflowDefinition({ ...update, ...intended, ...options });
+            if (!params.isCurrent()) return null;
+            saved = { definitionId: result.definitionId, revision: result.revision };
+            params.acknowledge(result, draft, description, 'updated');
+        } finally {
+            stopTracking?.();
+        }
     }
     return saved;
 }

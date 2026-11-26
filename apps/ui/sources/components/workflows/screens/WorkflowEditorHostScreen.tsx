@@ -115,6 +115,8 @@ import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflow
 import { formatTriggerResultDecides } from '../triggers/formatTriggerSummary';
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
+import type { PendingWorkflowDefinitionUpdate } from '../editor/saveWorkflowEditorDefinition';
+import { sameWorkflowDefinitionAuthoringContentV1 } from '@happier-dev/protocol/workflows/workflowAuthoringEqualityV1';
 import { parseMountedWorkflowDraftMutation, saveMountedWorkflowDraft, saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate } from '../editor/saveWorkflowEditorDefinition';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
@@ -575,9 +577,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const deletePendingRef = React.useRef(false);
     const deleteAbortRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => deleteAbortRef.current?.abort(), []);
-    const [observedSaveConflict, setSaveConflict] = React.useState<WorkflowSaveConflict | null>(null);
-    // Home can publish this revision before the pending Save acknowledges it.
-    const saveConflict = savePending ? null : observedSaveConflict;
+    const [saveConflict, setSaveConflict] = React.useState<WorkflowSaveConflict | null>(null);
+    const pendingDefinitionUpdateRef = React.useRef<Readonly<{ update: PendingWorkflowDefinitionUpdate; isCurrent: () => boolean }> | null>(null);
     /**
      * The description is Artifact metadata beside the name, outside the portable
      * definition: hydrated from the opened revision (or a reviewed copy's seed)
@@ -1306,6 +1307,13 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         retainCreate: (pending) => { pendingDefinitionCreatesRef.current[createIntent] = pending; },
                         copying, accountLifetime: lifetime, ...(caller === undefined ? {} : { caller }),
                         ...(operation === undefined ? {} : { operation }), isCurrent,
+                        trackUpdate: (update) => {
+                            const pending = { update, isCurrent };
+                            pendingDefinitionUpdateRef.current = pending;
+                            return () => {
+                                if (pendingDefinitionUpdateRef.current === pending) pendingDefinitionUpdateRef.current = null;
+                            };
+                        },
                         acknowledge: (result, acceptedDraft, acceptedDescription, kind) => {
                             savedDraftRef.current = acceptedDraft;
                             savedDescriptionRef.current = acceptedDescription;
@@ -1625,6 +1633,13 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             }
             return;
         }
+        const pending = pendingDefinitionUpdateRef.current;
+        const pendingUpdate = pending?.isCurrent() ? pending.update : null;
+        // Leave matching bytes to the Save receipt, which owns the final result.
+        if (accepted && changedBlockIds === null && pendingUpdate?.definitionId === revision.definitionId
+            && pluginJsonValuesEqual(pendingUpdate.expectedRevision, saved.revision)
+            && pluginJsonValuesEqual(pendingUpdate.metadata, revision.metadata)
+            && sameWorkflowDefinitionAuthoringContentV1(pendingUpdate.definition, revision.definition)) return;
         const draft = draftStore.get();
         const incoming = buildWorkflowEditorDraftFromDefinition({
             draftId: draft?.draftId ?? randomUUID(),

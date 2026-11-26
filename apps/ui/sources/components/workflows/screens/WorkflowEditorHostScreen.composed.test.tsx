@@ -2242,6 +2242,30 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.updates).toHaveLength(1);
     });
 
+    it('surfaces a different pushed revision while this editor Save is pending', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { getWorkflowDefinition, updateWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        await act(async () => readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get()!, name: 'Edited here' }));
+        const request = boundary.holdNextUpdate();
+        try {
+            await screen.pressByTestIdAsync('workflow-editor-save');
+            await request.issued;
+            const original = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+            await updateWorkflowDefinition({ definitionId: original.definitionId, expectedRevision: original.revision,
+                definition: original.definition, metadata: { ...original.metadata, title: 'Edited elsewhere' } });
+            await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+            await vi.waitFor(() => expect(readBodyProps()!.saveConflict?.currentDraft?.name).toBe('Edited elsewhere'));
+            expect(readBodyProps()!.draftStore.get()!.name).toBe('Edited here');
+        } finally {
+            await act(async () => { request.resolve(); });
+        }
+        await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
+        expect(readBodyProps()!.saveConflict?.currentDraft?.name).toBe('Edited elsewhere');
+        expect(readBodyProps()!.draftStore.get()!.name).toBe('Edited here');
+    });
+
     it('retries a failed pushed definition read without abandoning the mounted draft', async () => {
         const boundary = await serveMountedDraftActionHome();
         const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
