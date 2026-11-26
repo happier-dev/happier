@@ -12195,9 +12195,11 @@ live observations even without a Session; removing sampling requires an explicit
 alert-policy decision or a real provider change signal. Canonical Account-scoped
 Settings publications wake the existing scheduler when demand changes. The established runtime
 owner prepares one exact credential/configuration pair for an account's due
-status/quota work, without retaining it for later calls. Each operation keeps
-its own fresh credential, Account and effect/disclosure checks. A credential or
-configuration change rearms the existing deadlines rather than adding a poll.
+status and quota work. Each operation uses that pair for credential and
+configuration admission and keeps its Account and effect checks. Quota source
+initialization writes before the provider call, so that path revalidates the
+linked revisions. An initialized source uses the admitted pair. A credential or
+configuration change rearms the existing deadlines.
 
 Manual V4 Refresh commits its marker and an exact Provider Account Usage record
 hint in the existing Account feed. The daemon drains that feed page by page and

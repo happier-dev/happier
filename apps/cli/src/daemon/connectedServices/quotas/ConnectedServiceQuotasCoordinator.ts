@@ -4216,7 +4216,11 @@ export class ConnectedServiceQuotasCoordinator {
         },
         beforeInvoke: async (basis, signal) => {
           signal?.throwIfAborted();
-          if (!previousSnapshot && !await this.persistQualifiedConnectedAccountQuota({
+          if (previousSnapshot) {
+            admittedBasis = basis;
+            return 'basis-unchanged' as const;
+          }
+          if (!await this.persistQualifiedConnectedAccountQuota({
             accountMode: input.accountMode, profile: input.profile, snapshot: empty, basis, signal,
             stageDaySummaries: input.stageDaySummaries,
           })) throw new Error('Qualified quota source could not be initialized');

@@ -2340,8 +2340,9 @@ In 0.3 development source, qualified credential health and quota automation shar
 the existing quota loop when both are enabled. The established runtime owner
 prepares one credential/configuration pair for a Connected Account's due status and quota
 operations, keeps their results independent, and discards that pair when the
-invocation ends. Each operation retains its fresh currentness and effect checks;
-the preparation is not a credential cache or reusable authority. Health-only
+invocation ends. Operations check Account and runtime authority and use the
+admitted pair for credential and configuration currentness. A host write during
+preparation revalidates the linked revisions before provider work. Health-only
 automation and released legacy transports retain their existing loop owners.
 Unchanged qualified Accounts wait for their credential refresh window, quota
 reset deadline or existing failure backoff. Known notification opt-out with no

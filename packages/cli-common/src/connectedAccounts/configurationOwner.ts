@@ -267,6 +267,7 @@ type SnapshotMetadata = Readonly<{
     secretRefs: Readonly<Record<string, string>>;
     secretValues: Readonly<Record<string, string>>;
     unconfigured: boolean;
+    established: boolean;
 }>;
 
 type ConfigurationCurrentnessFence = Readonly<{
@@ -523,6 +524,8 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         mode: PluginConnectedAccountAuthenticationModeV2;
         attemptId?: string;
         expectedConfigurationRevision?: string;
+        /** Exact record already admitted at the established invocation boundary. */
+        established?: Readonly<{ record: ConnectedAccountConfigurationRecord | null }>;
         occurrenceId: string;
         sourceCustody: ConnectedAccountSourceCustodyV1;
     }>): Promise<ConnectedAccountAttemptConfigurationAdmission & Readonly<{ secretReader?: ConnectedAccountCredentialOperationSecretReader }>>;
@@ -540,7 +543,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         }>
         | ConfigurationPersistenceRefusal
     >;
-    isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration): Promise<boolean>;
+    isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration, options?: Readonly<{ revalidate?: boolean }>): Promise<boolean>;
     /** Host-owned revocation signal for this exact configuration snapshot. */
     currentnessSignal(snapshot: PluginConnectedAccountRuntimeConfiguration): AbortSignal;
     destroyAttempt(attemptId: string): Promise<void>;
@@ -732,6 +735,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
         secretRefs: Readonly<Record<string, string>>;
         secretValues?: Readonly<Record<string, string>>;
         unconfigured?: boolean;
+        established?: boolean;
         secretReader?: ConnectedAccountCredentialOperationSecretReader;
         publicOAuthClient?: PublicOAuthClient;
     }>): PluginConnectedAccountRuntimeConfiguration {
@@ -811,6 +815,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             secretRefs: input.secretRefs,
             secretValues: input.secretValues ?? Object.freeze({}),
             unconfigured: input.unconfigured === true,
+            established: input.established === true,
         }));
         return snapshot;
     }
@@ -1056,6 +1061,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             mode: PluginConnectedAccountAuthenticationModeV2;
             attemptId?: string;
             expectedConfigurationRevision?: string;
+            established?: Readonly<{ record: ConnectedAccountConfigurationRecord | null }>;
             occurrenceId: string;
             sourceCustody: ConnectedAccountSourceCustodyV1;
         }>): Promise<ConnectedAccountAttemptConfigurationAdmission & Readonly<{ secretReader?: ConnectedAccountCredentialOperationSecretReader }>> {
@@ -1079,7 +1085,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 return Object.freeze({ status: 'ready', snapshot });
             }
             const effective = await resolveEffectiveMode(input.mode, target);
-            const record = await params.read(target);
+            const record = input.established ? input.established.record : await params.read(target);
             await assertRuntimeCurrent(input.service, runtimeIdentity);
             // An AccountChange hint is only a wake; a new operation must not use
             // a shared Saved Secret the Home no longer authorizes.
@@ -1099,7 +1105,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             const revision = normalized.revision ?? (
                 modeConfiguration(effective.displayMode) ? null : UNCONFIGURED_REVISION
             );
-            if (!await isTargetRevisionCurrent(
+            if (!input.established && !await isTargetRevisionCurrent(
                 input.service,
                 runtimeIdentity,
                 target,
@@ -1143,6 +1149,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 secretValues: normalized.secretValues,
                 publicOAuthClient: effective.publicOAuthClient,
                 secretReader,
+                established: input.established !== undefined,
             });
             return Object.freeze({
                 status: 'ready',
@@ -1256,7 +1263,7 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             return Object.freeze({ status: 'committed' as const, snapshot });
         },
 
-        async isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration): Promise<boolean> {
+        async isCurrent(snapshot: PluginConnectedAccountRuntimeConfiguration, options?: Readonly<{ revalidate?: boolean }>): Promise<boolean> {
             const metadata = snapshotMetadata.get(snapshot);
             if (!metadata) return false;
             try {
@@ -1265,6 +1272,10 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 // A mode with no configuration declaration has no stored basis.
                 // A deferred-only attempt still tracks replacement of its basis.
                 if (metadata.unconfigured) return true;
+                // Finite established work consumes the admitted record and its
+                // existing local replacement signal. A host effect may explicitly
+                // revalidate an independently stored service configuration.
+                if (metadata.established && !options?.revalidate) return !metadata.currentnessSignal.aborted;
                 const record = await params.read(metadata.target);
                 const current = (record?.revision ?? UNCONFIGURED_REVISION) === metadata.revision;
                 if (!current) revokeCurrentnessFence(metadata.target, metadata.revision);

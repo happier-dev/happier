@@ -437,6 +437,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     let credentialRevision = requestAuthCredentialRevision;
     let configurationRevision: string | null = snapshot.configurationRevision;
     let credentialReads = 0;
+    let configurationReads = 0;
     let credentialReadMs = 0;
     let accountCurrentnessChecks = 0;
     const home = fastify();
@@ -490,11 +491,14 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...snapshot, credentialRevision, configurationRevision, exportProjection: storedExportProjection });
       },
       // An unconfigured account has no configuration row (the Home answers 404).
-      readConfiguration: async () => configurationRevision === null ? null : ({
-        target: { kind: 'account', ref: target }, authenticationModeId: 'token', revisionSemantics: 'revisioned',
-        credentialRevision, configurationRevision,
-        configurationContent: plainEnvelope('configuration', { values: { endpoint: 'https://provider.example' }, secretRefs: {} }),
-      }),
+      readConfiguration: async () => {
+        configurationReads += 1;
+        return configurationRevision === null ? null : {
+          target: { kind: 'account', ref: target }, authenticationModeId: 'token', revisionSemantics: 'revisioned',
+          credentialRevision, configurationRevision,
+          configurationContent: plainEnvelope('configuration', { values: { endpoint: 'https://provider.example' }, secretRefs: {} }),
+        };
+      },
       configuration: { read: async () => null, secrets: {
         admit: async () => {}, has: async () => false, read: async () => null,
       } },
@@ -619,11 +623,13 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     }
     rotateAfterStatusFields = undefined;
     const beforeMaterialCredentials = credentialReads;
+    const beforeMaterialConfigurations = configurationReads;
     await expect(owner.invoke({ account: target,
       operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
     })).resolves.toMatchObject({ kind: 'environment' });
     // One credential admission per materialization (R6).
     expect(credentialReads - beforeMaterialCredentials).toBe(1);
+    expect(configurationReads - beforeMaterialConfigurations).toBe(configured ? 1 : 0);
     for (const rotation of ['credential', 'configuration'] as const) {
       rotateAfterMaterialFields = rotation;
       const materialized = owner.invoke({ account: target,
@@ -637,6 +643,15 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       configurationRevision = snapshot.configurationRevision;
     }
     rotateAfterMaterialFields = undefined;
+    if (configured) {
+      configurationRevision = 'configuration-next-pass';
+      const beforeNextMaterialization = configurationReads;
+      await expect(owner.invokeWithReceipt({
+        account: target, operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
+      })).resolves.toMatchObject({ basis: { runtimeConfigurationRevision: configurationRevision } });
+      expect(configurationReads - beforeNextMaterialization).toBe(1);
+      configurationRevision = snapshot.configurationRevision;
+    }
     revokeAfterStatusFields = true;
     await expect(owner.invoke({ account: target, operation: { kind: 'status' } }))
       .resolves.toMatchObject({ status: 'connected' });
@@ -696,9 +711,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       operation: { kind: 'materialize', request: { kind: 'environment', keys: ['TOKEN'] } },
       // The bearer revision can remain unchanged while its configuration linkage changes.
       beforeInvoke: () => { configurationRevision = 'configuration-after-admission'; },
-    })).rejects.toMatchObject({ code: configured
-      ? 'connected_account_configuration_unavailable'
-      : 'connected_account_producer_result_stale' });
+    })).rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
     expect(nativeEntered).toBe(false);
     configurationRevision = snapshot.configurationRevision;
     revokeAfterFields = true;
@@ -850,6 +863,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     const failure = new Error('provider offline');
     let sourceReady = false;
     let providerCalls = 0;
+    let credentialReads = 0;
     let runtimeCurrent = true;
     const runtime: ConnectedAccountRuntime = {
       authentication: { modes: {} },
@@ -900,12 +914,15 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       } as unknown as Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'>,
       credentials: { token: 'token', encryption: null },
       getAccountEncryptionMode: async () => 'plain',
-      readCredential: async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
-        ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned',
-        credentialRevision: requestAuthCredentialRevision, configurationRevision: null,
-        content: plainEnvelope('credential', { v: 1, values: { token: 'provider-token' } }),
-        metadata: { scopes: [] },
-      }),
+      readCredential: async () => {
+        credentialReads += 1;
+        return QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+          ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned',
+          credentialRevision: requestAuthCredentialRevision, configurationRevision: null,
+          content: plainEnvelope('credential', { v: 1, values: { token: 'provider-token' } }),
+          metadata: { scopes: [] },
+        });
+      },
       configuration: { read: async () => null, secrets: {
         admit: async () => {}, has: async () => false, read: async () => null,
       } },
@@ -945,6 +962,17 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     expect(scheduled).toMatchObject({ status: { status: 'fulfilled', value: { result: { status: 'connected' } } },
       quota: { status: 'rejected', reason: deferred } });
     expect(providerCalls).toBe(1);
+    const beforeDuePass = credentialReads;
+    const due = await owner.invokeScheduledWithReceipts({
+      account,
+      quota: { beforeInvoke: (basis) => {
+        expect(basis.credentialRevision).toBe(requestAuthCredentialRevision);
+        return 'basis-unchanged' as const;
+      } },
+    });
+    expect(due.quota).toMatchObject({ status: 'rejected', reason: failure });
+    expect(providerCalls).toBe(2);
+    expect(credentialReads - beforeDuePass).toBe(1);
   });
   it('resolves a Saved Secret held credential key from its one record and sees the record rotate', async () => {
     const keyRef = 'happier:shared-secret:v1:anthropic-key';

@@ -87,7 +87,7 @@ export type QualifiedConnectedAccountScheduledOperationOptions = Readonly<{
   expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1;
   expectedConfigurationRevision?: string | null;
   beforeInvoke?: (basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
-    'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'>) => MaybePromise<void>;
+    'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'>) => MaybePromise<void | 'basis-unchanged'>;
   signal?: AbortSignal;
 }>;
 export type QualifiedConnectedAccountScheduledReceipt<K extends 'status' | 'quota', TQuota extends ConnectedAccountRuntimeQuotaBase = ConnectedAccountRuntimeQuotaBase> = Readonly<{
@@ -183,8 +183,7 @@ export type QualifiedConnectedAccountEstablishedRuntimeOwner<TQuota extends Conn
       /** Synchronous quota admission at the provider leaf, after all preparation awaits. */
       assertProviderCallAllowed?: () => void;
       /** Lets the host establish usage before provider work under the admitted source basis. */
-      beforeInvoke?: (basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
-        'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'>) => MaybePromise<void>;
+      beforeInvoke?: QualifiedConnectedAccountScheduledOperationOptions['beforeInvoke'];
       signal?: AbortSignal;
     }>,
   ): Promise<Readonly<{
@@ -789,8 +788,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
       expectedConfigurationRevision?: string | null;
       assertEffectfulOperationAllowed?: () => void;
       assertProviderCallAllowed?: () => void;
-      beforeInvoke?: (basis: Pick<QualifiedConnectedAccountEstablishedInvocationBasis,
-        'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'>) => MaybePromise<void>;
+      beforeInvoke?: QualifiedConnectedAccountScheduledOperationOptions['beforeInvoke'];
       signal?: AbortSignal;
     }>,
     scheduledInitial?: ReturnType<typeof readExactSnapshots>,
@@ -907,45 +905,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
               : null);
         const configurationOwner: ConnectedAccountConfigurationOwner =
           params.configurationOwner ?? createConnectedAccountConfigurationOwner({
-            async read(target) {
-              if (target.modeId !== mode.id) return null;
-              if (exactConfigurationTarget.kind === 'service') {
-                if (
-                  target.kind !== 'service'
-                  || !sameService(target.service, exactConfigurationTarget.service)
-                ) {
-                  return null;
-                }
-                return descriptorConfiguration
-                  ? await params.configuration.read(target)
-                  : null;
-              }
-              if (
-                target.kind !== 'account'
-                || !sameQualifiedConnectedAccountRef(target.account, exactConfigurationTarget.account)
-              ) {
-                return null;
-              }
-              const configuration = await readConfiguration({
-                target: accountTarget(input.account),
-                requestPurpose: 'connected-accounts:purpose-binding',
-                signal: input.signal,
-              });
-              if (!configuration) return null;
-              assertConfigurationSnapshotIdentity(configuration, input.account);
-              requireRevisionedConfigurationSnapshot(configuration);
-              // The parallel credential guard verifies that this admitted pair's
-              // credential and configuration revisions still address the current row.
-              assertSnapshotPair({ credential: initial.credential, configuration });
-              return parseConnectedAccountConfigurationRecordContent(
-                params.openContent({
-                  kind: 'configuration',
-                  accountMode,
-                  envelope: configuration.configurationContent,
-                }),
-                configuration.configurationRevision,
-              );
-            },
+            read: params.configuration.read,
             async replace() {
               return Object.freeze({
                 status: 'unavailable' as const,
@@ -961,6 +921,7 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           });
         const admittedConfiguration = await observeMaterializationPhase('established_configuration', () => configurationOwner.admit({
           intent: 'reconnect',
+          established: { record: initialConfigurationRecord },
           service: input.account.service,
           account: input.account,
           mode,
@@ -1011,18 +972,20 @@ export function createConnectedAccountEstablishedRuntimeOwner<
         );
 
         input.assertEffectfulOperationAllowed?.();
+        let revalidateAfterHostEffect = false;
         if (input.beforeInvoke) {
           assertNotAborted(input.signal);
           await assertAccountRuntimeCurrent(input.signal);
           if (!isCurrent()) {
             throw new Error('Connected-account runtime generation is no longer current');
           }
-          await input.beforeInvoke(Object.freeze({
+          const disposition = await input.beforeInvoke(Object.freeze({
             credentialRevision: initial.credential.credentialRevision,
             credentialConfigurationRevision: initial.credential.configurationRevision,
             isCurrent,
           }));
           assertNotAborted(input.signal);
+          revalidateAfterHostEffect = disposition !== 'basis-unchanged';
         }
         const result = await observeMaterializationPhase('established_runtime', () => runCurrentAccountRead(() => invoker.invokeEstablished({
           target: Object.freeze({
@@ -1042,7 +1005,10 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           async isConfigurationCurrent(configuration) {
             if (configuration !== exactConfiguration) return false;
             if (!await isAccountRuntimeCurrent(input.signal)) return false;
-            return configurationOwner.isCurrent(baseConfiguration);
+            return configurationOwner.isCurrent(baseConfiguration, {
+              // Account linkage is checked with the credential revision below.
+              revalidate: revalidateAfterHostEffect && exactConfigurationTarget.kind === 'service',
+            });
           },
           configurationRevocationSignal(configuration) {
             return configuration === exactConfiguration
@@ -1052,10 +1018,9 @@ export function createConnectedAccountEstablishedRuntimeOwner<
                 );
           },
           async isCredentialRevisionCurrent() {
-            // Entry consumes the exact snapshot already admitted above (R6: one
-            // credential admission per materialization). Only an intervening
-            // host callback (quota beforeInvoke) re-qualifies the revision.
-            const latest = !input.beforeInvoke
+            // Entry consumes the exact snapshot already admitted above. An
+            // intervening host effect re-qualifies the linked revisions.
+            const latest = !revalidateAfterHostEffect
               ? initial.credential
               : await readCredential({
                   ref: input.account,

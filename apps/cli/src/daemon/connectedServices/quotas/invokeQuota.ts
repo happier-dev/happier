@@ -1,6 +1,6 @@
 import { setTimeout, clearTimeout } from 'node:timers';
 import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
-import type { QualifiedConnectedAccountEstablishedInvocationBasis } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import type { QualifiedConnectedAccountEstablishedInvocationBasis, QualifiedConnectedAccountScheduledOperationOptions } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { ScheduledQualifiedAccountHealth } from '../refresh/ConnectedServiceRefreshCoordinator';
 import type { QualifiedConnectedAccountQuotaRuntime } from './ConnectedServiceQuotasCoordinator';
 import { logger } from '@/ui/logger';
@@ -17,7 +17,7 @@ export async function invokeQuota(input: Readonly<{
   expectedCredentialRevision?: string;
   fetchTimeoutMs: number | null;
   scheduledHealth?: Readonly<{ work: ScheduledQualifiedAccountHealth; dispatched(): void }>;
-  beforeInvoke(basis: InvocationBasis, signal?: AbortSignal): Promise<void>;
+  beforeInvoke(basis: InvocationBasis, signal?: AbortSignal): ReturnType<NonNullable<QualifiedConnectedAccountScheduledOperationOptions['beforeInvoke']>>;
   recoverUnauthorized?(signal?: AbortSignal): Promise<boolean>;
   assertProviderCallAllowed(): void;
   onTimeout(): void;
@@ -49,8 +49,9 @@ export async function invokeQuota(input: Readonly<{
       signal,
       beforeInvoke: async (basis: InvocationBasis) => {
         signal?.throwIfAborted();
-        await input.beforeInvoke(basis, signal);
+        const disposition = await input.beforeInvoke(basis, signal);
         signal?.throwIfAborted();
+        return disposition;
       },
     };
     const initial = input.scheduledHealth ? (async () => {
