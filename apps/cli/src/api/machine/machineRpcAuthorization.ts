@@ -1742,25 +1742,26 @@ export async function authorizeMachineRpcRequest(
   )
     return forbidden();
   let authorized: Extract<RpcAuthorizationResult, { ok: true }> = { ok: true };
-  // Original Action ingress can retain its verified requester without a raw
-  // Machine RPC stamp. Consume that private evidence through the same identity
-  // owner, bound to this physical receiver; never fabricate a Machine role.
+  // Original Action ingress can retain requester custody without a raw Machine
+  // RPC stamp. The identity owner binds that custody to this physical receiver.
   const retainedRequester = readRetainedVerifiedExternalActionRequester(
     request.localActionContext?.externalActionExecutionAuthorization);
-  if (!request.machineAdmission && retainedRequester) {
+  const localRootCustody = request.localActionContext?.authenticatedLocalRootCustody;
+  if (!request.machineAdmission && (retainedRequester || localRootCustody)) {
     if (!machine) return forbidden('machine_target');
     const method = request.method.startsWith(`${machine.machineId}:`)
       ? request.method.slice(machine.machineId.length + 1) : undefined;
     if (!method) return forbidden('machine_target');
-    if (resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
+    const localRepositoryRead = localRootCustody && isScmLocalRepositoryReadRpcMethod(method);
+    if ((retainedRequester || localRepositoryRead)
+      && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
       try {
         const installationId = machine.resolveInstallationId();
         const identity = selectHostRequesterExecutionIdentity({ actionContext: {
           ...request.localActionContext,
           authority: request.callerAuthority,
           callerInputAuthorization: request.callerInputAuthorization,
-          externalActionExecutionAuthorization: retainedRequester.authorization,
-          verifyMachineAdmissionCurrent: retainedRequester.isCurrent,
+          verifyMachineAdmissionCurrent: retainedRequester?.isCurrent,
           sessionActionOrigin: request.sessionActionOrigin,
           requesterSessionBootstrap: request.requesterSessionBootstrap,
           signal: request.signal,
@@ -1768,7 +1769,10 @@ export async function authorizeMachineRpcRequest(
           hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
         if (!isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
-        if (request.signal?.aborted || !await retainedRequester.isCurrent()) return forbidden('request_cancelled');
+        if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
+        if (localRepositoryRead && identity.kind === 'isolated') {
+          authorized = { ok: true, directWorkspaceRequester: identity };
+        }
       } catch { return forbidden('authorization_unavailable'); }
     }
   }
