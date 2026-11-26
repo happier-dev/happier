@@ -10,6 +10,9 @@ import {
   ConnectedServiceCredentialRecordV1Schema,
   assertConnectedServiceCredentialRecordBinding,
   openConnectedServiceCredentialCiphertext,
+  isConnectedServiceCredentialHealthStatusUsable,
+  normalizeConnectedServiceCredentialHealthStatus,
+  type ConnectedServiceCredentialHealthStatusV1,
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceId,
@@ -20,21 +23,72 @@ export {
   assertConnectedServiceCredentialRecordBinding,
 } from '@happier-dev/protocol';
 
-import type { ConnectedServiceCredentialApi } from '@/api/connectedServices/connectedServiceCredentialApi';
+import { ConnectedServiceCredentialUnsupportedFormatError, type ConnectedServiceCredentialApi } from '@/api/connectedServices/connectedServiceCredentialApi';
 import { requireEncryptionCredentials, type Credentials } from '@/persistence';
+import { logger } from '@/ui/logger';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { resolveConnectedServiceAccountMode } from './resolveConnectedServiceAccountMode';
+
+type ProfileHealthApi = Readonly<{
+  listConnectedServiceProfiles?(input: Readonly<{ serviceId: ConnectedServiceId; forceRefresh: true }>): Promise<Readonly<{
+    serviceId: ConnectedServiceId;
+    profiles: readonly Readonly<{ profileId: string; status: ConnectedServiceCredentialHealthStatusV1 }>[];
+  }>>;
+}>;
+type CredentialApi = ConnectedServiceCredentialApi & ProfileHealthApi;
+type CredentialBinding = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
+type ProfileHealth =
+  | Readonly<{ kind: 'usable'; status: ConnectedServiceCredentialHealthStatusV1 }>
+  | Readonly<{ kind: 'present_but_unusable'; status: ConnectedServiceCredentialHealthStatusV1 }>
+  | Readonly<{ kind: 'confirmed_missing' }>
+  | Readonly<{ kind: 'unknown' }>;
+
+export async function readConnectedServiceProfileHealths(input: Readonly<{
+  api: ProfileHealthApi;
+  serviceId: ConnectedServiceId;
+  profileIds: readonly string[];
+}>): Promise<ReadonlyMap<string, ProfileHealth>> {
+  if (input.profileIds.length === 0) return new Map();
+  const profiles = await input.api.listConnectedServiceProfiles?.({
+    serviceId: input.serviceId, forceRefresh: true,
+  }).catch((error: unknown) => {
+    logger.warn('[CONNECTED SERVICES] Could not read current profile health', {
+      serviceId: input.serviceId,
+      error: serializeAxiosErrorForLog(error),
+    });
+    return null;
+  });
+  const current = profiles?.serviceId === input.serviceId
+    ? new Map(profiles.profiles.map(profile => [profile.profileId, profile.status]))
+    : null;
+  return new Map(input.profileIds.map((profileId): [string, ProfileHealth] => {
+    if (!current) return [profileId, { kind: 'unknown' }];
+    if (!current.has(profileId)) return [profileId, { kind: 'confirmed_missing' }];
+    const status = normalizeConnectedServiceCredentialHealthStatus(current.get(profileId));
+    return [profileId, { kind: isConnectedServiceCredentialHealthStatusUsable(status) ? 'usable' : 'present_but_unusable', status }];
+  }));
+}
 
 export class ConnectedServiceCredentialResolutionError extends Error {
   readonly name = 'ConnectedServiceCredentialResolutionError';
-  readonly kind = 'missing_credential' as const;
   readonly serviceId: ConnectedServiceId;
   readonly profileId: string;
 
-  constructor(binding: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>) {
-    super(`Missing connected service credential (${binding.serviceId}/${binding.profileId})`);
+  constructor(binding: CredentialBinding, readonly kind: 'confirmed_missing' | 'present_but_unusable' | 'unknown') {
+    super(`Connected service credential resolution ${kind} (${binding.serviceId}/${binding.profileId})`);
     this.serviceId = binding.serviceId;
     this.profileId = binding.profileId;
   }
+}
+
+async function resolveAbsentCredential(api: ProfileHealthApi, binding: CredentialBinding): Promise<ConnectedServiceCredentialResolutionError> {
+  const health = (await readConnectedServiceProfileHealths({
+    api, serviceId: binding.serviceId, profileIds: [binding.profileId],
+  })).get(binding.profileId);
+  return new ConnectedServiceCredentialResolutionError(binding,
+    !health || health.kind === 'unknown' ? 'unknown'
+      : health.kind === 'confirmed_missing' ? 'confirmed_missing'
+        : 'present_but_unusable');
 }
 
 function parseConnectedServiceCredentialRecord(params: Readonly<{
@@ -56,7 +110,7 @@ export type ResolvedConnectedServiceCredential = Readonly<{
 }> & ConnectedServiceCredentialRevisionBoundaryV1;
 
 async function readPlainConnectedServiceCredential(params: Readonly<{
-  api: ConnectedServiceCredentialApi;
+  api: CredentialApi;
   binding: { serviceId: ConnectedServiceId; profileId: string };
 }>): Promise<ResolvedConnectedServiceCredential | null> {
   if (typeof params.api.getConnectedServiceCredentialPlain !== 'function') return null;
@@ -83,7 +137,7 @@ async function readPlainConnectedServiceCredential(params: Readonly<{
 }
 
 async function readPlainConnectedServiceCredentialBestEffort(params: Readonly<{
-  api: ConnectedServiceCredentialApi;
+  api: CredentialApi;
   binding: { serviceId: ConnectedServiceId; profileId: string };
 }>): Promise<ResolvedConnectedServiceCredential | null> {
   try {
@@ -95,7 +149,7 @@ async function readPlainConnectedServiceCredentialBestEffort(params: Readonly<{
 }
 
 async function readSealedConnectedServiceCredential(params: Readonly<{
-  api: ConnectedServiceCredentialApi;
+  api: CredentialApi;
   credentials: Credentials;
   binding: { serviceId: ConnectedServiceId; profileId: string };
 }>): Promise<ResolvedConnectedServiceCredential | null> {
@@ -136,7 +190,7 @@ async function readSealedConnectedServiceCredential(params: Readonly<{
 
 export async function resolveConnectedServiceCredentialsWithRevisions(params: Readonly<{
   credentials: Credentials;
-  api: ConnectedServiceCredentialApi;
+  api: CredentialApi;
   bindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
 }>): Promise<Map<ConnectedServiceId, ResolvedConnectedServiceCredential>> {
   const out = new Map<ConnectedServiceId, ResolvedConnectedServiceCredential>();
@@ -158,7 +212,7 @@ export async function resolveConnectedServiceCredentialsWithRevisions(params: Re
         continue;
       }
       if (accountMode === 'plain') {
-        throw new ConnectedServiceCredentialResolutionError(binding);
+        throw await resolveAbsentCredential(params.api, binding);
       }
     }
 
@@ -166,9 +220,14 @@ export async function resolveConnectedServiceCredentialsWithRevisions(params: Re
       api: params.api,
       credentials: params.credentials,
       binding,
+    }).catch((error: unknown) => {
+      if (error instanceof ConnectedServiceCredentialUnsupportedFormatError) {
+        throw new ConnectedServiceCredentialResolutionError(binding, 'present_but_unusable');
+      }
+      throw error;
     });
     if (!sealed) {
-      throw new ConnectedServiceCredentialResolutionError(binding);
+      throw await resolveAbsentCredential(params.api, binding);
     }
     out.set(binding.serviceId, sealed);
   }
@@ -178,7 +237,7 @@ export async function resolveConnectedServiceCredentialsWithRevisions(params: Re
 
 export async function resolveConnectedServiceCredentials(params: Readonly<{
   credentials: Credentials;
-  api: ConnectedServiceCredentialApi;
+  api: CredentialApi;
   bindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
 }>): Promise<Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>> {
   const resolved = await resolveConnectedServiceCredentialsWithRevisions(params);

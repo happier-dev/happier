@@ -5513,7 +5513,7 @@ afterEach(() => {
 
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex', forceRefresh: true });
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
@@ -5725,7 +5725,7 @@ afterEach(() => {
       expiresAt: now + 10 * 60_000,
     }));
     expect(result.diagnostic.category).toBeUndefined();
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex', forceRefresh: true });
     expect(api.acquireConnectedServiceRefreshLease).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(api.updateConnectedServiceCredentialHealth).not.toHaveBeenCalled();
@@ -5996,7 +5996,7 @@ afterEach(() => {
       reauthRequired: false,
     }));
 
-    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex' });
+    expect(api.listConnectedServiceProfiles).toHaveBeenCalledWith({ serviceId: 'openai-codex', forceRefresh: true });
     expect(api.acquireConnectedServiceRefreshLease).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({

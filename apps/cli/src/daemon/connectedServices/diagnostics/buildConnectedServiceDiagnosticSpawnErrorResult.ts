@@ -52,7 +52,7 @@ function readCredentialMissingSpawnError(error: unknown): ConnectedServiceCreden
   const record = readRecord(error);
   if (!record) return null;
   if (readString(record.name) !== 'ConnectedServiceCredentialResolutionError') return null;
-  if (readString(record.kind) !== 'missing_credential') return null;
+  if (readString(record.kind) !== 'present_but_unusable') return null;
   const serviceId = readString(record.serviceId);
   const profileId = readString(record.profileId);
   if (!serviceId || !profileId) return null;
@@ -62,8 +62,8 @@ function readCredentialMissingSpawnError(error: unknown): ConnectedServiceCreden
 function readProfileMissingSpawnError(error: unknown): ConnectedServiceCredentialMissingSpawnError | null {
   const record = readRecord(error);
   if (!record) return null;
-  if (readString(record.name) !== 'ConnectedServiceProfileMissingError') return null;
-  if (readString(record.kind) !== 'profile_missing') return null;
+  if (readString(record.name) !== 'ConnectedServiceCredentialResolutionError') return null;
+  if (readString(record.kind) !== 'confirmed_missing') return null;
   if (!readString(record.serviceId) || !readString(record.profileId)) return null;
   return record;
 }
@@ -103,6 +103,15 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
         diagnostics: { reason: 'profile_missing' },
       }),
     });
+  }
+
+  const resolutionError = readRecord(input.error);
+  if (readStringField(resolutionError, 'name') === 'ConnectedServiceCredentialResolutionError'
+    && readStringField(resolutionError, 'kind') === 'unknown') {
+    const code = 'connected_service_credential_resolution_unavailable';
+    const message = 'Happier could not verify the selected login. Try again or choose a login in Connected Accounts.';
+    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: message, errorDetail: { kind: 'launch_error', code, message } };
   }
 
   const missingCredential = readCredentialMissingSpawnError(input.error);

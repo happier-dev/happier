@@ -1,6 +1,6 @@
+import { readConnectedServiceProfileHealths } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   ConnectedServiceIdSchema,
-  isConnectedServiceCredentialHealthStatusReconnectRequired,
   type ConnectedServiceAuthGroupV1,
   type ConnectedServiceAuthGroupMemberStateV1,
   type ConnectedServiceCredentialHealthStatusV1,
@@ -65,7 +65,7 @@ type AuthGroupApi = Readonly<{
     expectedGeneration: number;
     expectedRuntimeStateRevision?: number;
   }>): Promise<ConnectedServiceAuthGroupV1>;
-  listConnectedServiceProfiles?(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
+  listConnectedServiceProfiles?(input: Readonly<{ serviceId: ConnectedServiceId; forceRefresh?: boolean }>): Promise<Readonly<{
     serviceId: ConnectedServiceId;
     profiles: ReadonlyArray<Readonly<{
       profileId: string;
@@ -112,17 +112,6 @@ function mapConnectedServiceAuthGenerationActionToApplyMode(
     default:
       return null;
   }
-}
-
-function mergeCredentialHealthStatus(input: Readonly<{
-  existing?: ConnectedServiceCredentialHealthStatusV1 | null;
-  profileListStatus: ConnectedServiceCredentialHealthStatusV1;
-}>): ConnectedServiceCredentialHealthStatusV1 {
-  void input.existing;
-  if (isConnectedServiceCredentialHealthStatusReconnectRequired(input.profileListStatus)) {
-    return input.profileListStatus;
-  }
-  return input.profileListStatus;
 }
 
 function resolveRetryAtMs(input: Readonly<{
@@ -312,25 +301,20 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
           unresolvedState.activeProfileId,
         ) ?? null,
       };
-      if (typeof params.api.listConnectedServiceProfiles !== 'function') return state;
-      const profiles = await params.api.listConnectedServiceProfiles({ serviceId }).catch(() => null);
-      if (!profiles) return state;
-      const healthByProfileId = new Map(profiles.profiles.map((profile) => [profile.profileId, profile.status]));
+      const healthByProfileId = await readConnectedServiceProfileHealths({
+        api: params.api, serviceId, profileIds: state.members.map(member => member.profileId),
+      });
       const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
-      for (const member of state.members) {
-        const healthStatus = healthByProfileId.get(member.profileId);
-        if (!healthStatus) continue;
-        const existing = memberStatesByProfileId.get(member.profileId) ?? {};
-        memberStatesByProfileId.set(member.profileId, {
-          ...existing,
-          credentialHealthStatus: mergeCredentialHealthStatus({
-            existing: existing.credentialHealthStatus,
-            profileListStatus: healthStatus,
-          }),
+      for (const [profileId, health] of healthByProfileId) {
+        if (!('status' in health)) continue;
+        memberStatesByProfileId.set(profileId, {
+          ...memberStatesByProfileId.get(profileId),
+          credentialHealthStatus: health.status,
         });
       }
       return {
         ...state,
+        members: state.members.filter(member => healthByProfileId.get(member.profileId)?.kind !== 'confirmed_missing'),
         memberStatesByProfileId,
       };
     },

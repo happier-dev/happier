@@ -208,8 +208,17 @@ describe('resolveConnectedServiceCredentials', () => {
     expect(api.getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
   });
 
-  it('throws a structured missing-credential error with service/profile identity', async () => {
+  it.each([
+    ['confirmed_missing', []],
+    ['present_but_unusable', [{ profileId: 'batiplus', status: 'connected' }]],
+    ['unknown', null],
+  ] as const)('classifies an unavailable exact credential as %s from current authority', async (kind, profiles) => {
     const api = {
+      listConnectedServiceProfiles: vi.fn(async ({ forceRefresh }: { forceRefresh?: boolean }) => {
+        if (!forceRefresh) return { serviceId: 'claude-subscription', profiles: [{ profileId: 'batiplus', status: 'connected' }] };
+        if (profiles === null) throw new Error('offline');
+        return { serviceId: 'claude-subscription', profiles };
+      }),
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
@@ -226,7 +235,7 @@ describe('resolveConnectedServiceCredentials', () => {
       bindings: [{ serviceId: 'claude-subscription', profileId: 'batiplus' }],
     })).rejects.toMatchObject({
       name: 'ConnectedServiceCredentialResolutionError',
-      kind: 'missing_credential',
+      kind,
       serviceId: 'claude-subscription',
       profileId: 'batiplus',
     });

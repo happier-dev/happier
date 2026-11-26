@@ -185,7 +185,7 @@ describe('buildConnectedServiceDiagnosticSpawnValidationErrorResult', () => {
       agentId: 'claude',
       error: Object.assign(new Error('Missing connected service credential (claude-subscription/batiplus)'), {
         name: 'ConnectedServiceCredentialResolutionError',
-        kind: 'missing_credential',
+        kind: 'present_but_unusable',
         serviceId: 'claude-subscription',
         profileId: 'batiplus',
       }),
@@ -225,8 +225,8 @@ describe('a spawn refused because the bound profile no longer exists', () => {
     const result = buildConnectedServiceCredentialSpawnErrorResult({
       agentId: 'claude',
       error: {
-        name: 'ConnectedServiceProfileMissingError',
-        kind: 'profile_missing',
+        name: 'ConnectedServiceCredentialResolutionError',
+        kind: 'confirmed_missing',
         serviceId: 'claude-subscription',
         profileId: 'Claude-2',
       },

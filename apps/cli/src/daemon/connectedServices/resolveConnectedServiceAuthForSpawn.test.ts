@@ -758,9 +758,9 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       },
     }));
     const api = {
-      listConnectedServiceProfiles: vi.fn(async () => ({
+      listConnectedServiceProfiles: vi.fn(async ({ forceRefresh }: { forceRefresh?: boolean }) => ({
         serviceId: 'claude-subscription' as const,
-        profiles: [{ profileId: 'work', status: 'needs_reauth' as const }],
+        profiles: [{ profileId: 'work', status: forceRefresh ? 'needs_reauth' as const : 'connected' as const }],
       })),
       getConnectedServiceCredentialSealed: async () => ({
         sealed: { format: 'account_scoped_v1', ciphertext },
