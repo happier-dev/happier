@@ -14,6 +14,14 @@ describe('FeatureGatesSchema', () => {
     }
   });
 
+  it('negotiates Code Mode only on an explicit valid support bit', () => {
+    const parse = (features: unknown) => FeaturesResponseSchema.parse({ features, capabilities: {} });
+    expect(readServerEnabledBit(parse({ sessions: { enabled: true, codeMode: { enabled: true } } }), 'sessions.codeMode')).toBe(true);
+    for (const features of [{}, { sessions: { enabled: true } }, { sessions: { enabled: true, codeMode: { enabled: 'true' } } }]) {
+      expect(readServerEnabledBit(parse(features), 'sessions.codeMode')).toBe(false);
+    }
+  });
+
   it('negotiates Artifact query hints only on an explicit valid support bit', () => {
     const parse = (features: unknown) => FeaturesResponseSchema.parse({ features, capabilities: {} });
     expect(readServerEnabledBit(parse({ artifacts: { queryHints: { enabled: true } } }), 'artifacts.queryHints')).toBe(true);

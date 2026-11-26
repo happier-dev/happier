@@ -32,6 +32,17 @@ it('declares every Account feature control before Settings projects its page', (
   }
 });
 
+it('discovers MCP server loading under the Code Mode gate and its existing Action owner', () => {
+  expect(readBuiltInSettingDeclarationV1('mcp.detail.loading')).toMatchObject({
+    pageId: 'mcp',
+    sectionId: 'mcp.detail.tools',
+    titleKey: 'capabilities.mcp.tools.loading.rowTitle',
+    featureId: 'sessions.codeMode',
+    storage: { scope: 'account', kind: 'owner', owner: 'mcp.servers.tools.set', access: 'read_write',
+      field: 'loading', allowedValues: ['every_turn', 'on_demand'] },
+  });
+});
+
 it('offers only the canonical Dictation recognition language to Settings Actions', () => {
   expect(readBuiltInSettingDeclarationV1('voiceDictation.language')?.storage?.options).toEqual(['dictation.language']);
   expect(readBuiltInSettingDeclarationV1('voiceDictation.sttLanguage')).toBeNull();

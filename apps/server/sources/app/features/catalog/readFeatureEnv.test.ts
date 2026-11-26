@@ -10,6 +10,7 @@ import {
   readPluginsFeatureEnv,
   readSessionAgentSwitchingFeatureEnv,
   readSessionBoardFeatureEnv,
+  readSessionCodeModeFeatureEnv,
   readSessionConversationsFeatureEnv,
   readSessionEphemeralRunnerFeatureEnv,
   readSessionFilteredListingFeatureEnv,
@@ -290,6 +291,17 @@ describe('readSessionAgentSwitchingFeatureEnv', () => {
     const res = readSessionAgentSwitchingFeatureEnv(env);
 
     expect(res.agentSwitchingEnabled).toBe(true);
+  });
+});
+
+describe('readSessionCodeModeFeatureEnv', () => {
+  it('defaults on and honors operator opt-outs', () => {
+    expect(readSessionCodeModeFeatureEnv({}).sessionsCodeModeEnabled).toBe(true);
+    for (const raw of ['0', 'false']) {
+      expect(readSessionCodeModeFeatureEnv({
+        HAPPIER_FEATURE_SESSIONS_CODE_MODE__ENABLED: raw,
+      }).sessionsCodeModeEnabled).toBe(false);
+    }
   });
 });
 

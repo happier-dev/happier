@@ -42,7 +42,7 @@ import { createAutomationConversationActionSpec, createAutomationEventActionSpec
 import { BOT_TEMPLATE_ACTION_SPECS_V1 } from './specs/botTemplates.js';
 import { BUG_REPORT_ACTION_SPECS } from './specs/bugReport.js';
 import { CAPABILITY_RULES_ACTION_SPECS_V1 } from './specs/capabilityRules.js';
-import { ACTION_CATALOG_ACTION_SPECS, ACTION_OPTIONS_ACTION_SPECS } from './specs/catalog.js';
+import { ACTION_CATALOG_ACTION_SPECS, ACTION_OPTIONS_ACTION_SPECS, SESSION_TOOLS_ACTION_SPECS_V1 } from './specs/catalog.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS } from './specs/connectedServices.js';
 import { DEPLOYMENT_ACTION_SPECS_V1 } from './specs/deployments.js';
 import { DEPLOYMENT_SUGGESTION_ACTION_SPECS_V1 } from './specs/deploySuggestions.js';
@@ -257,6 +257,7 @@ export const ACTION_SPEC_FAMILY_READERS: readonly (() => ActionSpecFamilyRows)[]
   () => PERSONAL_SAVED_SECRET_ACTION_SPECS_V1,
   () => CAPABILITY_RULES_ACTION_SPECS_V1,
   () => SESSION_CAPABILITIES_ACTION_SPECS_V1,
+  () => SESSION_TOOLS_ACTION_SPECS_V1,
   () => SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1,
   () => SKILL_ACTION_SPECS_V1,
   () => PROVIDER_ACTION_SPECS_V1,
@@ -433,6 +434,7 @@ export const ACTION_SPEC_FAMILY_IDS: readonly (readonly string[])[] = [
   ["secrets.list", "secrets.usedBy", "secrets.create", "secrets.update", "secrets.delete", "secrets.link", "secrets.export"],
   ["mcp.rules.set", "skills.rules.set"],
   ["sessions.spawn.capabilities.preview", "session.capabilities.get", "session.capabilities.set"],
+  ["tools.search", "tools.describe", "tools.call"],
   ["session.access.candidates.inspect", "session.access.principals.resolve", "session.access.accounts.search"],
   ["skills.found.list", "skills.found.read", "skills.found.adopt", "skills.machine.install", "skills.machine.uninstall", "skills.list", "skills.read", "skills.create", "skills.update", "skills.duplicate", "skills.delete", "skills.install", "skills.export", "skills.updates.diff", "skills.updates.apply"],
   ["providers.gateways.choose", "providers.connections.describe", "providers.connections.create_contribution", "providers.connections.create_custom", "providers.connections.enable_detected", "providers.connections.start_local", "providers.connections.update", "providers.connections.endpoint.set", "providers.connections.duplicate", "providers.connections.delete", "providers.connections.enabled.set", "providers.connections.secrets.bind", "providers.models.list", "providers.models.projection", "providers.models.refresh", "providers.models.manual.add", "providers.models.manual.remove", "providers.models.visibility.set", "providers.models.source_visibility.set", "providers.models.visibility.reset", "providers.models.visibility.bulk", "providers.models.experimental.confirm", "providers.models.load", "providers.models.cancel_load", "providers.probe", "providers.usage.refresh", "providers.binding.status", "providers.legacy.prepare", "providers.defaults.set"],
@@ -1257,6 +1259,9 @@ export const ACTION_SPEC_MCP_TOOL_BINDINGS: readonly (readonly [name: string, id
   ["sessions_spawn_capabilities_preview", "sessions.spawn.capabilities.preview"],
   ["session_capabilities_get", "session.capabilities.get"],
   ["session_capabilities_set", "session.capabilities.set"],
+  ["tools_search", "tools.search"],
+  ["tools_describe", "tools.describe"],
+  ["tools_call", "tools.call"],
   ["session_access_candidates_inspect", "session.access.candidates.inspect"],
   ["session_access_principals_resolve", "session.access.principals.resolve"],
   ["session_access_accounts_search", "session.access.accounts.search"],

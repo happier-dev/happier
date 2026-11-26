@@ -29,17 +29,18 @@ const reviewedServer = z.strictObject({
   where: z.optional(ReachRulesChangeV1Schema), toolPolicy: z.optional(McpServerToolPolicyV1Schema), signIn: z.optional(z.literal('OAuth')),
   configOverrides: z.optional(z.array(reviewedOverride)),
 });
-const mcpReviewInput = lazyZodSchema(() => z.strictObject({
+const mcpReviewInput = lazyZodSchema(() => (z.strictObject({
   serverId: z.optional(z.string().check(z.minLength(1))), servers: z.optional(z.array(reviewedServer)),
   name: z.optional(z.string()), title: z.optional(z.string()),
   from: z.optional(RegistryItemPointerV1Schema), inputs: z.optional(z.array(z.string())),
   address: z.optional(McpRemoteUrlV1Schema),
   where: z.optional(ReachRulesChangeV1Schema), machineId: z.optional(z.string().check(z.minLength(1))), directory: z.optional(z.string()),
   default: McpServerToolSettingsPatchV1Schema.shape.default, tools: McpServerToolSettingsPatchV1Schema.shape.tools,
+  loading: McpServerToolSettingsPatchV1Schema.shape.loading,
   removeBindings: z.optional(z.boolean()), stepUp: z.optional(z.boolean()), dryRun: z.optional(z.boolean()),
   oauthApp: z.optional(z.enum(['set', 'remove'])), clientId: z.optional(z.string().check(z.minLength(1))),
   configOverrides: z.optional(z.array(reviewedOverride)),
-}));
+})));
 
 function mcpReviewSchema(id: McpServerActionIdV1) {
   if (id === 'mcp.servers.tools.set' || id === 'mcp.servers.signIn.start') return z.required(mcpReviewInput, { serverId: true });
@@ -112,7 +113,7 @@ function projectMcpApprovalInput(id: McpServerActionIdV1, raw: unknown) {
     name: value.name, title: value.title,
     from: value.from ? readRecord(value.from).registry : undefined, inputs: value.inputs ? Object.keys(readRecord(value.inputs)) : undefined,
     where: value.where ?? (id === 'mcp.servers.create' || id === 'mcp.servers.duplicate' ? defaultMcpWhere : undefined),
-    machineId: value.machineId, directory: value.directory, default: value.default, tools: value.tools,
+    machineId: value.machineId, directory: value.directory, default: value.default, tools: value.tools, loading: value.loading,
     removeBindings: value.removeBindings, stepUp: value.stepUp,
     ...(configuration ? { configOverrides: configuration.map(reviewOverride) } : {}),
   });
@@ -134,6 +135,9 @@ const mcpReviewFields: NonNullable<PreNormalizedActionSpec['inputHints']>['field
     { value: 'ask', label: 'Ask' }, { value: 'allow_read_only', label: 'Allow read-only' }, { value: 'allow_all', label: 'Allow all' },
   ] },
   { path: 'tools', title: 'Tool policy changes', widget: 'json' },
+  { path: 'loading', title: 'Tool loading', widget: 'select', options: [
+    { value: 'every_turn', label: 'Every turn' }, { value: 'on_demand', label: 'On demand' },
+  ] },
   { path: 'where.write.place', title: 'Where', widget: 'json' },
   { path: 'where.write.state', title: 'Change', widget: 'select', options: [
     { value: 'on', label: 'Turn on' }, { value: 'off', label: 'Turn off' }, { value: 'inherit', label: 'Use inherited rules' },
@@ -175,7 +179,7 @@ const mcpObservationErrorCode = z.union([DaemonMcpServersDetectErrorCodeSchema, 
 // Public approval reads use this same observation owner. Preserve reviewed
 // policy/control choices, but never copy executable config or credential values.
 const mcpObservationControls = z.object(z.pick(mcpReviewInput, {
-  default: true, tools: true, where: true, directory: true,
+  default: true, tools: true, loading: true, where: true, directory: true,
   removeBindings: true, stepUp: true, dryRun: true, oauthApp: true, clientId: true,
 }).shape);
 

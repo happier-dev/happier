@@ -252,6 +252,13 @@ availability boundary. The retained `sessions.folders` reply bit mirrors that
 final availability for older clients; it has no independent operator setting,
 local opt-in or feature decision. New section consumers use `sessions` directly.
 
+### Session Code Mode feature id
+
+`sessions.codeMode` advertises Code Mode and on-demand MCP delivery in 0.3 development.
+It is server-represented, fails closed, and depends on `sessions`. Current Homes enable
+it by default. Set `HAPPIER_FEATURE_SESSIONS_CODE_MODE__ENABLED=0` to disable it.
+Clients treat missing or malformed values as disabled.
+
 ### Workflows feature id
 
 `workflows` is the single availability decision for Workflow definitions, automatic triggers,

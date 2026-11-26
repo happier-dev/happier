@@ -14,6 +14,11 @@ export type ToolTitleContext = Readonly<{
     subagentTitle?: (options: ToolTitleOptions) => string;
 }>;
 
+export function resolveScriptToolTitle({ tool }: ToolTitleOptions, translate = defaultToolTitleTranslation): string {
+    const title = typeof tool.input?.title === 'string' ? tool.input.title.trim() : '';
+    return title || translate('tools.script.title');
+}
+
 /** Tool-specific title rules live here; hosts supply localization and authorized catalog facts. */
 export function createToolTitleCatalog(context: ToolTitleContext = {}) {
     const t = context.translate ?? defaultToolTitleTranslation;
@@ -89,6 +94,7 @@ export function createToolTitleCatalog(context: ToolTitleContext = {}) {
         "CodeSearch": () => t('tools.names.search'),
         "SubAgent": (opts: ToolTitleOptions) => resolveSubagentToolPresentation(opts).title,
         "SubAgentRun": (opts: ToolTitleOptions) => resolveSubagentToolPresentation(opts).title,
+        "Script": (options: ToolTitleOptions) => resolveScriptToolTitle(options, t),
         "Bash": (opts: ToolTitleOptions) => {
             const shellBridge = extractHappierToolsShellBridgeCommand(opts.tool.input);
             if (shellBridge) {

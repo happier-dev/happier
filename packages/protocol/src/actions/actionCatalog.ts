@@ -34,6 +34,7 @@ import { readActionSecretInputPaths } from './actionInputHintsRuntime.js';
 import type { InputHintsDescriptor } from '../inputs/inputFields.js';
 import type { WorkflowMaterializedLeafV1 } from '../workflows/workflowDefinitionV1.js';
 import { readDatabaseActionAutomationMetadataV1 } from './databaseActionMetadata.js';
+import { normalizeToolSearchQueryV1, rankToolCatalogSearchV1, scoreToolSearchMatchV1 } from '../tools/toolCatalogSearchV1.js';
 
 export { readCompleteActionSpecV1 } from './actionSpecSections.js';
 
@@ -52,17 +53,6 @@ export type ResolvedActionOption = Readonly<{
   disabled?: boolean;
 }>;
 
-function normalizeText(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
-function tokenize(value: unknown): string[] {
-  return normalizeText(value)
-    .split(/[^a-z0-9_.-]+/i)
-    .map((token) => token.trim())
-    .filter(Boolean);
-}
-
 type SearchableActionDefinition = Readonly<{
   id: string;
   title: string;
@@ -74,7 +64,7 @@ type SearchableActionDefinition = Readonly<{
 
 type SearchableActionInputOption = NonNullable<ActionInputFieldHint['options']>[number];
 
-function actionSearchText(spec: SearchableActionDefinition): string {
+export function actionSearchText(spec: SearchableActionDefinition): string {
   const fieldText = Array.isArray(spec.inputHints?.fields)
     ? spec.inputHints.fields
         .flatMap((field) => [
@@ -111,40 +101,6 @@ function actionSearchText(spec: SearchableActionDefinition): string {
   ]
     .join(' ')
     .toLowerCase();
-}
-
-type NormalizedActionSearchQuery = Readonly<{
-  text: string;
-  tokens: readonly string[];
-}>;
-
-function normalizeActionSearchQuery(query: string): NormalizedActionSearchQuery {
-  return {
-    text: normalizeText(query),
-    tokens: tokenize(query),
-  };
-}
-
-function actionSearchScore(
-  spec: SearchableActionDefinition,
-  query: NormalizedActionSearchQuery,
-  searchText?: string,
-): number {
-  const haystack = searchText ?? actionSearchText(spec);
-  if (!query.text) return 1;
-
-  let score = 0;
-  if (spec.id === query.text) score += 1000;
-  if (normalizeText(spec.title) === query.text) score += 500;
-  if (haystack.includes(query.text)) score += 100;
-
-  for (const token of query.tokens) {
-    if (spec.id.includes(token)) score += 50;
-    if (normalizeText(spec.title).includes(token)) score += 25;
-    if (haystack.includes(token)) score += 10;
-  }
-
-  return score;
 }
 
 type ActionCatalogSurfaceParams = Readonly<{
@@ -488,31 +444,17 @@ function searchActionDefinitionSummaryCandidates(
   candidates: readonly ActionDefinitionSearchCandidate[],
   params?: Readonly<{ query?: string | null; limit?: number | null; includeOutputSchema?: boolean }>,
 ): readonly ActionDefinitionSummaryV1[] {
-  const query = typeof params?.query === 'string' ? params.query.trim() : '';
-  const normalizedQuery = normalizeActionSearchQuery(query);
+  const query = typeof params?.query === 'string' ? params.query : '';
   const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
   const limit = params?.limit === null ? undefined : Math.max(1, Math.min(100, limitRaw));
-  return candidates
-    .map((candidate) => {
-      const searchText = candidate.searchText ?? actionSearchText(candidate.definition);
-      return {
-        candidate,
-        score: actionSearchScore(candidate.definition, normalizedQuery, searchText),
-        // Prefer the whole intent before ID substring bonuses. Generic owners
-        // can describe a precise operation without naming it in their Action id.
-        matchesAllTokens: normalizedQuery.tokens.every(token => searchText.includes(token)),
-      };
-    })
-    .filter((entry) => (query ? entry.score > 0 : true))
-    .sort((left, right) => {
-      if (left.matchesAllTokens !== right.matchesAllTokens) return left.matchesAllTokens ? -1 : 1;
-      if (right.score !== left.score) return right.score - left.score;
-      return left.candidate.definition.title.localeCompare(right.candidate.definition.title);
-    })
-    .slice(0, limit)
-    .map((entry) => params?.includeOutputSchema === false
-      ? entry.candidate.definition
-      : entry.candidate.project?.() ?? entry.candidate.definition);
+  return rankToolCatalogSearchV1(candidates, query, candidate => ({
+    id: candidate.definition.id,
+    title: candidate.definition.title,
+    searchText: candidate.searchText ?? actionSearchText(candidate.definition),
+  }), limit)
+    .map((candidate) => params?.includeOutputSchema === false
+      ? candidate.definition
+      : candidate.project?.() ?? candidate.definition);
 }
 
 export function searchActionDefinitionSummaries(
@@ -573,7 +515,7 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
   isActionEnabled?: (id: ActionId) => boolean;
   additionalDefinitions?: readonly ActionDefinitionSummaryV1[];
 }>): readonly SerializedActionSpec[] {
-  const query = normalizeActionSearchQuery(params.query ?? '');
+  const query = normalizeToolSearchQueryV1(params.query);
   const catalog = params.purpose === 'automation' ? { ...params, surface: null }
     : params.purpose === 'workflow_step' ? { ...params, surface: 'agent' as const } : params;
   const hostDefinitions = listActionSpecsForCatalogSurface(catalog)
@@ -581,8 +523,8 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
     .map((spec) => getHostActionSearchSummary(spec, params))
     // Search the immutable cached summary so repeated request-current filters
     // do not rebuild the same host projection or its normalized search text.
-    .filter((summary) => !query.text
-      || actionSearchScore(summary.definition, query, summary.searchText) > 0);
+    .filter(({ definition, searchText }) => !query.text
+      || scoreToolSearchMatchV1({ id: definition.id, title: definition.title, searchText }, query).score > 0);
   const hostIds = new Set(hostDefinitions.map((summary) => summary.definition.id));
   const additionalDefinitions = (params.additionalDefinitions ?? [])
     .filter((definition) => (

@@ -44,12 +44,21 @@ export const McpToolSettingsV1Schema: z.ZodMiniType<Readonly<Record<string, McpT
 const McpToolSettingsPatchV1Schema: z.ZodMiniType<Readonly<Record<string, McpToolSettingV1 | 'inherit'>>, Readonly<Record<string, McpToolSettingV1 | 'inherit'>>> = asProtocolZod(defineProtocolObject({}, {
   policy: 'additive-open/preserve', additionalProperties: defineProtocolUnion([McpToolSettingV1Definition, defineProtocolLiteral('inherit')]),
 }));
+export const McpToolLoadingV1Schema = lazyZodSchema(() => z.enum(['every_turn', 'on_demand']));
+export type McpToolLoadingV1 = z.infer<typeof McpToolLoadingV1Schema>;
+
 export const McpServerToolPolicyV1Schema = lazyZodSchema(() => z.strictObject({
   default: z.enum(['ask', 'allow_read_only', 'allow_all']), overrides: McpToolSettingsV1Schema,
+  loading: z.optional(McpToolLoadingV1Schema),
 }));
 export type McpServerToolPolicyV1 = z.infer<typeof McpServerToolPolicyV1Schema>;
+export function resolveMcpToolLoadingV1(policy: McpServerToolPolicyV1 | undefined): McpToolLoadingV1 {
+  return policy?.loading ?? 'every_turn';
+}
+
 export const McpServerToolSettingsPatchV1Schema = lazyZodSchema(() => z.strictObject({
   default: z.optional(McpServerToolPolicyV1Schema.shape.default),
+  loading: McpServerToolPolicyV1Schema.shape.loading,
   tools: zMini.optional(McpToolSettingsPatchV1Schema),
 }));
 export type McpServerToolSettingsPatchV1 = z.infer<typeof McpServerToolSettingsPatchV1Schema>;

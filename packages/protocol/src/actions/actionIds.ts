@@ -17,6 +17,12 @@ export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, is
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_HANDOFF_ACTION_ID_V1 = 'session.handoff' as const;
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
+export const SESSION_TOOLS_SEARCH_ACTION_ID_V1 = 'tools.search' as const;
+export const SESSION_TOOLS_DESCRIBE_ACTION_ID_V1 = 'tools.describe' as const;
+export const SESSION_TOOLS_CALL_ACTION_ID_V1 = 'tools.call' as const;
+export const SESSION_TOOLS_ACTION_IDS_V1 = [
+  SESSION_TOOLS_SEARCH_ACTION_ID_V1, SESSION_TOOLS_DESCRIBE_ACTION_ID_V1, SESSION_TOOLS_CALL_ACTION_ID_V1,
+] as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 /** Both public invocation spellings retain the contributed Action's signed root. */
 export function isContributedActionRoot(actionId: string): boolean {
@@ -462,6 +468,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   mcp_servers: MCP_SERVER_ACTION_IDS_V1,
   capability_rules: CAPABILITY_RULES_ACTION_IDS_V1,
   session_capabilities: SESSION_CAPABILITIES_ACTION_IDS_V1,
+  session_tools: SESSION_TOOLS_ACTION_IDS_V1,
   skills: SKILL_ACTION_IDS_V1,
   providers: PROVIDER_ACTION_IDS_V1,
   model_preferences: ['models.favorite.set'],

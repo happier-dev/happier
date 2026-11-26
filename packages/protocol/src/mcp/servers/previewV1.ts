@@ -8,7 +8,7 @@ import type { CapabilitySelectionReasonV1 } from '../../reach/sessionCapabilityS
 import type { ReachPlaceV1 } from '../../reach/reachPlaceV1.js';
 import type { McpServersSettingsV1, McpServerCatalogEntryV1 } from './settingsV1.js';
 import { inferMcpServerAuthModeV1 } from './authModeV1.js';
-import { McpServerCatalogEntryTransportV1Schema } from './settingsV1.js';
+import { McpServerCatalogEntryTransportV1Schema, McpToolLoadingV1Schema, resolveMcpToolLoadingV1 } from './settingsV1.js';
 import { SessionMcpSelectionV1Schema, type SessionMcpSelectionV1 } from './sessionSelectionV1.js';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 import { SpawnCapabilitiesPreviewSuccessV1Schema } from '../../actions/specs/sessionCapabilities.js';
@@ -64,6 +64,7 @@ export function projectManagedMcpPreviewEntriesV1(selection: ManagedMcpSelection
     ...(item.title ? { title: item.title } : {}), transport: item.transport, authMode: inferMcpServerAuthModeV1(item.effectiveConfig),
     selected: item.selected, selectable: item.selectable, availability: item.availability, sourceKind: 'managed' as const,
     scopeKind: item.bindingTargetKind === 'project' ? 'allMachines' as const : item.bindingTargetKind ?? (item.portability === 'portable' ? 'allMachines' as const : 'machine' as const),
+    loading: resolveMcpToolLoadingV1(item.effectiveConfig.tools),
     reasonCode: item.reasonCode, portability: item.portability, defaultSelected: item.defaultSelected,
   })).sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -150,6 +151,7 @@ export const ManagedMcpPreviewEntryV1Schema = lazyZodSchema(() => z.extend(McpPr
   reasonCode: ManagedSessionMcpReasonCodeV1Schema,
   portability: ManagedSessionMcpPortabilityV1Schema,
   defaultSelected: z.boolean(),
+  loading: z.optional(McpToolLoadingV1Schema),
 }));
 export type ManagedMcpPreviewEntryV1 = z.infer<typeof ManagedMcpPreviewEntryV1Schema>;
 

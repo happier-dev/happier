@@ -413,6 +413,64 @@ describe('canonical MCP Action owner', () => {
     expect(catalog).toBe(beforeConflict);
   });
 
+  it('changes prompt delivery for catalog and plugin servers through the same Action and CAS', async () => {
+    const pluginId = 'acme.tools';
+    const pluginServerId = mcpPluginItemIdV1({ pluginId, localId: 'lookup' });
+    const toolsSnapshot = { checkedAt: 2, machineId: 'machine', tools: [{ name: 'lookup', tokens: 24 }] };
+    let catalog: McpServerCatalogV1 = { v: 1, bindings: [], servers: [{
+      id: 'server', name: 'server', transport: 'http', remote: { url: 'https://example.test/mcp', headers: {} },
+      env: {}, createdAt: 1, updatedAt: 1, toolsSnapshot,
+    }], pluginServers: { [pluginServerId]: { toolsSnapshot } } };
+    let revision = 9;
+    const execute = createMcpServerActionExecuteV1({
+      readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
+        readRow: async () => ({ status: 'present', revision, content: { t: 'plain', v: catalog } }) }),
+      readPluginItems: async () => [{ id: pluginServerId, name: 'lookup', transport: 'http',
+        source: { kind: 'plugin', pluginId, pluginName: 'Lookup' } }],
+      readToolAgentFacts: async () => ({ agents: [{ agentId: 'basic' }, { agentId: 'native', mcpToolControl: { off: 'blocked', approval: 'native' } }] }),
+      mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null,
+        ctx: { nowMs: 2, newId: () => 'new-rule', pluginItemIds: [pluginServerId] },
+        writeCatalog: async candidate => {
+          expect(candidate.expectedRevision).toBe(expectedRevision);
+          catalog = candidate.catalog;
+          return { status: 'updated', revision: ++revision, cursor: revision };
+        } }),
+      machine: async () => { throw new Error('Changing delivery does not launch a server'); },
+    });
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    for (const serverId of ['server', pluginServerId]) {
+      const list = () => execute({ actionId: 'mcp.servers.tools.list', input: { serverId }, context });
+      expect(await list()).toMatchObject({ ok: true, result: { tokens: 24 } });
+      const set = await execute({ actionId: 'mcp.servers.tools.set', input: { serverId, loading: 'on_demand' }, context });
+      expect(set).toMatchObject({ ok: true, result: { previous: { loading: 'every_turn' } } });
+      const delivery = { loading: 'on_demand', effectivePromptTokens: 0, savedPromptTokens: 24 };
+      expect(await list()).toMatchObject({ ok: true, result: { ...delivery,
+        perAgent: { agents: ['basic', 'native'].map(agentId => ({
+          agentId, approval: 'host', off: 'hidden', loading: 'on_demand', tokens: 0,
+        })) } } });
+      expect(await execute({ actionId: 'mcp.servers.read', input: { serverId }, context }))
+        .toMatchObject({ ok: true, result: { status: serverId === pluginServerId ? 'plugin' : 'present', ...delivery } });
+      expect(await execute({ actionId: 'mcp.servers.list', input: {}, context })).toMatchObject({
+        ok: true,
+        result: { catalog: { servers: expect.arrayContaining([expect.objectContaining({ id: serverId, ...delivery })]) } },
+      });
+      if (!set.ok) throw new Error('Tool delivery update refused');
+      const { previous } = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.tools.set'].parse(set.result);
+      expect(await execute({ actionId: 'mcp.servers.tools.set', input: { serverId, ...previous }, context })).toMatchObject({ ok: true });
+      expect(await list()).toMatchObject({ ok: true, result: { loading: 'every_turn', effectivePromptTokens: 24, savedPromptTokens: 0 } });
+    }
+    expect(MCP_SERVER_ACTION_INPUT_SCHEMAS_V1['mcp.servers.tools.set'].safeParse({ serverId: 'server', loading: 'lazy' }).success).toBe(false);
+
+    const entry = { ...catalog.servers[0]!, id: 'new', name: 'new', tools: { default: 'ask', overrides: {}, loading: 'on_demand' } };
+    const created = await execute({ actionId: 'mcp.servers.create', input: { expectedRevision: revision, entry }, context });
+    expect(created).toMatchObject({ ok: true, result: { serverId: 'new' } });
+    const updated = await execute({ actionId: 'mcp.servers.update', input: { expectedRevision: revision,
+      entry: { ...entry, tools: { ...entry.tools, loading: 'every_turn' } } }, context });
+    expect(updated).toMatchObject({ ok: true });
+    expect(await execute({ actionId: 'mcp.servers.read', input: { serverId: 'new' }, context }))
+      .toMatchObject({ ok: true, result: { loading: 'every_turn', effectivePromptTokens: 24 } });
+  });
+
   it('changes named server rules in one catalog CAS and returns the committed value and Undo input', async () => {
     let catalog: McpServerCatalogV1 = { v: 1, servers: [{ id: 'server', name: 'linear', transport: 'http',
       remote: { url: 'https://example.test/mcp', headers: {} }, env: {}, createdAt: 1, updatedAt: 1 }],
@@ -523,7 +581,8 @@ describe('canonical MCP Action owner', () => {
     const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
     expect(await execute({ actionId: 'mcp.servers.list', input: {}, context })).toEqual({ ok: true, result: {
       status: 'ready', revision: 9, authority: 'active', diagnostics: [], catalog: { v: 1,
-        servers: [{ id: 'server', name: 'server', transport: 'http', createdAt: 1, updatedAt: 2 }],
+        servers: [{ id: 'server', name: 'server', transport: 'http', createdAt: 1, updatedAt: 2,
+          loading: 'every_turn', effectivePromptTokens: null, savedPromptTokens: 0 }],
         bindings: [{ id: 'binding', serverId: 'server', enabled: true, target: { t: 'allMachines' }, createdAt: 1, updatedAt: 2 }] },
     } });
     expect(await execute({ actionId: 'mcp.servers.read', input: { serverId: 'server' }, context })).toMatchObject({
@@ -538,6 +597,15 @@ describe('canonical MCP Action owner', () => {
       ok: true, result: { status: 'updated', revision: 10, cursor: 10 },
     });
     expect(catalog).toEqual({ v: 1, servers: [], bindings: [] });
+  });
+
+  it('accepts list receipts from hosts that predate prompt-delivery reporting', () => {
+    const receipt = {
+      status: 'ready', revision: 9, authority: 'active', diagnostics: [], catalog: { v: 1,
+        servers: [{ id: 'server', name: 'server', transport: 'http', createdAt: 1, updatedAt: 2 }],
+        bindings: [] },
+    };
+    expect(MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.list'].parse(receipt)).toEqual(receipt);
   });
 
   it('creates imported definitions and default rules in one row CAS and refuses a batch atomically', async () => {

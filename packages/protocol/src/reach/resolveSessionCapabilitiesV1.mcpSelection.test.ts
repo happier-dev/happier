@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { McpServersSettingsV1Schema, type McpServersSettingsV1 } from '../mcp/servers/settingsV1.js';
 import type { SessionMcpSelectionV1 } from '../mcp/servers/sessionSelectionV1.js';
-import { projectManagedMcpSelectionV1 } from '../mcp/servers/previewV1.js';
+import { ManagedMcpPreviewEntryV1Schema, projectManagedMcpPreviewEntriesV1, projectManagedMcpSelectionV1 } from '../mcp/servers/previewV1.js';
 import { resolveSessionCapabilitiesV1 } from './resolveSessionCapabilitiesV1.js';
 
 function resolveMcpSelection(settings: McpServersSettingsV1, input: { machineId: string; directory: string; selection?: SessionMcpSelectionV1 }) {
@@ -23,6 +23,7 @@ describe('resolveSessionCapabilitiesV1 predecessor MCP session selection', () =>
           transport: 'stdio',
           stdio: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
           env: {},
+          tools: { default: 'ask', overrides: {}, loading: 'on_demand' },
           createdAt: 1,
           updatedAt: 1,
         },
@@ -50,6 +51,10 @@ describe('resolveSessionCapabilitiesV1 predecessor MCP session selection', () =>
       selectable: true,
       availability: 'active',
       reasonCode: 'active_by_default',
+    });
+    expect(ManagedMcpPreviewEntryV1Schema.parse(projectManagedMcpPreviewEntriesV1(resolved)[0])).toMatchObject({
+      selected: true,
+      loading: 'on_demand',
     });
   });
 

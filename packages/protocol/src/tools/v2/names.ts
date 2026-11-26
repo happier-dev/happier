@@ -2,6 +2,7 @@ import { z } from '../../zodRuntimePolicy.js';
 
 export const KNOWN_CANONICAL_TOOL_NAMES_V2 = [
   'Bash',
+  'Script',
   'Read',
   'Write',
   'Edit',

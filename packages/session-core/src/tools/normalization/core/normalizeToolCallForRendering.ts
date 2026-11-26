@@ -3,6 +3,7 @@ import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';
 import { normalizeToolInputForRendering } from "../normalize/inputNormalization.js";
 import { canonicalizeToolNameForRendering } from "../normalize/nameInference.js";
 import { normalizeToolResultForRendering } from "../normalize/resultNormalization.js";
+import { projectHappierToolsRunForRendering } from "../parse/happierToolsShellBridge.js";
 
 function inferDescriptionFromInput(input: unknown): string | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
@@ -19,6 +20,8 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
         typeof tool.description === 'string' && tool.description.trim().length > 0
             ? tool.description
             : inferDescriptionFromInput(parsedInput);
+    const script = nextName === 'Bash' ? projectHappierToolsRunForRendering(parsedInput, tool.result) : null;
+    if (script) return { ...tool, name: 'Script', description: nextDescription, ...script };
     const nextInput = normalizeToolInputForRendering({
         toolName: tool.name,
         canonicalToolName: nextName,

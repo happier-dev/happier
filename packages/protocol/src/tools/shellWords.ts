@@ -1,5 +1,5 @@
 /** Decode literal POSIX shell words; refuse expansions and outer shell operations. */
-export function tokenizeShellWords(command: string): string[] | null {
+export function tokenizeShellWords(command: string, options?: Readonly<{ allowQuotedNewlines?: boolean }>): string[] | null {
   const tokens: string[] = [];
   let current = '';
   let started = false;
@@ -10,7 +10,8 @@ export function tokenizeShellWords(command: string): string[] | null {
     const ch = command[index] ?? '';
     const next = command[index + 1] ?? '';
 
-    if (ch === '\0' || ch === '\n' || ch === '\r') return null;
+    if (ch === '\0' || ((ch === '\n' || ch === '\r')
+      && (!options?.allowQuotedNewlines || (!inSingle && !inDouble)))) return null;
 
     if (ch === '\\' && !inSingle) {
       if (!next || next === '\n' || next === '\r') return null;

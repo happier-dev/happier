@@ -3,6 +3,20 @@ import type { ToolCall } from '../messages/index.js';
 import { resolveToolRowPresentation } from './toolRowPresentation.js';
 
 describe('tool row presentation', () => {
+    it('uses a Script’s declared purpose and falls back to its canonical title', () => {
+        const tool: ToolCall = { name: 'Script', input: { code: 'return 1;', title: '  Collect results  ' },
+            description: null, state: 'running', result: null, createdAt: 1, startedAt: 1, completedAt: null };
+        expect(resolveToolRowPresentation(tool).title).toBe('Collect results');
+        expect(resolveToolRowPresentation({ ...tool, input: { code: 'return 1;', title: ' ' } }).title).toBe('Script');
+    });
+
+    it('shows the invoked Claude skill in the title before a result arrives', () => {
+        const tool: ToolCall = { name: 'Skill', input: { skill: ' claude-conversations ', args: 'search recent sessions' },
+            description: null, state: 'running', result: null, createdAt: 1, startedAt: 1, completedAt: null };
+        expect(resolveToolRowPresentation(tool).title).toBe('Skill: claude-conversations');
+        expect(resolveToolRowPresentation({ ...tool, input: { skill: ' ' } }).title).toBe('Skill');
+    });
+
     it.each(['cancelled', 'interrupted'])('presents a native %s tool as stopped rather than failed', status => {
         const tool: ToolCall = { name: 'Bash', input: { command: 'sleep 30' }, description: null,
             state: 'error', result: { status, failureReason: 'cancelled by tool cancellation' },

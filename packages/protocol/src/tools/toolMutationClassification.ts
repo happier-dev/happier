@@ -64,6 +64,7 @@ const toolMutationClassificationByName: Readonly<Record<string, ToolMutationClas
     unlink: 'path_pair',
 
     bash: 'opaque_executor',
+    script: 'opaque_executor',
     codexbash: 'opaque_executor',
     exec: 'opaque_executor',
     execute: 'opaque_executor',

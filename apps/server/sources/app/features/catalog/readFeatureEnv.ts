@@ -572,6 +572,10 @@ export function readSessionAgentSwitchingFeatureEnv(env: NodeJS.ProcessEnv): Ses
   };
 }
 
+export function readSessionCodeModeFeatureEnv(env: NodeJS.ProcessEnv): Readonly<{ sessionsCodeModeEnabled: boolean }> {
+  return { sessionsCodeModeEnabled: readFeatureConfig(env, 'sessionsCodeModeEnabled') };
+}
+
 export function readSessionDraftsFeatureEnv(env: NodeJS.ProcessEnv): SessionDraftsFeatureEnv {
   return {
     draftsEnabled: readFeatureConfig(env, 'sessionsDraftsEnabled'),

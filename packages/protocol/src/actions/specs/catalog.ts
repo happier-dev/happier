@@ -11,6 +11,7 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { WidgetSurfaceRefV1Schema } from '../../widgets/widgetInstanceV1.js';
 import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import type { PreNormalizedActionSpec } from './definition.js';
+export { SESSION_TOOLS_ACTION_SPECS_V1 } from './sessionTools.js';
 
 
 export const ActionSpecSearchInputSchema = lazyZodSchema(() => z.looseObject({

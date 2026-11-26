@@ -474,6 +474,19 @@ describe("resolveServerFeaturePayload", () => {
         expect(readOptionalPath(withoutMachines, ["features", "sessions", "ephemeralRunner", "enabled"])).toBe(false);
     });
 
+    it("publishes Code Mode by default and applies the operator opt-out and Sessions dependency", () => {
+        const read = (payload: unknown) => readOptionalPath(payload, ["features", "sessions", "codeMode", "enabled"]);
+        expect(read(resolveServerFeaturePayload({}, serverFeatureRegistry))).toBe(true);
+        for (const raw of ["0", "false"]) {
+            expect(read(resolveServerFeaturePayload({
+                HAPPIER_FEATURE_SESSIONS_CODE_MODE__ENABLED: raw,
+            }, serverFeatureRegistry))).toBe(false);
+        }
+        expect(read(resolveServerFeaturePayload({}, [
+            ...serverFeatureRegistry, fromPartial({ features: { sessions: { enabled: false } } }),
+        ]))).toBe(false);
+    });
+
     it("enables agent switching from the server registry by default so the in-Session Agent rail can appear", () => {
         const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
 

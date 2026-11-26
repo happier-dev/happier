@@ -153,6 +153,30 @@ function normalizeHappierToolsTokens(tokens: readonly string[]): string[] | null
   return null;
 }
 
+/** Display-only recognition. Script invocations never enter the trusted shell bridge. */
+export function parseHappierToolsRunCommand(command: string): { code: string; raw: boolean } | null {
+  const rawCommand = command.trim();
+  const hereDoc = rawCommand.match(/^([^\r\n]+?)\s*<<\s*(['"])([a-zA-Z_][a-zA-Z0-9_]*)\2[ \t]*\r?\n([\s\S]*)\r?\n\3$/u);
+  const invocation = (hereDoc?.[1] ?? rawCommand)
+    .replace(/^(?:"\$HAPPIER_CLI_BIN"|\$HAPPIER_CLI_BIN)(?=[ \t])/u, 'happier');
+  const rawTokens = tokenizeShellWords(invocation, { allowQuotedNewlines: true });
+  if (!rawTokens) return null;
+  const words = stripLeadingEnvAssignmentTokens(rawTokens);
+  const launcher = getShellPathBasename(words[0] ?? '');
+  const tokens = launcher === 'happier' || launcher === 'happier.exe'
+    ? ['happier', ...words.slice(1)] : normalizeHappierToolsTokens(words);
+  if (!tokens || tokens[1] !== 'tools' || tokens[2] !== 'run') return null;
+
+  const args = tokens.slice(3);
+  if (hereDoc && !args.includes('-')) return null;
+  if (hereDoc && hereDoc[4]?.split(/\r?\n/u).includes(hereDoc[3]!)) return null;
+  const inlineAt = args.findIndex(arg => arg === '--code' || arg.startsWith('--code='));
+  const inlineFlag = args[inlineAt];
+  const inline = inlineFlag === '--code' ? args[inlineAt + 1] : inlineFlag?.slice('--code='.length);
+  const raw = args.some((arg, index) => arg === '--raw' && !(inlineFlag === '--code' && index === inlineAt + 1));
+  return { code: hereDoc?.[4] ?? inline ?? rawCommand, raw };
+}
+
 export function parseHappierToolsShellBridgeCommand(command: string): HappierToolsShellBridgeCommand | null {
   const rawCommand = String(command ?? '').trim();
   if (!rawCommand) return null;

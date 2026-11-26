@@ -11,6 +11,7 @@ const titles: Readonly<Record<string, string>> = {
 
 export const defaultToolTitleTranslation: ToolTitleTranslator = (key, values) => {
     if (key.startsWith('tools.names.')) return titles[key.slice('tools.names.'.length)] ?? key;
+    if (key === 'tools.script.title') return 'Script';
     if (key === 'tools.common.unknownToolTitle') return 'Tool';
     if (key === 'tools.desc.terminalCmd') return `Run ${values?.cmd ?? ''}`;
     if (key === 'tools.desc.multiEditEdits') return `${values?.path ?? ''} (${values?.count ?? 0} edits)`;

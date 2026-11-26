@@ -1,5 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { McpToolLoadingV1Schema } from '../../mcp/servers/settingsV1.js';
 import { isPortableRelativePath } from '../../filesystem/portablePathSegment.js';
 import { AcpRegistryAgentV1Schema } from '../../registries/registryItemsV1.js';
 import { PluginAgentAcpStderrRulesV2Schema } from './agentAcpStderrRules.js';
@@ -313,7 +314,8 @@ export const PluginAgentToolsCapabilityV2Schema = lazyZodSchema(() => z.strictOb
   /** The native Run launch can enforce an empty tool allowlist, including built-in tools. */
   noTools: z.optional(z.boolean()),
   mcpToolControl: z.optional(z.strictObject({ off: z.enum(['hidden', 'blocked']), approval: z.enum(['native', 'host']) })),
-  mcpToolLoading: z.optional(z.enum(['every_turn', 'on_demand'])),
+  mcpToolLoading: z.optional(McpToolLoadingV1Schema),
+  nativeCodeMode: z.optional(z.boolean()),
   /** Native transcript call id in MCP request _meta; absent means no native correlation. */
   mcpToolCallIdMetaKey: z.optional(z.string().check(z.minLength(1))),
 }));

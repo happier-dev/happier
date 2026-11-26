@@ -5,6 +5,8 @@ import { ATMOSPHERE_PLANET_INTENSITIES, HOME_BACKGROUND_FIELD_MODES } from '../.
 import { BotFaceStyleSchema } from '../../sessions/identity/sessionBotFaceV1.js';
 import { ReviewQualityAggregationV1Schema } from '../../reviews/reviewQualityAggregationV1.js';
 import type { FeatureId } from '../../features/catalog.js';
+import { MCP_SERVER_TOOLS_SET_ACTION_ID_V1 } from '../../mcp/servers/serverActionIdsV1.js';
+import { McpToolLoadingV1Schema } from '../../mcp/servers/settingsV1.js';
 import { getUiFeatureDefinition } from './featurePreferenceMutations.js';
 
 /** Keep shared search placement aligned with the registry that places UI feature switches. */
@@ -1086,6 +1088,13 @@ export const BUILT_IN_SETTINGS_METADATA_V1 = lazyActionSpecArray(() => [
   {"anchor":"coordination.autonomousCheckIn","pageId":"coordination","sectionId":"coordination.checkIn","titleKey":"settingsCoordination.autonomousCheckIn","title":"Check in after agent turns","description":"Choose how many agent-to-agent turns can start before asking you to continue. Never pause keeps this check-in off.","storage":{"scope":"account","key":"coordinationAutonomousCheckIn","access":"read_write"},"targetKinds":[],"sensitive":false},
   {"anchor":"delegation.workDepthLimit","pageId":"subAgent","sectionId":"subAgent.workDepth","titleKey":"roles.delegation.depthSetting","title":"How far agents can hand off work","keywordKeys":["roles.delegation.ladderRefused"],"sectionTitleKey":"roles.delegation.depthTitle","storage":{"scope":"account","key":"workDepthLimit","access":"read_write"},"targetKinds":[],"sensitive":false},
   {"anchor":"mcp.found","pageId":"mcp","sectionId":"mcp.destinations","titleKey":"capabilities.mcp.foundOnMachines","title":"Found on your machines","targetKinds":[],"sensitive":false},
+  {
+    anchor: 'mcp.detail.loading', pageId: 'mcp', sectionId: 'mcp.detail.tools',
+    titleKey: 'capabilities.mcp.tools.loading.rowTitle', title: 'Tool loading', featureId: 'sessions.codeMode',
+    storage: { scope: 'account', kind: 'owner', owner: MCP_SERVER_TOOLS_SET_ACTION_ID_V1, field: 'loading',
+      access: 'read_write', allowedValues: Object.values(McpToolLoadingV1Schema._zod.def.entries) },
+    targetKinds: [], sensitive: false,
+  },
   {"anchor":"skills.updates","pageId":"skills","sectionId":"skills.destinations","titleKey":"capabilities.skillsUpdates.updates.title","title":"Updates","targetKinds":[],"sensitive":false},
   {"anchor":"skills.found","pageId":"skills","sectionId":"skills.destinations","titleKey":"capabilities.skillsFound.title","title":"Found on your machines","targetKinds":[],"sensitive":false},
   {"anchor":"skills.choose","pageId":"skills","sectionId":"skills.destinations","titleKey":"capabilities.skills.home.choose","title":"Choose what's on","targetKinds":[],"sensitive":false},

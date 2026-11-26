@@ -2609,6 +2609,9 @@ export type ActionExecutorDeps = Readonly<{
   spawnCapabilitiesPreview?: (args: SpawnCapabilitiesPreviewInputV1, context: ActionExecutorContext) => Promise<unknown>;
   sessionCapabilitiesGet?: (args: SessionCapabilitiesGetInputV1, context: ActionExecutorContext) => Promise<unknown>;
   sessionCapabilities?: SessionCapabilitiesActionPortV1;
+  sessionToolsSearch?: (args: AdmittedActionInputById['tools.search'], context: ActionExecutorContext) => Promise<unknown>;
+  sessionToolsDescribe?: (args: AdmittedActionInputById['tools.describe'], context: ActionExecutorContext) => Promise<unknown>;
+  sessionToolsCall?: (args: AdmittedActionInputById['tools.call'], context: ActionExecutorContext) => Promise<unknown>;
 
   // Session messaging (socket message event, server-scoped)
   sessionContinuationInspect?: (args: Readonly<{

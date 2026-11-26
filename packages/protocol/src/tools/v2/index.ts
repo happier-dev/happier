@@ -5,6 +5,7 @@ export {
   type CanonicalToolNameV2,
   type KnownCanonicalToolNameV2,
 } from './names.js';
+export { ScriptToolInputV2Schema, ScriptToolResultV2Schema, type ScriptToolInputV2, type ScriptToolResultV2 } from './scriptV2.js';
 
 export {
   ToolHappyMetaV2Schema,

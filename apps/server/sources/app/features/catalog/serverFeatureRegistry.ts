@@ -35,6 +35,7 @@ import { resolveSessionFollowingFeature } from '../sessionFollowingFeature';
 import { resolveSessionFilteredListingFeature } from '../sessionFilteredListingFeature';
 import { resolveSessionEphemeralRunnerFeature } from '../sessionEphemeralRunnerFeature';
 import { resolveSessionAgentSwitchingFeature } from '../sessionAgentSwitchingFeature';
+import { resolveSessionCodeModeFeature } from '../sessionCodeModeFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveSessionUsageLimitRecoveryFeature } from '../sessionUsageLimitRecoveryFeature';
 import { resolveTerminalFeature } from '../terminalFeature';
@@ -105,6 +106,7 @@ export const serverFeatureRegistry = Object.freeze([
     register(['sessions'], (env) => resolveSessionFilteredListingFeature(env)),
     register(['sessions'], (env) => resolveSessionEphemeralRunnerFeature(env)),
     register(['sessions'], (env) => resolveSessionAgentSwitchingFeature(env)),
+    register(['sessions'], resolveSessionCodeModeFeature),
     register(['sessions'], (env) => resolveSessionHandoffFeature(env)),
     register(['sessions'], (env) => resolveSessionUsageLimitRecoveryFeature(env)),
     register(['terminal'], (env) => resolveTerminalFeature(env)),

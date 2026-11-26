@@ -385,7 +385,7 @@ import { PROJECT_CONTEXT_ACTION_SPECS } from './specs/projects.js';
 import { SESSION_FOLLOW_ACTION_SPECS, SESSION_FOLLOW_RELATION_ACTION_SPECS } from './specs/session/follow.js';
 import { WORK_BOARD_ACTION_SPECS_V1, SESSION_BOARD_ACTION_SPECS } from './specs/session/boards.js';
 import { SESSION_LIFETIME_CONTROL_ACTION_SPECS, SESSION_RECOVERY_ACTION_SPECS, SESSION_PENDING_ACTION_SPECS } from './specs/session/control.js';
-import { ACTION_CATALOG_ACTION_SPECS, ACTION_OPTIONS_ACTION_SPECS } from './specs/catalog.js';
+import { ACTION_CATALOG_ACTION_SPECS, ACTION_OPTIONS_ACTION_SPECS, SESSION_TOOLS_ACTION_SPECS_V1 } from './specs/catalog.js';
 import { WorkspaceFilesReplaceActionOutputSchema, WORKSPACE_FILE_ACTION_SPECS } from './specs/workspaceFiles.js';
 import { UI_CONTEXT_ACTION_SPECS } from './specs/uiContext.js';
 export { CurrentUiContextCommandInvokeInputSchema, CurrentUiContextCommandInvokeOutputSchema,
@@ -542,6 +542,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof PERSONAL_SAVED_SECRET_ACTION_SPECS_V1)[number]
   | (typeof CAPABILITY_RULES_ACTION_SPECS_V1)[number]
   | (typeof SESSION_CAPABILITIES_ACTION_SPECS_V1)[number]
+  | (typeof SESSION_TOOLS_ACTION_SPECS_V1)[number]
   | (typeof SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1)[number]
   | (typeof SKILL_ACTION_SPECS_V1)[number]
   | (typeof PROVIDER_ACTION_SPECS_V1)[number]
@@ -595,6 +596,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...PERSONAL_SAVED_SECRET_ACTION_SPECS_V1,
   ...CAPABILITY_RULES_ACTION_SPECS_V1,
   ...SESSION_CAPABILITIES_ACTION_SPECS_V1,
+  ...SESSION_TOOLS_ACTION_SPECS_V1,
   ...SESSION_ACCESS_DISCOVERY_ACTION_SPECS_V1,
   ...SKILL_ACTION_SPECS_V1,
   ...PROVIDER_ACTION_SPECS_V1,
@@ -1686,6 +1688,7 @@ export type CanonicalActionSpecDefinition =
   | (typeof DOC_COLLABORATION_ACTION_SPECS_V1)[number]
   | (typeof CAPABILITY_RULES_ACTION_SPECS_V1)[number]
   | (typeof SESSION_CAPABILITIES_ACTION_SPECS_V1)[number]
+  | (typeof SESSION_TOOLS_ACTION_SPECS_V1)[number]
   | (typeof SKILL_ACTION_SPECS_V1)[number]
   | (typeof ACCOUNT_LIFECYCLE_ACTION_SPECS)[number]
   | (typeof MEMORY_DOCUMENT_ACTION_SPECS_V1)[number]

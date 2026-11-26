@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import type { KnownCanonicalToolNameV2 } from './names.js';
+import { ScriptToolInputV2Schema, ScriptToolResultV2Schema } from './scriptV2.js';
 import { ToolHappyMetaV2Schema, ToolHappierMetaSchema } from './meta.js';
 import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../structuredQuestionAnswersV1.js';
 
@@ -448,6 +449,7 @@ export const ChangeTitleResultV2Schema = lazyZodSchema(() => (<T extends z.ZodMi
 
 const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodMiniType> = {
   Bash: BashInputV2Schema,
+  Script: ScriptToolInputV2Schema,
   Read: ReadInputV2Schema,
   Write: WriteInputV2Schema,
   Edit: EditInputV2Schema,
@@ -483,6 +485,7 @@ const TOOL_INPUT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodMiniType> = {
 
 const TOOL_RESULT_SCHEMAS: Record<KnownCanonicalToolNameV2, z.ZodMiniType> = {
   Bash: BashResultV2Schema,
+  Script: ScriptToolResultV2Schema,
   Read: ReadResultV2Schema,
   Write: WriteResultV2Schema,
   Edit: EditResultV2Schema,

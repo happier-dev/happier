@@ -17,8 +17,8 @@ const cases: readonly (readonly [McpServerActionIdV1, unknown, readonly string[]
   ['mcp.servers.update', { entry, expectedRevision: 1 }, ['issue-mcp', '--workspace', 'Issue tracker']],
   ['mcp.servers.duplicate', { serverId: 'original' }, ['original', 'Everywhere']],
   ['mcp.servers.delete', { serverId: 'mcp-a', removeBindings: true, expectedRevision: 1 }, ['mcp-a', 'Remove rules']],
-  ['mcp.servers.tools.set', { serverId: 'mcp-a', default: 'allow_read_only', tools: { delete_issue: 'allow', search: 'off', list: 'inherit' } },
-    ['delete_issue', 'Allow', 'search', 'Off', 'Use server default', 'Allow read-only']],
+  ['mcp.servers.tools.set', { serverId: 'mcp-a', default: 'allow_read_only', loading: 'on_demand', tools: { delete_issue: 'allow', search: 'off', list: 'inherit' } },
+    ['delete_issue', 'Allow', 'search', 'Off', 'Use server default', 'Allow read-only', 'On demand']],
   ['mcp.servers.test', { t: 'byId', machineId: 'machine-a', directory: '/work', serverId: 'mcp-a' }, ['mcp-a', 'machine-a', '/work']],
   ['mcp.servers.signIn.start', { serverId: 'mcp-a', stepUp: true }, ['mcp-a', 'More access']],
   ['mcp.servers.import', { source: { kind: 'paste', text: JSON.stringify({ mcpServers: { issues: {
@@ -42,8 +42,8 @@ const cases: readonly (readonly [McpServerActionIdV1, unknown, readonly string[]
 
 describe('MCP danger approval review', () => {
   it.each([
-    ['mcp.servers.tools.set', { serverId: 'mcp-a', default: 'allow_read_only', tools: { read: 'allow', write: 'off', old: 'inherit' } },
-      { default: 'allow_read_only', tools: { read: 'allow', write: 'off', old: 'inherit' } }],
+    ['mcp.servers.tools.set', { serverId: 'mcp-a', default: 'allow_read_only', loading: 'on_demand', tools: { read: 'allow', write: 'off', old: 'inherit' } },
+      { default: 'allow_read_only', loading: 'on_demand', tools: { read: 'allow', write: 'off', old: 'inherit' } }],
     ['mcp.servers.delete', { serverId: 'mcp-a', expectedRevision: 1, removeBindings: true }, { removeBindings: true }],
     ['mcp.servers.delete', { serverId: 'mcp-a', expectedRevision: 1, removeBindings: false }, { removeBindings: false }],
     ['mcp.servers.signIn.start', { serverId: 'mcp-a', stepUp: true }, { stepUp: true }],

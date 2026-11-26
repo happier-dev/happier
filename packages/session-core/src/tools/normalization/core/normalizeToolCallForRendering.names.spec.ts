@@ -4,6 +4,54 @@ import { normalizeToolCallForRendering } from "./normalizeToolCallForRendering.j
 import { makeTool } from "./normalizeToolCallForRendering._testHelpers.js";
 
 describe('normalizeToolCallForRendering (names)', () => {
+    it('projects CLI scripts from the shell without changing ordinary or compound shell calls', () => {
+        const command = 'happier tools run --agent-bridge script.js';
+        const result = { stdout: '{"count":2}', stderr: 'reading sources' };
+        expect(normalizeToolCallForRendering(makeTool({ name: 'Bash', input: { command }, result }))).toMatchObject({
+            name: 'Script',
+            input: { code: command, origin: 'cli' },
+            result: { output: { count: 2 }, ...result },
+        });
+        expect(normalizeToolCallForRendering(makeTool({ name: 'Bash', input: { command: command + ' && echo done' } })).name).toBe('Bash');
+        const native = makeTool({ name: 'Script', input: { code: 'return 2;', origin: 'native' }, result: { output: 2 } });
+        expect(normalizeToolCallForRendering(native)).toMatchObject({ name: 'Script', input: native.input, result: native.result });
+    });
+
+    it('projects stdin source and preserves a structured shell failure', () => {
+        const command = '"$HAPPIER_CLI_BIN" tools run --agent-bridge - <<\'SCRIPT\'\nreturn await tools.search({ query: "issues" });\nSCRIPT';
+        const result = { exitCode: 1, output: 'script could not connect' };
+        const normalized = normalizeToolCallForRendering(makeTool({ name: 'Bash', input: { command }, result }));
+        expect(normalized).toMatchObject({
+            name: 'Script',
+            input: { code: 'return await tools.search({ query: "issues" });', origin: 'cli' },
+            result: { output: 'script could not connect' },
+        });
+    });
+
+    it('projects the inline runner source and its completed and refused calls from the CLI receipt', () => {
+        const code = 'await tools.search({ query: "issues" });\nawait mcp.issues.update();';
+        const refusalCause = { kind: 'access_denied' };
+        const command = `happier tools run --agent-bridge --code '${code}'`;
+        const result = JSON.stringify({
+            ok: false,
+            error: { code: 'permission_denied', message: 'Tool permission denied.', failureCause: refusalCause },
+            calls: [
+                { operation: 'search', ok: true },
+                { operation: 'call', source: 'issues', tool: 'update', ok: false, errorCode: 'permission_denied' },
+            ],
+        });
+        expect(normalizeToolCallForRendering(makeTool({ name: 'Bash', input: { command }, result }))).toMatchObject({
+            name: 'Script',
+            input: { code, origin: 'cli' },
+            result: {
+                error: 'Tool permission denied.',
+                calls: [
+                    { tool: 'search', status: 'completed' },
+                    { source: 'issues', tool: 'update', status: 'error', refusalCause },
+                ],
+            },
+        });
+    });
     it('maps legacy tool names to canonical V2 tool names', () => {
         const normalized = normalizeToolCallForRendering(
             makeTool({

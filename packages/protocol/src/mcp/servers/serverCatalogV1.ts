@@ -88,7 +88,10 @@ export function applyMcpServerCatalogMutationV1(catalog: McpServerCatalogV1, raw
       if (setting === 'inherit') overrides.delete(name);
       else overrides.set(name, setting);
     }
-    const tools = { default: change.settings.default ?? settings?.tools?.default ?? 'ask', overrides: Object.fromEntries(overrides) };
+    const loading = change.settings.loading ?? settings?.tools?.loading;
+    const tools = { default: change.settings.default ?? settings?.tools?.default ?? 'ask', overrides: Object.fromEntries(overrides),
+      ...(loading === undefined ? {} : { loading }),
+    };
     if (!server) return McpServerCatalogV1Schema.parse({ ...catalog,
       pluginServers: { ...catalog.pluginServers, [change.serverId]: { ...settings, tools } } });
     return McpServerCatalogV1Schema.parse({ ...catalog,

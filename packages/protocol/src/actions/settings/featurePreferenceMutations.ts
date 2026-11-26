@@ -171,6 +171,9 @@ export const UI_FEATURE_REGISTRY = {
     'sessions.agentSwitching': {
         settingsToggle: undefined,
     },
+    'sessions.codeMode': {
+        settingsToggle: undefined,
+    },
     'sessions.drafts': {
         settingsToggle: undefined,
     },

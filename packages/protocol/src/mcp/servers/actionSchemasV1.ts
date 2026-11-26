@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { McpOAuthClientRegistrationV1Schema } from '../oauth/mcpOAuthClientIdentityV1.js';
 import { McpServerRuleV1Schema, McpServerCatalogEntryV1Schema, McpServerConfigOverrideV1Schema, McpServerToolPolicyV1Schema, McpServerToolSettingsPatchV1Schema, McpServerToolsSnapshotV1Schema, McpToolSettingV1Schema, McpToolSettingsV1Schema, McpPluginItemMetadataV1Schema } from './settingsV1.js';
 import { McpServerPluginSettingsV1Schema } from './settingsV1.js';
+import { McpToolLoadingV1Schema } from './settingsV1.js';
 import { ReachRulesChangeV1Schema } from '../../reach/reachRulesChangeV1.js';
 import { McpServerCatalogSnapshotV1Schema } from './catalogSchemasV1.js';
 import { McpServerCatalogV1Schema, McpServerCatalogDiagnosticV1Schema, McpServerCatalogRowMutationResponseV1Schema } from './catalogSchemasV1.js';
@@ -36,12 +37,19 @@ const serverUpdate = lazyZodSchema(() => z.union([serverWrite,
   z.strictObject({ expectedRevision: catalogRevision, serverId: identity, from: z.strictObject({ registry: RegistryItemPointerV1Schema }),
     inputs: z.optional(z.record(z.string(), ValueRefV1Schema)) }),
 ]));
+const promptDelivery = lazyZodSchema(() => z.strictObject({
+  // Older hosts can acknowledge these Actions without prompt-delivery facts.
+  loading: z.optional(McpToolLoadingV1Schema),
+  effectivePromptTokens: z.optional(z.nullable(z.number().check(z.nonnegative()))),
+  savedPromptTokens: z.optional(z.nullable(z.number().check(z.nonnegative()))),
+}));
 export const McpServerListEntryV1Schema = lazyZodSchema(() => {
   const { id, name, title, description, transport, createdAt, updatedAt } = McpServerCatalogEntryV1Schema.shape;
-  return z.strictObject({ id, name, title, description, transport, createdAt, updatedAt });
+  return z.strictObject({ id, name, title, description, transport, createdAt, updatedAt, ...promptDelivery.shape });
 });
 const listCatalog = lazyZodSchema(() => z.strictObject({ v: McpServerCatalogV1Schema.shape.v,
-  servers: z.array(z.union([McpServerListEntryV1Schema, McpPluginItemMetadataV1Schema])), bindings: z.array(McpServerRuleV1Schema),
+  servers: z.array(z.union([McpServerListEntryV1Schema,
+    z.strictObject({ ...McpPluginItemMetadataV1Schema.shape, ...promptDelivery.shape })])), bindings: z.array(McpServerRuleV1Schema),
   pluginItemsStatus: z.optional(z.enum(['ready', 'unavailable'])) }));
 const listSnapshot = lazyZodSchema(() => z.discriminatedUnion('status', [
   McpServerCatalogSnapshotV1Schema._zod.def.options[0], McpServerCatalogSnapshotV1Schema._zod.def.options[1],
@@ -50,10 +58,11 @@ const listSnapshot = lazyZodSchema(() => z.discriminatedUnion('status', [
 ]));
 const readResult = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.literal('plugin'), server: McpPluginItemMetadataV1Schema, bindings: z.array(McpServerRuleV1Schema),
-    settings: z.optional(McpServerPluginSettingsV1Schema), revision: catalogRevision }),
+    settings: z.optional(McpServerPluginSettingsV1Schema), revision: catalogRevision, ...promptDelivery.shape }),
   McpServerCatalogSnapshotV1Schema,
   z.strictObject({ status: z.literal('present'), server: McpServerCatalogEntryV1Schema,
     bindings: z.array(McpServerRuleV1Schema), revision: catalogRevision,
+    ...promptDelivery.shape,
     installLink: z.optional(z.url()),
     authority: z.enum(['active', 'inactive']), complete: z.boolean(), diagnostics: z.array(McpServerCatalogDiagnosticV1Schema) }),
   z.strictObject({ status: z.literal('not-found'), serverId: identity, revision: catalogRevision }),
@@ -61,6 +70,7 @@ const readResult = lazyZodSchema(() => z.union([
 
 const toolsListResult = lazyZodSchema(() => z.strictObject({
   serverId: identity, revision: catalogRevision, snapshot: z.optional(McpServerToolsSnapshotV1Schema),
+  ...promptDelivery.shape,
   settings: z.strictObject({ default: McpServerToolPolicyV1Schema.shape.default,
     tools: McpToolSettingsV1Schema }),
   tools: z.array((<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(McpServerToolsSnapshotV1Schema.shape.tools._zod.def.element, {
@@ -69,7 +79,7 @@ const toolsListResult = lazyZodSchema(() => z.strictObject({
   tokens: z.nullable(z.number().check(z.nonnegative())),
   perAgent: z.strictObject({ status: z.enum(['ready', 'unavailable']), machineId: z.optional(identity), agents: z.array(z.strictObject({
     agentId: identity, approval: z.nullable(z.enum(['native', 'host'])), off: z.nullable(z.enum(['hidden', 'blocked'])),
-    loading: z.enum(['every_turn', 'on_demand']), tokens: z.nullable(z.number().check(z.nonnegative())),
+    loading: McpToolLoadingV1Schema, tokens: z.nullable(z.number().check(z.nonnegative())),
   })) }),
 }));
 

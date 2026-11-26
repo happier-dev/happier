@@ -14,7 +14,7 @@ import { MCP_OAUTH_CLIENT_METADATA_URL_V1, McpOAuthClientRegistrationV1Schema } 
 import { McpServerRuleV1Schema, McpServerCatalogEntryV1Schema, McpServerConfigOverrideV1Schema,
   McpServerToolPolicyV1Schema, McpServerToolSettingsPatchV1Schema, McpServerToolsSnapshotV1Schema, McpToolSettingV1Schema, McpToolSettingsV1Schema,
   McpPluginItemMetadataV1Schema, type McpPluginItemMetadataV1, type McpServerCatalogEntryV1 } from './settingsV1.js';
-import { isMcpPluginItemIdV1 } from './settingsV1.js';
+import { isMcpPluginItemIdV1, resolveMcpToolLoadingV1 } from './settingsV1.js';
 import { McpServerPluginSettingsV1Schema } from './settingsV1.js';
 import { ReachRulesChangeV1Schema, resolveCreateReachV1, type ReachRulesWriteContextV1 } from '../../reach/reachRulesChangeV1.js';
 import { McpRulesSetInputV1Schema, McpRulesSetOutputV1Schema } from '../../actions/specs/capabilityRules.js';
@@ -43,6 +43,18 @@ import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1
 export type McpServerActionRequestV1 = Readonly<{ actionId: McpServerActionIdV1 | 'mcp.rules.set'; input: unknown; context: ActionExecutorContext }>;
 export type McpServerToolAgentFactV1 = Readonly<{ agentId: string }>
   & Pick<PluginAgentToolsCapabilityV2, 'mcpToolControl' | 'mcpToolLoading'>;
+
+const mcpServerListProjection = lazyZodSchema(() => z.object(McpServerListEntryV1Schema.shape));
+
+function projectMcpServerPromptDelivery(server: z.infer<typeof McpServerPluginSettingsV1Schema> | undefined) {
+  const loading = resolveMcpToolLoadingV1(server?.tools);
+  const tokens = server?.toolsSnapshot?.tools.reduce((sum, tool) => sum + tool.tokens, 0) ?? null;
+  return { tokens, delivery: {
+    loading,
+    effectivePromptTokens: loading === 'on_demand' ? 0 : tokens,
+    savedPromptTokens: loading === 'on_demand' ? tokens : 0,
+  } };
+}
 export type McpServerActionPortsV1 = Readonly<{
   /** Application hosts supply their canonical web-app URL; plugin metadata has no installable definition. */
   resolveWebappUrl?(context: ActionExecutorContext): string | Promise<string>;
@@ -192,8 +204,10 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         // Lists disclose metadata without guessing which literals are secrets.
         result = snapshot.status === 'ready' || snapshot.status === 'partial'
           ? { ...snapshot, catalog: { v: snapshot.catalog.v,
-            servers: [...snapshot.catalog.servers.map(entry => lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(McpServerListEntryV1Schema)).parse(entry)),
-              ...(pluginItems ?? []).map(item => McpPluginItemMetadataV1Schema.parse(item))],
+            servers: [...snapshot.catalog.servers.map(entry => mcpServerListProjection
+              .parse({ ...entry, ...projectMcpServerPromptDelivery(entry).delivery })),
+              ...(pluginItems ?? []).map(item => ({ ...McpPluginItemMetadataV1Schema.parse(item),
+                ...projectMcpServerPromptDelivery(snapshot.catalog.pluginServers?.[item.id]).delivery }))],
             ...(ports.readPluginItems ? { pluginItemsStatus: pluginItems === null ? 'unavailable' : 'ready' } : {}),
             bindings: snapshot.catalog.bindings.map(entry => lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: undefined }) as z.ZodMiniObject<T['shape'], z.core.$strip>)(McpServerRuleV1Schema)).parse(entry)),
           } } : snapshot;
@@ -206,10 +220,15 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         const server = snapshot.catalog.servers.find(entry => entry.id === serverId);
         const plugin = !server && isMcpPluginItemIdV1(serverId)
           && (await ports.readPluginItems?.(context, { serverId }))?.find(item => item.id === serverId);
-        if (plugin) { result = { status: 'plugin', server: plugin, bindings: snapshot.catalog.bindings.filter(rule => rule.serverId === serverId),
-          settings: snapshot.catalog.pluginServers?.[serverId], revision: snapshot.revision }; break; }
+        if (plugin) {
+          const settings = snapshot.catalog.pluginServers?.[serverId];
+          result = { status: 'plugin', server: plugin, bindings: snapshot.catalog.bindings.filter(rule => rule.serverId === serverId),
+            settings, revision: snapshot.revision, ...projectMcpServerPromptDelivery(settings).delivery };
+          break;
+        }
         const webappUrl = server ? await ports.resolveWebappUrl?.(context) : undefined;
         result = server ? { status: 'present', server, bindings: snapshot.catalog.bindings.filter(binding => binding.serverId === serverId),
+          ...projectMcpServerPromptDelivery(server).delivery,
           ...(webappUrl && (!server.remote?.auth || server.transport === 'http')
             ? { installLink: encodeMcpServerInstallLinkV1(server, webappUrl) } : {}),
           revision: snapshot.revision, authority: snapshot.authority, complete: snapshot.status === 'ready', diagnostics: snapshot.diagnostics }
@@ -229,27 +248,31 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
           ?? (plugin ? catalog.catalog.pluginServers?.[serverId] ?? {} : undefined);
         if (!server) return { ok: false, errorCode: 'mcp_server_not_found', error: 'mcp_server_not_found' };
         const overrides: z.infer<typeof McpToolSettingsV1Schema> = server.tools?.overrides ?? {};
-        const tokenCost = server.toolsSnapshot ? server.toolsSnapshot.tools.reduce((sum, tool) => sum + tool.tokens, 0) : null;
-        const visibleTokenCost = server.toolsSnapshot ? server.toolsSnapshot.tools.reduce((sum, tool) => {
+        const { tokens, delivery } = projectMcpServerPromptDelivery(server);
+        const facts = await ports.readToolAgentFacts?.(context);
+        context.signal?.throwIfAborted();
+        const onDemand = delivery.loading === 'on_demand';
+        const visibleTokenCost = !onDemand && facts?.agents.some(agent => agent.mcpToolControl?.off === 'hidden')
+          ? server.toolsSnapshot?.tools.reduce((sum, tool) => {
           const decision = resolveMcpToolDecisionV1({ policy: server.tools, toolName: tool.name,
             annotations: tool.annotations, permissionMode: 'default' });
           return sum + (decision.exposed ? tool.tokens : 0);
-        }, 0) : null;
-        const facts = await ports.readToolAgentFacts?.(context);
-        context.signal?.throwIfAborted();
-        result = { serverId, revision: catalog.revision, snapshot: server.toolsSnapshot,
+        }, 0) ?? null : null;
+        result = { serverId, revision: catalog.revision, snapshot: server.toolsSnapshot, ...delivery,
           settings: { default: server.tools?.default ?? 'ask', tools: overrides },
           tools: (server.toolsSnapshot?.tools ?? []).map(tool => {
             const own = Object.hasOwn(overrides, tool.name);
             return { ...tool, setting: own ? overrides[tool.name] : 'inherit', source: own ? 'tool' : 'server_default' };
           }),
-          tokens: tokenCost,
+          tokens,
           perAgent: facts ? { status: 'ready', ...(facts.machineId ? { machineId: facts.machineId } : {}),
-            agents: facts.agents.map(agent => ({ agentId: agent.agentId,
+            agents: facts.agents.map(agent => onDemand
+              ? { agentId: agent.agentId, approval: 'host', off: 'hidden', loading: delivery.loading, tokens: 0 }
+              : { agentId: agent.agentId,
               approval: agent.mcpToolControl?.approval ?? null, off: agent.mcpToolControl?.off ?? null,
               loading: agent.mcpToolLoading ?? 'every_turn',
-              tokens: agent.mcpToolControl?.off === 'hidden' ? visibleTokenCost : tokenCost,
-            })),
+              tokens: agent.mcpToolControl?.off === 'hidden' ? visibleTokenCost : tokens,
+            }),
           } : { status: 'unavailable', agents: [] },
         };
         break;
@@ -268,6 +291,7 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
         const overrides: z.infer<typeof McpToolSettingsV1Schema> = server.tools?.overrides ?? {};
         const previous = {
           ...(settings.default === undefined ? {} : { default: server.tools?.default ?? 'ask' }),
+          ...(settings.loading === undefined ? {} : { loading: resolveMcpToolLoadingV1(server.tools) }),
           tools: Object.fromEntries(Object.keys(settings.tools ?? {}).map(name => [name,
             Object.hasOwn(overrides, name) ? overrides[name] : 'inherit'])),
         };

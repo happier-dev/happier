@@ -214,6 +214,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['sessions'],
     representation: 'server',
   },
+  'sessions.codeMode': {
+    description: 'Code Mode script execution and on-demand MCP tool loading.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sessions'],
+    representation: 'server',
+  },
   'sessions.folders': {
     description: 'Organize synced sessions into user-defined folders.',
     defaultFailMode: 'fail_closed',

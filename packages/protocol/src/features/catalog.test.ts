@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { FEATURE_CATALOG, FEATURE_IDS, featureRequiresServerSnapshot, isFeatureId } from './catalog.js';
 
 describe('feature catalog', () => {
+  it('negotiates Code Mode through the Home with a Sessions dependency', () => {
+    expect(FEATURE_CATALOG['sessions.codeMode']).toMatchObject({
+      representation: 'server', defaultFailMode: 'fail_closed', dependencies: ['sessions'],
+    });
+  });
   it('requires a server snapshot for server features and for client features that depend on one', () => {
     expect(featureRequiresServerSnapshot('terminal.embeddedPty')).toBe(true);
     // Client feature whose dependency chain reaches a server feature (voice.agent -> voice).

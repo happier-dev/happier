@@ -1,5 +1,5 @@
 import { isModelRefGrantedByConstraintsV1 } from '../auth/apiTokenGrant.js';
-import { MACHINE_DETAIL_ACTION_ID_V1 } from './actionIds.js';
+import { MACHINE_DETAIL_ACTION_ID_V1, SESSION_TOOLS_SEARCH_ACTION_ID_V1, SESSION_TOOLS_DESCRIBE_ACTION_ID_V1, SESSION_TOOLS_CALL_ACTION_ID_V1 } from './actionIds.js';
 import { MachineDetailInputSchema } from './specs/machine/discovery.js';
 import { createAutomaticApprovalContinuation, createApprovalAutomaticChecksV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1, canAuthorApprovalAutomaticConsentV1, hasApprovalAutomaticConsentPersonAuthorityV1, readApprovalAutomaticActionIdV1 } from './executor/automaticApprovalContinuation.js';
 import { ApprovalRequestDecideInputSchema } from './specs/approvals.js';
@@ -7382,6 +7382,17 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if (actionId === 'workspace.files.replace') {
           if (!deps.workspaceFilesReplace) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
           return completeActionResult(await deps.workspaceFilesReplace((parsed.data as z.infer<typeof WorkspaceFilesReplaceActionInputSchema>), ctx));
+        }
+        switch (actionId) {
+          case SESSION_TOOLS_SEARCH_ACTION_ID_V1:
+            if (deps.sessionToolsSearch) return { ok: true, result: await deps.sessionToolsSearch(parsed.data as AdmittedActionInputById[typeof actionId], ctx) };
+            return { ok: false, errorCode: 'session_requester_unavailable', error: 'session_requester_unavailable' };
+          case SESSION_TOOLS_DESCRIBE_ACTION_ID_V1:
+            if (deps.sessionToolsDescribe) return { ok: true, result: await deps.sessionToolsDescribe(parsed.data as AdmittedActionInputById[typeof actionId], ctx) };
+            return { ok: false, errorCode: 'session_requester_unavailable', error: 'session_requester_unavailable' };
+          case SESSION_TOOLS_CALL_ACTION_ID_V1:
+            if (deps.sessionToolsCall) return { ok: true, result: await deps.sessionToolsCall(parsed.data as AdmittedActionInputById[typeof actionId], ctx) };
+            return { ok: false, errorCode: 'session_requester_unavailable', error: 'session_requester_unavailable' };
         }
         const dispatchAgentsCatalogResult = await dispatchAgentsCatalog({ actionId, deps, data, parsed, ctx });
         if (dispatchAgentsCatalogResult !== null) return dispatchAgentsCatalogResult;
