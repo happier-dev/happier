@@ -15,12 +15,13 @@ type ManagedWakeResource = Readonly<{ id: string; homeId: string; controllerMach
 
 /** Exact projection demand shares one installed-controller read, never its private identity with recipients. */
 export async function withManagedWakeAvailabilityInTx<T extends Readonly<{ managedResource: ManagedWakeResource | null }>>(
-    tx: Tx, rows: readonly T[],
+    tx: Tx, rows: readonly T[], loadedMachines: readonly ControllerPresence[] = [],
 ) {
     const controllerIds = [...new Set(rows.flatMap(row => row.managedResource?.controllerMachineId
         ? [row.managedResource.controllerMachineId] : []))];
-    const controllers = new Map<string, ControllerPresence>();
-    for (const ids of portableQueryChunks({ values: controllerIds, bindingsPerValue: 1 })) {
+    const controllers = new Map(loadedMachines.map(machine => [machine.id, machine]));
+    const missingControllerIds = controllerIds.filter(id => !controllers.has(id));
+    for (const ids of portableQueryChunks({ values: missingControllerIds, bindingsPerValue: 1 })) {
         for (const controller of await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(CONTROLLER_PRESENCE_SELECT) }).then(decodeMachineStoredContent)) {
             controllers.set(controller.id, controller);
         }

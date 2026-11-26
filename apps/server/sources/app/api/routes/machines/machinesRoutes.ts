@@ -1,7 +1,6 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { resolveInstallationIdentityUpdate, updateMachineInstallationIdentityInTx } from "@/app/machines/installationIdentityUpdate";
 import { Fastify } from "../../types";
-import { persistentMachineWhere } from '@/app/machines/machineSelection';
 import { withManagedWakeAvailabilityInTx } from '@/app/machines/managed/managedWakeAvailability';
 import { z } from "zod/mini";
 import { readDeploymentAppEnrollmentsForMachinesInTx } from '@/app/deployments/deploymentAppEnrollment';
@@ -9,7 +8,6 @@ import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorCon
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { timingSafeEqual } from "node:crypto";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -59,7 +57,7 @@ import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 import { MachineEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/enrollmentV1';
 import { registerManagedMachineRoutes } from "@/app/machines/managed/managedRoutes";
 import { requireMachineEnrollmentInTx, linkMachineEnrollmentInTx } from "@/app/machines/machineEnrollment";
-import { ManagedMachineError, readMachineDevcontainerChildInTx, readMachineDevcontainerChildrenInTx } from "@/app/machines/managed/managedRows";
+import { ManagedMachineError, projectMachineDevcontainerChildrenInTx } from "@/app/machines/managed/managedRows";
 import { MachineContentKeyTransitionInputV1Schema, MachineContentKeyTransitionResultV1Schema, MachinePublishedRowV1Schema } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
@@ -88,6 +86,7 @@ function readMachineProjection(request: FastifyRequest): 'hostFacts' | undefined
 async function readAccessibleMachineProjectionsInTx(
     tx: Tx,
     input: Readonly<{ actorAccountId: string; machineIds: readonly string[]; request: FastifyRequest; projection?: 'hostFacts';
+        discovery?: Readonly<{ includeRevoked: boolean; persistentOnly: boolean }>;
         admission?: SocketRpcMachineAdmissionContextV1 }>,
 ) {
     // Recipient-work facts only schedule the present user's UI key repair; automation, API-token
@@ -96,11 +95,13 @@ async function readAccessibleMachineProjectionsInTx(
         && input.request.authAuthority === 'present_user' && input.request.authTokenKind === 'account';
     const includePresenceHistory = input.request.headers.accept === MACHINE_PRESENCE_EVENTS_PROJECTION_V1;
     const openings = await readAccessibleMachineOpeningsInTx(tx, { actorAccountId: input.actorAccountId, machineIds: input.machineIds,
+        discovery: input.discovery,
         ...(input.admission ? { admission: input.admission } : {}),
         ...(schedulesRecipientRepair ? { includeRecipientWork: true as const } : {}) });
-    const children = input.projection === 'hostFacts' ? null : await readMachineDevcontainerChildrenInTx(tx, [...openings.keys()]);
+    const openingRows = [...openings.values()].map(opening => opening.machine);
+    const children = input.projection === 'hostFacts' ? null : await projectMachineDevcontainerChildrenInTx(tx, openingRows);
     const apps = input.projection === 'hostFacts' ? null : await readDeploymentAppEnrollmentsForMachinesInTx(tx, {
-        machines: [...openings.values()].map(opening => opening.machine),
+        machines: openingRows,
         reader: { accountId: input.request.userId, authentication: readTeamOperationAuthenticationFromRequest(input.request) },
     });
     return input.machineIds.flatMap(machineId => {
@@ -166,25 +167,22 @@ function isMachineRevokedError(value: unknown): value is { error: 'machine_revok
     return (value as { error?: unknown }).error === 'machine_revoked';
 }
 
-async function serializeMachineRowForRequest(
+async function serializeMachineRowForRequestInTx(
+    tx: Tx,
     row: Omit<MachineSerializationRow, 'managedResource'>,
     request: FastifyRequest,
     storageMode?: "plain" | "e2ee",
 ) {
-    const projection = await inTx(async tx => {
-        const machine = await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
-            id: true, managedResource: true, deploymentAppDeploymentId: true, revokedAt: true, replacedByMachineId: true,
-        } });
-        const [projectedMachine] = await withManagedWakeAvailabilityInTx(tx, [machine]);
-        const apps = await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [machine],
-            reader: { accountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request) },
-        });
-        return { machine: projectedMachine, devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id),
-            deploymentApp: apps.get(row.id) ?? null };
+    const machine = await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
+        id: true, accountId: true, managedResource: true, deploymentAppDeploymentId: true, revokedAt: true, replacedByMachineId: true,
+    } });
+    const [projectedMachine] = await withManagedWakeAvailabilityInTx(tx, [machine]);
+    const apps = await readDeploymentAppEnrollmentsForMachinesInTx(tx, { machines: [machine],
+        reader: { accountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request) },
     });
-    return serializeMachineRow({ ...row, ...projection.machine }, {
-        devcontainerChild: projection.devcontainerChild,
-        deploymentApp: projection.deploymentApp,
+    return serializeMachineRow({ ...row, ...projectedMachine }, {
+        devcontainerChild: (await projectMachineDevcontainerChildrenInTx(tx, [machine])).get(row.id) ?? null,
+        deploymentApp: apps.get(row.id) ?? null,
         ...(storageMode ? { storageMode } : {}),
         recipientAccountStoredContentProtocolVersion:
             readAccountStoredContentCompatibilityForHttpRequest(request)
@@ -559,32 +557,29 @@ export function machinesRoutes(app: Fastify) {
                 && !managedEnrollment
             ) {
                 try {
-                    await inTx(tx => requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id }), { readOnly: true });
+                    const registered = await inTx(async tx => {
+                        await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id });
+                        // Registration content is create-only: adopt the winning content basis.
+                        return serializeMachineRowForRequestInTx(tx, machine, request, accountMode);
+                    }, { readOnly: true });
+                    log({ module: 'machines', machineId: id, userId }, 'Found existing machine');
+                    return reply.send({ machine: registered });
                 } catch (error) {
                     if (error instanceof ManagedMachineError) return reply.code(409).send({ error: "invalid-params", reason: error.code });
                     throw error;
                 }
-                // Registration content is create-only: adopt the winning content basis.
-                // Note: This checks the pre-tx row (which may be slightly stale under concurrency),
-                // but the response is still safe and consistent for the authenticated account.
-                log({ module: 'machines', machineId: id, userId }, 'Found existing machine');
-                return reply.send({
-                    machine: {
-                        ...await serializeMachineRowForRequest(machine, request, accountMode),
-                    }
-                });
             }
 
             log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
 
-            type UpdatedMachineRow =
-                | Parameters<typeof serializeMachineRowForRequest>[0]
+            type UpdatedMachineResponse =
+                | Awaited<ReturnType<typeof serializeMachineRowForRequestInTx>>
                 | null
                 | { error: 'machine_revoked' }
                 | { error: 'invalid_installation_identity'; reason: string }
                 | { error: 'machine_storage_mode_mismatch' };
             let machineReplacement: MachineRegistrationReplacementResult | null = null;
-            let updated: UpdatedMachineRow;
+            let updated: UpdatedMachineResponse;
             try {
                 updated = await inTx(async (tx) => {
                     const declarationBodies = await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
@@ -628,7 +623,7 @@ export function machinesRoutes(app: Fastify) {
                         && !currentWantsAutomaticReplacement
                     ) {
                         if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, current.id, declarationBodies, request.authTerminalRequestId);
-                        return current;
+                        return serializeMachineRowForRequestInTx(tx, current, request, accountMode);
                     }
 
                     // Registration metadata/state/envelope are create-only. Existing metadata also contains
@@ -657,7 +652,7 @@ export function machinesRoutes(app: Fastify) {
                     }
 
                     if (managedEnrollment) await linkMachineEnrollmentInTx(tx, managedEnrollment, userId, updatedMachine.id, declarationBodies, request.authTerminalRequestId);
-                    return updatedMachine;
+                    return serializeMachineRowForRequestInTx(tx, updatedMachine, request, accountMode);
                 }, {
                     // Exclusive Account admission protects installation and managed lifecycle predicates.
                     isolationLevel: "ReadCommitted",
@@ -675,8 +670,12 @@ export function machinesRoutes(app: Fastify) {
                 // can fail (P2028/P1008) which would brick daemon startup/session spawning. Degrade only for
                 // best-effort installation refreshes. Content/key replacement is never a registration write.
                 if (isPrismaErrorCode(error, 'P2028') || isPrismaErrorCode(error, 'P1008')) {
+                    let registered;
                     try {
-                        await inTx(tx => requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id }), { readOnly: true });
+                        registered = await inTx(async tx => {
+                            await requireMachineEnrollmentInTx(tx, { accountId: userId, machineId: id });
+                            return serializeMachineRowForRequestInTx(tx, machine, request, accountMode);
+                        }, { readOnly: true });
                     } catch (currentnessError) {
                         if (currentnessError instanceof ManagedMachineError) return reply.code(409).send({ error: "invalid-params", reason: currentnessError.code });
                         throw currentnessError;
@@ -692,11 +691,7 @@ export function machinesRoutes(app: Fastify) {
                         },
                         'Machine update skipped due to transaction contention',
                     );
-                    return reply.send({
-                        machine: {
-                            ...await serializeMachineRowForRequest(machine, request, accountMode),
-                        },
-                    });
+                    return reply.send({ machine: registered });
                 }
                 throw error;
             }
@@ -722,9 +717,7 @@ export function machinesRoutes(app: Fastify) {
             }
 
             return reply.send({
-                machine: {
-                    ...await serializeMachineRowForRequest(updated, request, accountMode),
-                },
+                machine: updated,
                 ...(machineReplacement ? { machineReplacement } : {}),
             });
         } else {
@@ -750,7 +743,7 @@ export function machinesRoutes(app: Fastify) {
                     declarationBodies,
                     terminalAuthRequestId: request.authTerminalRequestId,
                     });
-                    return registered;
+                    return { ...registered, machine: await serializeMachineRowForRequestInTx(tx, registered.machine, request, accountMode) };
                 }, {
                     // Registration's Account fence protects replacement and enrollment without stale snapshots.
                     isolationLevel: "ReadCommitted",
@@ -783,7 +776,7 @@ export function machinesRoutes(app: Fastify) {
                             );
                             return;
                         }
-                        let rejoinedMachine = existingSameAccount;
+                        let rejoinedMachine;
                         {
                             try {
                                 rejoinedMachine = await inTx(async tx => {
@@ -804,7 +797,7 @@ export function machinesRoutes(app: Fastify) {
                                             replacementMachineId: existingSameAccount.id, replacementMachine: winningMachine,
                                             replacesMachineId: verifiedInstallationIdentity.replacesMachineId, reason: automaticReplacementReason });
                                     }
-                                    return winningMachine;
+                                    return serializeMachineRowForRequestInTx(tx, winningMachine, request, accountMode);
                                 }, {
                                     // Rejoin uses the same exclusive registration admission as create/update.
                                     isolationLevel: "ReadCommitted",
@@ -817,9 +810,7 @@ export function machinesRoutes(app: Fastify) {
                         }
                         log({ module: 'machines', machineId: id, userId }, 'Machine created concurrently; returning existing machine');
                         return reply.send({
-                            machine: {
-                                ...await serializeMachineRowForRequest(rejoinedMachine, request, accountMode),
-                            },
+                            machine: rejoinedMachine,
                             ...(machineReplacement ? { machineReplacement } : {}),
                         });
                     }
@@ -834,9 +825,7 @@ export function machinesRoutes(app: Fastify) {
             }
 
             return reply.send({
-                machine: {
-                    ...await serializeMachineRowForRequest(newMachine, request, accountMode),
-                },
+                machine: newMachine,
                 ...(machineReplacement ? { machineReplacement } : {}),
             });
         }
@@ -892,7 +881,7 @@ export function machinesRoutes(app: Fastify) {
             return;
         }
 
-        return reply.send({ machine: await serializeMachineRowForRequest(result.machine, request) });
+        return reply.send({ machine: await inTx(tx => serializeMachineRowForRequestInTx(tx, result.machine, request)) });
     });
 
 
@@ -926,19 +915,9 @@ export function machinesRoutes(app: Fastify) {
                 ? await listScopedTeamMachineCandidatesInTx(tx, userId, request.query.sharedWithTeamId) : undefined;
             const ids = sharedWithTeamScopes ? [...sharedWithTeamScopes.keys()]
                 : await listMachineCandidatesInTx(tx, userId, { includeRevokedOwned });
-            const machines: Array<{ id: string; lastActiveAt: Date }> = [];
-            for (const selectedIds of portableQueryChunks({ values: ids, bindingsPerValue: 1,
-                fixedBindings: isApiTokenCaller ? 0 : 1 })) machines.push(...await tx.machine.findMany({
-                where: {
-                    id: { in: [...selectedIds] },
-                    ...(includeRevokedOwned ? {} : { revokedAt: null }),
-                    ...(isApiTokenCaller ? {} : persistentMachineWhere),
-                },
-                orderBy: { lastActiveAt: 'desc' },
-                select: { id: true, lastActiveAt: true },
-            }));
-            machines.sort((left, right) => right.lastActiveAt.getTime() - left.lastActiveAt.getTime());
-            return readAccessibleMachineProjectionsInTx(tx, { actorAccountId: userId, machineIds: machines.map(machine => machine.id), request, projection });
+            const machines = await readAccessibleMachineProjectionsInTx(tx, { actorAccountId: userId, machineIds: ids, request, projection,
+                discovery: { includeRevoked: includeRevokedOwned, persistentOnly: !isApiTokenCaller } });
+            return machines.sort((left, right) => right.machine.lastActiveAt.getTime() - left.machine.lastActiveAt.getTime());
         });
         if (isApiTokenCaller && projection !== 'hostFacts') {
             // A Runner is also selectable by the exact Session it was activated

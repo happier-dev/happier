@@ -530,6 +530,24 @@ export async function readMachineDevcontainerChildrenInTx(tx: Tx, machineIds: re
     return new Map([...rows].map(([machineId, row]) => [machineId, readStoredManagedDevcontainerChild(row)]));
 }
 
+/** Openings already hold the enrollment association and its Machine in this snapshot. */
+export async function projectMachineDevcontainerChildrenInTx(tx: Tx, machines: readonly Readonly<
+    Pick<Prisma.MachineGetPayload<Record<string, never>>, 'id' | 'accountId' | 'revokedAt' | 'replacedByMachineId'>
+    & { managedResource: StoredManagedMachine | null }
+>[]): Promise<ReadonlyMap<string, DevcontainerChildProjectionV1 | null>> {
+    const enrolled = machines.filter(machine => machine.managedResource !== null);
+    if (enrolled.length === 0) return new Map();
+    const homeId = await readCurrentServerIdentityId(process.env, tx);
+    const result = new Map<string, DevcontainerChildProjectionV1 | null>();
+    for (const machine of enrolled) {
+        const row = machine.managedResource;
+        if (row && isCurrentMachineManagedEnrollment(row, machine, homeId)) {
+            result.set(machine.id, readStoredManagedDevcontainerChild(row));
+        }
+    }
+    return result;
+}
+
 async function readCurrentMachineManagedEnrollmentInTx(tx: Tx, machineId: string): Promise<StoredManagedMachine | null> {
     return (await readCurrentMachineManagedEnrollmentsInTx(tx, [machineId])).get(machineId) ?? null;
 }

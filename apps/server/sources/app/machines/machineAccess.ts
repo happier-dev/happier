@@ -25,6 +25,7 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { isProviderActionIdV1, readRequesterProviderMachineActionRoleV1, resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { inTx, type Tx } from '@/storage/inTx';
 import { withManagedWakeAvailabilityInTx } from './managed/managedWakeAvailability';
+import { persistentMachineWhere } from './machineSelection';
 import type { MachineSerializationRow } from './machineSerialization';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
@@ -481,6 +482,7 @@ function callerDataEncryptionKeyFromFacts(row: Pick<MachineFacts, 'id' | 'dataEn
 export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; machineIds: readonly string[];
     includeRecipientWork?: true;
+    discovery?: Readonly<{ includeRevoked: boolean; persistentOnly: boolean }>;
     /** Host-verified finite admission; does not waive mode or recipient-envelope readiness. */
     admission?: SocketRpcMachineAdmissionContextV1;
 }>): Promise<ReadonlyMap<string, AccessibleMachineOpening>> {
@@ -489,9 +491,14 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
     const rows: MachineOpeningRow[] = [];
     // An owner's grants cannot change their role. Do not load their foreign grant graph.
     const actorFacts = buildMachineAdmissionFactsSelect(input.actorAccountId);
+    const discoveryWhere = input.discovery ? {
+        ...(input.discovery.includeRevoked ? {} : { revokedAt: null }),
+        ...(input.discovery.persistentOnly ? persistentMachineWhere : {}),
+    } : {};
     // Nine relation-projection bindings plus three custody and three actor predicates.
-    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 15 })) {
-        const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: {
+    for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1,
+        fixedBindings: input.discovery?.persistentOnly ? 16 : 15 })) {
+        const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] }, ...discoveryWhere }, include: {
             ...MACHINE_OPENING_INCLUDE,
             grants: actorFacts.grants,
         } }).then(decodeMachineStoredContent);
@@ -519,7 +526,7 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
             callerDataEncryptionKey: key,
         });
     }
-    for (const machine of await withManagedWakeAvailabilityInTx(tx, [...result.values()].map(opening => opening.machine))) {
+    for (const machine of await withManagedWakeAvailabilityInTx(tx, [...result.values()].map(opening => opening.machine), rows)) {
         const opening = result.get(machine.id);
         if (opening) opening.machine = machine;
     }

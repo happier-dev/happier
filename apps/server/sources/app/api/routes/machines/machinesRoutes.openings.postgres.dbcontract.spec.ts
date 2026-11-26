@@ -149,6 +149,64 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         } finally { db.$transaction = originalTransaction; }
     });
 
+    it('lists a fleet without rereading its projected Machines for order or controller presence', async () => {
+        const data = await fixture('plain', 20, 1);
+        const [controller, guest, runner, revoked] = data.ids;
+        await db.machine.update({ where: { id: runner }, data: { kind: 'ephemeral_session_runner' } });
+        await db.machine.update({ where: { id: revoked }, data: { revokedAt: new Date() } });
+        await db.managedMachine.create({ data: {
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: data.owner.id,
+            controllerMachineId: controller, controllerInstallationId: `installation-${controller}`,
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Retained', choices: {} },
+            enrolledMachineId: guest, desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+        } });
+        const originalTransaction = db.$transaction;
+        const traced = tracedTransport();
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.$transaction, traced, args);
+        } });
+        try {
+            await withAuthenticatedTestApp(machinesRoutes, async app => {
+                statements.length = 0;
+                const response = await app.inject({ method: 'GET', url: '/v1/machines', headers: headers(data.owner.id) });
+                expect(response.statusCode, response.body).toBe(200);
+                const rows = response.json<Array<{ id: string }>>();
+                expect(rows.map(row => row.id)).toEqual(data.ids.filter(id => id !== runner && id !== revoked).reverse());
+                const machineReads = statements.filter(event => /^SELECT\b/u.test(event.query)
+                    && /\bFROM\s+(?:"public"\.)?"Machine"/u.test(event.query));
+                console.info('MACHINE_CENSUS_SQL', JSON.stringify({ machines: rows.length, machineReads: machineReads.length,
+                    statements: statements.length }));
+                expect(machineReads).toHaveLength(2);
+            });
+        } finally { db.$transaction = originalTransaction; }
+    });
+
+    it('returns new and unchanged Machine registrations from their admitting transaction', async () => {
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        const machineId = randomUUID();
+        const originalTransaction = db.$transaction;
+        const traced = tracedTransport();
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.$transaction, traced, args);
+        } });
+        try {
+            await withAuthenticatedTestApp(machinesRoutes, async app => {
+                for (const attempt of ['first', 'unchanged']) {
+                    statements.length = 0;
+                    const response = await app.inject({ method: 'POST', url: '/v1/machines', headers: headers(account.id),
+                        payload: { id: machineId, metadata: 'retained-machine-metadata', dataEncryptionKey: null } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json().machine).toMatchObject({ id: machineId, metadata: 'retained-machine-metadata', metadataVersion: 1 });
+                    const transactions = statements.filter(event => /^(COMMIT|ROLLBACK)\b/u.test(event.query)).length;
+                    console.info('MACHINE_REGISTRATION_SQL', JSON.stringify({ attempt, transactions, statements: statements.length }));
+                    expect.soft(transactions).toBe(1);
+                }
+            });
+        } finally { db.$transaction = originalTransaction; }
+    });
+
     it('carries requested presence history in Machine sync without extra SQL', async () => {
         const data = await fixture('plain', 32, 1);
         const [machineId] = data.ids;
