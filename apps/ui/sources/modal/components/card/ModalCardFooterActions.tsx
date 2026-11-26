@@ -7,7 +7,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { useSheetDismiss } from './sheetDragDismiss';
+import { useIsBottomSheet } from './sheetDragDismiss';
 
 /** Core's sheet, localized dismissal and text bindings for the shared short-card footer. */
 export function ModalCardFooterActions(props: Readonly<{
@@ -22,7 +22,7 @@ export function ModalCardFooterActions(props: Readonly<{
   children?: React.ReactNode;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
-  const phoneSheet = useSheetDismiss() !== null;
+  const phoneSheet = useIsBottomSheet();
   const phone = useDeviceType() === 'phone';
   const noteAction = props.noteAction ? <TextLinkButton testID={props.noteAction.testID} size="meta" label={props.noteAction.label}
     onPress={props.noteAction.onPress} /> : null;

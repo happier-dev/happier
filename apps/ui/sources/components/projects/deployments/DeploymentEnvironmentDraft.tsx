@@ -226,6 +226,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [targetKey, setTargetKey] = React.useState<string>(props.initialTargetKey ?? OWN_SERVER_TARGET);
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
     const [platformProvider, setPlatformProvider] = React.useState<PreparedPlatformTargetLink | null>(null);
+    const [platformWaitingFor, setPlatformWaitingFor] = React.useState<string | null>(null);
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
     const [composeDocument, setComposeDocument] = React.useState('');
     const [imageName, setImageName] = React.useState('');
@@ -616,7 +617,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       : imageDraft && imageName.trim().length === 0 ? t('newApp.deploy.configureNeeds.image')
       : imageDraft && !imagePortValid ? t('newApp.deploy.configureNeeds.port')
       : props.projectChoice && projectSelection == null ? t('newApp.deploy.configureNeeds.project')
-      : null;
+      : onPlatform && platformProvider === null ? platformWaitingFor : null;
     const pressStep = useEventCallback(() => {
       if (draftStep !== 'where') { void save(); return; }
       if (!whereReady) return;
@@ -986,6 +987,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               name={name} environment={platformEnvironment} ownerAccountId={props.lifetime.scope.accountId}
               lifetime={props.lifetime} actions={actions}
               initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
+              onWaitingForChange={stepped ? setPlatformWaitingFor : undefined}
               onApproval={onApprovalRequested} onClose={props.onDiscard} />
           ) : null}
           {/* Unknown readiness opens the Machine setup owner; a confirmed setup need can review its recipe here.

@@ -132,7 +132,8 @@ export function BaseModal({
     const suspended = React.useContext(ModalRoutePresentationContext)?.suspended === true;
     const presented = visible && !suspended;
     // A bottom sheet that closes on its scrim also closes by dragging it down (its frame draws the grabber).
-    const sheetDismiss = placement === 'bottom' && closeOnBackdrop && onClose ? onClose : null;
+    const isBottomSheet = placement === 'bottom';
+    const sheetDismiss = isBottomSheet && closeOnBackdrop && onClose ? onClose : null;
     const webContentShellRef = React.useRef<HTMLDivElement | null>(null);
     const nativeScrollRef = React.useRef<ScrollView | null>(null);
     // The page behind a modal is never what a list inside it scrolls: its content follows the modal's own overlay
@@ -140,7 +141,7 @@ export function BaseModal({
     const scrollSourceRef = scrollHost === 'overlay' ? (isWeb ? webContentShellRef : nativeScrollRef) : null;
     const sheetChildren = (
         <PopoverScrollSourceProvider scrollSourceRef={scrollSourceRef}>
-            <SheetDismissProvider onDismiss={sheetDismiss}>{children}</SheetDismissProvider>
+            <SheetDismissProvider isBottomSheet={isBottomSheet} onDismiss={sheetDismiss}>{children}</SheetDismissProvider>
         </PopoverScrollSourceProvider>
     );
     const scrimFrost = useFloatingScrimFrost();

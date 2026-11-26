@@ -72,7 +72,7 @@ describe('sheet drag to dismiss', () => {
     it('draws the grabber on a dismissible sheet only', async () => {
         const dismiss = vi.fn();
         const dismissible = await renderScreen(
-            <SheetDismissProvider onDismiss={dismiss}>
+            <SheetDismissProvider isBottomSheet onDismiss={dismiss}>
                 <ModalCardFrame title="Add to Home" header="none" presentation="sheet" testID="sheet">{React.createElement('Child')}</ModalCardFrame>
             </SheetDismissProvider>,
         );
@@ -89,7 +89,7 @@ describe('sheet drag to dismiss', () => {
         standardCleanup();
 
         const card = await renderScreen(
-            <SheetDismissProvider onDismiss={dismiss}>
+            <SheetDismissProvider isBottomSheet={false} onDismiss={dismiss}>
                 <ModalCardFrame title="Add to Home" presentation="card" testID="card">{React.createElement('Child')}</ModalCardFrame>
             </SheetDismissProvider>,
         );

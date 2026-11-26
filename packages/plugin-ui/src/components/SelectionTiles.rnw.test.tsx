@@ -153,7 +153,8 @@ describe('SelectionTiles', () => {
         const handler = Reflect.get(node, '__reactLayoutHandler');
         if (typeof handler === 'function') act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 600, height: 300 } } }));
       }
-      expect(getComputedStyle(leading).width).toBe('600px');
+      expect(getComputedStyle(leading.parentElement!).width).toBe('100%');
+      expect(getComputedStyle(leading).width).toBe('100%');
       expect(getComputedStyle(next).width).toBe('295px');
     } finally { mount.unmount(); }
   });
@@ -414,6 +415,13 @@ describe('SelectionTiles', () => {
     const grid = mount.container.querySelector<HTMLElement>('[data-testid="layout:grid"]')!;
     expect(list.querySelector('[data-testid="preview:list"]')?.textContent).toBe('list preview');
     expect(grid.querySelector('[data-testid="preview:grid"]')?.textContent).toBe('grid preview');
+    const group = mount.container.querySelector<HTMLElement>('[role="radiogroup"]')!;
+    const onLayout = Reflect.get(group, '__reactLayoutHandler');
+    for (const width of [900, 390]) {
+      act(() => onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 300 } } }));
+      expect(getComputedStyle(list.parentElement!).width).toBe('100%');
+      expect(getComputedStyle(list).width).toBe('100%');
+    }
     expect(list.textContent).toContain('List');
     expect(grid.getAttribute('aria-checked')).toBe('true');
     await pressKey(grid, 'ArrowUp');

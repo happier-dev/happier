@@ -5,7 +5,7 @@ import { EscapeLayerProvider, useEscapeLayerScope } from '@/keyboard/escape';
 import { ModalBoundaryProvider, useIsInsideModalBoundary, useModalContentViewport } from '../context/ModalBoundaryContext';
 import { ModalContentIdProvider, useModalContentId } from '../context/ModalContentIdContext';
 import { ModalPortalPlacementProvider, useModalPortalPlacement } from '../portal/ModalPortalTarget';
-import { SheetDismissProvider, useSheetDismiss } from './card/sheetDragDismiss';
+import { SheetDismissProvider, useIsBottomSheet, useSheetDismiss } from './card/sheetDragDismiss';
 import { PopoverScrollSourceProvider, usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScrollSource';
 import { ContainedPageScopeProvider, useContainedPageScope } from '@/components/ui/lists/listPresentation';
 import { SurfaceFreshnessOnSheetProvider, useSurfaceFreshnessOnSheet } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -30,6 +30,7 @@ type ShellFacts = Readonly<{
     modalId: ReturnType<typeof useModalContentId>;
     escape: ReturnType<typeof useEscapeLayerScope>;
     portal: ReturnType<typeof useModalPortalPlacement>;
+    isBottomSheet: boolean;
     dismiss: ReturnType<typeof useSheetDismiss>;
     scroll: ReturnType<typeof usePopoverScrollSourceRef>;
     contained: ReturnType<typeof useContainedPageScope>;
@@ -117,7 +118,7 @@ export function useRetainedPlacement<TArgs>(
         <ModalContentIdProvider id={placement.modalId}>
             <ModalPortalPlacementProvider placement={placement.portal}>
                 <ModalBoundaryProvider viewport={placement.viewport} inside={placement.inside}>
-                    <SheetDismissProvider onDismiss={placement.dismiss}>
+                    <SheetDismissProvider isBottomSheet={placement.isBottomSheet} onDismiss={placement.dismiss}>
                         <PopoverScrollSourceProvider scrollSourceRef={placement.scroll}>
                             <PluginSurfaceFocusEligibilityTransfer captured={placement.focus}>
                                 <PaneRegionProvider region={placement.region}>
@@ -186,6 +187,7 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     const portal = useModalPortalPlacement();
     // A shell's dismiss is often a fresh closure each render; the body reaches the current one through one
     // stable function, so re-rendering the shell never republishes (and re-renders) the body.
+    const isBottomSheet = useIsBottomSheet();
     const shellDismiss = useSheetDismiss();
     const shellDismissRef = React.useRef(shellDismiss);
     const [stableDismiss] = React.useState(() => () => { shellDismissRef.current?.(); });
@@ -222,9 +224,9 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     React.useLayoutEffect(() => { shellDismissRef.current = shellDismiss; }, [shellDismiss]);
     const publishArgs = React.useCallback((nextArgs: TArgs) => {
         if (owner.current !== token) return;
-        publish({ args: nextArgs, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
+        publish({ args: nextArgs, viewport, inside, modalId, escape, portal, isBottomSheet, dismiss, scroll, contained, onSheet, focus, region,
             planes, onFloatingSheet, onPhonePanel, pushStack, pushedView });
-    }, [owner, token, publish, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
+    }, [owner, token, publish, viewport, inside, modalId, escape, portal, isBottomSheet, dismiss, scroll, contained, onSheet, focus, region,
         planes, onFloatingSheet, onPhonePanel, pushStack, pushedView]);
     React.useImperativeHandle(props.publishArgsRef, () => publishArgs, [publishArgs]);
     React.useLayoutEffect(() => publishArgs(args), [args, publishArgs]);

@@ -228,6 +228,7 @@ export function DeploymentPlatformTargetEditor(
     /** Drafts review the same provider result in place; the creating page commits the association. */
     /** Inside the new-Environment draft: the chosen existing resource or reviewed create intent, linked after Create. */
     onPrepared?: (prepared: PreparedPlatformTargetLink | null) => void;
+    onWaitingForChange?: (waitingFor: string | null) => void;
   }>,
 ) {
   const shouldContinue = useMountedShouldContinue();
@@ -648,7 +649,19 @@ export function DeploymentPlatformTargetEditor(
   // In the draft, a ready create intent is the editor's whole answer: the draft's Create makes the resource with it.
   const preparedCreateKey = React.useRef<string | null>(null);
   const createIntentReady = Boolean(create && draft && target && !missing && !needsConnect && drawn.canCheck);
-  const { onPrepared } = props;
+  const { onPrepared, onWaitingForChange } = props;
+  const connectLabel = needsConnect ? t('projects.deployments.platformLink.connectAction', { platform: target.title }) : null;
+  const reviewMissing = missingField ? t('projects.deployments.platformLink.reviewMissing', {
+    field: missingField.title ?? t('projects.deployments.branch'),
+  }) : null;
+  const waitingFor = !onWaitingForChange || !target || (create ? createIntentReady : ready) ? null
+    : connectLabel ?? (connectionPending ? t('common.loading')
+      : firstConnection.unavailable ? t('errors.connectedAccountsUnavailable')
+      : !account ? t('projects.deployments.platformLink.onPlatformBody')
+      : optionRefusal ? t('projects.deployments.platformLink.choicesFailed', { platform: target.title })
+      : reviewMissing ?? (!create ? t(outcome ? 'projects.deployments.platformLink.checkAgain' : 'projects.deployments.platformLink.check') : null));
+  React.useEffect(() => { onWaitingForChange?.(waitingFor); }, [onWaitingForChange, waitingFor]);
+  React.useEffect(() => () => onWaitingForChange?.(null), [onWaitingForChange]);
   // Before Create, the platform's inspect says what making this resource means (deploy auto-mode U8): read once per
   // platform, account and source method, through the target's own inspect with no resource named.
   // The create draft's own choices name how it deploys and which provider environment; the notice is read for those.
@@ -799,7 +812,7 @@ export function DeploymentPlatformTargetEditor(
                   title={t('projects.deployments.platformLink.connection')} reason={t('errors.connectedAccountsUnavailable')}
                   action={{ label: t('common.retry'), onPress: firstConnection.retry,
                     testID: 'project-deployments.platform.connectionRetry' }} />
-              ) : needsConnect ? (
+              ) : connectLabel ? (
                 <SurfaceStateCard
                   testID="project-deployments.platform.connect"
                   size="line"
@@ -807,7 +820,7 @@ export function DeploymentPlatformTargetEditor(
                   title={t('projects.deployments.platformLink.connectTitle', { platform: target.title })}
                   reason={t('projects.deployments.platformLink.connectBody', { platform: target.title })}
                   action={{
-                    label: t('projects.deployments.platformLink.connectAction', { platform: target.title }),
+                    label: connectLabel,
                     onPress: connect,
                     testID: 'project-deployments.platform.connect.add',
                   }}
@@ -952,9 +965,9 @@ export function DeploymentPlatformTargetEditor(
                 />
               ) : null}
             </ItemGroup>
-            {props.onPrepared && create && draft && !connectionNeeded && missingField && !drawn.failure ? (
+            {props.onPrepared && create && draft && !connectionNeeded && reviewMissing && !drawn.failure ? (
               <SurfaceStateCard testID="project-deployments.platform.reviewMissing" size="line" kind="unavailable"
-                title={t('projects.deployments.platformLink.reviewMissing', { field: missingField.title ?? t('projects.deployments.branch') })} />
+                title={reviewMissing} />
             ) : null}
             {/* One cause, one message: a failed choices read is the sheet's message, not a stale Check result too. */}
             {drawn.failure ? null : <DeploymentPlatformInspectState outcome={outcome}

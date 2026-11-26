@@ -56,7 +56,6 @@ type Copy = Readonly<{
     recommendationsDescription: (p: Readonly<{ count: number }>) => string;
     recommended: string;
     sourceTitle: string;
-    sourceNote: (p: Readonly<{ machine: string }>) => string;
     suggestedBy: (p: Readonly<{ agent: string; machine: string }>) => string;
     /** Cards a Session's agent checked and handed over (journey-deploy jdF-autoRecs). */
     sourceSession: string;
@@ -335,7 +334,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'One way to build it. You review everything before anything is created.' : `${count} ways to build it. Pick one; you review everything before anything is created.`,
       recommended: "Recommended",
       sourceTitle: "Your description",
-      sourceNote: ({ machine }) => `suggested on ${machine}`,
       suggestedBy: ({ agent, machine }) => `Suggested by ${agent} on ${machine} · read-only`,
       sourceSession: "from your session",
       suggestedInSession: "Suggested in your session",
@@ -588,7 +586,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Una manera de construir-la. Ho revises tot abans que es creï res.' : `${count} maneres de construir-la. Tria’n una; ho revises tot abans que es creï res.`,
       recommended: "Recomanada",
       sourceTitle: "La teva descripció",
-      sourceNote: ({ machine }) => `suggerit a ${machine}`,
       suggestedBy: ({ agent, machine }) => `Suggerit per ${agent} a ${machine} · només lectura`,
       sourceSession: "de la teva sessió",
       suggestedInSession: "Suggerit a la teva sessió",
@@ -841,7 +838,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Eine Möglichkeit, sie zu bauen. Du prüfst alles, bevor etwas erstellt wird.' : `${count} Möglichkeiten, sie zu bauen. Wähle eine; du prüfst alles, bevor etwas erstellt wird.`,
       recommended: "Empfohlen",
       sourceTitle: "Deine Beschreibung",
-      sourceNote: ({ machine }) => `vorgeschlagen auf ${machine}`,
       suggestedBy: ({ agent, machine }) => `Vorgeschlagen von ${agent} auf ${machine} · nur lesend`,
       sourceSession: "aus deiner Sitzung",
       suggestedInSession: "In deiner Sitzung vorgeschlagen",
@@ -1094,7 +1090,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Una forma de construirla. Revisas todo antes de que se cree nada.' : `${count} formas de construirla. Elige una; revisas todo antes de que se cree nada.`,
       recommended: "Recomendada",
       sourceTitle: "Tu descripción",
-      sourceNote: ({ machine }) => `sugerido en ${machine}`,
       suggestedBy: ({ agent, machine }) => `Sugerido por ${agent} en ${machine} · solo lectura`,
       sourceSession: "de tu sesión",
       suggestedInSession: "Sugerido en tu sesión",
@@ -1347,7 +1342,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Une façon de la construire. Vous vérifiez tout avant que quoi que ce soit soit créé.' : `${count} façons de la construire. Choisissez-en une ; vous vérifiez tout avant que quoi que ce soit soit créé.`,
       recommended: "Recommandée",
       sourceTitle: "Votre description",
-      sourceNote: ({ machine }) => `proposé sur ${machine}`,
       suggestedBy: ({ agent, machine }) => `Proposé par ${agent} sur ${machine} · lecture seule`,
       sourceSession: "de votre session",
       suggestedInSession: "Proposé dans votre session",
@@ -1600,7 +1594,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Un modo per costruirla. Controlli tutto prima che venga creato qualcosa.' : `${count} modi per costruirla. Scegline uno; controlli tutto prima che venga creato qualcosa.`,
       recommended: "Consigliata",
       sourceTitle: "La tua descrizione",
-      sourceNote: ({ machine }) => `suggerito su ${machine}`,
       suggestedBy: ({ agent, machine }) => `Suggerito da ${agent} su ${machine} · sola lettura`,
       sourceSession: "dalla tua sessione",
       suggestedInSession: "Suggerito nella tua sessione",
@@ -1853,7 +1846,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? '作り方の提案は 1 つです。何かが作成される前にすべて確認できます。' : `作り方の提案が ${count} つあります。1 つ選んでください。何かが作成される前にすべて確認できます。`,
       recommended: "おすすめ",
       sourceTitle: "あなたの説明",
-      sourceNote: ({ machine }) => `${machine} で提案`,
       suggestedBy: ({ agent, machine }) => `${machine} の ${agent} による提案 · 読み取り専用`,
       sourceSession: "セッションから",
       suggestedInSession: "セッションでの提案",
@@ -2106,7 +2098,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Jeden sposób, by ją zbudować. Wszystko sprawdzisz, zanim cokolwiek powstanie.' : `Sposoby, by ją zbudować: ${count}. Wybierz jeden; wszystko sprawdzisz, zanim cokolwiek powstanie.`,
       recommended: "Polecana",
       sourceTitle: "Twój opis",
-      sourceNote: ({ machine }) => `zaproponowano na ${machine}`,
       suggestedBy: ({ agent, machine }) => `Zaproponowane przez ${agent} na ${machine} · tylko odczyt`,
       sourceSession: "z Twojej sesji",
       suggestedInSession: "Zaproponowane w Twojej sesji",
@@ -2359,7 +2350,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Uma forma de construir. Você revisa tudo antes de qualquer coisa ser criada.' : `${count} formas de construir. Escolha uma; você revisa tudo antes de qualquer coisa ser criada.`,
       recommended: "Recomendada",
       sourceTitle: "Sua descrição",
-      sourceNote: ({ machine }) => `sugerido em ${machine}`,
       suggestedBy: ({ agent, machine }) => `Sugerido por ${agent} em ${machine} · somente leitura`,
       sourceSession: "da sua sessão",
       suggestedInSession: "Sugerido na sua sessão",
@@ -2612,7 +2602,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? 'Один способ его собрать. Вы всё проверите, прежде чем что-то будет создано.' : `Способов его собрать: ${count}. Выберите один; вы всё проверите, прежде чем что-то будет создано.`,
       recommended: "Рекомендуется",
       sourceTitle: "Ваше описание",
-      sourceNote: ({ machine }) => `предложено на ${machine}`,
       suggestedBy: ({ agent, machine }) => `Предложено ${agent} на ${machine} · только чтение`,
       sourceSession: "из вашей сессии",
       suggestedInSession: "Предложено в вашей сессии",
@@ -2865,7 +2854,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? '一种构建方式。在创建任何内容之前，你会检查所有内容。' : `${count} 种构建方式。选择一种；在创建任何内容之前，你会检查所有内容。`,
       recommended: "推荐",
       sourceTitle: "你的描述",
-      sourceNote: ({ machine }) => `在 ${machine} 上推荐`,
       suggestedBy: ({ agent, machine }) => `由 ${machine} 上的 ${agent} 推荐 · 只读`,
       sourceSession: "来自你的会话",
       suggestedInSession: "在你的会话中推荐",
@@ -3114,7 +3102,6 @@ export const newAppTranslations: Readonly<
       recommendationsDescription: ({ count }) => count === 1 ? '一種建置方式。在建立任何內容之前，你會檢查所有內容。' : `${count} 種建置方式。選擇一種；在建立任何內容之前，你會檢查所有內容。`,
       recommended: "推薦",
       sourceTitle: "你的描述",
-      sourceNote: ({ machine }) => `在 ${machine} 上推薦`,
       suggestedBy: ({ agent, machine }) => `由 ${machine} 上的 ${agent} 推薦 · 唯讀`,
       sourceSession: "來自你的工作階段",
       suggestedInSession: "在你的工作階段中推薦",

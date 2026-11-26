@@ -12,9 +12,22 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
  * gesture works. Escape, the scrim and Back keep closing it as before.
  */
 const SheetDismissContext = React.createContext<(() => void) | null>(null);
+const BottomSheetContext = React.createContext(false);
 
-export function SheetDismissProvider(props: Readonly<{ onDismiss: (() => void) | null; children: React.ReactNode }>): React.ReactElement {
-    return <SheetDismissContext.Provider value={props.onDismiss}>{props.children}</SheetDismissContext.Provider>;
+export function SheetDismissProvider(props: Readonly<{
+    isBottomSheet: boolean;
+    onDismiss: (() => void) | null;
+    children: React.ReactNode;
+}>): React.ReactElement {
+    return (
+        <BottomSheetContext.Provider value={props.isBottomSheet}>
+            <SheetDismissContext.Provider value={props.onDismiss}>{props.children}</SheetDismissContext.Provider>
+        </BottomSheetContext.Provider>
+    );
+}
+
+export function useIsBottomSheet(): boolean {
+    return React.useContext(BottomSheetContext);
 }
 
 export function useSheetDismiss(): (() => void) | null {

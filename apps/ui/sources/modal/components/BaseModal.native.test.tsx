@@ -95,6 +95,30 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('BaseModal (native)', () => {
+    it('stacks three bottom-sheet footer actions even when the sheet cannot be dragged closed', async () => {
+        const { ModalCardFooterActions } = await import('./card/ModalCardFooterActions');
+        const { useSheetDismiss } = await import('./card/sheetDragDismiss');
+        function Footer() {
+            const dismiss = useSheetDismiss();
+            return <ModalCardFooterActions>
+                <View testID="footer-action"><Text>{dismiss ? 'Drag closes' : 'Drag disabled'}</Text></View>
+                <View testID="footer-secondary" />
+                <View testID="footer-primary" />
+            </ModalCardFooterActions>;
+        }
+        const onClose = vi.fn();
+        const screen = await renderScreen(<BaseModal visible placement="bottom" closeOnBackdrop={false} onClose={onClose}>
+            <Footer />
+        </BaseModal>);
+        try {
+            expect(screen.getTextContent()).toContain('Drag disabled');
+            await screen.pressByTestIdAsync('modal-scrim-target');
+            expect(onClose).not.toHaveBeenCalled();
+            let layout = screen.findHostByTestId('footer-action')?.parent;
+            while (layout && flattenStyleProp(layout.props.style).flexDirection === undefined) layout = layout.parent;
+            expect(flattenStyleProp(layout?.props.style).flexDirection).toBe('column');
+        } finally { await screen.unmount(); }
+    });
     it.each(['body', 'overlay'] as const)('advertises only the actual %s scroll owner to native virtualized children', async (scrollHost) => {
         const context = (ScrollView as typeof ScrollView & { Context: React.Context<{ horizontal: boolean } | null> }).Context;
         function CatalogProbe() {

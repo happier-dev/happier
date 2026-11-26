@@ -294,6 +294,9 @@ it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine
       expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy(),
     );
     expect(calls('execution.run.start')).toHaveLength(1);
+    const cardsText = screen.getTextContent();
+    expect(cardsText).toMatch(/Suggested by [^·]+ on devbox · read-only/);
+    expect(cardsText.match(/suggested (?:by [^·]+ )?on devbox/gi)).toHaveLength(1);
     expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
     expect(
       screen.findByTestId('newApp.auto.useSetup')?.props.disabled,

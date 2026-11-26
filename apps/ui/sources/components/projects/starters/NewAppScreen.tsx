@@ -74,6 +74,7 @@ import { useNewAppAutoSuggestions, type NewAppAutoChosen } from './auto/useNewAp
 import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 } from '@happier-dev/protocol/projects/starters/createV1';
 import { applyDeploySuggestion, openStarterBuildSession } from './applyDeploySuggestion';
 import { NewAppMakingSteps } from './NewAppMakingSteps';
+import { keepNewAppFactsTogether } from './keepNewAppFactsTogether';
 import type { NewAppSuggestionContext } from './newAppPresentation';
 import { useNewAppForges, type ForgeOwnerFact } from './useNewAppForges';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
@@ -884,8 +885,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       item.sourceId === deploySource.app.sourceId && item.itemId === deploySource.app.itemId) ?? null : null;
     const name = deployFrame?.appName ?? null;
     const target = deployFrame?.runsOn?.title ?? null;
+    const reviewTarget = deployStep === 'review' && target ? keepNewAppFactsTogether(target) : null;
     const [title, description] = deployStep === 'review'
-      ? [name && target ? t('newApp.deploy.reviewTitle', { name, target }) : target ? t('newApp.deploy.reviewTitleUnnamed', { target }) : t('newApp.title'),
+      ? [reviewTarget ? (name ? t('newApp.deploy.reviewTitle', { name, target: reviewTarget })
+        : t('newApp.deploy.reviewTitleUnnamed', { target: reviewTarget })) : t('newApp.title'),
         t('newApp.deploy.reviewDescription')]
       : deployStep === 'configure'
         // The summary's Source and Runs on rows name the app and its Machine; the description says what this step is for

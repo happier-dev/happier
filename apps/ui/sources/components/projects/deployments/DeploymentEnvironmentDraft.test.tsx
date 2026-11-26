@@ -51,6 +51,46 @@ const repository = ProjectSourceRepositorySelectorV1Schema.parse({
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft Machine Home', () => {
+  it('keeps the Machine name together in the New app review title', async () => {
+    const serverId = await homes.addHome({ name: 'New app', serverUrl: 'https://draft-review-machine-name.test',
+      accountId: 'alice', serverIdentityId: `srv_${'a'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const machineId = 'runtime';
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources', { body: { ok: true, sources: [], coverage: { complete: true, nextCursor: null } } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId, installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: raw => {
+          const intent = DeploymentEnvironmentCreateIntentInputV1Schema.parse(raw);
+          const { mode: _mode, name: _name, definition: _definition, firstTargetLink: _link, ...selectors } = intent;
+          return DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview', input: { ...selectors,
+            controllerMachineId: machineId, contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
+            review: { creationDefaults: { values: { controllerMachineId: machineId, retainPreviousDeployments: 1 },
+              sources: { controllerMachineId: 'explicit', retainPreviousDeployments: 'builtin' } } } });
+        } });
+      const machine = createMachineFixture({ id: machineId, installationId: 'runtime-installation', activeAt: Date.now() });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [{ ...machine, metadata: { ...machine.metadata!, displayName: 'NLDW4-5-40-40' } }]);
+      const { NewAppScreen } = await import('../starters/NewAppScreen');
+      const { t } = await import('@/text');
+      const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+      try {
+        await screen.pressByTestIdAsync('newApp.built.image');
+        await screen.pressByTestIdAsync('newApp.continue');
+        const draft = 'project-deployments.draft';
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`${draft}.continue`)?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync(`${draft}.continue`);
+        await act(async () => screen.changeTextByTestId(`${draft}.imageName`, 'nginx:stable'));
+        await act(async () => screen.changeTextByTestId(`${draft}.imagePort`, '80'));
+        await act(async () => screen.changeTextByTestId(`${draft}.project.newName`, 'Operations'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`${draft}.review`)?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync(`${draft}.review`);
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`${draft}.defaults`)).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('newApp.deploy.reviewTitle', { name: 'Operations', target: 'NLDW4‑5‑40‑40' }));
+      } finally { await screen.unmount(); }
+    } finally { account.dispose(); storage.setState(previous); }
+  });
+
   it.each(['compose', 'image', 'unconfirmed image', 'partial image', 'legacy partial image', 'unconfirmed partial image'] as const)('settles a repository-free Project with its %s Environment only at final confirmation', async scenario => {
     const kind = scenario === 'compose' ? 'compose' : 'image';
     const unknown = scenario === 'unconfirmed image';
@@ -1611,6 +1651,20 @@ describe('Environment draft Machine Home', () => {
       await settle(() => expect(frame().primary.disabled).toBe(false));
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('configure'));
+      const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
+      const { t } = await import('@/text');
+      const profile = (connected: boolean) => AccountProfileSchema.parse({ id: 'alice', connectedAccountsV4: connected ? [{
+        ref: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' },
+        status: 'connected', authenticationModeId: 'token', revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true, configurationRevision: null,
+        displayName: 'Beta connection', scopes: [],
+      }] : [] });
+      await act(async () => storage.setState({ profile: profile(false), profileScope: account.accountLifetime.scope }));
+      await settle(() => expect(screen.findByTestId('project-deployments.platform.connect')).not.toBeNull());
+      const connect = t('projects.deployments.platformLink.connectAction', { platform: 'Beta runtime' });
+      expect(frame().primary.disabled).toBe(true);
+      expect(frame().waitingFor).toBe(connect);
+      await act(async () => storage.setState({ profile: profile(true) }));
       const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
       const mode = () => screen.findAllByType(SegmentedChoiceItem).find(node => node.props.testID === 'project-deployments.platform.mode');
       await settle(() => expect(mode(), screen.getTextContent()).toBeDefined());
@@ -1624,6 +1678,7 @@ describe('Environment draft Machine Home', () => {
       await patch({ resourceName: 'taken-project' });
       await patch({ providerEnvironment: { kind: 'native', selection: { kind: 'production' } } });
       await settle(() => expect(frame().primary.disabled, screen.getTextContent()).toBe(false));
+      expect(frame().waitingFor).toBeNull();
       await act(async () => frame().press());
       await settle(() => expect(frame().step).toBe('review'));
       const { DeploymentCreationReviewFacts } = await import('@/components/approvals/ApprovalReviewFacts');
@@ -1634,7 +1689,6 @@ describe('Environment draft Machine Home', () => {
       await settle(() => expect(links, screen.getTextContent()).toBe(1));
       await settle(() => expect(screen.findByTestId('project-deployments.draft.creates.platform.refused'),
         screen.getTextContent()).not.toBeNull());
-      const { t } = await import('@/text');
       const rowText = (testID: string) => screen.findByTestId(testID)?.findAll(() => true)
         .flatMap(node => node.children.filter(value => typeof value === 'string')).join(' ') ?? '';
       expect(rowText('project-deployments.draft.creates.environment')).toContain(t('newApp.deploy.plan.saved'));

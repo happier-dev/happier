@@ -260,7 +260,7 @@ export function useNewAppAutoSuggestions(
       return {
         kind: 'recommendations',
         source: phase.runner
-          ? t('newApp.auto.sourceNote', { machine: phase.runner.label })
+          ? t('newApp.auto.suggestedBy', { agent: runnerAgentTitle(phase.runner), machine: phase.runner.label })
           : null,
         cards: outcome.recommendations.map((recommendation, index) =>
           presentDeploySuggestionCard(
@@ -324,7 +324,6 @@ export function useNewAppAutoSuggestions(
     return true;
   }, [chosen, chosenCardId, phase]);
   const questions = settled?.kind === 'questions' ? settled.questions : pendingQuestions ?? null;
-  const runner = phase.kind === 'describe' ? null : phase.runner;
 
   return {
     description,
@@ -342,9 +341,8 @@ export function useNewAppAutoSuggestions(
     chosenCardId,
     chooseCard: setChosenCardId,
     chosen,
-    suggestedBy: view.kind !== 'recommendations' ? null
-      : runner ? t('newApp.auto.suggestedBy', { agent: runnerAgentTitle(runner), machine: runner.label })
-      : phase.kind === 'settled' && phase.origin === 'session' ? t('newApp.auto.suggestedInSession') : null,
+    suggestedBy: view.kind === 'recommendations' && phase.kind === 'settled' && phase.origin === 'session'
+      ? t('newApp.auto.suggestedInSession') : null,
   };
 }
 

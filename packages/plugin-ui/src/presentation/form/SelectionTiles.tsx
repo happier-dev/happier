@@ -936,7 +936,7 @@ const CARD_GAP_PX = 10;
 const CARD_GAP_TIGHT_PX = 8;
 /** A card line not measured yet (the page window's estimate only): a regular and a compact card's minimum height. */
 const CARD_LINE_ESTIMATE_PX = { regular: 92, compact: 48 } as const;
-const FILL_TILE_FRAME: ViewStyle = { width: '100%' };
+const FILL_TILE_FRAME: ViewStyle = { width: '100%', maxWidth: '100%', minWidth: 0 };
 
 /** A card's outline and its mark settle on the colour step of the motion scale; nothing in the card moves. */
 const CARD_PAINT_TRANSITION = Platform.OS === 'web' ? {
@@ -1079,8 +1079,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
     return Math.floor((width - totalGap) / fittedColumns);
   }, [fittedColumns, gap, width]);
   const fallbackTileWidthStyle = useMemo((): ViewStyle | null => {
-    if (width > 0) return null;
-    if (fittedColumns <= 1) return { width: '100%' };
+    if (width > 0 || fittedColumns <= 1) return null;
     // Sheet cells have no gap to leave room for, so the shares are exact.
     if (sheet) return { width: `${100 / fittedColumns}%`, maxWidth: `${100 / fittedColumns}%`, flexGrow: 0, flexShrink: 0 };
     if (fittedColumns === 2) return { width: '48%', maxWidth: '48%', flexGrow: 0, flexShrink: 0 };
@@ -1110,9 +1109,9 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         // A regular card whose body sits below leads with its preview at the card's width (an option you try on).
         const leadingPreview = !compact && below && option.preview != null;
         const footer = props.renderOptionFooter?.({ option, selected, disabled });
-        // A spanning tile takes the measured row (the whole grid before measurement); the others keep their column.
-        const spans = option.span === 'row' && !sheet;
-        const ownWidthStyle = spans ? (width > 0 ? { width } : FILL_TILE_FRAME) : tileWidth ? { width: tileWidth } : fallbackTileWidthStyle;
+        // Full rows follow the container even while the most recent layout measurement is stale.
+        const fillsRow = fittedColumns <= 1 || (option.span === 'row' && !sheet);
+        const ownWidthStyle = fillsRow ? FILL_TILE_FRAME : tileWidth ? { width: tileWidth } : fallbackTileWidthStyle;
         const tileTestID = option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined);
         // A trailing footer shares the tile's line with the choice, which takes the room the footer leaves.
         const trailing = props.footerPlacement === 'trailing' && !sheet && footer != null && footer !== false;
@@ -1143,7 +1142,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
             renderMaterialSurface={props.renderMaterialSurface}
             style={sheet ? [
               styles.sheetCell,
-              tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
+              ownWidthStyle,
               // Hairlines only between cells: before every cell but a row's first, above every row but the first.
               index % fittedColumns !== 0 ? { borderLeftWidth: StyleSheet.hairlineWidth, borderColor: dividerColor } : null,
               index >= fittedColumns ? { borderTopWidth: StyleSheet.hairlineWidth, borderColor: dividerColor } : null,
@@ -1192,7 +1191,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 sheet ? styles.sheetCellPressable : null,
                 // The frame above owns the column's share before measurement; the press target fills it
                 // (a second percentage here would take a share of the share).
-                trailing ? styles.tilePressableTrailing : spans ? ownWidthStyle : tileWidth ? { width: tileWidth } : FILL_TILE_FRAME,
+                trailing ? styles.tilePressableTrailing : fillsRow || !tileWidth ? FILL_TILE_FRAME : { width: tileWidth },
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
@@ -1492,7 +1491,7 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       backgroundColor: colors.previewBackground,
     },
     grid: {
-      width: '100%',
+      ...FILL_TILE_FRAME,
       alignSelf: 'stretch',
     },
     tile: {
@@ -1584,6 +1583,8 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     // `descriptionPlacement="below"`: the body (description, then the footer) takes the card's full width from its
     // own padding, under the title row.
     bodyBelow: {
+      maxWidth: '100%',
+      minWidth: 0,
       marginTop: 6,
     },
     // Its height is its content: the body and footer follow the title row instead of a card's reserved height, and a
@@ -1640,6 +1641,7 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       flexDirection: 'row',
       alignItems: 'flex-start',
       flex: 1,
+      minWidth: 0,
       gap: 10,
     },
     titleRowCentered: {
@@ -1659,6 +1661,8 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     },
     textContainer: {
       flex: 1,
+      maxWidth: '100%',
+      minWidth: 0,
       gap: 0,
     },
     textContainerCentered: {
