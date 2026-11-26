@@ -1,3 +1,4 @@
+import { ScmGitIdentitySchema } from './gitIdentity.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
@@ -181,6 +182,7 @@ export const ScmBackendDescribeRequestSchema = ScmRequestBaseSchema;
 export type ScmBackendDescribeRequest = z.infer<typeof ScmBackendDescribeRequestSchema>;
 
 export const ScmBackendDescribeResponseSchema = lazyZodSchema(() => z.object({
+  gitIdentity: z.optional(z.nullable(ScmGitIdentitySchema)),
   success: z.boolean(),
   backendId: z.optional(ScmBackendIdSchema),
   repoMode: z.optional(ScmRepoModeSchema),
@@ -1054,7 +1056,7 @@ export function mapGitScmErrorCode(stderr: string): ScmOperationErrorCode {
   if (lower.includes('gpg failed to sign') || lower.includes('failed to sign the data') || lower.includes('signing failed')) {
     return SCM_OPERATION_ERROR_CODES.COMMIT_SIGNING_FAILED;
   }
-  if (lower.includes('author identity unknown') || lower.includes('committer identity unknown') || lower.includes('unable to auto-detect email address')) {
+  if (lower.includes('empty ident name') || lower.includes('empty ident email') || lower.includes('author identity unknown') || lower.includes('committer identity unknown') || lower.includes('unable to auto-detect email address')) {
     return SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED;
   }
   if (lower.includes('index.lock') && (lower.includes('file exists') || lower.includes('unable to create'))) {

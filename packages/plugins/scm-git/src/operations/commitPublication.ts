@@ -17,12 +17,12 @@ import { observeGitCommitPublication } from './commitOutcome.js';
 const COMMIT_STATE_FILES = ['MERGE_HEAD', 'MERGE_MSG', 'MERGE_MODE', 'SQUASH_MSG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'AUTO_MERGE'] as const;
 export type GitCommitTarget = Readonly<{ headOid: string | null; ref: string | null; baseTreeOid: string; mergeHeads: readonly string[]; cherryPickOid: string | null; stateFiles: readonly Readonly<{ name: typeof COMMIT_STATE_FILES[number]; content: string | null }>[] }>;
 
-function failure(errorCode: ScmOperationErrorCode, error: string): ScmCommitCreateResponse {
+function failure(errorCode: ScmOperationErrorCode, error: string, cause = error): ScmCommitCreateResponse {
     const needsInput = errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_HEAD_CHANGED || errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_STAGING_CONFLICT || errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_HOOK_CONTENT_CHANGED || errorCode === SCM_OPERATION_ERROR_CODES.SCM_SOURCE_CHANGED;
     return { success: false, errorCode, error, outcome: needsInput
         ? { v: 1, kind: 'needs_input', errorCode, message: error, nextActions: [{ kind: 'refresh' }] }
         : { v: 1, kind: 'failed', errorCode, nextActions: [{ kind: 'refresh' }],
-            ...(errorCode === SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED ? {} : { message: error }) } };
+            message: cause } };
 }
 
 export async function captureGitCommitTarget(context: ScmBackendContext, request: ScmCommitCreateRequest): Promise<
@@ -198,7 +198,7 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
         };
         const author = await run(['var', 'GIT_AUTHOR_IDENT']);
         const committer = await run(['var', 'GIT_COMMITTER_IDENT']);
-        if (!author.success || !committer.success) return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED, author.stderr || committer.stderr || 'Commit identity is unavailable'));
+        if (!author.success || !committer.success) return decorate(failure(SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED, 'Your Git name and email are missing. Set your identity with settings.set at sourceControl.gitIdentity (scmGitIdentity), then retry.', author.stderr || committer.stderr));
         let authorIdentity = author.stdout.trim();
         const parents: string[] = [];
         if (request.mode === 'amend' && target.headOid) {

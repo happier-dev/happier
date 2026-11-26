@@ -8,6 +8,10 @@ export type ScmPullRequestActionInputById = {
     readonly "scm.pullRequest.list": {
         [x: string]: unknown;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -34,6 +38,10 @@ export type ScmPullRequestActionInputById = {
             url: string;
         };
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -48,6 +56,10 @@ export type ScmPullRequestActionInputById = {
         [x: string]: unknown;
         base: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -66,6 +78,10 @@ export type ScmPullRequestActionInputById = {
         base: string;
         head: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -87,6 +103,10 @@ export type ScmPullRequestActionInputById = {
             url: string;
         };
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -107,6 +127,10 @@ export type ScmPullRequestActionInputById = {
             url: string;
         };
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -136,6 +160,10 @@ export type ScmPullRequestActionInputById = {
         [x: string]: unknown;
         action: 'commit' | 'commitAndPush' | 'commitPushAndOpenOrReuse' | 'openOrReuse' | 'push' | 'pushAndOpenOrReuse';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;

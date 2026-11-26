@@ -21,6 +21,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.backend.describe": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -29,6 +33,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.status.snapshot": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -48,6 +56,10 @@ export type ScmGitActionInputById = {
     readonly "scm.worktrees.enrichment": {
         worktreePaths: string[];
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -142,6 +154,10 @@ export type ScmGitActionInputById = {
             sessionId?: string | undefined;
         };
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -150,6 +166,10 @@ export type ScmGitActionInputById = {
     } | {
         path: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -166,6 +186,10 @@ export type ScmGitActionInputById = {
         };
         area?: 'both' | 'included' | 'pending' | undefined;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -184,6 +208,10 @@ export type ScmGitActionInputById = {
         };
         maxBytes?: number | undefined;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -194,6 +222,10 @@ export type ScmGitActionInputById = {
         path: string;
         expectedHash?: string | undefined;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -203,6 +235,10 @@ export type ScmGitActionInputById = {
     readonly "scm.diff.commit": {
         commit: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -212,6 +248,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.change.include": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -222,6 +262,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.change.exclude": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -328,6 +372,10 @@ export type ScmGitActionInputById = {
             includeUndo?: boolean | undefined;
         })[];
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -337,6 +385,10 @@ export type ScmGitActionInputById = {
     readonly "scm.commit.create": {
         message: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -378,6 +430,10 @@ export type ScmGitActionInputById = {
     readonly "scm.commit.undoLast": {
         expectedHeadOid: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -387,6 +443,10 @@ export type ScmGitActionInputById = {
     readonly "scm.commit.backout": {
         commit: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -406,6 +466,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.log.list": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -427,6 +491,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.branch.list": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -440,6 +508,10 @@ export type ScmGitActionInputById = {
     readonly "scm.branch.create": {
         name: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -452,6 +524,10 @@ export type ScmGitActionInputById = {
         name: string;
         strategy: 'bring_changes' | 'stash_on_current_branch';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -462,6 +538,10 @@ export type ScmGitActionInputById = {
     readonly "scm.branch.merge": {
         sourceRef: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -471,6 +551,10 @@ export type ScmGitActionInputById = {
     readonly "scm.branch.rebase": {
         sourceRef: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -480,6 +564,10 @@ export type ScmGitActionInputById = {
     readonly "scm.branch.operation.continue": {
         operation: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -489,6 +577,10 @@ export type ScmGitActionInputById = {
     readonly "scm.branch.operation.skip": {
         operation: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -498,6 +590,10 @@ export type ScmGitActionInputById = {
     readonly "scm.branch.operation.abort": {
         operation: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -508,6 +604,10 @@ export type ScmGitActionInputById = {
         path: string;
         side: 'ours' | 'theirs';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -517,6 +617,10 @@ export type ScmGitActionInputById = {
     readonly "scm.conflict.markResolved": {
         paths: string[];
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -525,6 +629,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.worktree.create": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -539,6 +647,10 @@ export type ScmGitActionInputById = {
         confirmed: true;
         authorizationToken: 'remove-worktree';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -548,6 +660,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.worktree.prune": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -558,6 +674,10 @@ export type ScmGitActionInputById = {
         name: string;
         fetchUrl: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -568,6 +688,10 @@ export type ScmGitActionInputById = {
     readonly "scm.remote.setUrl": {
         name: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -579,6 +703,10 @@ export type ScmGitActionInputById = {
     readonly "scm.remote.remove": {
         name: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -587,6 +715,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.remote.fetch": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -601,6 +733,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.remote.pull": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -616,6 +752,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.remote.push": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -642,6 +782,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.remote.publish": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -651,6 +795,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.stash.list": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -661,6 +809,10 @@ export type ScmGitActionInputById = {
     readonly "scm.stash.show": {
         stashRef: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -670,6 +822,10 @@ export type ScmGitActionInputById = {
     };
     readonly "scm.stash.create": {
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -680,6 +836,10 @@ export type ScmGitActionInputById = {
     readonly "scm.stash.apply": {
         stashRef: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -689,6 +849,10 @@ export type ScmGitActionInputById = {
     readonly "scm.stash.pop": {
         stashRef: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -698,6 +862,10 @@ export type ScmGitActionInputById = {
     readonly "scm.stash.drop": {
         stashRef: string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -725,6 +893,10 @@ export type ScmGitActionResultById = {
     };
     readonly "scm.backend.describe": {
         success: boolean;
+        gitIdentity?: null | undefined | {
+            name: string;
+            email: string;
+        };
         backendId?: string | undefined;
         repoMode?: '.git' | '.sl' | undefined;
         isRepo?: boolean | undefined;

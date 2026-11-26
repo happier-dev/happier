@@ -42,6 +42,10 @@ export type ScmRepositoryActionInputById = {
     readonly "scm.repository.init": {
         [x: string]: unknown;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -53,6 +57,10 @@ export type ScmRepositoryActionInputById = {
         confirmed: true;
         confirmationToken: 'remove-stale-index-lock';
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -84,6 +92,10 @@ export type ScmRepositoryActionInputById = {
     readonly "scm.hostingRepository.describePublishTargets": {
         [x: string]: unknown;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
@@ -100,6 +112,10 @@ export type ScmRepositoryActionInputById = {
         visibility: 'internal' | 'private' | 'public';
         remoteName: unknown;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;

@@ -1,5 +1,26 @@
 # Compatibility and version skew
 
+## Person Git identity (unreleased 0.3)
+
+The nullable Account preference `scmGitIdentity` stores a deliberate non-secret
+`{name, email}` pair. Existing `settings.get` / `settings.set` Actions address it
+at `sourceControl.gitIdentity`. SCM requests optionally carry `gitIdentity` from
+the requester; the receiving Machine never reads the custodian's preference for
+a guest. Identity objects are closed. Earlier requests without the field remain
+readable; the setting defaults to null. The inspected 0.2 frontier
+`ba3670d22d5bb36b0c92f4bd627ef790f0ce03de` has no Git identity preference.
+
+SCM's `resolveGitIdentity` owns repository-local identity, then person identity,
+then native Git resolution for the verified custodian, then none. Other people
+never inherit the Machine's global/system identity. Missing commit identity
+retains `COMMIT_IDENTITY_REQUIRED`. Amend and cherry-pick preserve their original
+author semantics. Backend Describe can return the effective `gitIdentity` for a
+future presenter. Agent spawn integration consumes this resolver separately;
+this change supplies SCM execution and does not install an Agent spawn overlay.
+Match unpublished 0.3 Protocol, SDK and requester/receiver sources; no shim,
+feature gate, credential field or wire epoch is introduced.
+
+
 ## Session accepted-workspace failure cause (unreleased 0.3)
 
 An unavailable `projectContextSource` can carry the existing optional

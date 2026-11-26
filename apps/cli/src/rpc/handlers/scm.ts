@@ -1,3 +1,6 @@
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { readScmPersonGitIdentity, runWithGitIdentity } from '@/scm/gitIdentity';
+import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm/requestBase';
 import { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
@@ -312,7 +315,7 @@ export function registerScmHandlers(
                 }
                 const root = managed?.target.rootPath ?? (target?.success && target.data.target.kind === 'machine'
                     ? target.data.target.project?.directory : undefined);
-                const semanticInput = managed ? managed.input : target?.success ? target.data.input : request;
+                let semanticInput = managed ? managed.input : target?.success ? target.data.input : request;
                 const selected = managed && deps?.selectWorkspaceSource
                     ? await deps.selectWorkspaceSource(context, { workspace: managed.target, rootPath: root })
                     : await selectSource(request, context);
@@ -324,7 +327,14 @@ export function registerScmHandlers(
                 const managedProject: ManagedProjectRepository | undefined = managed && handledPush
                     ? (context ? await deps?.readManagedProjectRepository?.(managed.target, context) : undefined) ?? { kind: 'unavailable' }
                     : undefined;
-                return runWithWorkspaceSourceDemand(selected, () => {
+                const base = ScmRequestBaseSchema.safeParse(semanticInput);
+                if (!base.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
+                const admission = context?.machineAdmission;
+                const isCustodian = admission ? isCustodianMachineAdmission(admission)
+                    : !context && deps?.admittedLocalRepositoryOperation !== true;
+                const person = readScmPersonGitIdentity(base.data.gitIdentity, isCustodian);
+                if (person && semanticInput && typeof semanticInput === 'object') semanticInput = { ...semanticInput, gitIdentity: person };
+                return runWithGitIdentity({ person, isCustodian }, () => runWithWorkspaceSourceDemand(selected, () => {
                     const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
                     const machinePolicy = deps?.accessPolicy ?? resolveFilesystemAccessPolicy();
                     const handle = () => {
@@ -344,7 +354,7 @@ export function registerScmHandlers(
                     };
                     // Local member placement resolves the root in its own child.
                     return managed ? handle() : runAsAdmittedRequester(context, method, root, semanticInput, selected, handle);
-                });
+                }));
             });
         },
     });

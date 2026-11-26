@@ -1,3 +1,6 @@
+import { readAccountSettingsForScope } from '@/sync/domains/state/accountSettingsPersistence';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { TokenStorage, homeAccountCredentialScope } from '@/auth/storage/tokenStorage';
 import type {
     ScmComparisonCaptureInput,
     ScmBranchCheckoutRequest,
@@ -139,6 +142,21 @@ type MachineScmRpcRequest = Readonly<{
     entriesPage?: ScmStatusSnapshotRequest['entriesPage'];
 }>;
 
+async function withRequesterGitIdentity<T extends MachineScmRpcRequest>(request: T, options?: MachineScmCallOptions): Promise<T> {
+    const state = storage.getState();
+    const serverId = resolveServerProfileScopeIdForIdentifier(options?.workspace?.serverId ?? options?.serverId ?? state.settingsScope?.serverId ?? '');
+    let accountId = options?.accountId ?? (state.settingsScope && areServerProfileIdentifiersEquivalent(serverId, state.settingsScope.serverId)
+        ? state.settingsScope.accountId : null);
+    if (!accountId) {
+        const profile = getServerProfileById(serverId);
+        const credentials = profile ? await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId }) : null;
+        accountId = homeAccountCredentialScope(serverId, credentials?.token)?.accountId ?? null;
+    }
+    const scope = createServerAccountScope(serverId, accountId);
+    const identity = scope ? readAccountSettingsForScope({ scope, focusedScope: state.settingsScope, focusedSettings: state.settings }).scmGitIdentity : null;
+    return identity ? { ...request, gitIdentity: identity } : request;
+}
+
 function resolveScmRpcTimeoutMs(method: string): number | undefined {
     if (method === RPC_METHODS.SCM_DIFF_COMMIT) {
         return SCM_DIFF_COMMIT_TIMEOUT_MS;
@@ -181,6 +199,7 @@ export async function runMachineScmRpc<
     if (workspace && !supportsManagedWorkspaceScmRpcMethod(method)) {
         return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The workspace does not support this SCM operation.' };
     }
+    request = await withRequesterGitIdentity(request, options);
     let payload: MachineScmRpcRequest = method.startsWith('scm.diffSummary.') || requiresExplicitScmMachineTarget(method) ? request : withScmBackendPreference({
         ...request,
         outcomeVersion: 1 as const,
@@ -270,6 +289,7 @@ async function callMachineScm<T extends { success: boolean; error?: string; erro
         || (getScmRpcSideEffectClass(method) === 'read' && method !== RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE)) {
         return normalizeUiScmFacadeResult<T>(await callMachineScmTransport<T, R>(machineId, method, request, options));
     }
+    request = await withRequesterGitIdentity(request, options);
     const actionId = ActionIdSchema.parse(method);
     const schema = getActionSpec(actionId).outputSchema;
     if (!schema) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The SCM Action has no result contract.' };

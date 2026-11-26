@@ -632,6 +632,10 @@ export type DeploymentsActionInputById = {
             repositoryName: string;
             description?: string | undefined;
             providerId?: string | undefined;
+            gitIdentity?: undefined | {
+                name: string;
+                email: string;
+            };
             providerBaseUrl?: string | undefined;
             ownerKind?: 'org' | 'user' | undefined;
             remoteUrlKind?: 'https' | 'ssh' | undefined;
@@ -9846,6 +9850,10 @@ export type DeploymentsActionResultById = {
                 description?: string | undefined;
                 remoteName?: string | undefined;
                 providerId?: string | undefined;
+                gitIdentity?: undefined | {
+                    name: string;
+                    email: string;
+                };
                 providerBaseUrl?: string | undefined;
                 ownerKind?: 'org' | 'user' | undefined;
                 remoteUrlKind?: 'https' | 'ssh' | undefined;

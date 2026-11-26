@@ -1,3 +1,4 @@
+import { applyGitIdentity } from './gitIdentity';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { appendGitConfigEnvironment } from './gitConfigEnvironment';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -311,10 +312,12 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         return { success: false, stdout: '', exitCode: -1,
             stderr: typeof code === 'string' ? code : typeof dataCode === 'string' ? dataCode : 'SCM command execution is unavailable' };
     };
-    const executeCommand: ScmCommandRunner = command => {
+    const executeRawCommand: ScmCommandRunner = command => {
         const scoped = withEmptySafeDirectory(command);
         return runner ? Promise.resolve().then(() => runner(scoped)).catch(failure) : runHostScmCommand(scoped);
     };
+    const executeCommand: ScmCommandRunner = async command => executeRawCommand(isGitExecutable(command.bin)
+        ? await applyGitIdentity(command, probe => executeRawCommand({ ...probe, signal: command.signal })) : command);
     const execute = () => executeCommand(input);
     const command = isHostGitPush(input)
         ? runHostGitPush(input, runHostScmCommand, lease?.registry.scmAgentIsolation, executeCommand).then(transport => transport ?? execute()) : execute();

@@ -12,6 +12,10 @@ export type ScmDiffSummaryActionInputById = {
         expectedHeadOid: null | string;
         expectedRef: null | string;
         cwd?: string | undefined;
+        gitIdentity?: undefined | {
+            name: string;
+            email: string;
+        };
         backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;

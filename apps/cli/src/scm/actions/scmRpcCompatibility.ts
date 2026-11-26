@@ -7,7 +7,7 @@ import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm/requestBase';
 // transports also carry validated SCM envelope fields; consume them only here.
 const ScmRepositoryCloneRpcInputSchema = lazyZodSchema(() => z.extend(ScmRepositoryCloneInputSchema, ScmRequestBaseSchema.shape));
 const ScmRepositoryCloneRpcRequestSchema = z.pipe(ScmRepositoryCloneRpcInputSchema,
-    z.transform(({ cwd: _cwd, backendPreference: _backendPreference, outcomeVersion: _outcomeVersion, ...request }:
+    z.transform(({ cwd: _cwd, backendPreference: _backendPreference, outcomeVersion: _outcomeVersion, gitIdentity: _gitIdentity, ...request }:
         z.infer<typeof ScmRepositoryCloneRpcInputSchema>) => request));
 
 export function parseScmRepositoryCloneRpcRequest(input: unknown) {

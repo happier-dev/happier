@@ -65,6 +65,7 @@ describe('SCM operation outcomes', () => {
 
   it('classifies process diagnostics once at the canonical protocol mapper', () => {
     expect(scm.mapGitScmErrorCode('error: gpg failed to sign the data')).toBe('COMMIT_SIGNING_FAILED');
+    expect(scm.mapGitScmErrorCode('fatal: empty ident name (for <>) not allowed')).toBe('COMMIT_IDENTITY_REQUIRED');
     expect(scm.mapGitScmErrorCode('Author identity unknown')).toBe('COMMIT_IDENTITY_REQUIRED');
     expect(scm.mapGitScmErrorCode("fatal: Unable to create '/repo/.git/index.lock': File exists")).toBe('INDEX_LOCKED');
     expect(scm.mapGitScmErrorCode('fatal: Could not resolve host: github.com')).toBe('REMOTE_NETWORK_FAILED');

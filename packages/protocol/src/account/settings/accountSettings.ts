@@ -1,3 +1,4 @@
+import { ScmGitIdentitySchema } from '../../scm/gitIdentity.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 export { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
@@ -1281,6 +1282,7 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     petsDesktopOverlayDefaultEnabled: accountPreference(z.boolean(), true, 'pet preferences'),
 } as const;
 const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
+    scmGitIdentity: accountPreference(z.nullable(ScmGitIdentitySchema), null, 'source control'),
     scmCommitStrategy: accountPreference(z.enum(['atomic', 'git_staging']), 'atomic', 'source control'),
     scmGitRepoPreferredBackend: accountPreference(z.enum(['git', 'sapling']), 'git', 'source control'),
     scmGitRepoPreferredBackendQualifiedId: accountPreference(z.nullable(ScmBackendQualifiedIdSchema), null, 'source control'),

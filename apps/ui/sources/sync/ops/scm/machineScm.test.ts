@@ -46,6 +46,7 @@ describe('machineScm', () => {
 
     beforeEach(async () => {
         await harness.reset();
+        setScmSettings({ settings: { scmGitIdentity: null } });
         serverId = await harness.addHome({ name: 'SCM Home', serverUrl: 'https://scm.example', accountId: 'account-b',
             serverIdentityId: 'srv_scm', currentAccount: true });
         const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'account-b' };
@@ -57,6 +58,32 @@ describe('machineScm', () => {
     afterEach(() => {
         machineRpcWithServerScopeMock.mockReset();
         standardCleanup();
+    });
+
+    it('carries the requester Account Git identity as ordinary non-secret text', async () => {
+        const { runMachineScmRpc } = await import('./machineScm');
+        const identity = { name: 'Person Name', email: 'person@example.test' };
+        setScmSettings({ settings: { scmGitIdentity: identity } });
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true });
+        await runMachineScmRpc('machine-1', RPC_METHODS.SCM_BACKEND_DESCRIBE, { cwd: '/repo' }, { serverId });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ gitIdentity: identity }),
+        }));
+    });
+
+    it('uses the addressed Account identity instead of the focused Account identity', async () => {
+        const { runMachineScmRpc } = await import('./machineScm');
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const identity = { name: 'Addressed Person', email: 'addressed@example.test' };
+        setScmSettings({ settings: { scmGitIdentity: { name: 'Focused Person', email: 'focused@example.test' } } });
+        saveAccountSettings({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'addressed-account' },
+            { ...storage.getState().settings, scmGitIdentity: identity }, 1);
+        machineRpcWithServerScopeMock.mockResolvedValue({ success: true });
+        await runMachineScmRpc('machine-1', RPC_METHODS.SCM_BACKEND_DESCRIBE, { cwd: '/repo' },
+            { serverId, accountId: 'addressed-account' });
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({ gitIdentity: identity }),
+        }));
     });
 
     it('loads captured Review from an older daemon in one legacy-shaped index request', async () => {

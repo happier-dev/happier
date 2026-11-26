@@ -796,6 +796,10 @@ export type PluginDevLoopActionInputById = {
                 visibility: 'internal' | 'private' | 'public';
                 remoteName: unknown;
                 cwd?: string | undefined;
+                gitIdentity?: undefined | {
+                    name: string;
+                    email: string;
+                };
                 backendPreference?: undefined | {
                     kind: 'prefer';
                     backendId: string;

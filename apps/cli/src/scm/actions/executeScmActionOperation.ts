@@ -1,3 +1,6 @@
+import { projectVerifiedExternalActionRequesterContext, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { readResolvedGitIdentity, readScmPersonGitIdentity, runWithGitIdentity } from '@/scm/gitIdentity';
 import type { ScmBackendContext } from '@/scm/types';
 import { runWithScmHostingActionExecutor } from '../hostingProviders/executionAuthority';
 import { discoverScmRepositories } from '../repositoryDiscovery';
@@ -365,9 +368,12 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 request,
                 ...routeBase,
                 onNonRepository: async () => ({ success: true, isRepo: false }),
-                runWithBackend: async ({ context, selection }) => selection.backend.describeBackend
-                    ? await selection.backend.describeBackend({ context, request })
-                    : { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' },
+                runWithBackend: async ({ context, selection }) => {
+                    if (!selection.backend.describeBackend) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'SCM backend operation is unavailable' };
+                    const result = await selection.backend.describeBackend({ context, request });
+                    const identity = await readResolvedGitIdentity(context.cwd);
+                    return identity ? { ...result, gitIdentity: identity.identity } : result;
+                },
             });
         }
         case 'scm.status.snapshot': {
@@ -1254,13 +1260,30 @@ async function executeScmActionOperationInAccountScope(params: ExecuteScmActionO
         }
     }
     const localActionId = params.actionId;
+    const requesterContext = params.actionContext && projectVerifiedExternalActionRequesterContext(params.actionContext);
+    const root = requesterContext?.verifiedExternalActionRequester?.authorization.binding;
+    const local = requesterContext?.authenticatedLocalRootCustody ?? requesterContext?.localActionContext?.authenticatedLocalRootCustody
+        ?? requesterContext?.inheritedLocalActionContext?.authenticatedLocalRootCustody;
+    const admission = requesterContext?.machineAdmission;
+    const custodianAccountId = admission?.custodianAccountId ?? root?.custodianAccountId ?? local?.accountId;
+    const target = admission ?? root ?? local;
+    const requester = selectHostRequesterExecutionIdentity({ actionContext: requesterContext,
+        hostHomeServerIdentityId: root?.serverIdentityId ?? local?.serverIdentityId,
+        hostCustodianAccountId: custodianAccountId,
+        ...(target ? { hostExecutionTarget: { machineId: target.machineId, installationId: target.installationId } } : {}) });
+    const isCustodian = !params.actionContext || !!custodianAccountId && requester.kind !== 'unknown'
+        && isCustodianMachineAdmission({ actorAccountId: requester.requester.accountId, custodianAccountId });
     const result = localActionId === 'scm.diffSummary.generate' || localActionId === 'scm.diffSummary.draftPullRequest'
         ? await params.executeDiffSummary?.({ request })
-        : await runWithScmHostingActionExecutor(params.executeHostingProviderAction, () => runLocalScmAction({
+        : await runWithGitIdentity({
+            person: readScmPersonGitIdentity((request as scm.ScmRequestBase).gitIdentity, isCustodian),
+            // Private root custody is established by ingress; Manage is not custodian identity.
+            isCustodian,
+        }, () => runWithScmHostingActionExecutor(params.executeHostingProviderAction, () => runLocalScmAction({
             ...params,
             actionId: localActionId,
             input: request,
-        }));
+        })));
     if (result === undefined) {
         throw new Error(`SCM action operation is unavailable: ${params.actionId}`);
     }
