@@ -12,7 +12,7 @@ import {
 
 import { classifyProviderLimitEvidence, parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import { classifyProviderOutputFailure } from '@/agent/runtime/classifyProviderOutputFailure';
-import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
+import { ProviderCliNotFoundError, ProviderCliVersionUnsupportedError } from '@/runtime/managedTools/requireProviderCliCommand';
 import { ProviderProcessExitError } from './ProviderProcessExitError';
 
 export type PrimarySessionRuntimeIssueCause =
@@ -425,12 +425,13 @@ export function classifyPrimarySessionRuntimeIssue(
 ): SessionRuntimeIssueV1 {
   const provider = normalizeNonEmptyString(input.provider);
   const missingCli = input.error instanceof ProviderCliNotFoundError ? input.error : null;
+  const unsupportedCli = input.error instanceof ProviderCliVersionUnsupportedError ? input.error : null;
   const piBrokerReadinessFailure = provider === 'pi' ? readPiBrokerReadinessFailure(input.error) : null;
   const runtimeAuthClassification = readRuntimeAuthClassification(input.error);
   const runtimeAuthUsageLimit = buildUsageLimitDetailsFromRuntimeAuthClassification(runtimeAuthClassification);
   const runtimeAuthSource = refineRuntimeAuthClassificationSource(runtimeAuthClassification);
   const providerProcessExitAfterSwitch = readProviderProcessExitAfterSwitchDetails(input.error);
-  const source = missingCli || piBrokerReadinessFailure
+  const source = missingCli || unsupportedCli || piBrokerReadinessFailure
     ? 'dependency_failure'
     : runtimeAuthSource
     ? runtimeAuthSource
@@ -457,7 +458,8 @@ export function classifyPrimarySessionRuntimeIssue(
     scope: 'primary_session',
     status: 'failed',
     code: temporaryThrottle === null
-      ? (missingCli ? 'provider_cli_not_found' : null) ?? piBrokerReadinessFailure?.code ?? piProviderFailure?.code ?? source
+      ? (missingCli ? 'provider_cli_not_found' : unsupportedCli ? 'provider_cli_version_unsupported' : null)
+        ?? piBrokerReadinessFailure?.code ?? piProviderFailure?.code ?? source
       : 'provider_temporary_throttle',
     source,
     occurredAt,
@@ -466,6 +468,7 @@ export function classifyPrimarySessionRuntimeIssue(
     ...(providerTurnId === null ? {} : { providerTurnId }),
     sanitizedPreview: temporaryThrottle === null
       ? missingCli?.message
+        ?? unsupportedCli?.message
         ?? piBrokerReadinessFailure?.sanitizedPreview
         ?? piProviderFailure?.sanitizedPreview
         ?? buildSafeModelNotFoundPreview(input.error)

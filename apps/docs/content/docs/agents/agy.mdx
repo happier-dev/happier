@@ -14,7 +14,7 @@ account-switch validation is still in progress.
 
 ## Requirements and authentication
 
-Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); connected accounts need Antigravity CLI 1.5.18 or newer. Run `agy update` to upgrade an older install.
+Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); connected accounts need Antigravity CLI 1.5.16 or newer. Run `agy update` to upgrade an older install.
 
 Native Antigravity can continue a background task after the conversation returns to idle. Its result appears on the original tool card, and later activity can appear as another continuation. When Antigravity cannot identify which prompt originated a permission request, Happier asks you to decide even if a newer prompt has broader permissions.
 
@@ -127,7 +127,10 @@ sessions. For shared MCP setup and session selection, see [MCP servers](/extendi
 - For `Authentication required` with a connected account, sign in to that account again in
   **Settings -> Connected services** (or with `happier connect agy`), then retry launch.
 - If a connected-account session says it needs a newer Antigravity CLI, run `agy update` on that machine
-  and retry.
+  and retry. Antigravity's own background updater only runs from interactive `agy`, so a CLI used only
+  through Happier can stay on an old version. In current development source, the Updates screen lists
+  an `agy` placed by Google's installer (`~/.local/bin/agy`, or `%LOCALAPPDATA%\agy\bin\agy.exe` on
+  Windows), compares it with the latest Antigravity CLI release, and runs `agy update` for you.
 - If a model is unavailable, retry after the ACP handshake completes; the model list is
   provider-advertised.
 
