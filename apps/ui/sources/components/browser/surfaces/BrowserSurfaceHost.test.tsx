@@ -40,7 +40,7 @@ import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/
 import type {
     PluginReactNativeLoaderBackend,
 } from '@/components/plugins/reactNative/loader';
-import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createMachineFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -75,6 +75,16 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { buildCooperativeNavigationRuntimeScript } from '@happier-dev/peer-mediation/browser/collector/build';
+
+// The real shell names the presented page as its current-context owner. The
+// retained Browser host inherits that fact; its own visibility provider cannot
+// create a semantic owner for an otherwise standalone fixture.
+function BrowserPresentationRoot({ children }: React.PropsWithChildren) {
+    return <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>{children}</PluginSurfaceFocusEligibilityProvider>;
+}
+const renderScreen: typeof renderTestScreen = (element, options) => renderTestScreen(element, {
+    ...options, wrapper: BrowserPresentationRoot,
+});
 
 // Static Browser imports reach Socket consumers before the route harness loads.
 // Register the canonical network boundary hoisted, then let the harness configure it.
