@@ -25,7 +25,6 @@ export type DeploymentTargetObservedVariableV1 = Readonly<Pick<DeploymentTargetV
 type ProviderLimits = Readonly<{
     opaqueKeys?: ReadonlySet<string>;
     unsupportedSetKeys?: ReadonlySet<string>;
-    unavailableSecretServiceCode?: 'secret_use_client_required' | 'outcome_unknown';
 }>;
 
 function groupObservations(observed: readonly DeploymentTargetObservedVariableV1[]) {
@@ -141,7 +140,7 @@ export function createDeploymentTargetVariableSyncV1(input: SyncInput, observed:
         if (source.kind === 'value') value = source.value;
         else {
             if (!context.services.secrets) {
-                fail(binding.name, limits.unavailableSecretServiceCode ?? 'secret_use_client_required');
+                fail(binding.name, 'secret_use_client_required');
                 return null;
             }
             try {
@@ -149,8 +148,10 @@ export function createDeploymentTargetVariableSyncV1(input: SyncInput, observed:
                 value = await context.services.secrets.readSavedSecret(source.ref,
                     { resourceRevision: source.resourceRevision, signal: context.signal });
             } catch (error) {
-                const code = isPluginError(error) && (error.code === 'secret_use_client_required' || error.code === 'secret_missing'
-                    || error.code === 'plugin_secret_custody_unavailable') ? error.code : 'outcome_unknown';
+                const nativeCode = isPluginError(error) ? error.code : undefined;
+                const code = nativeCode === 'plugin_service_unavailable' ? 'plugin_secret_custody_unavailable'
+                    : nativeCode === 'secret_use_client_required' || nativeCode === 'secret_missing'
+                        || nativeCode === 'plugin_secret_custody_unavailable' ? nativeCode : 'outcome_unknown';
                 fail(binding.name, code);
                 return null;
             }

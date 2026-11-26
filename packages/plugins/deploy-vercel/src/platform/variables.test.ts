@@ -2,8 +2,18 @@ import { expect, it } from 'vitest';
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import * as entry from '../index.js';
 import { recordedVercelEnvironment } from './fixtures/environmentResponse.js';
+
+const unavailableSecretCustody = {
+  async readSavedSecret(): Promise<never> { throw new PluginError({ code: 'plugin_service_unavailable' }); },
+  async saveShared(): Promise<never> { throw new Error('Unexpected Saved Secret write'); },
+  async status(): Promise<never> { throw new Error('Unexpected Saved Secret status read'); },
+  async get(): Promise<never> { throw new Error('Unexpected Saved Secret get'); },
+  async set(): Promise<never> { throw new Error('Unexpected Saved Secret write'); },
+  async delete(): Promise<never> { throw new Error('Unexpected Saved Secret delete'); },
+};
 
 const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'fixture' };
 const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
@@ -52,13 +62,13 @@ it('preserves foreign keys and removes owned keys when secret custody is unavail
     ] } : request.method === 'POST' ? { created: { id: 'new-id', key: 'TOKEN', type: 'sensitive', target: ['production'], updatedAt: 30, value: privateValue }, failed: [] } : {};
     return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
   } });
-  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http, secrets: unavailableSecretCustody } });
   try {
     const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2,
       owned: [{ key: 'OLD', providerId: 'old-id', desiredRevision: 1, providerRevision: '20' }],
       set: [createDeploymentVariableBindingV1({ phase: 'runtime', name: 'TOKEN', source: { kind: 'secret', ref: savedRef, resourceRevision: 3 } })],
       remove: ['OLD'], useOurs: [], keepTheirs: [] });
-    expect(result).toMatchObject({ v: 1, owned: [], failures: [{ key: 'TOKEN', code: 'outcome_unknown' }] });
+    expect(result).toMatchObject({ v: 1, owned: [], failures: [{ key: 'TOKEN', code: 'plugin_secret_custody_unavailable' }] });
     expect(JSON.stringify(result)).not.toContain(privateValue);
     expect(requests.map(request => [request.method, new URL(request.url).pathname])).toEqual([
       ['GET', '/v10/projects/prj_exact/env'], ['DELETE', '/v9/projects/prj_exact/env/old-id'],
@@ -213,13 +223,14 @@ it('does not send a secret write when invocation custody is unavailable', async 
       if (request.method !== 'GET') writes++;
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ envs: [] })) };
     } });
-    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http, secrets: unavailableSecretCustody } });
     try {
       const result = await kit.invokeAction('variables-sync', { ...common, desiredRevision: 2, owned: [],
         set: [createDeploymentVariableBindingV1({ phase: 'runtime', name: 'TOKEN', source: { kind: 'secret',
           ref: 'happier:shared-secret:v1:token', resourceRevision: 3 } })], remove: [], useOurs: [], keepTheirs: [] });
-      expect(result).toMatchObject({ owned: [], failures: [{ key: 'TOKEN', code: 'outcome_unknown' }] });
+      expect(result).toMatchObject({ owned: [], failures: [{ key: 'TOKEN', code: 'plugin_secret_custody_unavailable' }] });
       expect(writes).toBe(0);
+      expect(JSON.stringify(result)).not.toContain('happier:shared-secret:');
     } finally { await kit.dispose(); }
 });
 

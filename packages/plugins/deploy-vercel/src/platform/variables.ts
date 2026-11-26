@@ -72,7 +72,7 @@ async function read(input: Read, ctx: PluginAccountActionContext): Promise<Deplo
 /** Primary API: Vercel project env GET v10, upsert POST v10 and DELETE v9, checked 2026-11-10. */
 async function sync(input: Sync, ctx: PluginAccountActionContext): Promise<DeploymentTargetVariablesSyncResultV1> {
   const observed = await readSnapshot(input, ctx);
-  const planned = createDeploymentTargetVariableSyncV1(input, observed.variables, { unavailableSecretServiceCode: 'outcome_unknown' });
+  const planned = createDeploymentTargetVariableSyncV1(input, observed.variables);
   for (const binding of planned.set) {
     const key = binding.name;
     const materialized = await planned.materialize(binding, ctx);
