@@ -8,6 +8,9 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key) => key });
 });
 
+// Collect the real product graph before the individual renderer case starts.
+await import('./SessionSimulatorPreviewPane');
+
 describe('SessionSimulatorPreviewPane', () => {
     it('is a thin session wrapper around the simulator product pane', async () => {
         const mod = await import('./SessionSimulatorPreviewPane').catch((error: unknown) => ({ importError: error }));
