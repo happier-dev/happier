@@ -3,6 +3,7 @@ import { definePlugin, PluginError, type JsonValue, type PluginInvocationContext
 import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
+  CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
   SessionPullRequestBindingResultV1Schema,
   SessionPullRequestLinkCompletionsContributionProtocolV1,
   SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_ID_V1,
@@ -24,6 +25,7 @@ import { channelsOperationOnlyTargetedContributionsFixture } from './testkit/ope
 describe('registered Session PR URL attach', () => {
   it('attaches the detected URL with exact Account credentials and retains its original relationship clock', async () => {
     let currentMachineId = 'machine-1';
+    let viewer = { id: 99, login: 'native-user' };
     const materializedAccounts: unknown[] = [];
     const credential = { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: '99' };
     const requests: Array<Readonly<{ method?: string; url: string }>> = [];
@@ -32,7 +34,7 @@ describe('registered Session PR URL attach', () => {
       if (request.method !== undefined && request.method !== 'GET') throw new Error('Linking an existing PR must not write to GitHub');
       const path = new URL(request.url).pathname;
       const body = path === '/repos/acme/widgets' ? { id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } }
-        : path === '/user' ? { id: 99, login: 'native-user' }
+        : path === '/user' ? viewer
         : path === '/repos/acme/widgets/issues/comments' ? []
         : /^\/repos\/acme\/widgets\/issues\/[0-9]+$/.test(path) ? { id: 288 + Number(path.split('/').at(-1)), number: Number(path.split('/').at(-1)), title: 'Existing PR', pull_request: {} }
         : path === '/search/users' ? { items: [{ id: 99, login: 'native-user', type: 'User' }] }
@@ -302,6 +304,18 @@ describe('registered Session PR URL attach', () => {
       expect([...state.rows.values()].filter(row => row.value[CHANNEL_STATE_FIELD.recordKind] === 'connection')).toHaveLength(1);
       expect((await state.get(result.bindingId))?.value.payload).toEqual(retainedBinding?.value.payload);
       expect(await read()).toMatchObject({ kind: 'relations', links: [{ linkedAtMs }] });
+      viewer = { id: 101, login: 'second-authorized-viewer' };
+      await expect(core.invokeAction('session-pull-request-binding-v1', {
+        ...input, sessionId: 'session-2', credentialRef: { ...credential, accountId: '101' },
+      }, { surface: 'mcp', services })).rejects.toMatchObject({
+        code: 'channels_connection_reserved_by_another_connection',
+        details: { recommendedRecovery: {
+          action: { pluginId: PLUGIN_MANIFEST.id, localId: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionList },
+          input: {},
+        } },
+      });
+      viewer = { id: 99, login: 'native-user' };
+      expect(await state.get(String(connectionId))).toEqual(retainedConnection);
       for (const failure of [{ code: 'unsupported_action', retryable: false }, { code: 'connection_unavailable', retryable: true }]) {
         baselineFailure = new PluginError({ ...failure, message: 'PRIVATE_TRANSCRIPT_DIAGNOSTIC', details: { private: 'PRIVATE_TRANSCRIPT_DETAIL' } });
         const before = peerCompletions.length;

@@ -280,45 +280,56 @@ async function seedAccountCollectionsActionFixture(params: Readonly<{
             );
         } finally { observation.dispose(); }
     }
+    async function readChannelState(context) {
+        const accountStorage = context.services.storage.account;
+        if (!accountStorage) return { marker: null, accountStorage: 'absent' };
+        const row = await accountStorage.collection({
+            id: '${COLLECTION_ID}',
+            schemaVersion: 1,
+            schema: {
+                type: 'object',
+                properties: {
+                    id: { type: 'string', maxLength: 256 },
+                    marker: { type: 'string', maxLength: 256 },
+                },
+                required: ['id', 'marker'],
+                additionalProperties: false,
+            },
+            rowIdField: 'id',
+            serverReadable: ['id', 'marker'],
+            indexes: [],
+        }).get('connection-1');
+        return { marker: row?.value?.marker ?? null };
+    }
     export function activate(api) {
         ${params.includeNestedAction ? `api.actions.register('poll-provider', async (input, context) => {
             if (input.background) return backgroundOutcome;
-            if (input.wake) { backgroundOutcome = null; wakeBackground?.(); return {}; }
+            if (input.wake) {
+                backgroundOutcome = null;
+                const ready = wakeBackground !== undefined;
+                wakeBackground?.();
+                return { ready };
+            }
             return await poll(context, input.routingOverride);
         });
         api.backgroundServices.register('poll-source', async context => {
             while (!context.signal.aborted) {
+                let resume;
                 await new Promise(resolve => {
+                    resume = resolve;
                     wakeBackground = resolve;
                     context.signal.addEventListener('abort', resolve, { once: true });
                 });
-                context.signal.removeEventListener('abort', wakeBackground);
+                wakeBackground = undefined;
+                context.signal.removeEventListener('abort', resume);
                 if (context.signal.aborted) break;
-                try { backgroundOutcome = await poll(context); }
+                try { backgroundOutcome = { state: await readChannelState(context), ...await poll(context) }; }
                 catch (error) { backgroundOutcome = { code: error.code, message: error.message }; }
             }
         });` : ''}
         api.actions.register('read-channel-state', async (_input, context) => {
             ${params.includeNestedAction ? 'if (_input.nest) return (await poll(context)).result;' : ''}
-            const accountStorage = context.services.storage.account;
-            if (!accountStorage) return { marker: null, accountStorage: 'absent' };
-            const row = await accountStorage.collection({
-                id: '${COLLECTION_ID}',
-                schemaVersion: 1,
-                schema: {
-                    type: 'object',
-                    properties: {
-                        id: { type: 'string', maxLength: 256 },
-                        marker: { type: 'string', maxLength: 256 },
-                    },
-                    required: ['id', 'marker'],
-                    additionalProperties: false,
-                },
-                rowIdField: 'id',
-                serverReadable: ['id', 'marker'],
-                indexes: [],
-            }).get('connection-1');
-            return { marker: row?.value?.marker ?? null };
+            return await readChannelState(context);
         });
     }`, 'utf8');
     await seedCurrentLocalPathPluginFixture({
@@ -646,6 +657,12 @@ describe('executable plugin Account Collections binding', () => {
             await seedAccountCollectionsActionFixture({ happyHomeDir, pluginRoot, includePage: true, includeNestedAction: true, providerPluginId });
             await seedAccountCollectionsActionFixture({ happyHomeDir, pluginRoot: providerRoot, pluginId: providerPluginId, includePage: true, includeNestedAction: true, contributeToPluginId: PLUGIN_ID });
             accountDataBoundary.readStoredCredentials.mockResolvedValue({ token: 'fixture-account-token', encryption: null });
+            const accountSettings = {
+                source: 'network' as const, settings: accountSettingsParse({}),
+                scopeKey: resolveAccountSettingsScopeKey({ token: 'fixture-account-token', encryption: null }),
+                loadedAtMs: 1,
+            };
+            setActiveAccountSettingsSnapshot({ ...accountSettings, settingsVersion: 1, settingsSecretsReadKeys: [] });
             const loaded = await resolvePluginContributes({ happyHomeDir, existingAgentIds: new Set() });
             const target = loaded.activationTargets?.find((entry) => entry.pluginId === PLUGIN_ID);
             if (!target?.devDaemonEntryPath) throw new Error('Expected the fixture development entry');
@@ -719,15 +736,25 @@ describe('executable plugin Account Collections binding', () => {
                     pluginId: PLUGIN_ID, localId: 'poll-provider', input: { routingOverride: override }, surface: 'cli',
                 })).resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_origin_mismatch' });
             }
-            runtime.startAdoptedBackgroundServices?.();
-            await runtime.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: 'poll-provider', input: { wake: true }, surface: 'cli' });
-            await vi.waitFor(async () => {
-                const background = await runtime?.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: 'poll-provider', input: { background: true }, surface: 'cli' });
-                expect(background).toEqual({ status: 'executed', value: {
-                    result: { marker: HOST_MARKER },
-                    executionOrigin: { serverIdentityId: 'srv_page', sourceRef: { pluginId: providerPluginId, machineId: 'machine-page', sourceCustody: runtime?.readPluginSourceCustody?.(providerPluginId) } },
-                } });
-            });
+            const expectBackgroundPoll = async (phase: string) => {
+                await vi.waitFor(async () => {
+                    const wake = await runtime?.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: 'poll-provider', input: { wake: true }, surface: 'cli' });
+                    expect(wake).toEqual({ status: 'executed', value: { ready: true } });
+                });
+                await vi.waitFor(async () => {
+                    const background = await runtime?.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: 'poll-provider', input: { background: true }, surface: 'cli' });
+                    expect(background, phase).toEqual({ status: 'executed', value: {
+                        state: { marker: HOST_MARKER },
+                        result: { marker: HOST_MARKER },
+                        executionOrigin: { serverIdentityId: 'srv_page', sourceRef: { pluginId: providerPluginId, machineId: 'machine-page', sourceCustody: runtime?.readPluginSourceCustody?.(providerPluginId) } },
+                    } });
+                });
+            };
+            await expectBackgroundPoll('before Account lifetime change');
+            // A new Settings key advances the Account lifetime even when the
+            // authenticated Account and plugin activation are retained.
+            setActiveAccountSettingsSnapshot({ ...accountSettings, settingsVersion: 2, settingsSecretsReadKeys: [new Uint8Array(32).fill(1)] });
+            await expectBackgroundPoll('after Account lifetime change');
             originMachineId = 'different-machine';
             await expect(runtime.targetActionInvocations?.invoke({ pluginId: PLUGIN_ID, localId: 'poll-provider', input: {}, surface: 'cli' }))
                 .resolves.toMatchObject({ status: 'failed', code: 'plugin_action_caller_unavailable' });

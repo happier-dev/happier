@@ -38,6 +38,7 @@ type ServiceOptions = Readonly<{
 export type PluginBackgroundServiceRunnerRegistration = ServiceOptions & Readonly<{
     pluginId: string;
     pluginVersion: string;
+    refreshOnAccountLifetimeChange?: boolean;
     runner(context: BackgroundServiceContext): Promise<void>;
     createExecution?(): BackgroundServiceExecution;
 }>;
@@ -231,7 +232,10 @@ export function createBackgroundServiceRunnerHost(params: Readonly<{
         const service: RunningBackgroundService = { registration, controller: new AbortController(), pending: new Set(), active: new Set(), completed: new Set(), continuous, task: Promise.resolve() };
         running.set(key, service);
         service.task = Promise.resolve().then(async () => {
-            do { await runBatch(service); } while (isCurrent(registration) && service.pending.size > 0);
+            do {
+                await runBatch(service);
+            } while (isCurrent(registration) && (service.pending.size > 0
+                || ('pluginId' in registration && registration.refreshOnAccountLifetimeChange && service.continuous)));
             if (running.get(key) === service && !service.releaseFailure) running.delete(key);
         }).finally(() => {
             if (running.get(key) === service && !service.releaseFailure) running.delete(key);
@@ -252,6 +256,21 @@ export function createBackgroundServiceRunnerHost(params: Readonly<{
             if (registration.activation !== 'demand' && isCurrent(registration)) begin(registration, true);
         }
     }
+    function refreshAccountContexts(): void {
+        if (!started || disposed) return;
+        for (const registration of registrations.values()) {
+            if (!('pluginId' in registration) || !registration.refreshOnAccountLifetimeChange || !isCurrent(registration)) continue;
+            const service = running.get(keyOf(registration));
+            if (service) {
+                // Settle the old invocation before constructing a fresh Account-bound context.
+                service.continuous = true;
+                service.controller.abort();
+            } else {
+                begin(registration, true);
+            }
+        }
+    }
+
     function demand(target: BackgroundServiceDemandTarget): BackgroundServiceDemandHandle {
         const registration = registrations.get('pluginId' in target
             ? `plugin\u0000${target.pluginId}\u0000${target.localId}`
@@ -302,7 +321,7 @@ export function createBackgroundServiceRunnerHost(params: Readonly<{
         const failedRelease = services.find((service) => service.releaseFailure)?.releaseFailure;
         if (failedRelease) throw failedRelease.error;
     }
-    return Object.freeze({ register, start, demand, retire, settle, dispose(): Promise<void> {
+    return Object.freeze({ register, start, refreshAccountContexts, demand, retire, settle, dispose(): Promise<void> {
         if (disposalPromise) return disposalPromise;
         disposed = true;
         const scopes = [...new Set([...registrations.values()].map(scopeOf))];

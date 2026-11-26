@@ -3442,6 +3442,11 @@ only that caller's handle without waiting for shared cleanup; it does not cancel
 other callers. Demands accepted during a run join one sequential
 follow-up run.
 
+A continuous daemon runner that declares Account storage receives a fresh
+invocation context when the active Account lifetime changes. The runner host
+cancels and settles the previous invocation first. The new invocation uses the
+same plugin activation and binds its own Account storage handles.
+
 Process placement uses a supervised Happier child through the existing binary-safe
 launch and process-custody owners. The daemon admits the plugin's source and policy;
 the child loads that exact source to activate the selected runner and any consumed

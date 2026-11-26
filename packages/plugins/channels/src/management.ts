@@ -26,6 +26,7 @@ import type {
   PluginMachineExecutionRoutingV1,
 } from '@happier-dev/plugin-sdk/actions';
 import {
+  CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
   ConversationBindingReadResultV1Schema,
   type ConversationPairingReadInputV1,
   type ConversationPairingReadResultV1,
@@ -1812,13 +1813,13 @@ async function ensureConnectionIdentityKey(context: PluginInvocationContext): Pr
   }
 }
 
-function readReservationConnectionId(input: Readonly<{
+function readConnectionReservation(input: Readonly<{
   row: StateRow;
   reservationRowId: string;
   providerPluginId: string;
   providerConnectionKey: string;
-  integrationPrincipalId: string;
-}>): string {
+  integrationPrincipalId?: string;
+}>): Readonly<{ connectionId: string; integrationPrincipalId: string }> {
   const value = input.row.value;
   const payload = own(value, 'payload');
   const connectionId = value[CHANNEL_STATE_FIELD.connectionId];
@@ -1828,10 +1829,12 @@ function readReservationConnectionId(input: Readonly<{
     || !isJsonRecord(payload)
     || payload.providerPluginId !== input.providerPluginId
     || payload.providerConnectionKey !== input.providerConnectionKey
-    || payload.integrationPrincipalId !== input.integrationPrincipalId) {
+    || typeof payload.integrationPrincipalId !== 'string'
+    || payload.integrationPrincipalId.length === 0
+    || (input.integrationPrincipalId !== undefined && payload.integrationPrincipalId !== input.integrationPrincipalId)) {
     throw pluginError('channels_connection_reservation_corrupt', 'Connection identity reservation does not match setup identity.');
   }
-  return connectionId;
+  return { connectionId, integrationPrincipalId: payload.integrationPrincipalId };
 }
 
 function assertRejoinedConnection(input: Readonly<{
@@ -1862,6 +1865,8 @@ function assertRejoinedConnection(input: Readonly<{
   return input.row;
 }
 
+const CONNECTION_RESERVED_CODE = 'channels_connection_reserved_by_another_connection';
+
 async function readExistingReservation(input: Readonly<{
   context: PluginInvocationContext;
   reservationRowId: string;
@@ -1873,22 +1878,30 @@ async function readExistingReservation(input: Readonly<{
   const reservation = await collection.get(input.reservationRowId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (reservation === null) return null;
-  const connectionId = readReservationConnectionId({
+  const retained = readConnectionReservation({
     row: reservation,
     reservationRowId: input.reservationRowId,
     providerPluginId: input.providerPluginId,
     providerConnectionKey: input.providerConnectionKey,
-    integrationPrincipalId: input.integrationPrincipalId,
   });
-  const connection = await collection.get(connectionId, { signal: input.context.signal });
+  const connection = await collection.get(retained.connectionId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
-  return assertRejoinedConnection({
+  const row = assertRejoinedConnection({
     row: connection,
-    connectionId,
+    ...retained,
     providerPluginId: input.providerPluginId,
     providerConnectionKey: input.providerConnectionKey,
-    integrationPrincipalId: input.integrationPrincipalId,
   });
+  if (retained.integrationPrincipalId !== input.integrationPrincipalId) {
+    throw new PluginError({
+      code: CONNECTION_RESERVED_CODE,
+      message: 'This provider resource already has a connection using a different integration account. Open Channels Connections and use the integration account on the existing connection.',
+      details: { recommendedRecovery: recommendConversationRecovery(
+        CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionList, {}, 'connectionReservedByAnotherPrincipal',
+      ) },
+    });
+  }
+  return row;
 }
 
 async function findExistingConnection(input: Readonly<{
@@ -2137,7 +2150,8 @@ async function createOrRejoinConnection(input: Readonly<{
         providerConnectionKey: input.setup.providerConnectionKey, integrationPrincipalId: input.setup.integrationPrincipal.id,
       });
     } catch (readError) {
-      if (isPluginError(readError) && readError.code === 'channels_connection_reservation_corrupt') throw readError;
+      if (isPluginError(readError) && (readError.code === 'channels_connection_reservation_corrupt'
+        || readError.code === CONNECTION_RESERVED_CODE)) throw readError;
       throw new PluginError({ code: error.code, message: error.message,
         details: { recommendedRecovery: recommendConversationRecovery('connection/create-v1', {}, 'createOutcomeUnknown', 'accountStateUnavailable') },
       }, { cause: error });
@@ -3228,13 +3242,13 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   assertNotAborted(input.context.signal);
   if (reservationStored === null) return;
   const reservationRow = asChannelStateRow(reservationStored);
-  if (reservationRow === undefined || readReservationConnectionId({
+  if (reservationRow === undefined || readConnectionReservation({
     row: reservationRow,
     reservationRowId,
     providerPluginId: current.providerPluginId,
     providerConnectionKey: reservationIdentity.providerConnectionKey,
     integrationPrincipalId: reservationIdentity.integrationPrincipalId,
-  }) !== input.connectionId) return;
+  }).connectionId !== input.connectionId) return;
 
   const custody = await settleConversationOutwardDeliveriesForConnectionDeletion({
     stateCollection: collection,
@@ -3277,13 +3291,13 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
     }
     if (recordKind === CHANNEL_STATE_RECORD_KIND.connectionReservation) {
       if (row.rowId !== reservationRow.rowId || row.revision !== reservationRow.revision) return;
-      if (readReservationConnectionId({
+      if (readConnectionReservation({
         row,
         reservationRowId,
         providerPluginId: current.providerPluginId,
         providerConnectionKey: reservationIdentity.providerConnectionKey,
         integrationPrincipalId: reservationIdentity.integrationPrincipalId,
-      }) !== input.connectionId) return;
+      }).connectionId !== input.connectionId) return;
       continue;
     }
     if (recordKind === CHANNEL_STATE_RECORD_KIND.binding) {

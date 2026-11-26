@@ -34,6 +34,10 @@ import {
 } from '../sourceAuthority';
 import { createPluginDisposableRegistry } from './disposables';
 import { logger } from '@/ui/logger';
+import {
+    getActiveAccountSettingsSnapshotLifetimeToken,
+    subscribeActiveAccountSettingsSnapshotChanges,
+} from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type {
     PluginDaemonModuleNamespace,
     ResolvedPluginHookHandler,
@@ -654,6 +658,13 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             runner: entry.registration.value,
             placement: declaration.placement,
             activation: declaration.activation,
+            refreshOnAccountLifetimeChange: declaration.placement !== 'process'
+                && declaration.activation !== 'demand'
+                && resolveManifestHostAccessRequests({
+                    manifest: target.manifest,
+                    pluginId: target.pluginId,
+                    contribution: { family: 'backgroundServices', localId: declaration.id },
+                }).some(({ request }) => request.capability === 'storage.account'),
             ...(declaration.placement === 'process' ? {
                 createExecution: () => {
                     const sourceCustody = occurrencesByPluginId.get(entry.pluginId)?.sourceCustody;
@@ -815,6 +826,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         },
     });
     let backgroundServicesStarted = false;
+    let unsubscribeBackgroundAccountLifetime: (() => void) | undefined;
     const targetHookHandlers = createTargetHookHandlerRegistry({
         activationTargets,
         targetRegistrations,
@@ -1275,6 +1287,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     function startAdoptedBackgroundServices(): void {
         if (backgroundServicesStarted || lifecycleState !== 'active') return;
         backgroundServicesStarted = true;
+        if (params.invocationServices && backgroundServiceRegistrations.some(({ refreshOnAccountLifetimeChange }) => refreshOnAccountLifetimeChange)) {
+            let accountLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+            unsubscribeBackgroundAccountLifetime = subscribeActiveAccountSettingsSnapshotChanges(() => {
+                const currentLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+                if (currentLifetime === accountLifetime) return;
+                accountLifetime = currentLifetime;
+                backgroundServiceRunnerHost.refreshAccountContexts();
+            });
+        }
         backgroundServiceRunnerHost.start();
         for (const registry of backgroundServiceRegistries()) {
             registry.startAdoptedBackgroundServices();
@@ -1416,6 +1437,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             if (disposalPromise) return disposalPromise;
             disposalPromise = (async () => {
                 lifecycleState = 'disposing';
+                unsubscribeBackgroundAccountLifetime?.();
                 agentExternalSessionsRetirement.abort();
                 targetOccurrenceCurrent = false;
                 try {
