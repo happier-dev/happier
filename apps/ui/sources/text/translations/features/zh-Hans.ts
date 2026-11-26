@@ -6436,7 +6436,6 @@ const fileViewerTranslations = { 'zh-Hans': {
         downloading: ({ loaded, total }) => `正在下载 ${loaded} / ${total} MB`,
         loadStopped: ({ name }) => `已停止加载 ${name}`,
         loadAgain: '重新加载',
-        recordingCantPlay: "此设备无法播放此录制内容。",
         videoCantPlayTitle: "无法在此播放该视频",
         audioCantPlayTitle: "无法在此播放该音频",
         mediaCantPlayBody: "此设备不支持其编码。请下载，或在默认应用中打开。",

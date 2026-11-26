@@ -1,17 +1,20 @@
 import * as React from 'react';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SessionMediaTileState } from '@/components/sessions/media/SessionMediaTileState';
 import { t } from '@/text';
 
 /**
  * The one host video-preview player configuration shared by SessionMedia and
  * draft Composer staged media. Callers own only their opaque source lookup;
- * this component owns no media cache or transfer state.
+ * this component owns no media cache or transfer state. When the decoder rejects
+ * the source it draws the media tile's own state with the stage's sentence; a
+ * staged chip asks for the glyph alone (`form="glyph"`).
  */
 export const SessionMediaVideoPreview = React.memo(function SessionMediaVideoPreview(props: Readonly<{
     uri: string;
     accessibilityLabel: string;
+    form?: 'tile' | 'glyph';
 }>): React.ReactElement {
     const player = useVideoPlayer(props.uri, (instance: VideoPlayer) => {
         instance.loop = false;
@@ -40,11 +43,14 @@ export const SessionMediaVideoPreview = React.memo(function SessionMediaVideoPre
     }, [player]);
 
     if (failedPlayer === player || player.status === 'error') {
-        return <SurfaceStateCard
+        const cantPlay = t('files.viewer.videoCantPlayTitle');
+        return <SessionMediaTileState
             testID="session-media-video-cant-play"
-            kind="unavailable"
-            size="line"
-            title={t('files.viewer.recordingCantPlay')}
+            icon="video-camera"
+            iconSize={props.form === 'glyph' ? 20 : 24}
+            label={cantPlay}
+            form={props.form}
+            accessibilityLabel={cantPlay}
         />;
     }
 

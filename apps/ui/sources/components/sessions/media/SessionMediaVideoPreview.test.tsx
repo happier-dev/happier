@@ -34,3 +34,19 @@ it('shows unavailable when the decoder rejected WebM before subscription', async
     expect(screen.findByTestId('session-media-video-cant-play')).not.toBeNull();
     expect(screen.root.findAllByType('VideoView')).toHaveLength(0);
 });
+it('a rejected recording takes the tile\'s own centred state, with the stage\'s one sentence', async () => {
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<SessionMediaVideoPreview uri="file:///recording.webm" accessibilityLabel="Recording" />);
+    await act(async () => { boundary.listener?.({ status: 'error' }); });
+    const state = screen.findByTestId('session-media-video-cant-play');
+    expect(state?.props.accessibilityLabel).toBe(t('files.viewer.videoCantPlayTitle'));
+    expect(screen.getTextContent()).toBe(t('files.viewer.videoCantPlayTitle'));
+});
+it('the staged chip form of a rejected recording is the glyph alone, named by the same sentence', async () => {
+    const { t } = await import('@/text');
+    boundary.status = 'error';
+    const screen = await renderScreen(<SessionMediaVideoPreview uri="file:///recording.webm" accessibilityLabel="Recording" form="glyph" />);
+    const state = screen.findByTestId('session-media-video-cant-play');
+    expect(state?.props.accessibilityLabel).toBe(t('files.viewer.videoCantPlayTitle'));
+    expect(screen.getTextContent()).toBe('');
+});

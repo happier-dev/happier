@@ -6540,7 +6540,6 @@ const fileViewerTranslations = { ca: {
         downloading: ({ loaded, total }) => `Baixant ${loaded} de ${total} MB`,
         loadStopped: ({ name }) => `S'ha aturat la càrrega de ${name}`,
         loadAgain: 'Torna a carregar',
-        recordingCantPlay: "Aquest dispositiu no pot reproduir aquesta gravació.",
         videoCantPlayTitle: "Aquest vídeo no es pot reproduir aquí",
         audioCantPlayTitle: "Aquest àudio no es pot reproduir aquí",
         mediaCantPlayBody: "Aquest dispositiu no admet la codificació. Baixa'l o obre'l a l'aplicació predeterminada.",

@@ -6564,7 +6564,6 @@ const fileViewerTranslations = { ru: {
         downloading: ({ loaded, total }) => `Загрузка: ${loaded} из ${total} МБ`,
         loadStopped: ({ name }) => `Загрузка ${name} остановлена`,
         loadAgain: 'Загрузить снова',
-        recordingCantPlay: "Это устройство не может воспроизвести эту запись.",
         videoCantPlayTitle: "Это видео нельзя воспроизвести здесь",
         audioCantPlayTitle: "Это аудио нельзя воспроизвести здесь",
         mediaCantPlayBody: "Устройство не поддерживает эту кодировку. Скачайте файл или откройте его в приложении по умолчанию.",

@@ -16,6 +16,7 @@ import {
     resolveSessionMediaInlineImageLayout,
 } from '@/components/sessions/media/resolveSessionMediaInlineImageLayout';
 import { SessionMediaVideoPreview } from '@/components/sessions/media/SessionMediaVideoPreview';
+import { SessionMediaTileState } from '@/components/sessions/media/SessionMediaTileState';
 import { ImageNumberBadge } from '@/components/ui/referenceChip/ImageNumberBadge';
 import { useTranscriptNativeItemReveal } from '@/components/sessions/transcript/viewport/shell/renderer/TranscriptNativeItemReveal';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
@@ -104,12 +105,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: 2,
         borderColor: theme.colors.border.focus,
     },
-    videoLabel: {
-        marginTop: theme.space.s6,
-        color: theme.colors.text.secondary,
-        textAlign: 'center',
-        paddingHorizontal: theme.space.s8,
-    },
     recordingStatus: {
         marginTop: theme.space.s4,
         maxWidth: 168,
@@ -175,7 +170,6 @@ function SessionMediaInlineVideoTile(props: Readonly<{
     originRef: React.RefObject<View | null>;
     onOpenPreview: () => void;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const preview = useFilePreviewSource(props.previewInput);
     const accessibilityLabel = resolveInlineVideoAccessibilityLabel(props.media);
@@ -199,15 +193,14 @@ function SessionMediaInlineVideoTile(props: Readonly<{
                     accessibilityLabel={accessibilityLabel}
                 />
             ) : (
-                <View style={styles.placeholder}>
-                    <Icon name="video-camera" size={24} color={theme.colors.text.secondary} />
-                    {/* No first frame here: say so in words; the viewer explains why and offers Retry. */}
-                    {preview.status === 'error' || !props.media.browserRecording ? (
-                        <Text style={styles.videoLabel} numberOfLines={2}>
-                            {preview.status === 'error' ? t('files.sessionMedia.noPreview') : props.media.name}
-                        </Text>
-                    ) : null}
-                </View>
+                // No first frame here: say so in words; the viewer explains why and offers Retry.
+                <SessionMediaTileState
+                    icon="video-camera"
+                    iconSize={24}
+                    label={preview.status === 'error'
+                        ? t('files.sessionMedia.noPreview')
+                        : props.media.browserRecording ? undefined : props.media.name}
+                />
             )}
         </Pressable>
         <RecordingStatusLabel media={props.media} />
@@ -279,10 +272,7 @@ function SessionMediaInlineImageTile(props: Readonly<{
                 : undefined}
             placeholder={preview.status === 'error' ? (
                 // No picture here: say so in words, as the video tile does; the hint and the viewer carry the rest.
-                <View style={stylesheet.placeholder}>
-                    <Icon name="warning-circle" size={20} color={theme.colors.text.secondary} />
-                    <Text style={stylesheet.videoLabel} numberOfLines={2}>{t('files.sessionMedia.noPreview')}</Text>
-                </View>
+                <SessionMediaTileState icon="warning-circle" iconSize={20} label={t('files.sessionMedia.noPreview')} />
             ) : (
                     <Icon
                         name="image"
@@ -302,7 +292,6 @@ function SessionMediaInlineInertTile(props: Readonly<{
     media: SessionMediaInlineImageAvailableSummary | SessionMediaInlineVideoAvailableSummary;
     testIdPrefix: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
     const video = isInlineVideo(props.media);
     const size = video
@@ -322,18 +311,11 @@ function SessionMediaInlineInertTile(props: Readonly<{
                 : resolveInlineImageAccessibilityLabel(props.media)}
             style={[styles.tile, size]}
         >
-            <View style={styles.placeholder}>
-                <Icon
-                    name={video ? 'video-camera' : 'image'}
-                    size={video ? 24 : 22}
-                    color={theme.colors.text.secondary}
-                />
-                {video ? (
-                    <Text style={styles.videoLabel} numberOfLines={2}>
-                        {displayName(props.media)}
-                    </Text>
-                ) : null}
-            </View>
+            <SessionMediaTileState
+                icon={video ? 'video-camera' : 'image'}
+                iconSize={video ? 24 : 22}
+                label={video ? displayName(props.media) : undefined}
+            />
         </View>
         <RecordingStatusLabel media={props.media} />
         </View>

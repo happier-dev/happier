@@ -40,6 +40,7 @@ export const ComposerStagedMediaPreview = React.memo(function ComposerStagedMedi
                 <SessionMediaVideoPreview
                     uri={preview.uri}
                     accessibilityLabel={props.accessibilityLabel}
+                    form="glyph"
                 />
             );
         }

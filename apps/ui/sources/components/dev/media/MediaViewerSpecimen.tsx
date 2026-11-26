@@ -18,6 +18,8 @@ import { ImageCompare } from '@/components/workspaces/scm/review/imageCompare/Im
 import type { ImageCompareSide } from '@/components/workspaces/scm/review/imageCompare/imageCompareModel';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { SessionMediaInlineImages, type SessionMediaInlinePreviewSource } from '@/components/sessions/media/SessionMediaInlineImages';
+import { SessionMediaVideoPreview } from '@/components/sessions/media/SessionMediaVideoPreview';
+import { AgentInputAttachmentsRow } from '@/components/sessions/agentInput/components/AgentInputAttachmentsRow';
 import type { SessionMediaInlineMediaSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 
 /* eslint-disable @typescript-eslint/no-require-imports -- dev specimen: bundled sample media */
@@ -88,8 +90,13 @@ const UNPLAYABLE_RECORDING: readonly SessionMediaInlineMediaSummary[] = [{
   id: 'unplayable-recording', mediaKind: 'video', name: 'checkout-flow.mp4', path: 'recordings/checkout-flow.mp4',
   mimeType: 'video/mp4', sizeBytes: 4_812_336, category: 'tool-artifact', role: 'output',
 }];
-const UNPLAYABLE_RECORDING_SOURCE: SessionMediaInlinePreviewSource = () =>
-  uriSource('data:video/mp4;base64,' + btoa('not a movie: this device has no decoder for these bytes'));
+const UNPLAYABLE_RECORDING_URI = 'data:video/mp4;base64,' + btoa('not a movie: this device has no decoder for these bytes');
+const UNPLAYABLE_RECORDING_SOURCE: SessionMediaInlinePreviewSource = () => uriSource(UNPLAYABLE_RECORDING_URI);
+/** The same recording staged in the composer: the chip takes the glyph form of the tile's can't-play state. */
+const UNPLAYABLE_STAGED_CHIP = [{
+  kind: 'media' as const, media: 'video' as const, key: 'unplayable-staged', label: 'checkout-flow.mp4',
+  renderedPreview: <SessionMediaVideoPreview uri={UNPLAYABLE_RECORDING_URI} accessibilityLabel="checkout-flow.mp4" form="glyph" />,
+}];
 
 /** Dev-only: the Media stage and viewer bodies on bundled sample media (files lab MS1, FV2b, FV4, FV5). */
 export function MediaViewerSpecimen() {
@@ -191,8 +198,8 @@ export function MediaViewerSpecimen() {
         onPress={() => stage.open([CHECKOUT_ITEM, TERMINAL_ITEM], 0)}
         testID="dev-media-open-message-picture"
       />
-      {/* A message's recording this device cannot decode: the sentence stands in the same tile, which still opens the
-          stage with its download and open actions (RECORDING-FORMAT-1126). */}
+      {/* A message's recording this device cannot decode: the tile's own centred state says so, and the tile still
+          opens the stage with its download and open actions; staged in the composer it is the glyph alone. */}
       <Text style={textStyle}>A recording this device can't play</Text>
       <SessionMediaInlineImages
         previewSource={UNPLAYABLE_RECORDING_SOURCE}
@@ -202,6 +209,9 @@ export function MediaViewerSpecimen() {
         mediaPreviewEnabled
         testIdPrefix="dev-media-recording"
       />
+      <View testID="dev-media-recording-staged">
+        <AgentInputAttachmentsRow items={UNPLAYABLE_STAGED_CHIP} />
+      </View>
       {/* A received video: pause it, mark the frame with numbered steps and attach it (platform lab `media`). */}
       <RoundButton
         size="small"

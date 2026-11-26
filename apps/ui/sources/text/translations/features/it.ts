@@ -6547,7 +6547,6 @@ const fileViewerTranslations = { it: {
         downloading: ({ loaded, total }) => `Download di ${loaded} di ${total} MB`,
         loadStopped: ({ name }) => `Caricamento di ${name} interrotto`,
         loadAgain: 'Carica di nuovo',
-        recordingCantPlay: "Questo dispositivo non può riprodurre questa registrazione.",
         videoCantPlayTitle: "Questo video non può essere riprodotto qui",
         audioCantPlayTitle: "Questo audio non può essere riprodotto qui",
         mediaCantPlayBody: "Questo dispositivo non supporta la sua codifica. Scaricalo o aprilo nell'app predefinita.",

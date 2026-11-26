@@ -6556,7 +6556,6 @@ const fileViewerTranslations = { fr: {
         downloading: ({ loaded, total }) => `Téléchargement : ${loaded} sur ${total} Mo`,
         loadStopped: ({ name }) => `Chargement de ${name} arrêté`,
         loadAgain: 'Recharger',
-        recordingCantPlay: "Cet appareil ne peut pas lire cet enregistrement.",
         videoCantPlayTitle: "Cette vidéo ne peut pas être lue ici",
         audioCantPlayTitle: "Cet audio ne peut pas être lu ici",
         mediaCantPlayBody: "Cet appareil ne prend pas en charge son encodage. Téléchargez-le ou ouvrez-le dans votre app par défaut.",

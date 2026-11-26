@@ -6436,7 +6436,6 @@ const fileViewerTranslations = { 'zh-Hant': {
         downloading: ({ loaded, total }) => `正在下載 ${loaded} / ${total} MB`,
         loadStopped: ({ name }) => `已停止載入 ${name}`,
         loadAgain: '重新載入',
-        recordingCantPlay: "此裝置無法播放此錄製內容。",
         videoCantPlayTitle: "無法在此播放此影片",
         audioCantPlayTitle: "無法在此播放此音訊",
         mediaCantPlayBody: "此裝置不支援其編碼。請下載，或在預設 App 中打開。",
