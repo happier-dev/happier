@@ -3785,22 +3785,32 @@ describe('deployment children retain their controller Action authority', () => {
             transport: getActionSpec('deployments.environments.get').serverTransport!,
             inputSchema: getActionSpec('deployments.environments.get').inputSchema,
             input: getActionSpec('deployments.environments.get').inputSchema.parse({ serverId, environmentId }) }).path;
-        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); }, async app => {
-            const request = (role: string, options: Readonly<{ method?: 'GET' | 'PATCH'; path?: string; payload?: Record<string, unknown>;
-                childActionId?: string }> = {}) => {
+        // Same-Account content the requester can open itself, so a refusal can only come from the child scope.
+        const sibling = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+            runtimeTargetLinkId: null, ...await f.content('deployment-environment.v1') } });
+        const siblingLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+            environmentId: sibling.id, ...await f.content('deployment-target-link.v1') } });
+        const artifactPath = (artifactId: string) => `/v1/artifacts/${encodeURIComponent(artifactId)}`;
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const request = (role: string, options: Readonly<{ method?: 'GET' | 'PATCH' | 'POST' | 'DELETE'; path?: string; payload?: Record<string, unknown>;
+                childActionId?: string; root?: 'teardown' | 'deploy' }> = {}) => {
                 const method = options.method ?? 'GET';
                 const path = options.path ?? environmentPath(f.environment.id);
                 const effectActionId = options.childActionId ?? preview;
+                const root = options.root === 'deploy'
+                    ? { token: f.authorization.token, target: f.originalActionEnvelope.target, requestId: f.authorization.binding.requestId }
+                    : { token: authorization.token, target, requestId: envelope.requestId };
                 const reviewedChild = { actionId: effectActionId, role,
                     inputDigest: computeActionInputApprovalDigestV1(effectActionId as Parameters<typeof computeActionInputApprovalDigestV1>[0], childInput) };
                 return app.inject({ method, url: path, ...(options.payload ? { payload: options.payload } : {}), headers: {
-                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
                     [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
-                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.target),
                     [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
                     [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId, target,
-                        installationId: f.controller.installationId, requestId: envelope.requestId,
+                        authorizationToken: root.token, effectActionId, target: root.target,
+                        installationId: f.controller.installationId, requestId: root.requestId,
                         method, path, ...(options.payload ? { body: options.payload } : {}), reviewedChild,
                         privateKey: f.controller.keys.secretKey }),
                 } });
@@ -3808,6 +3818,27 @@ describe('deployment children retain their controller Action authority', () => {
             for (const role of [DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1]) {
                 const read = await request(role);
                 expect(read.statusCode, `${role} reads its teardown Environment: ${read.body}`).toBe(200);
+                // RAILWAY-VOLUME-1126: the host opens the root Environment's content, then its selected Link's content.
+                for (const artifactId of [f.environment.contentArtifactId, f.link.contentArtifactId]) {
+                    const opened = await request(role, { path: artifactPath(artifactId) });
+                    expect(opened.statusCode, `${role} opens ${artifactId}: ${opened.body}`).toBe(200);
+                    expect(ArtifactHttpReadV1Schema.parse(opened.json()).id).toBe(artifactId);
+                }
+                for (const [label, refused] of [
+                    ['another Environment\'s content', await request(role, { path: artifactPath(sibling.contentArtifactId) })],
+                    ['a Link of another Environment', await request(role, { path: artifactPath(siblingLink.contentArtifactId) })],
+                    ['a Receipt Artifact', await request(role, { path: artifactPath(f.receipt.contentArtifactId!) })],
+                    ['a write to the Environment content', await request(role, { method: 'DELETE', path: artifactPath(f.environment.contentArtifactId) })],
+                    ['a body sent to the Link content', await request(role, { method: 'POST', path: artifactPath(f.link.contentArtifactId),
+                        payload: { expectedBodyVersion: 1 } })],
+                    ['the same Environment read under a non-teardown root', await request(role, { root: 'deploy',
+                        path: artifactPath(f.environment.contentArtifactId) })],
+                    ['the same Link read under a non-teardown root', await request(role, { root: 'deploy',
+                        path: artifactPath(f.link.contentArtifactId) })],
+                ] as const) {
+                    expect(refused.statusCode, `${role}: ${label}: ${refused.body}`).toBe(401);
+                    expect(refused.json(), `${role}: ${label}`).toMatchObject({ error: 'invalid_token' });
+                }
             }
             for (const [label, refused] of [
                 ['a role the teardown root does not declare', await request('teardown.unreviewed')],
@@ -3822,6 +3853,57 @@ describe('deployment children retain their controller Action authority', () => {
             ] as const) {
                 expect(refused.statusCode, `${label}: ${refused.body}`).toBe(401);
                 expect(refused.json()).toMatchObject({ error: 'invalid_token' });
+            }
+            // SEC-CHILD-TABLE-1126 reviewer negatives for teardown-preview-reads (worst cases of attack items 1-3).
+            {
+                const role = DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1;
+                const sec: Record<string, number> = {};
+                const status = async (key: string, response: Promise<{ statusCode: number }>) => { sec[key] = (await response).statusCode; };
+                // 1. Same-Environment DATA Link, same Account content: the bound is any Link of the Environment.
+                const dataLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(), role: 'data', sourceKind: 'plugin', pluginId: 'example.deploy', contributionLocalId: 'db',
+                    hostTargetId: null, targetKind: 'database', state: 'provisioned',
+                    ...await f.content('deployment-target-link.v1') } });
+                await status('sameEnvDataLink', request(role, { path: artifactPath(dataLink.contentArtifactId) }));
+                // 1b. Same-Environment Link whose content belongs to an Account that never granted this requester.
+                const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+                const strangerArtifact = await createArtifact({ actorUserId: stranger.id, artifactId: crypto.randomUUID(),
+                    kind: 'v1:other:deployment-target-link.v1',
+                    header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-target-link.v1', title: 'Private' })),
+                    body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                    dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!strangerArtifact.ok) throw new Error(strangerArtifact.error);
+                const strangerLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(), role: 'data', sourceKind: 'plugin', pluginId: 'example.deploy', contributionLocalId: 'db',
+                    hostTargetId: null, targetKind: 'database', state: 'provisioned',
+                    contentArtifactId: strangerArtifact.artifact.id } });
+                await status('sameEnvForeignOwnerLink', request(role, { path: artifactPath(strangerLink.contentArtifactId) }));
+                // 3. A removed Link of the same Environment, then a Link moved to another Environment.
+                const removed = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(), role: 'data', sourceKind: 'plugin', pluginId: 'example.deploy', contributionLocalId: 'db',
+                    hostTargetId: null, targetKind: 'database', state: 'provisioned',
+                    deletedAt: new Date(), ...await f.content('deployment-target-link.v1') } });
+                await status('removedLink', request(role, { path: artifactPath(removed.contentArtifactId) }));
+                await db.deploymentTargetLink.update({ where: { id: dataLink.id }, data: { environmentId: sibling.id } });
+                await status('movedLink', request(role, { path: artifactPath(dataLink.contentArtifactId) }));
+                // 2. Exactness and method: query, trailing slash, double encoding, case change, HEAD, GET with body.
+                const id = f.environment.contentArtifactId;
+                await status('query', request(role, { path: `${artifactPath(id)}?download=1` }));
+                await status('trailingSlash', request(role, { path: `${artifactPath(id)}/` }));
+                // A UUID encodes to itself; a non-canonical escape of the same id must not match.
+                await status('nonCanonicalEscape', request(role, { path: `/v1/artifacts/${id.replace(/-/gu, '%2D')}` }));
+                await status('upperCase', request(role, { path: artifactPath(id.toUpperCase()) }));
+                await status('head', request(role, { method: 'HEAD' as 'GET', path: artifactPath(id) }));
+                await status('getWithBody', request(role, { method: 'GET', path: artifactPath(id), payload: { x: 1 } }));
+                // 3. Tombstoned Environment (after the root was signed).
+                await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { deletedAt: new Date() } });
+                await status('tombstonedEnvironment', request(role, { path: artifactPath(id) }));
+                await status('tombstonedEnvironmentLink', request(role, { path: artifactPath(f.link.contentArtifactId) }));
+                await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { deletedAt: null } });
+                const note = `SECPREVIEW ${JSON.stringify(sec)}`;
+                for (const key of ['sameEnvForeignOwnerLink', 'movedLink', 'query', 'trailingSlash', 'nonCanonicalEscape', 'upperCase', 'head', 'getWithBody'])
+                    expect(sec[key], `${key} ${note}`).not.toBe(200);
+                expect(sec.sameEnvDataLink, note).toBeGreaterThan(0);
+                // A removed Link or a deleted Environment stops being readable by a preview signed earlier.
+                for (const key of ['removedLink', 'tombstonedEnvironment', 'tombstonedEnvironmentLink'])
+                    expect(sec[key], `${key} ${note}`).toBe(401);
             }
         }, { authentication: 'real' });
     });

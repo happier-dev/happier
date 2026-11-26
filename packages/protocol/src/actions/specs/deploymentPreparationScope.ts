@@ -116,6 +116,7 @@ export function readDeploymentReviewedChildPlanV1(): readonly DeploymentReviewed
       action: SESSION_MESSAGE_SEND_ACTION_ID_V1, access: 'read' },
     { root: ids.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, role: DEPLOYMENT_PREVIEW_SETUP_CHILD_ROLE_V1, action: 'plugin', access: 'read' },
     { root: ids.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, role: ids.PLATFORM_FAILURE_SETUP_ROLE, action: 'plugin', access: 'read' },
+    // The teardown preview also opens the root Environment's content and its own Links' content (Home reader).
     { root: ids.DEPLOYMENT_TEARDOWN_ACTION_ID_V1, role: DEPLOYMENT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, action: 'plugin', access: 'read' },
     { root: ids.DEPLOYMENT_TEARDOWN_ACTION_ID_V1, role: DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1, action: 'plugin', access: 'read' },
   ] satisfies readonly DeploymentReviewedChildRowV1[]);

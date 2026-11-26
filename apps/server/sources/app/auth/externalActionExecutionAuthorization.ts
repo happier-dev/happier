@@ -1819,7 +1819,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         }).ok);
     const reviewedSetupRead = proof.deploymentChildExecution ? false
         : await readDeploymentReviewedSetupHttpPurpose(db, binding, effectActionId, proof,
-            actionId => isAccountActionHttpOperation(actionId, proof));
+            actionId => isAccountActionHttpOperation(actionId, proof), () => readArtifactGetHttpPurpose(proof));
     const sibling = {
         docDecision: isDocDecisionPreparationEffect(binding.actionId, effectActionId),
         docDiscussion: isDocDiscussionEffect(binding.actionId, effectActionId),
