@@ -17,6 +17,8 @@ import { FileViewerBody } from '@/components/workspaces/files/file/FileViewerBod
 import { ImageCompare } from '@/components/workspaces/scm/review/imageCompare/ImageCompare';
 import type { ImageCompareSide } from '@/components/workspaces/scm/review/imageCompare/imageCompareModel';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
+import { SessionMediaInlineImages, type SessionMediaInlinePreviewSource } from '@/components/sessions/media/SessionMediaInlineImages';
+import type { SessionMediaInlineMediaSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 
 /* eslint-disable @typescript-eslint/no-require-imports -- dev specimen: bundled sample media */
 const SAMPLES = {
@@ -80,6 +82,14 @@ function buildSamplePdf(): Uint8Array {
 function uriSource(uri: string): UseFilePreviewSourceInput {
   return { enabled: true, source: { kind: 'uri', uri } };
 }
+
+/** A recording whose bytes no decoder accepts (plain text served as video): the tile's can't-play state. */
+const UNPLAYABLE_RECORDING: readonly SessionMediaInlineMediaSummary[] = [{
+  id: 'unplayable-recording', mediaKind: 'video', name: 'checkout-flow.mp4', path: 'recordings/checkout-flow.mp4',
+  mimeType: 'video/mp4', sizeBytes: 4_812_336, category: 'tool-artifact', role: 'output',
+}];
+const UNPLAYABLE_RECORDING_SOURCE: SessionMediaInlinePreviewSource = () =>
+  uriSource('data:video/mp4;base64,' + btoa('not a movie: this device has no decoder for these bytes'));
 
 /** Dev-only: the Media stage and viewer bodies on bundled sample media (files lab MS1, FV2b, FV4, FV5). */
 export function MediaViewerSpecimen() {
@@ -180,6 +190,17 @@ export function MediaViewerSpecimen() {
         title="Annotate a message picture"
         onPress={() => stage.open([CHECKOUT_ITEM, TERMINAL_ITEM], 0)}
         testID="dev-media-open-message-picture"
+      />
+      {/* A message's recording this device cannot decode: the sentence stands in the same tile, which still opens the
+          stage with its download and open actions (RECORDING-FORMAT-1126). */}
+      <Text style={textStyle}>A recording this device can't play</Text>
+      <SessionMediaInlineImages
+        previewSource={UNPLAYABLE_RECORDING_SOURCE}
+        media={UNPLAYABLE_RECORDING}
+        onOpenPath={() => {}}
+        fileOpenEnabled
+        mediaPreviewEnabled
+        testIdPrefix="dev-media-recording"
       />
       {/* A received video: pause it, mark the frame with numbered steps and attach it (platform lab `media`). */}
       <RoundButton
