@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
+import { ensureManagedJavaScriptRuntimeCommand, managedJavaScriptRuntimeBinPath, resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { reviewReviewerIdForSelectionV1, type ReviewEngineReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
@@ -194,6 +194,13 @@ else {
       serverEnv: { ...features, DATABASE_URL: databaseUrl } });
     owner = await fixture.createAccount('review-owner');
     machine = await fixture.enrollDaemon(owner, { prepareHome: async homeDir => {
+      // Plugin authoring requires the canonical managed wrapper, including its
+      // genuine runtime version, integrity and layout. Install only in this
+      // fixture's external root through the existing public runtime owner.
+      const runtimeEnv = { ...process.env, HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot,
+        HAPPIER_JS_RUNTIME_PATH: undefined, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined };
+      await ensureManagedJavaScriptRuntimeCommand(runtimeEnv);
       // Pinned npm dependencies execute their package bin, never a PATH shim.
       // Seed that native boundary in this fixture's private managed install.
       const command = resolveAgentCliManagedCommandPathForRuntime({
@@ -209,7 +216,8 @@ else {
       HAPPIER_MUSE_PATH: executablePath, PATH: [bin, process.env.PATH].filter(Boolean).join(delimiter), MUSE_INSTALL_DIR: bin,
       // Keep the seeded package ready through the native runtime boundary;
       // setup would otherwise install a runtime and replace it with stock npm.
-      HAPPIER_JS_RUNTIME_PATH: process.execPath, HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
+      HAPPIER_JS_RUNTIME_PATH: managedJavaScriptRuntimeBinPath({ HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot }),
+      HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined,
       HAPPIER_MANAGED_TOOLS_ROOT: managedToolsRoot,
       HOME: nativeHome, XDG_CONFIG_HOME: join(nativeHome, 'config'), XDG_DATA_HOME: join(nativeHome, 'data'),
       XDG_CACHE_HOME: join(nativeHome, 'cache'), CODEX_HOME: join(nativeHome, 'codex'),
