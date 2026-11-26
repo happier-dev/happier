@@ -13,11 +13,10 @@ import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, projectAutomationActionTriggerStr
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, projectExternalActionRequesterInvocationContextV1, sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
@@ -35,7 +34,7 @@ import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { reloadConfiguration } from '@/configuration';
 import { createInstalledMachineRpcDatabaseBoundary } from '@/daemon/testkit/installedMachineRpcRelay.testkit';
-import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { admitRequesterAccountActionContext, prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
 import { createExecutionRunRpcActionDeps, createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { registerExecutionRunActionRpcHandlers } from '@/rpc/handlers/executionRuns/actionRpcRegistration';
@@ -210,6 +209,22 @@ describe('attached Voice Run signed Session transport', () => {
   });
 });
 
+// Load the genuine Home verifier with the composed harness. Its cold module
+// graph is setup; each case still initializes authentication with its own DB.
+const authPath = '../../../../server/sources/app/auth/auth';
+const verifierPath = '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
+const { auth }: { auth: {
+  init(): Promise<void>;
+  mintExternalActionExecutionAuthorization(binding: ExternalActionExecutionAuthorizationBindingV1,
+    context: { input: unknown }): Promise<ExternalActionExecutionAuthorizationV1>;
+} } = await import(authPath);
+const { verifyExternalActionMachineRpcExecution }: {
+  verifyExternalActionMachineRpcExecution(execution: NonNullable<SocketRpcRequestPayload['externalActionExecution']>,
+    request: Pick<SocketRpcRequestPayload, 'method' | 'params' | 'requestId'>): Promise<{
+      effectiveAuthority: 'present_user'; sessionRpcTarget?: { sessionId: string; machineId: string };
+    } | null>;
+} = await import(verifierPath);
+
 describe('Account Run Start Automation admission', () => {
   it.each([
     { transport: 'signed', refuse: false },
@@ -254,19 +269,6 @@ describe('Account Run Start Automation admission', () => {
     homeDb.current = createInstalledMachineRpcDatabaseBoundary({ machineId: target.machineId, ownerAccountId: 'owner',
       installation: { installationId, createdAt: 1, publicKey: encodeBase64(keys.publicKey, 'base64url'),
         privateKey: encodeBase64(keys.secretKey, 'base64url'), version: 1 } });
-    const authPath = '../../../../server/sources/app/auth/auth';
-    const verifierPath = '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
-    const { auth }: { auth: {
-      init(): Promise<void>;
-      mintExternalActionExecutionAuthorization(binding: ExternalActionExecutionAuthorizationBindingV1,
-        context: { input: unknown }): Promise<ExternalActionExecutionAuthorizationV1>;
-    } } = await import(authPath);
-    const { verifyExternalActionMachineRpcExecution }: {
-      verifyExternalActionMachineRpcExecution(execution: NonNullable<SocketRpcRequestPayload['externalActionExecution']>,
-        request: Pick<SocketRpcRequestPayload, 'method' | 'params' | 'requestId'>): Promise<{
-          effectiveAuthority: 'present_user'; sessionRpcTarget?: { sessionId: string; machineId: string };
-        } | null>;
-    } = await import(verifierPath);
     await auth.init();
     const authorization = await auth.mintExternalActionExecutionAuthorization({
       accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
@@ -397,26 +399,22 @@ describe('Account Run Start Automation admission', () => {
         return rpc.invokeLocal(rpcMethod, params, options);
       } } } : {}),
     }));
-    const invocation = { surface: 'voice', authority: 'present_user', caller: { kind: 'host' } } as const;
-    const requesterAccountProjection: NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']> = {
-      accountId: 'owner', serverId, accountEncryptionMode: 'plain',
-      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes }),
-      isCurrent: async () => true,
-      readArtifact: async () => null,
-      sealRequesterAccountContext: async ({ authorization, purpose, installationPublicKey }) =>
-        sealExternalActionRequesterAccountContextV1({ authorization, credentials: { token, encryption: null }, invocation,
-          purpose, installationPublicKey, randomBytes }),
-    };
-    // Root ingress attaches the private projection non-enumerably, outside the strict wire schema.
-    const rootRequesterAuthorization: ExternalActionExecutionAuthorizationV1 = direct ? authorization
-      : Object.defineProperty({ ...authorization }, 'requesterAccountProjection', { value: requesterAccountProjection, enumerable: false });
+    const invocation = projectExternalActionRequesterInvocationContextV1({
+      surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' }, callerPermissionMode: 'yolo',
+    });
+    if (!invocation) throw new Error('Expected the host requester invocation');
+    const requester = await admitRequesterAccountActionContext({ authorization, credentials, invocation,
+      serverId, serverIdentityId: serverId, serverHttpBaseUrl, isCurrent: async () => true });
+    if (!requester) throw new Error('Expected real requester Account admission');
+    onTestFinished(() => requester.dispose());
+    const rootRequesterAuthorization = requester.authorization;
     const rootAuthorization = await projectExternalActionRequesterHttpAuthorization({
       authorization: rootRequesterAuthorization, serverId, serverIdentityId: serverId, serverHttpBaseUrl,
       target, installationId, privateKey: keys.secretKey, rootAdmitted: true,
     });
     if (!rootAuthorization) throw new Error('Expected the admitted requester HTTP projection');
     const rootContext = { surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: requestId,
-      bypassApprovals: true, runtimeAccountId: 'owner', serverId, serverIdentityId: serverId, externalActionTarget: target,
+      bypassApprovals: true, ...(direct ? { callerPermissionMode: 'yolo' } : {}), runtimeAccountId: 'owner', serverId, serverIdentityId: serverId, externalActionTarget: target,
       executionRunTargetMachineId: target.machineId, externalActionExecutionAuthorization: rootAuthorization,
       signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ ...args,
         authorizationToken: authorization.token, privateKey: keys.secretKey }),
