@@ -393,7 +393,9 @@ const CheckRowBars = React.memo(function CheckRowBars(
 function useCheckResult(facts: ServiceCheckListFacts) {
   const { theme } = useUnistyles();
   const value = facts.valueText ?? (facts.latencyMs === null ? null : formatServiceCheckLatency(facts.latencyMs));
-  const tone = facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
+  // Only a failing rule that measures the response tones it; a status failure (a 502) leaves a normal latency ink (D8).
+  const measured = facts.collectorTrend !== null && facts.valueText !== null;
+  const tone = !measured ? null : facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
     : facts.lastTone === 'warning' ? theme.colors.state.warning.textForeground : null;
   const history = facts.collectorTrend ? t(`${m}.collectorHistory24h`) : t(`${m}.columnResponse24h`);
   return { value, tone, history, readout: [value, facts.ruleText, history].filter(Boolean).join(' · ') };
@@ -580,7 +582,9 @@ const CheckByline = React.memo(function CheckByline(
       ? t(`${m}.staleByline`, { machine: observer })
       : failing
         ? [
-            props.resultInColumn && facts.valueText !== null ? facts.ruleText ?? facts.causeText : facts.causeText,
+            // With the value in its column, line 2 names the rule the way a healthy Key flow names itself (D9).
+            props.resultInColumn && facts.valueText !== null
+              ? [facts.kind, facts.ruleText ?? facts.causeText].filter(Boolean).join(' · ') : facts.causeText,
             facts.failingSince === null
               ? null
               : t(`${m}.failingSince`, {
@@ -640,8 +644,13 @@ const CheckByline = React.memo(function CheckByline(
   // Why a check fails is the row's message: in the table it takes a second line rather than ending mid-cause
   // ("checked fr…", PAGE-ACCEPT-176 R2-D13); what a healthy check is stays one line. A narrow list's line follows its
   // state word on the same line, so it stays one line there.
+  // A failure the Response column does not state (a 502, a timeout) speaks here, in its tone; a Key flow's measured
+  // value carries the tone in its column instead (D8).
+  const causeTone = failing && !(props.resultInColumn && facts.valueText !== null)
+    ? facts.lastTone === 'danger' ? theme.colors.state.danger.textForeground
+      : facts.lastTone === 'warning' ? theme.colors.state.warning.textForeground : null : null;
   return line ? (
-    <Text style={meta} numberOfLines={props.columns && (failing || (stale && observer)) ? 2 : 1}>
+    <Text style={causeTone ? { ...meta, color: causeTone } : meta} numberOfLines={props.columns && (failing || (stale && observer)) ? 2 : 1}>
       {line}
     </Text>
   ) : null;

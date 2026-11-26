@@ -288,6 +288,12 @@ export const TELEMETRY_FIXTURE_PRICE_CATALOG = {
   provenance: { source: 'litellm', origin: 'fetched', asOfMs: NOW - 12 * 24 * HOUR, revision: 'catalog-fixture', fetchStatus: 'ready' },
 } as const;
 
+/** Deterministic jitter in [-1, 1) per hour and seed: uneven noise, not a periodic wave. */
+function metricJitter(hour: number, seed: number) {
+  const x = Math.sin(hour * 12.9898 + seed * 78.233) * 43758.5453;
+  return (x - Math.floor(x)) * 2 - 1;
+}
+
 /** A day of the service's hourly intervals (lab p7Flows-metrics): request time stepping up after the 18:40 deploy. */
 function metricTrend(pick: (hour: number) => Readonly<Record<string, number>>) {
   return Array.from({ length: 24 }, (_, index) => {
@@ -298,14 +304,20 @@ function metricTrend(pick: (hour: number) => Readonly<Record<string, number>>) {
 const metricsEvidence = { v: 1, items: [{ source: { kind: 'alert', label: 'Collector' }, author: { kind: 'process' }, text: 'Retained metrics' }] };
 function metricsRead(measure: Readonly<{ kind: string }>) {
   if (measure.kind === 'runtime') {
-    const trend = metricTrend(hour => ({ value: 380_000_000 + ((hour * 7919) % 11) * 6_000_000 }));
+    // Heap climbs with the day's load and drops back after each collection.
+    const trend = metricTrend(hour => ({ value: Math.round(360_000_000 + 40_000_000 * ((hour % 4) / 3) + 8_000_000 * metricJitter(hour, 13)) }));
     return { result: { status: 'up', observedAt: NOW, evidence: metricsEvidence, measurements: { measure: 'v8js.memory.heap.used',
       value: 412_000_000, unit: 'By', basis: 'metric_points', producers: [{ serviceName: 'billing-api', serviceVersion: 'v1.43' }],
       window: { since: NOW - 24 * HOUR, until: NOW }, completeness: 'complete', reasons: [] } }, routes: [], trend };
   }
+  // A working day's traffic (quiet overnight, busiest mid-afternoon) with uneven hour-to-hour noise; request time steps
+  // up after the 18:40 deploy and errors follow it.
   const trend = metricTrend(hour => {
-    const p95 = hour >= 18 ? 400 + (hour % 3) * 9 : 190 + ((hour * 31) % 5) * 8;
-    return { value: p95, p95, p50: Math.round(p95 / 4.6), count: 9000 + ((hour * 977) % 7) * 900, errorRate: hour >= 18 ? 0.024 : 0.004 };
+    const daytime = Math.max(0, Math.sin((Math.PI * (hour - 6)) / 16));
+    const p95 = Math.round((hour >= 18 ? 400 : 180 + 40 * daytime) * (1 + 0.08 * metricJitter(hour, 3)));
+    const count = Math.round((2_400 + 11_000 * daytime) * (1 + 0.12 * metricJitter(hour, 5)));
+    return { value: p95, p95, p50: Math.round(p95 / 4.6), count,
+      errorRate: hour >= 18 ? 0.022 + 0.004 * metricJitter(hour, 7) : 0.004 + 0.0015 * metricJitter(hour, 11) };
   });
   return { result: { status: 'up', observedAt: NOW, evidence: metricsEvidence, measurements: { measure: 'p95', value: 412, unit: 'ms',
     basis: 'metric_points', p95Ms: 412, p50Ms: 88, requestCount: 236_400, errorRate: 0.011,

@@ -35,7 +35,7 @@ import { t } from '@/text';
 const m = 'projects.deployments.monitoring' as const;
 const CHECK_KINDS = ['configuredCheck'] as const;
 const NO_OPEN = () => {};
-type MonitoringView = 'list' | 'grid';
+export type MonitoringView = 'list' | 'grid';
 
 /**
  * Monitoring (MONITOR-LAB-1115 B): whether everything the person runs is up. The glance line says what is down,
@@ -119,7 +119,8 @@ export function MonitoringScreen() {
   );
 }
 
-const MonitoringBody = React.memo(function MonitoringBody(
+/** The page under its shell: exported so the dev specimen draws the real page over fixture rows. */
+export const MonitoringBody = React.memo(function MonitoringBody(
   props: Readonly<{
     rows: readonly ManagedConfiguredCheckRow[];
     scope: ServerAccountScope | null;

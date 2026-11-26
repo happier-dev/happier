@@ -14,27 +14,27 @@ import {
   readAppCallsPricingV1,
 } from '@happier-dev/plugin-sdk/usage';
 import { normalizeUsageQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
-import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
+import { resolveUsagePageCostSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useMachineServiceResource } from '@/components/machines/resources/useMachineServiceResource';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { usageMeterFill } from '@/components/settings/usage/usageAccent';
+import { rankUsageBreakdownEntries } from '@/components/settings/usage/widgets/UsageBreakdownsWidget';
 import { UsageWidgetBody, type UsageWidgetSuppliedFacts } from '@/components/settings/usage/widgets/UsageWidgetBody';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
-import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
-import { WidgetFrameBodyCaptionContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { readUsageAppCallsPriceOverrides } from '@/sync/api/account/usageAppCallsAccounting';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { appCallsUsageSlice, usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
 import { t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 
+import { TelemetryCard } from './TelemetryCard';
 import {
   readTelemetryCaptureCostsSnapshot,
   readTelemetryCaptureListSnapshot,
@@ -189,27 +189,29 @@ export function TelemetryAppLlmCalls(
   const reading = !facts || !calls?.value;
   const coverage = totals?.coverage ?? null;
   const routes = priced?.usage.routeBreakdown ?? [];
-  const routeRows = routes.map((entry, index) => ({
+  // Ranked by the cost they draw, as every Usage breakdown body ranks its rows.
+  const routeSelection = resolveUsagePageCostSelection(routes.map(entry => entry.cost), 'api_equivalent');
+  const routeRows = rankUsageBreakdownEntries(routes, 'cost', routeSelection).map(({ entry, tokens, value }, index) => ({
     id: entry.key,
     label: entry.label ?? entry.key,
-    value: resolveUsageCostBasis(entry.cost, 'api_equivalent')?.amountUsd ?? null,
-    annotation: t('deploymentTelemetry.llm.tokens', { count: formatTokenCount(entry.tokens.total ?? null, locale) }),
+    value,
+    annotation: t('deploymentTelemetry.llm.tokens', { count: formatTokenCount(tokens.total, locale) }),
     color: usageMeterFill(theme, index === 0),
   }));
   const usageCard = (id: 'usage_cost_facts' | 'usage_daily', testID: string, title: string | null) => (
-    <LlmCard testID={`${testID}.frame`} title={title}>
+    <TelemetryCard testID={`${testID}.frame`} title={title}>
       {facts ? <UsageWidgetBody id={id} input={NO_INPUT} serverId={facts.authority.serverId} testID={testID} facts={facts} /> : (
         <SurfaceStateCard testID={`${testID}.reading`} kind="loading" size="line" title={t('deploymentTelemetry.llm.reading')} />
       )}
-    </LlmCard>
+    </TelemetryCard>
   );
   return (
     <View style={styles.body} testID="project-deployments.telemetry.llm">
       {filters}
       {usageCard('usage_cost_facts', 'project-deployments.telemetry.llm.costFacts', t('usage.cost'))}
-      {usageCard('usage_daily', 'project-deployments.telemetry.llm.daily',
-        granularity === 'hour' ? t('deploymentTelemetry.llm.hourlyCost') : t('deploymentTelemetry.llm.dailyCost'))}
-      {routeRows.length > 0 ? <LlmCard testID="project-deployments.telemetry.llm.routes.frame" title={t('deploymentTelemetry.llm.byRoute')}>
+      {/* Titled as Usage and Home title this widget; its caption says the measure and period once. */}
+      {usageCard('usage_daily', 'project-deployments.telemetry.llm.daily', t('usage.widgets.usage_daily'))}
+      {routeRows.length > 0 ? <TelemetryCard testID="project-deployments.telemetry.llm.routes.frame" title={t('deploymentTelemetry.llm.byRoute')}>
         <UsageBreakdownsBody theme={chartTheme} spacing={theme.space} testID="project-deployments.telemetry.llm.routes" model={{
           namedByCard: true,
           blocks: [{
@@ -217,7 +219,7 @@ export function TelemetryAppLlmCalls(
             testID: 'project-deployments.telemetry.llm.routes.rows',
             valueFormatter: value => formatUsageCost(value, 'USD', locale),
           }],
-        }} /></LlmCard> : null}
+        }} /></TelemetryCard> : null}
       {coverage && (coverage.lostObservations > 0 || coverage.reason !== null) ? (
         <Text variant="meta" style={[styles.quiet, styles.partial]} testID="project-deployments.telemetry.llm.partial">
           {t('deploymentTelemetry.measurement.partial')}
@@ -244,27 +246,10 @@ export function TelemetryAppLlmCalls(
   );
 }
 
-/**
- * One card of the tab, in the shared widget frame on the page's sheet edge. The Usage body names its period and price
- * basis beneath the title, as it does on Usage and Home.
- */
-function LlmCard(props: Readonly<{ testID: string; title: string | null; children: React.ReactNode }>) {
-  const [caption, setCaption] = React.useState<string | null>(null);
-  const body = React.useMemo(() => ({ kind: 'content' as const, children: (
-    <WidgetFrameBodyCaptionContext.Provider value={setCaption}>{props.children}</WidgetFrameBodyCaptionContext.Provider>
-  ) }), [props.children]);
-  return <View style={styles.card}>
-    <WidgetFrame testID={props.testID} frameStyle="card" placement="home" rows={0} title={props.title}
-      {...(caption ? { source: caption } : {})} body={body} />
-  </View>;
-}
-
 const ALL = '';
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16 },
-  // Cards stand on the sheets' edge, like the groups and lists around them.
-  card: { marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8,
     paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx },
   quiet: { color: theme.colors.text.secondary },

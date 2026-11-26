@@ -33,6 +33,7 @@ import {
   type TelemetryCaptureReads,
 } from './telemetryCaptureReads';
 import { serviceCheckWindowEnds } from './serviceCheckPresentation';
+import { TelemetryCard } from './TelemetryCard';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 const METRICS_PROJECTION: PluginUiResourceProjection<ReturnType<typeof readTelemetryCaptureMetricsSnapshot>> = {
@@ -136,12 +137,16 @@ export function TelemetryMetrics(props: Readonly<{
     }} />
   ) : null;
   return (
-    <ItemGroup surface="none" testID="project-deployments.telemetry.metrics">
+    <View style={styles.body} testID="project-deployments.telemetry.metrics">
+    <ItemGroup surface="none">
       <View style={styles.selection}>{serviceChoice}{versionChoice}</View>
       {failure || snapshot?.freshness === 'stale' ? (
         <SurfaceFreshnessLine reason={failure?.message ?? t('common.unavailable')}
           action={{ label: t('common.retry'), onPress: retry }} />
       ) : null}
+    </ItemGroup>
+    {/* The charts stand on one card, as the LLM calls tab's do (lab p7Flows-metrics). */}
+    <TelemetryCard testID="project-deployments.telemetry.metrics.card" title={null}>
       <View
         style={[styles.charts, twoUp ? styles.chartsRow : null]}
         onLayout={(event) =>
@@ -218,13 +223,14 @@ export function TelemetryMetrics(props: Readonly<{
           </View>;
         })}
       </View>
-    </ItemGroup>
+    </TelemetryCard>
+    </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // The chips choose what the charts below show; the charts start a step below them.
-  selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8, marginBottom: theme.space.s16 },
+    body: { gap: theme.space.s16 },
+  selection: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
   charts: { gap: theme.space.s16 },
   chartsRow: { flexDirection: 'row', flexWrap: 'wrap' },
   chart: { minWidth: 0, gap: theme.space.s8 },

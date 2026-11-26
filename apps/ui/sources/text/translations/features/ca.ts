@@ -294,8 +294,6 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
     reportedNone: 'El teu SDK no informa del cost',
     note: 'Les crides a models de la teva app, amb els teus preus d’Ús. El que fan servir els teus agents és a Ús, i mai no se sumen.',
     openUsage: 'Obre Ús',
-    dailyCost: 'Cost diari',
-    hourlyCost: 'Cost per hora',
     allServices: 'Tots els serveis',
     byRoute: 'Per ruta',
     reading: 'Llegint les crides a models',

@@ -294,8 +294,6 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
     reportedNone: '你的 SDK 未回報費用',
     note: '你的應用程式自身的模型呼叫，依你的用量價格計價。代理的用量在「用量」中，兩者從不相加。',
     openUsage: '開啟用量',
-    dailyCost: '每日費用',
-    hourlyCost: '每小時費用',
     allServices: '所有服務',
     byRoute: '依路由',
     reading: '正在讀取模型呼叫',

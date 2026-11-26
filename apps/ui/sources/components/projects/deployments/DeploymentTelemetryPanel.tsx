@@ -452,7 +452,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
   return (
     <PageContentColumn testID="project-deployments.telemetry.recording">
     <View style={styles.panel}>
-      {capabilities.exceptions ? <TelemetryExceptionSummary active={active} environmentId={environment.id} lifetime={lifetime}
+      {/* Until exceptions arrive, Getting ready says so; the summary stands once there is one to summarize. */}
+      {capabilities.exceptions && status?.capabilityLastSampleAt?.exceptions != null ? <TelemetryExceptionSummary active={active} environmentId={environment.id} lifetime={lifetime}
         retainedLastSeen={status?.capabilityLastSampleAt?.exceptions} /> : null}
       {status?.capabilityLastSampleAt && status.lastReceivedAt !== undefined ? (
         <TelemetryCapabilityReadiness lastReceivedAt={status.lastReceivedAt} samples={status.capabilityLastSampleAt}
@@ -498,6 +499,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
           <Text variant="meta" style={styles.facts} numberOfLines={1} testID="project-deployments.telemetry.collector">
             {collectorLabelText}
           </Text>
+          <View style={styles.barControls}>
           <SegmentedTabBar<WindowId>
             role="radiogroup"
             accessibilityLabel={t('deploymentTelemetry.window.label')}
@@ -513,6 +515,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
             ? <TelemetryMenu onOpenSettings={props.onOpenSettings ? () => props.onOpenSettings?.(reads?.status) : null}
                 onAddTelemetry={addTelemetry}
                 openingSetup={openingSetup} onClear={clear} /> : null}
+          </View>
         </View>
       </View>
       </View>
@@ -752,8 +755,11 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
   },
   tabs: { flexShrink: 1, minWidth: 0 },
-  // The bar's end wraps on a phone, so a long delivery line never pushes the window or "…" off the page.
-  barEnd: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8, flexShrink: 1, minWidth: 0 },
+  // The bar's end keeps the trailing edge: the window and "…" stay one group there, and when the line is short the
+  // delivery line moves beneath them (DESIGN "Phones recompose"), never the controls.
+  barEnd: { flexDirection: 'row', flexWrap: 'wrap-reverse', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s8,
+    flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  barControls: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   detail: { gap: theme.space.s16 },
   // The detail's header stands on the same edge as the tab bar and its sections.
   detailHeader: { gap: theme.space.s4 },

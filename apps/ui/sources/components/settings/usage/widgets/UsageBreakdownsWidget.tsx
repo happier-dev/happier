@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
+import { resolveUsageCostForSelection, type UsagePageCostSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
-import { type UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { type UsageAnalyticsBreakdownDimension, type UsageAnalyticsBreakdownEntry } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import {
   HappierPressable,
   UsageBreakdownsBody,
@@ -51,6 +52,20 @@ const DRILL_FIELD: Readonly<
   machine: 'machines',
   source: 'sources',
 };
+
+/**
+ * A breakdown's rows in the measure the card draws, largest first: the one order every ranking of Usage facts shows, so
+ * a row's bar, figure and place agree. Leaders arrive ordered by tokens (their frontier); this orders what is drawn.
+ */
+export function rankUsageBreakdownEntries(entries: readonly UsageAnalyticsBreakdownEntry[], metric: UsageQuery['metric'],
+  selection: UsagePageCostSelection | null, dropUnmeasured = false) {
+  return entries.map(entry => {
+    const tokens = resolveUsageMeasuredTokens(entry.tokens);
+    return { entry, tokens, value: metric === 'cost' ? resolveUsageCostForSelection(entry.cost, selection) : tokens.total };
+  })
+    .filter(({ value }) => !dropUnmeasured || value !== null)
+    .sort((left, right) => compareUsageMeasurementsDescending(left.value, right.value));
+}
 
 /** One body per widget: its Style own-input picks the encoding of the same question. */
 export function UsageBreakdownsWidget(props: UsageBodyProps) {
@@ -114,12 +129,7 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
-    const rows = entries.map(entry => {
-        const tokens = resolveUsageMeasuredTokens(entry.tokens);
-        return { entry, tokens, value: metric === 'cost' ? resolveUsageCostForSelection(entry.cost, selection) : tokens.total };
-      })
-      .filter(({ value }) => dimension !== 'model' || value !== null)
-      .sort((left, right) => compareUsageMeasurementsDescending(left.value, right.value))
+    const rows = rankUsageBreakdownEntries(entries, metric, selection, dimension === 'model')
       .map(({ entry, tokens, value }) => {
         return {
           id: entry.key,

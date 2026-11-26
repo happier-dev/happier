@@ -1006,8 +1006,14 @@ describe('Environment Telemetry capability views', () => {
           modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat', callCount: 2,
           tokens: { input: 1800, output: 680, total: 2480, reasoning: null, cacheRead: null, cacheWrite: null },
           tokenCategories: { input: 1800, output: 680, total: 2480, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
-          reportedCost: { amount: 0.0042, currency: 'USD' }, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
-          coverage: { lostObservations: 0, reason: null, callCount: 2, tokenCategoryCallCount: 2, reportedCostCallCount: 2 } };
+          reportedCost: { amount: 0.0042, currency: 'USD' }, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 },
+          // More tokens, less money: embeddings at a fraction of a cent.
+          { bucketStartMs: now - 3_600_000, route: { method: 'POST', path: '/search' }, provider: 'openai',
+            modelId: 'text-embedding-3-small', requestedModel: 'text-embedding-3-small', operation: 'embeddings', callCount: 1,
+            tokens: { input: 50_000, output: 0, total: 50_000, reasoning: null, cacheRead: null, cacheWrite: null },
+            tokenCategories: { input: 50_000, output: 0, total: 50_000, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+            reportedCost: null, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
+          coverage: { lostObservations: 0, reason: null, callCount: 3, tokenCategoryCallCount: 3, reportedCostCallCount: 2 } };
       if (call_.actionId.endsWith('/capture/traces/list') && (call_.input as { appLlmCalls?: unknown }).appLlmCalls)
         return { ok: true, source, items: [call] };
       if (call_.actionId.endsWith('/capture/metrics/read')) {
@@ -1129,6 +1135,8 @@ describe('Environment Telemetry capability views', () => {
       // Getting ready: each recorded choice says its own delivery; Exceptions offers the browser addition.
       expect(textIn('project-deployments.telemetry.readiness.exceptions')).toContain('Not receiving yet');
       expect(screen.findByTestId('project-deployments.telemetry.readiness.llm')).toBeNull();
+      // Exceptions are said once: Getting ready speaks until one arrives, then the summary does.
+      expect(screen.findByTestId('project-deployments.telemetry.exceptions.summary')).toBeNull();
       expect(screen.findByTestId('project-deployments.telemetry.exceptions.add-telemetry')).not.toBeNull();
 
       await screen.pressByTestIdAsync('project-deployments.telemetry.tab:llmCalls');
@@ -1141,12 +1149,15 @@ describe('Environment Telemetry capability views', () => {
       ]);
       // Priced with the viewer's Usage prices and drawn by Usage's own bodies: the provider's figure stays its own fact.
       expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0042');
-      // Worth at API prices: 1,800 input and 680 output tokens at the catalog's $0.25 and $2 per million.
-      expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0018');
+      // Worth at API prices: $0.0018 of gpt-5-mini and $0.001 of embeddings.
+      expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('$0.0028');
       // An app's calls have no agents: the provider reported that cost.
       expect(textIn('project-deployments.telemetry.llm.costFacts')).toContain('Provider-reported cost');
       expect(screen.findByTestId('project-deployments.telemetry.llm.daily.drawn')).not.toBeNull();
-      expect(textIn('project-deployments.telemetry.llm.routes')).toContain('POST /checkout');
+      // Routes rank by the cost they draw, not by tokens.
+      const routes = textIn('project-deployments.telemetry.llm.routes');
+      expect(routes.indexOf('POST /checkout')).toBeGreaterThanOrEqual(0);
+      expect(routes.indexOf('POST /checkout')).toBeLessThan(routes.indexOf('POST /search'));
       // Service and version are the window's own facts, chosen from chips; a choice applies at once.
       await screen.pressByTestIdAsync('project-deployments.telemetry.llm.service');
       await waitForHomeGovernance(() => {
@@ -1167,6 +1178,8 @@ describe('Environment Telemetry capability views', () => {
         expect.objectContaining({ input: expect.objectContaining({ source, appLlmCalls: { serviceName: 'billing-api', serviceVersion: 'v1.43' } }) }),
       ]);
       await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
+      // The retained calls are a titled list of their own.
+      expect(textIn('telemetry.capture.llmCalls')).toContain('Calls');
       await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
       await settle();
       expect(calls.at(-1)).toEqual(expect.objectContaining({ input: expect.objectContaining({ source, traceId: 'trace-1' }) }));

@@ -294,8 +294,6 @@ const it: Shared_deploymentTelemetryTranslations.Copy = {
     reportedNone: 'Il tuo SDK non comunica i costi',
     note: 'Le chiamate ai modelli della tua app, con i tuoi prezzi di Utilizzo. Quello che usano i tuoi agenti è in Utilizzo, e le due cose non vengono mai sommate.',
     openUsage: 'Apri Utilizzo',
-    dailyCost: 'Costo giornaliero',
-    hourlyCost: 'Costo orario',
     allServices: 'Tutti i servizi',
     byRoute: 'Per route',
     reading: 'Lettura delle chiamate ai modelli',

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { TelemetryKeyFlowConfigV1, TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
 
-import { ServiceCheckList } from '@/components/projects/deployments/ServiceCheckList';
+import { MonitoringBody } from '@/components/monitoring/MonitoringScreen';
 import { ServiceCheckPageBody } from '@/components/projects/deployments/ServiceCheckPage';
 import {
   ServiceCheckCollectorTrendReaderContext,
@@ -35,9 +35,17 @@ function flow(name: 'Checkout' | 'Assist'): TelemetryKeyFlowConfigV1 {
     threshold: { operator: 'above', value: name === 'Checkout' ? 800 : 4000 } };
 }
 
-/** A smooth, plausible series: a daily swell plus a little noise, deterministic per index. */
-function wave(index: number, base: number, spread: number) {
-  return base + spread * Math.sin(index / 7) + (spread / 3) * Math.sin(index * 1.7);
+/** Deterministic jitter in [-1, 1) per index and seed: request-to-request noise, not a periodic wave. */
+function jitter(index: number, seed: number) {
+  const x = Math.sin(index * 12.9898 + seed * 78.233) * 43758.5453;
+  return (x - Math.floor(x)) * 2 - 1;
+}
+
+/** A plausible series: the working day's swell (busier from 09:00, quiet overnight) plus uneven noise. */
+function wave(index: number, base: number, spread: number, seed = 1) {
+  const hour = ((index * 15) / 60) % 24;
+  const daytime = Math.max(0, Math.sin((Math.PI * (hour - 7)) / 15));
+  return base + spread * 0.7 * daytime + spread * 0.35 * jitter(index, seed);
 }
 
 function results(state: State, latency: (index: number) => number) {
@@ -72,7 +80,7 @@ function history(state: State) {
 }
 
 function checkRow(input: Readonly<{ key: string; name: 'Checkout' | 'Assist'; state: State }>): ManagedConfiguredCheckRow {
-  const recent = results(input.state, (index) => Math.round(wave(index, 240, 40)));
+  const recent = results(input.state, (index) => Math.round(wave(index, input.name === 'Checkout' ? 240 : 1900, input.name === 'Checkout' ? 90 : 700, input.name === 'Checkout' ? 3 : 7)));
   return {
     kind: 'configuredCheck', key: input.key, scope: SCOPE, automationId: `automation-${input.key}`, triggerId: 'trigger-1',
     native: { name: input.name, templateVersion: 1, enabled: true, triggers: [] } as never,
@@ -88,7 +96,7 @@ function checkRow(input: Readonly<{ key: string; name: 'Checkout' | 'Assist'; st
 function httpRow(target: 'billing.acme.dev/health' | 'n8n.acme.dev'): ManagedConfiguredCheckRow {
   // n8n answers 502 from outside: an unreachable target, the one case that reads Down (rose).
   const down = target === 'n8n.acme.dev';
-  const recent = results('passing', (index) => Math.round(wave(index, 140, 20))).map((result, index) => down && index >= 54
+  const recent = results('passing', (index) => Math.round(wave(index, down ? 180 : 140, 40, down ? 11 : 5))).map((result, index) => down && index >= 54
     ? { ...result, status: 'down', measurements: undefined, cause: { kind: 'http', vantage: 'outside', httpStatus: 502, expectStatus: 200 } }
     : { ...result, measurements: undefined, cause: undefined });
   const key = down ? 'n8n' : 'billing-health';
@@ -96,7 +104,7 @@ function httpRow(target: 'billing.acme.dev/health' | 'n8n.acme.dev'): ManagedCon
     kind: 'configuredCheck', key, scope: SCOPE, automationId: `automation-${key}`, triggerId: 'trigger-1',
     native: { name: target, templateVersion: 1, enabled: true, triggers: [] } as never,
     definitionFacts: { kind: 'available', observerMachineId: COLLECTOR, checks: [{ checkId: 'http', name: 'HTTP',
-      targetLabel: target, periodMs: MINUTE, domainId: null, keyFlow: null }] },
+      targetLabel: target, titleTarget: { kind: 'host', label: target }, periodMs: MINUTE, domainId: null, keyFlow: null }] },
     lastResults: { kind: 'available', checks: [{ checkId: 'http', result: recent.at(-1)!, recentResults: recent,
       recentResultsCoverage: 'complete', history: { ...history('passing'), uptimePercent: down ? 93.1 : 99.98 },
       ...(down ? { failingSince: NOW - 6 * MINUTE, failureStreak: 6 } : {}) }] },
@@ -115,8 +123,8 @@ function collectorRead(config: TelemetryKeyFlowConfigV1, state: State, until: nu
     // The newest interval is the window the newest check result measured, so the trend heads and the facts agree.
     const newest = regressed && index === count - 1;
     const p95 = newest ? FAILING_P95 : regressed ? wave(index, 1380, 60) : wave(index, config.threshold.value * 0.4, config.threshold.value * 0.06);
-    const errorRate = newest ? FAILING_ERROR_RATE : regressed ? 0.023 + 0.002 * Math.sin(index)
-      : 0.002 + 0.0006 * Math.sin(index / 5) + 0.0003 * Math.sin(index * 1.3);
+    const errorRate = newest ? FAILING_ERROR_RATE : regressed ? 0.023 + 0.002 * jitter(index, 13)
+      : Math.max(0, 0.002 + 0.0008 * jitter(index, 17));
     return quiet ? { since, until: since + step, unit: 'ms', count: 0 }
       : { since, until: since + step, unit: 'ms', value: p95, p95, errorRate, count: 120 };
   });
@@ -149,10 +157,10 @@ export function ServiceCheckKeyFlowSpecimen(props: Readonly<{ state: State; view
       {props.view === 'page' ? (
         <ItemList testID="services.check.page"><ServiceCheckPageBody row={shown} /></ItemList>
       ) : (
-        // Monitoring's own wide column, so the list draws every column it has room for there.
+        // The Monitoring page itself (header, glance line, Needs you / Checks grouping) over these rows.
         <ItemList pageColumn="wide">
-          <ServiceCheckList rows={rows} scope={SCOPE} selection={selection} testID="specimen.checks"
-            accessibilityLabel="Checks" presentation={props.view === 'cards' ? 'grid' : 'list'} />
+          <MonitoringBody rows={rows} scope={SCOPE} view={props.view === 'cards' ? 'grid' : 'list'} onView={() => {}}
+            selection={selection} pending={null} reading={false} more={null} />
         </ItemList>
       )}
     </ServiceCheckCollectorTrendReaderContext.Provider>

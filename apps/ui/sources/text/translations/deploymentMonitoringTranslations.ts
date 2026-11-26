@@ -74,7 +74,7 @@ const en = {
   checkDownTitle: 'This check is down',
   keyFlowChecksService: ({ service }: { service: string }) => `checks ${service}`,
   keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-    `${measure} · last ${window} · limit ${limit}`,
+    `${measure} over ${window}, limit ${limit}`,
   widgetTitle: 'Check',
   widgetDescription: 'One saved check: its state, latest result and history',
   widgetChooseCheck: 'Choose a check to show here',
@@ -157,7 +157,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Aquesta comprovació està caiguda',
     keyFlowChecksService: ({ service }: { service: string }) => `comprova ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · últims ${window} · límit ${limit}`,
+      `${measure} en ${window}, límit ${limit}`,
     widgetTitle: 'Comprovació',
     widgetDescription: 'Una comprovació desada: el seu estat, l’últim resultat i l’historial',
     widgetChooseCheck: 'Tria una comprovació per mostrar-la aquí',
@@ -236,7 +236,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Dieser Check ist ausgefallen',
     keyFlowChecksService: ({ service }: { service: string }) => `prüft ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · letzte ${window} · Grenze ${limit}`,
+      `${measure} über ${window}, Grenze ${limit}`,
     widgetTitle: 'Prüfung',
     widgetDescription: 'Eine gespeicherte Prüfung: Zustand, letztes Ergebnis und Verlauf',
     widgetChooseCheck: 'Wähle eine Prüfung, die hier erscheinen soll',
@@ -315,7 +315,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Esta comprobación está caída',
     keyFlowChecksService: ({ service }: { service: string }) => `comprueba ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · últimos ${window} · límite ${limit}`,
+      `${measure} en ${window}, límite ${limit}`,
     widgetTitle: 'Comprobación',
     widgetDescription: 'Una comprobación guardada: su estado, último resultado e historial',
     widgetChooseCheck: 'Elige una comprobación para mostrarla aquí',
@@ -396,7 +396,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Cette vérification est hors service',
     keyFlowChecksService: ({ service }: { service: string }) => `vérifie ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · dernières ${window} · limite ${limit}`,
+      `${measure} sur ${window}, limite ${limit}`,
     widgetTitle: 'Vérification',
     widgetDescription: 'Une vérification enregistrée : son état, son dernier résultat et son historique',
     widgetChooseCheck: 'Choisissez une vérification à afficher ici',
@@ -475,7 +475,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Questo controllo è inattivo',
     keyFlowChecksService: ({ service }: { service: string }) => `controlla ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · ultimi ${window} · limite ${limit}`,
+      `${measure} in ${window}, limite ${limit}`,
     widgetTitle: 'Controllo',
     widgetDescription: 'Un controllo salvato: stato, ultimo risultato e cronologia',
     widgetChooseCheck: 'Scegli un controllo da mostrare qui',
@@ -552,7 +552,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'このチェックはダウンしています',
     keyFlowChecksService: ({ service }: { service: string }) => `${service} を確認`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · 直近 ${window} · 上限 ${limit}`,
+      `${window} の ${measure}、上限 ${limit}`,
     widgetTitle: 'チェック',
     widgetDescription: '保存したチェック 1 件の状態、最新の結果、履歴',
     widgetChooseCheck: 'ここに表示するチェックを選んでください',
@@ -629,7 +629,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'To sprawdzenie nie odpowiada',
     keyFlowChecksService: ({ service }: { service: string }) => `sprawdza ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · ostatnie ${window} · limit ${limit}`,
+      `${measure} w ciągu ${window}, limit ${limit}`,
     widgetTitle: 'Sprawdzenie',
     widgetDescription: 'Jedno zapisane sprawdzenie: stan, ostatni wynik i historia',
     widgetChooseCheck: 'Wybierz sprawdzenie, które ma się tu pojawić',
@@ -708,7 +708,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Esta verificação está fora do ar',
     keyFlowChecksService: ({ service }: { service: string }) => `verifica ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · últimos ${window} · limite ${limit}`,
+      `${measure} em ${window}, limite ${limit}`,
     widgetTitle: 'Verificação',
     widgetDescription: 'Uma verificação guardada: estado, último resultado e histórico',
     widgetChooseCheck: 'Escolha uma verificação para mostrar aqui',
@@ -786,7 +786,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: 'Эта проверка недоступна',
     keyFlowChecksService: ({ service }: { service: string }) => `проверяет ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · последние ${window} · лимит ${limit}`,
+      `${measure} за ${window}, предел ${limit}`,
     widgetTitle: 'Проверка',
     widgetDescription: 'Одна сохранённая проверка: состояние, последний результат и история',
     widgetChooseCheck: 'Выберите проверку, чтобы показать её здесь',
@@ -863,7 +863,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: '此检查已宕机',
     keyFlowChecksService: ({ service }: { service: string }) => `检查 ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · 最近 ${window} · 上限 ${limit}`,
+      `${window} 内 ${measure}，上限 ${limit}`,
     widgetTitle: '检查',
     widgetDescription: '一项已保存的检查：状态、最新结果和历史',
     widgetChooseCheck: '选择要在这里显示的检查',
@@ -940,7 +940,7 @@ export const deploymentMonitoringTranslations = {
     checkDownTitle: '此檢查已停機',
     keyFlowChecksService: ({ service }: { service: string }) => `檢查 ${service}`,
     keyFlowWindowLimit: ({ measure, window, limit }: { measure: string; window: string; limit: string }) =>
-      `${measure} · 最近 ${window} · 上限 ${limit}`,
+      `${window} 內 ${measure}，上限 ${limit}`,
     widgetTitle: '檢查',
     widgetDescription: '一項已儲存的檢查：狀態、最新結果和歷史',
     widgetChooseCheck: '選擇要在這裡顯示的檢查',
