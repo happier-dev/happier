@@ -139,13 +139,14 @@ describe('Use guest own work on an isolation-off Machine', () => {
 
   it('places a Keep-updated Replica on the daemon only when the owner turned isolation off', async () => {
     const content = { v: 1 as const, selection: 'git_worktree' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const create = (mode: 'keep_synced' | 'keep_both_in_sync') => WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse({
+    const create = (mode: 'keep_synced' | 'keep_both_in_sync', replaceRelationshipId?: string) => WorkspaceSyncRelationshipCreateRpcRequestV1Schema.parse({
       v: 1, operationId: 'replica', actionInput: { v: 1, sourceWorkspaceRefId: 'source-ref', targetMachineId: 'guest-machine',
         targetPath: '/home/guest/replica', mode, destinationIntent: 'use_existing',
+        ...(replaceRelationshipId ? { replaceRelationshipId } : {}),
         contentPolicy: { ...content, policyDigest: computeWorkspaceSyncPolicyDigest(content) } } });
-    const admit = (mode: 'keep_synced' | 'keep_both_in_sync', enabled: boolean, role: 'use' | 'manage' = 'use') =>
+    const admit = (mode: 'keep_synced' | 'keep_both_in_sync', enabled: boolean, role: 'use' | 'manage' = 'use', replaceRelationshipId?: string) =>
       authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE}`,
-        params: create(mode), machineAdmission: { ...guest, role }, callerAuthority: 'present_user' },
+        params: create(mode, replaceRelationshipId), machineAdmission: { ...guest, role }, callerAuthority: 'present_user' },
       boundary(() => ({ enabled })));
     expect(await admit('keep_synced', false)).toEqual({ ok: true, directWorkspaceRequester: expect.objectContaining({
       kind: 'isolated', requester: expect.objectContaining({ accountId: 'guest' }) }) });
@@ -153,6 +154,8 @@ describe('Use guest own work on an isolation-off Machine', () => {
     expect(await admit('keep_synced', true)).toEqual({ ok: true });
     // A two-way link writes back into the owner's checkout; it is not this Replica.
     expect(await admit('keep_both_in_sync', false)).toEqual({ ok: true });
+    // Replace stays off daemon placement for Use even on an isolation-off Machine (B21 N1).
+    expect(await admit('keep_synced', false, 'use', 'existing-link')).toEqual({ ok: true });
     // Manage keeps its existing native placement.
     expect(await admit('keep_synced', true, 'manage')).toMatchObject({ ok: true });
   });

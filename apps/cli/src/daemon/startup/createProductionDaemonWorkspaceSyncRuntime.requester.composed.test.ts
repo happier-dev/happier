@@ -383,7 +383,7 @@ it.skipIf(process.platform !== 'linux')('offers cold member Sync roots without p
 });
 
 it.skipIf(process.platform !== 'linux').each([
-  ['manage', 'existing'], ['use', 'existing'],
+  ['manage', 'existing'], ['manage', 'missing'], ['use', 'existing'], ['use', 'missing'],
 ] as const)('creates a Git Replica from an isolation-off %s source into an own %s folder', async (role, gitReplica) => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role, isolationOff: true, gitReplica,
@@ -420,6 +420,36 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
     relationshipId: result.relationshipId,
   });
   expect(setup.homeActionRequests.at(-1)?.placement.machineId).toBe(setup.installed.machineId);
+});
+
+it.skipIf(process.platform !== 'linux').each([
+  ['custodian', 'local'], ['custodian', 'shared'], ['manage', 'local'], ['manage', 'shared'],
+] as const)('keeps %s %s Git Replica admitted on an isolation-off Machine', async (caller, targetKind) => {
+  executionBoundary.member = false;
+  const remoteTarget = targetKind === 'shared';
+  const setup = await createRequesterWorkspaceSyncFixture({
+    role: 'manage', isolationOff: true, gitReplica: 'existing',
+    sourceCustodianAccountId: caller === 'custodian' ? 'member-a' : 'requester',
+    remoteTarget, remoteSeed: remoteTarget,
+    ...(remoteTarget ? { targetCustodianAccountId: 'other-owner' } : {}),
+    originalActionHomeHttp: true, socketIo, allowRelationshipAction: true,
+  });
+  runScmExecutable(setup.sourcePath, 'git', ['clone', '-q', '.', setup.targetPath]);
+  const asked = caller === 'custodian' ? await setup.askAsSessionAgent(setup.request)
+    : await setup.executeNativeRelationshipAction();
+  const settled = asked.ok && asked.result && typeof asked.result === 'object'
+    && 'kind' in asked.result && asked.result.kind === 'approval_request_created'
+    && 'artifactId' in asked.result && typeof asked.result.artifactId === 'string'
+    ? await (async () => {
+      const decision = await setup.executeApprovalDecision(asked.result.artifactId as string, {
+        request: setup.request, envelope: setup.envelope, authorization: setup.authorization });
+      return decision.ok && decision.result && typeof decision.result === 'object' && 'execution' in decision.result
+        ? decision.result.execution : decision;
+    })()
+    : asked;
+  expect(settled, JSON.stringify({ asked, settled, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics }))
+    .toMatchObject({ ok: true, result: { created: true } });
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
 });
 
 it.skipIf(process.platform !== 'linux').each(['foreign destination', 'foreign Project'] as const)(

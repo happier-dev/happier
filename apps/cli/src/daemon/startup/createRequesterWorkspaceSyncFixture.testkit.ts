@@ -320,8 +320,11 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       if (options.forwardHomeRpc) return options.forwardHomeRpc(payload, packet =>
         requesterWorkspaceSyncTargetInstallationFiles.run({ path: configuration.installationIdentityFile,
           identity: JSON.stringify(installed.installation) }, () => receiver.handleRequest(packet, undefined, 'authenticated_home_socket')));
+      // Match real Home (registerSocketRpcHandlers.ts): consume carrierPublicKey on
+      // the wire hop and forward only the receiver projection to SOURCE.
+      const forwardedSeedRouting = { v: routing.v, sourceWriterTarget: routing.sourceWriterTarget, target: routing.target };
       const received: RpcRequest = { ...payload, requestId: payload.requestId,
-        method: payload.method, params: payload.params, workspaceSyncSeedRouting: routing, externalActionExecution: signed,
+        method: payload.method, params: payload.params, workspaceSyncSeedRouting: forwardedSeedRouting, externalActionExecution: signed,
         callerInputAuthorization: signed.authorization, machineAdmission: sourceContext.machineAdmission,
         callerAuthority: sourceContext.callerAuthority, sessionActionOrigin: sourceContext.sessionActionOrigin,
         callerInputConstraints: sourceContext.callerInputConstraints };

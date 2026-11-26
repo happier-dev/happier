@@ -2923,10 +2923,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         if (!originalActionInput.success || !sameStrictJsonValue(originalActionInput.data, request.actionInput, { omitUndefinedObjectMembers: true })) {
           throw compositionError('project_requester_authority_unavailable', 'The original Sync input is unavailable');
         }
-        if (directRequester) {
-          const target = localTarget ? null : await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl,
-            () => readPublishedMachineRow(request.actionInput.targetMachineId, requester.credentials, { signal }));
-          if (target?.access?.custodian.accountId !== admission.actorAccountId) {
+        // A guest without Manage keeps a Replica only on their own Machine (owner ruling 2026-11-23 ~15:10Z).
+        // The custodian and Manage holders keep their existing destinations.
+        if (directRequester && requiresRequesterWorkspaceCapture(admission)) {
+          const targetCustodianAccountId = localTarget ? admission.custodianAccountId : (await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl,
+            () => readPublishedMachineRow(request.actionInput.targetMachineId, requester.credentials, { signal })))?.access?.custodian.accountId;
+          if (targetCustodianAccountId !== admission.actorAccountId) {
             throw compositionError('target_unavailable', 'Choose a Machine you own for this Replica');
           }
         }
