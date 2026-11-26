@@ -19955,7 +19955,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -21197,7 +21197,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -24501,7 +24501,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -25743,7 +25743,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -33759,7 +33759,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -35001,7 +35001,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -38305,7 +38305,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -39547,7 +39547,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -52636,7 +52636,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -53878,7 +53878,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -57182,7 +57182,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -58424,7 +58424,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -62548,7 +62548,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -63790,7 +63790,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -67094,7 +67094,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -68336,7 +68336,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -72384,7 +72384,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -73626,7 +73626,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -76930,7 +76930,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
@@ -78172,7 +78172,7 @@ export type ManagedMachinesActionResultById = {
                         serverId: string;
                         machineId: string;
                     };
-                    agentTarget: {
+                    agentTarget?: undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;

@@ -2,12 +2,42 @@ import { describe, expect, it } from 'vitest';
 import { AccountApiTokensCreateActionInputV1Schema } from './accountApiTokens.js';
 import { PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
 import { API_TOKEN_SOCKET_EVENT_ACTIONS, resolveSocketRpcSessionAuthorization, SESSION_RPC_METHODS } from '../rpc/index.js';
-import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, evaluateApiTokenGrantV1, resolveApiTokenSessionCapabilityCeilingV1 } from './apiTokenGrant.js';
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema, StoredApiTokenGrantV1Schema, evaluateApiTokenGrantV1, projectApiTokenSessionSpawnAdmissionV1, resolveApiTokenSessionCapabilityCeilingV1 } from './apiTokenGrant.js';
+import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { ExternalActionApiTokenServerPrincipalV1Schema, ExternalActionCredentialScopeDiagnosticV1Schema, ExternalActionExecutionAuthorizationBindingV1Schema } from '../actions/externalActionApi.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { actionSpecToActionDefinitionV1 } from '../actions/actionCatalog.js';
 
 describe('scoped credential public ingress', () => {
+  it('retains authored Agent omission without widening an exact create grant', () => {
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'allowed' } };
+    const authored = { executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'managed' as const }, organizationPlacement: { folderId: null, tagIds: [] } };
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const admission = projectApiTokenSessionSpawnAdmissionV1(authored);
+    expect(admission).not.toHaveProperty('agentTarget');
+    expect(evaluateApiTokenGrantV1({ grant: API_TOKEN_FULL_GRANT_V1, actionId: 'session.spawn_new', target,
+      spawnInput: admission, sessionSpawnInputKind: 'canonical_admission' })).toEqual({ ok: true });
+    const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1, create: {
+      machineId: 'machine', agentTargetKey: buildBackendTargetKeyV2(agentTarget), directory: 'managed', placement: authored.organizationPlacement,
+    } });
+    const check = (spawnInput: unknown) => evaluateApiTokenGrantV1({ grant, actionId: 'session.spawn_new', target,
+      spawnInput, sessionSpawnInputKind: 'canonical_admission' });
+    expect(check(admission)).toEqual({ ok: false, reason: 'create_not_granted' });
+    expect(check(projectApiTokenSessionSpawnAdmissionV1({ ...authored, agentTarget }))).toEqual({ ok: true });
+    expect(check(projectApiTokenSessionSpawnAdmissionV1({ ...authored,
+      agentTarget: { ...agentTarget, identity: { ...agentTarget.identity, localId: 'outside-grant' } } })))
+      .toEqual({ ok: false, reason: 'create_not_granted' });
+  });
+
+  it('keeps every other Session admission field strict when the Agent is omitted', () => {
+    const authored = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' as const } };
+    expect(() => projectApiTokenSessionSpawnAdmissionV1({ ...authored, unexpected: true })).toThrow();
+    expect(() => projectApiTokenSessionSpawnAdmissionV1({ directory: authored.directory })).toThrow();
+    expect(ApiTokenSessionSpawnAdmissionV1Schema.safeParse({ ...authored, unexpected: true }).success).toBe(false);
+    expect(ApiTokenSessionSpawnAdmissionV1Schema.safeParse({ directory: authored.directory }).success).toBe(false);
+  });
+
   it('retains closed Environment authority through token creation, stored reads and relay discovery', () => {
     const grant = { ...API_TOKEN_FULL_GRANT_V1,
       actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },

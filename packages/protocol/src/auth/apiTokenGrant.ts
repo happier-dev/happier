@@ -20,7 +20,7 @@ import { SessionOrganizationPlacementV1Schema, SessionSectionPlacementV1Schema, 
 import type { SessionPermissionMode } from '../sessions/metadata/sessionPermissionModes.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
-import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewTargetedAuthoringInputV2Schema } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../connect/connectedServiceBindings.js';
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
@@ -42,12 +42,13 @@ export type ApiTokenSessionPresetAcquisitionV1 = z.infer<typeof ApiTokenSessionP
 export const ApiTokenSessionSpawnAdmissionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(SessionSpawnNewInputV2BaseSchema, {
   executionTarget: true, agentTarget: true, directory: true, organizationPlacement: true,
   modelSelection: true, permissionMode: true, connectedServices: true,
-}), { managedPresetAcquisition: z.optional(ApiTokenSessionPresetAcquisitionV1Schema),
+}), { agentTarget: z.optional(SessionSpawnNewInputV2BaseSchema.shape.agentTarget),
+  managedPresetAcquisition: z.optional(ApiTokenSessionPresetAcquisitionV1Schema),
   machineSetupRequested: z.optional(z.literal(true)) })));
 export type ApiTokenSessionSpawnAdmissionV1 = z.infer<typeof ApiTokenSessionSpawnAdmissionV1Schema>;
 export function projectApiTokenSessionSpawnAdmissionV1(input: unknown,
   options: Readonly<{ managedPresetAcquisition?: ManagedAcquireInputV1 }> = {}): ApiTokenSessionSpawnAdmissionV1 {
-  const canonical = SessionSpawnNewInputV2Schema.parse(input);
+  const canonical = SessionSpawnNewTargetedAuthoringInputV2Schema.parse(input);
   const captured = options.managedPresetAcquisition;
   const acquisition = captured ? ApiTokenSessionPresetAcquisitionV1Schema.parse({ selection: captured.selection,
     controller: 'controller' in captured ? captured.controller : undefined }) : undefined;
@@ -59,8 +60,9 @@ export function projectApiTokenSessionSpawnAdmissionV1(input: unknown,
     throw new Error('Session preset acquisition does not match its placement and execution target');
   }
   return ApiTokenSessionSpawnAdmissionV1Schema.parse({
-    executionTarget: canonical.executionTarget, agentTarget: canonical.agentTarget, directory: canonical.directory,
+    executionTarget: canonical.executionTarget, directory: canonical.directory,
     ...(acquisition ? { managedPresetAcquisition: acquisition } : {}),
+    ...(canonical.agentTarget !== undefined ? { agentTarget: canonical.agentTarget } : {}),
     ...(canonical.organizationPlacement !== undefined ? { organizationPlacement: canonical.organizationPlacement } : {}),
     ...(canonical.modelSelection !== undefined ? { modelSelection: canonical.modelSelection } : {}),
     ...(canonical.permissionMode !== undefined ? { permissionMode: canonical.permissionMode } : {}),
