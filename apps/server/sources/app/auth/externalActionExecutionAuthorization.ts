@@ -121,7 +121,7 @@ import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { isMachineGrantSetAccessReadV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
-import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { admitSessionSpawnNewTargetedAuthoringInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { bindApiSessionSpawnNewInput } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import type { ActionRequiredAuthority } from "@happier-dev/protocol/actions/metadata";
@@ -402,7 +402,7 @@ export function readExternalActionSessionSpawnAdmission(
             serverId: context.serverId, externalActionTarget: context.target,
         }));
     })();
-    const projected = projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(canonical), {
+    const projected = projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewTargetedAuthoringInputV2(canonical), {
         managedPresetAcquisition: envelope.sessionSpawnAdmission?.managedPresetAcquisition,
     });
     if (envelope.sessionSpawnAdmission !== undefined && !sameManagedInput(projected, envelope.sessionSpawnAdmission)) {

@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { isOriginalAccountExecutionAction, isOriginalTerminalExecutionAction } from './externalActionExecutionAuthorization';
+import { isOriginalAccountExecutionAction, isOriginalTerminalExecutionAction, readExternalActionSessionSpawnAdmission } from './externalActionExecutionAuthorization';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+
+describe('Session authoring admission', () => {
+    it('preserves an omitted Agent for the ordinary receiving creation owner', () => {
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'managed-child',
+            input: { executionTarget: { serverId: 'home', machineId: 'guest' },
+                directory: { kind: 'managed' } } });
+        const admission = readExternalActionSessionSpawnAdmission(envelope, {
+            serverId: 'home', target: { kind: 'machine', machineId: 'guest' },
+        });
+        expect(admission).toMatchObject({ executionTarget: { serverId: 'home', machineId: 'guest' },
+            directory: { kind: 'managed' } });
+        expect(admission).not.toHaveProperty('agentTarget');
+    });
+});
 
 describe('paired terminal Action admission', () => {
     it('admits catalog Account roots and input-placed Provider Machine roots', () => {
