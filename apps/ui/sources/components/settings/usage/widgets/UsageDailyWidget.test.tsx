@@ -88,7 +88,7 @@ describe('Daily period chart', () => {
     const screen = await renderControls(<UsageFlowWidget {...props} id="usage_flow" testID="flow" />);
     expect(screen.findByType(StackedSeriesChart).props.series[0].points.map((point: { y: number }) => point.y))
       .toEqual([10, 10, 10, 10, 10, 10]);
-    const qualifier = t('transcriptNavigation.soFar');
+    const qualifier = t('session.transcriptNavigation.soFar');
     expect(screen.findHostByTestId('flow.chart')?.props.accessibilityLabel).toContain(`${qualifier}: Codex 17`);
     await screen.pressByTestIdAsync('flow.chart-values-toggle');
     const finalRow = screen.findHostByTestId('flow.chart-values-row-6');
@@ -108,7 +108,7 @@ describe('Daily period chart', () => {
         <UsageFlowWidget {...props} id="usage_flow" testID="flow" />
       </WidgetFrameBodyCaptionContext.Provider>,
     );
-    const qualifier = t('transcriptNavigation.soFar');
+    const qualifier = t('session.transcriptNavigation.soFar');
     expect(screen.findHostByTestId('flow.empty')).toBeTruthy();
     expect(screen.findHostByTestId('flow.chart-scale-0')).toBeFalsy();
     expect(caption).toHaveBeenLastCalledWith(expect.stringContaining(qualifier));
@@ -136,7 +136,7 @@ describe('Daily period chart', () => {
         <UsageFlowWidget {...props} id="usage_flow" testID="flow" />
       </WidgetFrameBodyCaptionContext.Provider>,
     );
-    const qualifier = t('transcriptNavigation.soFar');
+    const qualifier = t('session.transcriptNavigation.soFar');
     const chart = screen.findByType(StackedSeriesChart);
     expect(chart.props.series[0].points.map((point: { y: number }) => point.y)).toEqual([17]);
     expect(caption).toHaveBeenLastCalledWith(expect.stringContaining(qualifier));
@@ -158,7 +158,7 @@ describe('Daily period chart', () => {
     await screen.pressByTestIdAsync('flow.chart-values-toggle');
     const rows = Array.from({ length: 5 }, (_, index) =>
       screen.findHostByTestId(`flow.chart-values-row-${index}`)?.props.accessibilityLabel);
-    expect(rows[4]).not.toContain(t('transcriptNavigation.soFar'));
+    expect(rows[4]).not.toContain(t('session.transcriptNavigation.soFar'));
     expect(rows.reduce((sum, row) => sum + Number(row?.match(/Codex: (\d+)/u)?.[1]), 0))
       .toBe(props.slice.accounting?.totals.tokens.total);
   });

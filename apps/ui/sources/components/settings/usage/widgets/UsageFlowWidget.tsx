@@ -110,7 +110,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
   const period = props.query.period;
   const { series, trailingReading, drawsPartial } = React.useMemo(() => {
     const flow = projectUsageFlowModel(periodSeries, range, Date.now(), timeUnitMs, period);
-    const label = t('transcriptNavigation.soFar');
+    const label = t('session.transcriptNavigation.soFar');
     const labelPartial = (entries: typeof flow.drawn) => entries.map(entry => ({
       ...entry, points: entry.points.map(point => point.partial ? { ...point, annotation: label } : point),
     }));
@@ -126,7 +126,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
     : null;
   useWidgetFrameBodyCaption(
     `${byModel ? t('usage.board.page.byModel') : t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}`
-    + (drawsPartial || sparseReading !== null ? ` · ${t('transcriptNavigation.soFar')}` : ''),
+    + (drawsPartial || sparseReading !== null ? ` · ${t('session.transcriptNavigation.soFar')}` : ''),
   );
   // Choosing an Agent in the lens or the legend narrows the page's one filter row to it.
   const drill = useUsageDrill(props.query);
@@ -197,7 +197,7 @@ function UsageFlowWidgetOriginal(props: UsageBodyProps) {
       showLegend={plotsUsage}
       {...(sparseReading !== null ? {
         renderFrame: () => needsMoreHistory,
-        summary: `${format(sparseReading)} · ${t('transcriptNavigation.soFar')}`,
+        summary: `${format(sparseReading)} · ${t('session.transcriptNavigation.soFar')}`,
       } : {})}
       {...(!byAgent
         ? {}

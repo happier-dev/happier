@@ -869,9 +869,9 @@ describe('Usage chart models', () => {
     const readAt = START + 6 * DAY + 11 * HOUR;
     const period = resolveUsageQueryPeriod(normalizeUsageQuery({ period: { relative: '7days' }, timeZoneOffsetMinutes: 0 }), readAt);
     const days = [bucket(5, { tokens: 900, eventCount: 3 }), bucket(6, { tokens: 10, eventCount: 1 })];
-    const model = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs }, days }), 'tokens', 'intensity',
+    const model = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs! }, days }), 'tokens', 'intensity',
       readAt + 4 * MINUTE, { relative: '7days' });
-    const fixed = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs }, days }), 'tokens', 'intensity',
+    const fixed = projectUsageSkyModel(calendar({ period: { startMs: period.startMs!, endMs: period.endMs! }, days }), 'tokens', 'intensity',
       readAt + 4 * MINUTE, period);
     expect(fixed.days.some(day => day.partial)).toBe(false);
     expect(model.days.map(day => day.partial === true)).toEqual([false, false, false, false, false, false, true]);
