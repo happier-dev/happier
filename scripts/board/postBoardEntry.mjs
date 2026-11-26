@@ -33,8 +33,7 @@ export function parseBoardHeading(heading) {
 }
 
 /** Comma-separated addressees, keeping parenthesized lists whole. Each entry designates its
- * exact text and, for a list (`Voice lanes (ADMIT, SWEEP)`), the group and each member. `base`
- * drops a trailing parenthetical (`Voice ORCH (fresh)` → `Voice ORCH`) for name lookups only. */
+ * exact text, its base name without a trailing parenthetical, and any comma-separated members. */
 export function addresseeEntries(to) {
   const raws = [];
   let depth = 0;
@@ -49,8 +48,7 @@ export function addresseeEntries(to) {
     const list = /^(.*?)\s*\(([^()]*)\)$/.exec(raw);
     const members = list?.[2].includes(',') ? list[2].split(',').map((name) => name.trim()).filter(Boolean) : [];
     const base = list ? list[1] : raw;
-    // Only a list designates its parts; `LANE (fresh)` is not LANE.
-    return { raw, base, members, names: new Set(members.length ? [raw, base, ...members] : [raw]) };
+    return { raw, base, members, names: new Set([raw, base, ...members]) };
   });
 }
 

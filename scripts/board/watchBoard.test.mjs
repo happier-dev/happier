@@ -244,7 +244,7 @@ for (const type of ['URGENT', 'HOLD', 'LIFTED', 'RULING', 'ASK']) {
   });
 }
 
-test('wakes only on exact addressee names, including parenthesized lists, and on ALL-leads broadcasts', { timeout: 15000 }, async (t) => {
+test('wakes on exact addressee names, qualified base names, list members and ALL-leads broadcasts', { timeout: 15000 }, async (t) => {
   const f = await fixture(t);
   const lines = [
     heading('Other', 'ASK', 'LANE please look'), heading('LANE-2'), heading('Other (LANE)'),
@@ -253,7 +253,7 @@ test('wakes only on exact addressee names, including parenthesized lists, and on
     heading('ALL leads', 'RULING', 'one board'),
   ];
   await fs.writeFile(f.board, lines.join('\n'));
-  assert.deepEqual(await start(t, f, [], 10000, true, ['LANE']).done, [lines[3], lines[4], lines[6]]);
+  assert.deepEqual(await start(t, f, [], 10000, true, ['LANE']).done, [lines[3], lines[4], lines[5], lines[6]]);
   await fs.rm(f.seen);
   assert.deepEqual(await start(t, f, [], 10000, true, ['LANE (fresh)']).done, [lines[5], lines[6]]);
 });
