@@ -5,7 +5,7 @@ import type { DeploymentMachinePlacementDiagnosticV1 } from '@happier-dev/protoc
 import { DEPLOYMENT_MACHINE_INSTALLATION_REPLACED_REASON_V1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DEPLOYMENT_MACHINE_REINSTALL_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ProjectSourceV1, ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { resolveProjectSourceAccessInTx, type ProjectSourceAccess } from '@/app/projects/sources/projectSourceService';
+import { resolveProjectSourceAccessInTx, type ProjectSourceAccess, type ProjectSourceAccessResult } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveMachinePrincipalAccessForMachinesInTx, resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -136,7 +136,15 @@ export async function resolveDeploymentEnvironmentAdmissionInTx(tx: Tx, actorAcc
     // New-Environment admission opts into the owner's active-only read instead.
     const read = await resolveProjectSourceAccessInTx(tx, actorAccountId, input.projectSourceId, authentication,
         { includeDeleted: input.includeDeletedSource !== false });
-    if (!read.ok) return deploymentFailure('deployment_unavailable', { phase: 'deployment.source.admission.read', causeKind: read.failure.error === 'source_invalid' ? 'incomplete' : 'not_found' });
+    return projectDeploymentSourceAdmissionRead(read);
+}
+
+export function projectDeploymentSourceAdmissionRead(read: ProjectSourceAccessResult | undefined):
+    Readonly<{ ok: true; admission: DeploymentSourceAdmission }> | DeploymentFailure {
+    if (!read?.ok) return deploymentFailure('deployment_unavailable', {
+        phase: 'deployment.source.admission.read',
+        causeKind: read?.failure.error === 'source_invalid' ? 'incomplete' : 'not_found',
+    });
     return { ok: true, admission: projectDeploymentSourceAdmission(read) };
 }
 

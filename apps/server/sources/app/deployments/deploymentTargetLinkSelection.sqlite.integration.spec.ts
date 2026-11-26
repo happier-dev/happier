@@ -21,6 +21,9 @@ it('admits only matching public Link candidates before paging, leaving unrelated
     const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
         { serverId, requestKey: crypto.randomUUID(), name: 'Selected Link' }));
     if (!source.ok) throw new Error(source.error);
+    const secondSource = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+        { serverId, requestKey: crypto.randomUUID(), name: 'Second Link' }));
+    if (!secondSource.ok) throw new Error(secondSource.error);
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
         metadata: '{}', installationId: crypto.randomUUID() } });
     const content = async (kind: string) => {
@@ -34,6 +37,9 @@ it('admits only matching public Link candidates before paging, leaving unrelated
     const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
         createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
         controllerMachineId: machine.id, ...await content('deployment-environment.v1') } });
+    const secondEnvironment = await db.deploymentEnvironment.create({ data: { projectSourceId: secondSource.source.id,
+        createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+        controllerMachineId: machine.id, ...await content('deployment-environment.v1') } });
     const selected = await content('deployment-target-link.v1');
     const unreadable = await content('deployment-target-link.v1');
     await db.artifact.update({ where: { id: unreadable.contentArtifactId }, data: { deletedAt: new Date() } });
@@ -43,7 +49,8 @@ it('admits only matching public Link candidates before paging, leaving unrelated
         ...Array.from({ length: 120 }, (_, index) => ({ ...base, id: `a-unrelated-${index}`, ...unreadable,
             ...(index % 3 === 0 ? { pluginId: 'other.deploy' }
                 : index % 3 === 1 ? { contributionLocalId: 'database' } : { targetKind: 'database' }) })),
-        ...['b-match', 'c-match'].map(id => ({ ...base, id, ...selected })),
+        { ...base, id: 'b-match', ...selected },
+        { ...base, id: 'c-match', environmentId: secondEnvironment.id, ...selected },
         { ...base, id: 'd-native', role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', pluginId: null,
             contributionLocalId: null, targetKind: 'ownServer', ...selected },
         { ...base, id: 'a-other-host', role: 'runtime', sourceKind: 'host', hostTargetId: 'other-host', pluginId: null,
@@ -67,6 +74,11 @@ it('admits only matching public Link candidates before paging, leaving unrelated
         expect(await inTx(tx => listDeploymentTargetLinksInTx(tx, owner.id, { ...input,
             selection: { source: { kind: 'host', id: 'own-server' }, targetKind: 'ownServer' } })))
             .toMatchObject({ items: [{ targetLink: { id: 'd-native' } }], nextCursor: null, coverage: 'complete' });
+        const before = requests.length;
+        expect(await inTx(tx => listDeploymentTargetLinksInTx(tx, owner.id, { ...input, limit: 2 })))
+            .toMatchObject({ ok: true, items: [{ targetLink: { id: 'b-match' } }, { targetLink: { id: 'c-match' } }],
+                nextCursor: null, coverage: 'complete' });
+        expect(requests.slice(before).filter(request => request.model === 'ProjectSource')).toHaveLength(1);
         await db.artifact.update({ where: { id: selected.contentArtifactId }, data: { deletedAt: new Date() } });
         expect(await inTx(tx => listDeploymentTargetLinksInTx(tx, owner.id, input)))
             .toMatchObject({ items: [], coverage: 'partial' });

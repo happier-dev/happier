@@ -7,7 +7,8 @@ import { getActivePrismaRuntime } from '@/storage/prisma';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { qualifyTeamOperationAuthenticationInTx, resolveTeamActorContextInTx } from '@/app/teams/actorContext';
 import { isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
-import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, type DeploymentAuthentication } from './deploymentAdmission';
+import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
+import { deploymentFailure, projectDeploymentSourceAdmissionRead, type DeploymentAuthentication } from './deploymentAdmission';
 import { projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
 import { projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
@@ -55,25 +56,24 @@ export async function listDeploymentTargetLinksInTx(tx: Tx, actorAccountId: stri
         ...(cursor ? { id: { gt: cursor } } : {}),
     }, orderBy: { id: 'asc' }, take: limit + 1,
     include: { environment: { include: { principals: deploymentEnvironmentPrincipalSelect } }, machines: { orderBy: { position: 'asc' } } } });
-    const sources = new Map<string, Awaited<ReturnType<typeof resolveDeploymentEnvironmentAdmissionInTx>>>();
+    const window = rows.slice(0, limit);
+    const sourceIds = [...new Set(window.map(({ environment }) => environment.projectSourceId))];
+    const reads = await resolveProjectSourcesAccessInTx(tx, actorAccountId, sourceIds, authentication, { includeDeleted: true });
+    const sources = new Map(sourceIds.map(id => [id, projectDeploymentSourceAdmissionRead(reads.get(id))]));
     const candidates: { row: (typeof rows)[number]; environment: ReturnType<typeof projectDeploymentEnvironmentHeader>;
         targetLink: ReturnType<typeof projectDeploymentTargetHeader> }[] = [];
     const items: Extract<DeploymentTargetLinksListResultV1, { ok: true }>['items'] = [];
     let coverage: 'complete' | 'partial' = 'complete';
-    for (const row of rows.slice(0, limit)) {
-        const cachedSource = sources.get(row.environment.projectSourceId);
-        const source = cachedSource ?? await resolveDeploymentEnvironmentAdmissionInTx(tx, actorAccountId,
-            { serverId: input.serverId, projectSourceId: row.environment.projectSourceId }, authentication);
-        if (!cachedSource) {
-            sources.set(row.environment.projectSourceId, source);
-        }
-        if (!source.ok || source.admission.owner.kind !== scope.kind
-            || (source.admission.owner.kind === 'account' && scope.kind === 'account' && source.admission.owner.accountId !== scope.accountId)
-            || (source.admission.owner.kind === 'team' && scope.kind === 'team' && source.admission.owner.teamId !== scope.teamId)) {
+    for (const row of window) {
+        const read = sources.get(row.environment.projectSourceId);
+        const source = read?.ok ? read.admission : null;
+        if (!source || source.owner.kind !== scope.kind
+            || (source.owner.kind === 'account' && scope.kind === 'account' && source.owner.accountId !== scope.accountId)
+            || (source.owner.kind === 'team' && scope.kind === 'team' && source.owner.teamId !== scope.teamId)) {
             coverage = 'partial'; continue;
         }
         const projected = projectDeploymentListRow(() => ({
-            environment: projectDeploymentEnvironmentHeader(row.environment, input.serverId, source.admission),
+            environment: projectDeploymentEnvironmentHeader(row.environment, input.serverId, source),
             targetLink: projectDeploymentTargetHeader(row),
         }));
         if (!projected) { coverage = 'partial'; continue; }
