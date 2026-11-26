@@ -7,7 +7,7 @@ import { ProjectSourcesMoveToTeamInputV1Schema, type ProjectSourcesFailureV1,
     type ProjectSourcesMoveToTeamInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptListResultV1Schema, deploymentInProgressStates,
-    type DeploymentEnvironmentHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+    type DeploymentEnvironmentHeaderV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ProjectDeploymentDefaultsOutputV1 } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
 import { evaluateApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
@@ -33,7 +33,7 @@ export class ProjectSourceTeamMoveReadFailure extends Error {
     constructor(readonly result: ActionExecuteFailure | ProjectSourcesFailureV1) { super('project_source_move_read_failed'); }
 }
 
-type MachineRole = 'runtime' | 'build' | 'controller' | 'edge' | 'data' | 'backup' | 'cleanup';
+type MachineRole = DeploymentTargetLinkHeaderV1['role'] | 'build' | 'controller' | 'edge' | 'backup' | 'cleanup';
 const refuse: (code: string) => never = (code) => { throw new ProjectSourceTeamMoveReadFailure(moveFailure(code)); };
 const isArray: (value: unknown) => value is readonly unknown[] = Array.isArray;
 
