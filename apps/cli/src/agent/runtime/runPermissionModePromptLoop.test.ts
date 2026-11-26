@@ -1696,6 +1696,68 @@ describe('runPermissionModePromptLoop', () => {
     expect(notices).toEqual(['cannot reset (settings_change)']);
   });
 
+  it.each([['default', 'read-only'], ['read-only', 'default']] as const)(
+    'keeps eager launch mode %s and reports a refused request for %s once',
+    async (launchMode, requestedMode) => {
+      const notices: string[] = [];
+      const session = createMutableApiSessionClientFixture({ overrides: {
+        sendAgentMessage: (_provider, body) => {
+          if (body.type === 'message') notices.push(body.message);
+        },
+      } });
+      const { messageQueue: queue } = createPermissionModeQueueState({ session, initialPermissionMode: launchMode });
+      session.__setMetadata(createPromptLoopMetadata({ permissionMode: launchMode, permissionModeUpdatedAt: 10 }));
+      const runtime = createRuntime();
+      const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
+      const modes = [
+        { permissionMode: launchMode, appendSystemPrompt: 'Extra context' },
+        { permissionMode: requestedMode },
+        { permissionMode: requestedMode, appendSystemPrompt: 'Extra context' },
+        { permissionMode: launchMode },
+      ];
+      let ready = 0;
+      const enqueue = () => queue.push({ text: `web prompt ${ready}`, localId: `local-${ready}` }, modes[ready]!);
+      enqueue();
+      const launchConfig = { getCurrentPermissionMode: () => launchMode };
+
+      await runPermissionModePromptLoop({
+        ...launchConfig,
+        providerName: 'Test Provider',
+        agentMessageType: 'qwen',
+        explicitPermissionMode: launchMode,
+        session,
+        messageQueue: queue,
+        permissionHandler,
+        runtime,
+        createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+        messageBuffer: new MessageBuffer(),
+        shouldExit: () => ready === modes.length,
+        getAbortSignal: () => new AbortController().signal,
+        keepAlive: () => {},
+        setThinking: () => {},
+        sendReady: () => {
+          if (++ready >= modes.length) return;
+          session.__setMetadata(createPromptLoopMetadata({
+            permissionMode: modes[ready]!.permissionMode,
+            permissionModeUpdatedAt: 10 + ready,
+          }));
+          enqueue();
+        },
+        currentPermissionModeUpdatedAt: 10,
+        setCurrentPermissionMode: () => {},
+        setCurrentPermissionModeUpdatedAt: () => {},
+        formatPromptErrorMessage: String,
+        startRuntimeBeforeFirstPrompt: true,
+        describeUnavailableRuntimeReset: (cause) => `cannot reset (${cause})`,
+      });
+
+      expect(notices).toEqual(['cannot reset (settings_change)']);
+      expect(runtime.reset).not.toHaveBeenCalled();
+      expect(runtime.sendPrompt).toHaveBeenCalledTimes(modes.length);
+      expect(permissionHandler.setPermissionMode.mock.calls).toEqual([[launchMode]]);
+    },
+  );
+
   it('handles /compact through a runtime compaction hook without sending it as a normal prompt', async () => {
     const session = createPromptLoopSession();
     session.__setMetadata({

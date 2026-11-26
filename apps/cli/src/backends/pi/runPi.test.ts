@@ -113,8 +113,8 @@ describe('runPi', () => {
     expect(config.startRuntimeBeforeFirstPrompt).toBe(true);
     expect(config.shouldRenderTerminalDisplay()).toBe(false);
     expect(config.resolveKeepAliveMode()).toBe('local');
-    // Pi's tools are fixed at launch; a changing key would reset the runtime under a live TUI.
-    expect(config.resolvePermissionModeQueueKey('read-only')).toBe(config.resolvePermissionModeQueueKey('default'));
+    // Changes to the launch tool set must reach the refusal path in either direction.
+    expect(config.resolvePermissionModeQueueKey('read-only')).not.toBe(config.resolvePermissionModeQueueKey('default'));
     // The runtime is the user's live Pi: /clear and restart-only settings are refused with a notice.
     expect(config.describeUnavailableRuntimeReset('clear')).toEqual(expect.any(String));
 

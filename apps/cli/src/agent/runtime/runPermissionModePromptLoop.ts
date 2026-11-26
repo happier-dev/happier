@@ -128,6 +128,7 @@ export async function runPermissionModePromptLoop(opts: {
   setThinking: (value: boolean) => void;
   sendReady: (context?: ReadyNotificationTurnContext) => void;
   currentPermissionModeUpdatedAt: number;
+  getCurrentPermissionMode?: () => PermissionMode;
   setCurrentPermissionMode: (mode: PermissionMode) => void;
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
   initialResumeId?: string;
@@ -156,6 +157,8 @@ export async function runPermissionModePromptLoop(opts: {
 }): Promise<void> {
   let wasStarted = false;
   let currentModeHash: string | null = null;
+  let launchPermissionMode: PermissionMode | null = null;
+  let lastRequestedPermissionMode: PermissionMode | null = null;
   let pending: QueuedPermissionModeMessage | null = null;
   let storedSessionIdForResume: { value: string; origin: 'initial' | 'restart' } | null = null;
   let didReplaySeedBootstrap = false;
@@ -183,6 +186,10 @@ export async function runPermissionModePromptLoop(opts: {
     currentPermissionModeUpdatedAt: opts.currentPermissionModeUpdatedAt,
     take: 50,
     applyMode: ({ mode, updatedAt }) => {
+      if (launchPermissionMode !== null) {
+        refusePermissionChange(mode);
+        return;
+      }
       opts.setCurrentPermissionMode(mode);
       opts.setCurrentPermissionModeUpdatedAt(updatedAt);
       opts.permissionHandler.setPermissionMode(mode);
@@ -273,6 +280,14 @@ export async function runPermissionModePromptLoop(opts: {
     return await overrideSync.flushPendingAfterStart() === true && !opts.shouldExit();
   };
 
+  function refusePermissionChange(mode: PermissionMode): void {
+    if (mode !== lastRequestedPermissionMode && mode !== launchPermissionMode) {
+      const notice = opts.describeUnavailableRuntimeReset?.('settings_change');
+      if (notice) postNotice(notice);
+    }
+    lastRequestedPermissionMode = mode;
+  }
+
   const ensureRuntimeStarted = async (): Promise<{ startedFreshSessionForTurn: boolean }> => {
     if (wasStarted) return { startedFreshSessionForTurn: false };
 
@@ -357,6 +372,10 @@ export async function runPermissionModePromptLoop(opts: {
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
     if (opts.shouldExit()) return;
     overrideSync.syncFromMetadata();
+    if (opts.describeUnavailableRuntimeReset && opts.getCurrentPermissionMode) {
+      launchPermissionMode = opts.getCurrentPermissionMode();
+      opts.permissionHandler.setPermissionMode(launchPermissionMode);
+    }
     const eagerStart = await ensureRuntimeStarted();
     if (opts.shouldExit()) return;
     pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
@@ -400,12 +419,15 @@ export async function runPermissionModePromptLoop(opts: {
     }
     if (!message) continue;
 
-    opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
-
-    if (wasStarted && currentModeHash && message.hash !== currentModeHash && opts.describeUnavailableRuntimeReset) {
-      // The provider cannot restart; keep the live runtime and say the new settings do not apply.
+    if (launchPermissionMode !== null) {
+      refusePermissionChange(message.mode.permissionMode);
       currentModeHash = message.hash;
-      postNotice(opts.describeUnavailableRuntimeReset('settings_change'));
+    } else {
+      opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
+      if (wasStarted && currentModeHash && message.hash !== currentModeHash && opts.describeUnavailableRuntimeReset) {
+        currentModeHash = message.hash;
+        postNotice(opts.describeUnavailableRuntimeReset('settings_change'));
+      }
     }
     if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
       const resumeId = opts.runtime.getSessionId();

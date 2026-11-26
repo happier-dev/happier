@@ -791,6 +791,7 @@ export async function runStandardAcpProvider(
       setThinking: setThinkingState,
       sendReady,
       currentPermissionModeUpdatedAt: permissionModeState.getCurrentPermissionModeUpdatedAt(),
+      getCurrentPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
       setCurrentPermissionMode: permissionModeState.setCurrentPermissionMode,
       setCurrentPermissionModeUpdatedAt: permissionModeState.setCurrentPermissionModeUpdatedAt,
       initialResumeId: initialResumeId || undefined,

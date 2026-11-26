@@ -134,13 +134,10 @@ function createSharedTerminalConfig(opts: PiRunOptions): StandardAcpProviderConf
     startRuntimeBeforeFirstPrompt: true,
     shouldRenderTerminalDisplay: () => false,
     resolveKeepAliveMode: () => 'local',
-    // Pi's tools are fixed when the TUI launches; a changing key would reset the runtime, which
-    // cannot restart the user's terminal.
-    resolvePermissionModeQueueKey: () => 'pi-shared-tui',
     // A reset would re-adopt the same live Pi session while claiming a fresh one.
     describeUnavailableRuntimeReset: (cause) => (cause === 'clear'
       ? 'This Pi session runs in your terminal, so Happier cannot clear it. To start fresh, quit Pi and run `happier pi` again.'
-      : 'This Pi session runs in your terminal and keeps the settings it started with. Restart `happier pi` to apply the new settings.'),
+      : 'The requested settings do not apply to this live Pi session. Pi keeps the permissions it started with. To change them, quit Pi and run `happier pi` again.'),
     createRuntime: (params) => {
       // Created with the runtime: Pi exiting ends the runner through its termination path.
       const host = sharedTerminal ?? createPiSharedTerminalHost({ requestRunnerTermination: params.requestRunnerTermination });
