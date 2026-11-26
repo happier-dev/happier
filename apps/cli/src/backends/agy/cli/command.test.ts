@@ -20,7 +20,8 @@ describe('happier agy auth login', () => {
       await chmod(agy, 0o755);
       vi.stubEnv('HAPPIER_AGY_PATH', agy);
       vi.stubEnv('AGY_CLI_FORCE_FILE_TOKEN_STORAGE', '1');
-      if (geminiHome) vi.stubEnv('GEMINI_HOME', join(dir, 'profile'));
+      // Explicit in both rows so a developer's own GEMINI_HOME cannot change the expected launch.
+      vi.stubEnv('GEMINI_HOME', geminiHome ? join(dir, 'profile') : '');
 
       await handleAgyCliCommand({ args: ['agy', 'auth', 'login'], rawArgv: [], terminalRuntime: null });
 

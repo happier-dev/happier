@@ -53,6 +53,8 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
     await withTempDir('agy-launch-', async dir => {
       // An inherited value would silently move a machine login out of the OS keyring.
       vi.stubEnv(FILE_TOKEN_STORAGE, '1');
+      // The backend merges the host environment; a developer's own GEMINI_HOME must not leak in.
+      vi.stubEnv('GEMINI_HOME', '');
       const agy = await writeAgyFixture(dir, '1.5.18');
       const profile = join(dir, 'profile');
       const backend = await createAgyAcpBackend({ cwd: dir, env: {
@@ -96,6 +98,7 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
 
   it('refuses a connected account whose profile was not materialized instead of using the machine login', async () => {
     await withTempDir('agy-launch-', async dir => {
+      vi.stubEnv('GEMINI_HOME', '');
       const agy = await writeAgyFixture(dir, '1.5.18');
       const backend = await createAgyAcpBackend({ cwd: dir, env: {
         HAPPIER_AGY_PATH: agy, HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: CONNECTED_ACCOUNT_SELECTIONS,
