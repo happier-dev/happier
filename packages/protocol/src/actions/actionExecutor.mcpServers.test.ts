@@ -263,8 +263,10 @@ describe('MCP catalog Actions', () => {
     expect(await executor.execute('mcp.servers.list', {},
       { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } })).toEqual({ ok: true,
       result: { status: 'ready', revision: 4, authority: 'active', diagnostics: [], catalog: {
-        v: 1, servers: [{ id: 'local', name: 'local', title: 'Local tools', transport: 'stdio', createdAt: 1, updatedAt: 2 },
-          { id: 'remote', name: 'remote', transport: 'http', createdAt: 1, updatedAt: 2 }],
+        v: 1, servers: [{ id: 'local', name: 'local', title: 'Local tools', transport: 'stdio', createdAt: 1, updatedAt: 2,
+          loading: 'every_turn', effectivePromptTokens: null, savedPromptTokens: 0 },
+          { id: 'remote', name: 'remote', transport: 'http', createdAt: 1, updatedAt: 2,
+            loading: 'every_turn', effectivePromptTokens: null, savedPromptTokens: 0 }],
         bindings: [{ id: 'binding', serverId: 'local', enabled: true, target: { t: 'allMachines' }, createdAt: 1, updatedAt: 2 }],
       } } });
   });

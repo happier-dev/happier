@@ -446,11 +446,15 @@ it('shows both labelled Project page counts before opening the page, sharing bod
     const account = await createAccountLifetime({ accountId: 'account-a' });
     let payload: unknown = { running: 2, failed: 1 };
     let revision = 0;
-    installLiveResourceRpc({ read: () => {
-        const marker = 'abcd'[revision]!;
-        return { ...resourceResponse(marker), result: { ...resourceResponse(marker).result,
-            bytesBase64: Buffer.from(JSON.stringify(payload)).toString('base64') } };
-    } });
+    const digestMarker = () => revision.toString(16);
+    installLiveResourceRpc({
+        read: () => {
+            const resource = resourceResponse(digestMarker());
+            return { ...resource, result: { ...resource.result,
+                bytesBase64: Buffer.from(JSON.stringify(payload)).toString('base64') } };
+        },
+        openMarker: digestMarker,
+    });
     const pluginId = 'acme.composer';
     const executionOrigin = widgetExecutionOrigin(pluginId, 'machine-1');
     const projection = widgetProjectionOf([], { [pluginId]: { ...widgetInstalledPackage(pluginId, 'Counts'), occurrenceId: 'occurrence-42', executionOrigin } },
@@ -675,7 +679,7 @@ it('projects ordered labelled counts atomically with one read/watch and stable u
         await vi.waitFor(() => expect(shown).toEqual(expected(null, 1)));
         expect(content).toBe(true);
         expect(screen.tree.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'builds').subtitle)
-            .toBe('Running — · Failed 1');
+            .toBe('Failed 1');
         expect(machineResourceRpc.open).toHaveBeenCalledTimes(1);
     } finally { await screen.unmount(); }
     await vi.waitFor(() => expect(machineResourceRpc.close).toHaveBeenCalledTimes(1));
@@ -2183,7 +2187,9 @@ describe('PluginContextualResourceStoreProvider', () => {
             await act(async () => { screen.tree.update(renderDocument('session-2')); });
             expect(screen.findByTestId('private-preview.preview')).toBeNull();
             expect(screen.findByTestId('private-preview.primary')!.props.disabled).toBe(true);
-            expect(screen.tree.root.findAllByType(HappierDataMetric)).toHaveLength(0);
+            const loadingMetric = screen.tree.root.findByType(HappierDataMetric);
+            expect(loadingMetric.props.pending).toBe(true);
+            expect(loadingMetric.props.value).toBe('');
             expect(captureSlot.capture()?.frozenByPath.size).toBe(0);
         } finally { lease.dispose(); await act(async () => { screen.tree.unmount(); }); }
     });

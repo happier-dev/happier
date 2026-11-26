@@ -6,7 +6,6 @@ import { DaemonProviderModelProjectionResponseV1Schema } from '../rpc/providers.
 import { RPC_METHODS } from '../rpc/methods.js';
 import { createProviderErrorV1 } from './errors.js';
 import { createActionExecutor } from '../actions/actionExecutor.js';
-import { ActionsSettingsV1Schema } from '../actions/actionSettings.js';
 import { ApprovalRequestV2Schema } from '../approvals/approvalRequestV1.js';
 
 afterEach(() => vi.restoreAllMocks());
@@ -84,17 +83,15 @@ describe('Session-addressed Provider binding status', () => {
 describe('shared Provider Action recipient catalog admission', () => {
   it.each(['different-action', 'malformed', 'retired'] as const)('refuses a %s forwarded approval', async scenario => {
     const input = { machineId: 'hub', agentTargetKey, forceRefresh: true as const };
-    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-      serverId: 'test-home', machineId: 'hub', actionRequestId: 'refresh-request',
-      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-        actions: { 'providers.models.refresh': { approvalRequiredSurfaces: ['ui'] } },
-      }) } as const;
+    const context = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'test-home', machineId: 'hub', actionRequestId: 'refresh-request' } as const;
     const receiver = createActionExecutor({ approvalsCreate: async ({ request }) => {
       ApprovalRequestV2Schema.parse(request);
       return { artifactId: 'refresh-approval' };
     } });
     const produced = await receiver.execute('providers.models.refresh', input, context);
-    if (!produced.ok || typeof produced.result !== 'object' || !produced.result) throw new Error('Expected pending producer');
+    if (!produced.ok || typeof produced.result !== 'object' || !produced.result) throw new Error(`Expected pending producer: ${JSON.stringify(produced)}`);
+    expect(produced.result).toMatchObject({ kind: 'approval_request_created', artifactId: 'refresh-approval', actionId: 'providers.models.refresh' });
     let current = true;
     const forward = createProviderActionExecuteV1({ assertCurrent() {
       if (!current) throw Object.assign(new Error('Account retired'), { code: 'scope-retired' });

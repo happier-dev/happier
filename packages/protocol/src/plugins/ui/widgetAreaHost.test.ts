@@ -92,6 +92,17 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
         ]) expect(await port.execute({ area: 'pinned', context: { count: 1 }, operation })).toMatchObject({ ok: false, errorCode: 'invalid_widget_area_request' });
         expect(observed).toHaveLength(8);
     });
+    function createCountWidgetInputs() {
+        // The descriptor is an external boundary; size and input admission remain real.
+        return createWidgetActionInputResolverV1({
+            readDescriptor: async () => ({ sizeDeclaration: { sizes: ['small'], defaultSize: 'small' },
+                inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer', required: true }] },
+                inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
+            readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
+            validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+        });
+    }
+
     it('creates and edits a group through host-captured scope without admitting forged identities', async () => {
         const b = createWorkBoardArtifactBoundary();
         const transport = { ...b.transport, read: async (id: string) => {
@@ -101,7 +112,7 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
         const store = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
         await store.apply({ kind: 'add', instance, size: 'small' });
         const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
-        const executor = createActionExecutor({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area } });
+        const executor = createActionExecutor({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs: createCountWidgetInputs() });
         const port = createPluginWidgetAreaHostPortV1({ scope, pluginId: 'example', pageId: 'overview', declarations, isCurrent: () => true,
             execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', bypassApprovals: true }) });
         for (const operation of [
@@ -110,7 +121,10 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
             { actionId: 'widgets.item.size.set', instanceId: 'g', width: 'half' },
             { actionId: 'widgets.group.set', instanceId: 'g', dividers: 'none' },
             { actionId: 'widgets.group.inputs.set', instanceId: 'g', bindings: { count: { kind: 'value', value: 7 } } },
-        ]) expect(await port.execute({ area: 'pinned', context: { count: 1 }, operation })).toMatchObject({ ok: true });
+        ]) {
+            const result = await port.execute({ area: 'pinned', context: { count: 1 }, operation });
+            expect(result, `${operation.actionId}: ${JSON.stringify(result)}`).toMatchObject({ ok: true });
+        }
         expect((await store.read()).items).toMatchObject([{ kind: 'group', id: 'g', title: 'Together', width: 'half', dividers: 'none', context: { count: { value: 7 } } }]);
         expect(PluginUiWidgetAreaOperationV1Schema.safeParse({ actionId: 'widgets.group.create', groupId: 'forged', instanceIds: ['follow'], surface }).success).toBe(false);
         expect(await port.execute({ area: 'pinned', context: { count: 1 }, operation: { actionId: 'widgets.group.ungroup', instanceId: 'g' } })).toMatchObject({ ok: true });
@@ -199,15 +213,7 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
         const store = createWidgetSurfaceArtifactPortV1(transport, { surface, isCurrent: () => true });
         await store.apply({ kind: 'add', instance, size: 'small' });
         const area = createWidgetAreaActionPortV1(ref => createWidgetSurfaceArtifactPortV1(transport, { surface: ref, isCurrent: () => true }));
-        // The descriptor is an external boundary; size and input admission remain real.
-        const widgetInputs = createWidgetActionInputResolverV1({
-            readDescriptor: async () => ({ sizeDeclaration: { sizes: ['small'], defaultSize: 'small' },
-                inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer', required: true }] },
-                inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
-            readContext: async request => request.context.widgetAreaContext?.values ?? {}, readViewerValues: async () => ({ values: {} }),
-            validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
-        });
-        const executor = createActionExecutor({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs });
+        const executor = createActionExecutor({ widgetAccountScope: () => scope, widgetSurfaceActions: { pluginArea: area }, widgetInputs: createCountWidgetInputs() });
         const port = createPluginWidgetAreaHostPortV1({ scope, pluginId: 'example', pageId: 'overview', declarations, isCurrent: () => true,
             execute: (id, input, context) => executor.execute(id, input, { ...context, surface: 'ui', bypassApprovals: true }) });
         expect(await port.execute({ area: 'pinned', context: { count: 1 }, operation: { actionId: 'widgets.group.create', groupId: 'g', instanceIds: ['follow'] } })).toMatchObject({ ok: true });

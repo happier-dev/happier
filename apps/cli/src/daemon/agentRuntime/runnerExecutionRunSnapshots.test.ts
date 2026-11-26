@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { createRunnerExecutionRunProfileCatalog } from '@/agent/runtime/session/process/runnerExecutionRunSnapshot';
 import { createNativeAgentExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
 import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
@@ -264,12 +265,12 @@ describe('runner execution-run snapshot SCM preparation', () => {
       });
       expect(patch).toMatchObject({ permissionMode: 'no_tools', instructions: expect.stringContaining('retained-commit-context-evidence') });
       expect(patch?.instructions).not.toContain('unselected-commit-evidence');
-      const summary = await profileCatalog.builtInProfilesByIntent.get('scm_diff_summary')!.prepareStartParams!({
+      const summary = await runWithScmAccountScope('commit-requester', () => profileCatalog.builtInProfilesByIntent.get('scm_diff_summary')!.prepareStartParams!({
         cwd: repository.rootPath, sessionId: context.sessionId,
         request: { intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'commit-agent' },
           instructions: '', intentInput: { cwd: repository.rootPath, source: { kind: 'workingTree' }, outputs: ['summary'] },
           permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response' },
-      });
+      }));
       expect(summary).toMatchObject({ intentInput: { comparison: {
         commitTarget: { headOid: repository.headCommit, ref: `refs/heads/${repository.branchName}` },
         inventory: { state: 'complete' },

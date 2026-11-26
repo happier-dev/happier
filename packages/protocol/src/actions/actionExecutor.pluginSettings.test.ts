@@ -44,8 +44,9 @@ describe('createActionExecutor (plugin Settings administration)', () => {
         expect(resolveActionApprovalRouting({ actionId, spec, settings: defaults, context }).required,
           `${actionId}/${surface}`).toBe(requiresApproval);
         const waived = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
-        expect(resolveActionApprovalRouting({ actionId, spec, settings: waived, context }).required,
-          `${actionId}/${surface} waived`).toBe(false);
+        const waivedRouting = resolveActionApprovalRouting({ actionId, spec, settings: waived, context });
+        expect(waivedRouting.required, `${actionId}/${surface} waived`).toBe(false);
+        expect(waivedRouting.uiConfirmationRequired, `${actionId}/${surface} native review waived`).toBeUndefined();
       }
     }
   });
@@ -194,8 +195,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
       .toMatchObject({ ok: true, result: { ok: true, data: { revision: '8' } } });
     expect(write).toHaveBeenCalledWith(expect.objectContaining({ input }));
   });
-  it('routes validated scope-selected administration through the one canonical executor with cancellation', async () => {
-    const controller = new AbortController();
+  it.each(['cli', 'ui'] as const)('loads validated scope-selected Settings for a present user on %s', async (surface) => {
     const pluginSettingsAdministrationAction = vi.fn(async () => ({
       ok: true,
       kind: 'plugins.settings.list' as const,
@@ -215,7 +215,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
       scope: { kind: 'account' as const },
       target: { kind: 'account' as const },
     };
-    const context = { surface: 'cli' as const, signal: controller.signal };
+    const context = { surface, authority: 'present_user' as const };
 
     await expect(executor.execute('plugins.settings.list', input, context)).resolves.toEqual({
       ok: true,

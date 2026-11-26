@@ -85,7 +85,9 @@ it.each([
         const serverId = rotatesCredentials ? 'account-approval-rotation' : 'account-approval';
         const serverIdentityId = `srv_${serverId}`;
         const accountId = `account-owner-${surface}-${scenario}`;
-        const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+        const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId,
+            provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
+        })).toString('base64url')}.signature`,
             encryption: null, credentialProvenance: 'stored_session' as const };
         const rotateStoredCredentials = () => writeStoredCredentialsForServerId(serverId,
             { ...credentials, token: `${credentials.token}-rotated` });
@@ -350,7 +352,7 @@ it.each([
             // override, current-intent callback, Machine or shared test harness.
             if (scenario === 'cancel') {
                 controller.abort();
-                expect(await invoking).toMatchObject({ ok: false, errorCode: 'plugin_action_aborted' });
+                expect(await invoking).toMatchObject({ ok: false, errorCode: 'cancelled' });
                 // Detaching the original caller leaves history for an explicit
                 // public cancellation; it never grants replay of live operands.
                 expect(readApproval().status).toBe('open');
@@ -385,7 +387,7 @@ it.each([
                 || nested;
             expect(writes, JSON.stringify(result)).toBe(noEffect ? 0 : 1);
             if (scenario === 'cancel') {
-                expect(result).toMatchObject({ ok: false, errorCode: 'plugin_action_aborted' });
+                expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
                 expect(readApproval().status).toBe('canceled');
                 expect(await deciding.execute('approval.request.decide', { artifactId, decision: 'approve' }, decisionContext))
                     .toMatchObject({ ok: false, errorCode: 'approval_not_open' });

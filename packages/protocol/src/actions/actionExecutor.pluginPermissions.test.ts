@@ -77,7 +77,7 @@ const dismissedPendingRequest = {
 } as const satisfies PluginPermissionGrantRequestV1;
 
 describe('createActionExecutor (plugin permission grants)', () => {
-  it.each(['agent', 'mcp', 'cli'] as const)('PARITY2 admits %s list and user-waived revoke without conferring grant authority', async (surface) => {
+  it.each(['agent', 'mcp', 'cli'] as const)('PARITY2 keeps %s list available and honors a revoke waiver only on supported surfaces', async (surface) => {
     // Permission persistence/transport is the boundary; executor admission and policy stay real.
     const operations: string[] = [];
     const executor = createActionExecutor({
@@ -100,13 +100,17 @@ describe('createActionExecutor (plugin permission grants)', () => {
       'plugins.permissions.grants.dismissRequest': [surface],
     } });
     const revoked = await executor.execute('plugins.permissions.grants.revoke', { grantId: activeGrant.id }, { ...context, actionsSettings });
-    expect(revoked, JSON.stringify(revoked)).toMatchObject({ ok: true, result: { grant: revokedGrant } });
-    // Grant/dismiss are person-class: waived on this surface they run like revoke (no present-user floor).
+    if (surface === 'cli') {
+      expect(revoked).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface' } });
+      expect(operations).toEqual(['plugins.permissions.grants.list']);
+    } else {
+      expect(revoked).toMatchObject({ ok: true, result: { grant: revokedGrant } });
+      expect(operations).toEqual(['plugins.permissions.grants.list', 'plugins.permissions.grants.revoke']);
+    }
     for (const actionId of ['plugins.permissions.grants.grant', 'plugins.permissions.grants.dismissRequest'] as const) {
       await expect(executor.execute(actionId, { requestId: pendingRequest.id }, { ...context, actionsSettings }))
         .resolves.not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
     }
-    expect(operations.slice(0, 2)).toEqual(['plugins.permissions.grants.list', 'plugins.permissions.grants.revoke']);
   });
 
   it.each(['agent', 'mcp'] as const)('PARITY2 asks before %s permission revocation without reaching persistence', async (surface) => {

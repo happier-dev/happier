@@ -147,20 +147,20 @@ async function withAccountPluginActionRuntime<T extends CurrentProcessPluginActi
             ? { executionPlacement: execution.target === 'daemon' ? 'machine' as const : 'client' as const } : {}) };
     }
     const snapshot = getActiveAccountSettingsSnapshot();
-    // The existing invocation-context producer can capture only this local
-    // credential's just-admitted snapshot; shared ingress never borrows it.
+    // Retain the admitted Account lifetime. Home remains responsible for
+    // accepting the captured credential on each request after local rotation.
+    // Shared ingress can only use its own captured operation.
     const operationContext = capturedOperation ?? (!params.context?.externalActionExecutionAuthorization
       && !params.context?.externalActionCredential && !params.context?.rpcSessionAuthorization
       && snapshot?.scopeKey === resolveAccountSettingsScopeKeyForToken(credentials.token)
       ? createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl: params.host.serverHttpBaseUrl!,
-        isCurrent: async () => isCurrent() && (!params.host.isCredentialCurrent || await params.host.isCredentialCurrent()) }) : undefined);
+        isCurrent: async () => isCurrent() }) : undefined);
     if (operationContext && (operationContext.credentials.token !== credentials.token
       || normalizeServerHttpBaseUrl(operationContext.serverHttpBaseUrl) !== normalizeServerHttpBaseUrl(params.host.serverHttpBaseUrl!))) {
       return { matched: true, result: { ok: false, errorCode: 'authorityChanged', error: 'authorityChanged' } };
     }
     const isCredentialCurrent = async () => isCurrent()
-      && (!operationContext || await operationContext.isCurrent(params.context?.signal))
-      && (!params.host.isCredentialCurrent || await params.host.isCredentialCurrent());
+      && (!operationContext || await operationContext.isCurrent(params.context?.signal));
     const explicitMachineId = params.host.runtimeActionMachineId
       ?? (params.context?.externalActionTarget?.kind === 'machine' ? params.context.externalActionTarget.machineId : undefined)
       ?? params.context?.executionRunTargetMachineId;
