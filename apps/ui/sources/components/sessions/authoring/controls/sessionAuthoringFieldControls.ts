@@ -106,6 +106,8 @@ export type SessionAuthoringMcpContext = Readonly<{
  */
 export type SessionAuthoringConnectedServicesContext = Readonly<{
     serverId: string | null;
+    /** The execution target, when this authoring surface already has one. */
+    machineId?: string | null;
 }>;
 
 export type SessionAuthoringFieldControlModel =

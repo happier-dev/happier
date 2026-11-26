@@ -114,8 +114,7 @@ export function useSessionAuthoringConnectedServicesChip(props: SessionAuthoring
     const credentialResourcesEnabled = useFeatureEnabled('teams.credentialResources', credentialResourcesFeatureScope);
     const teamCredentialCatalog = useHomeTeamCredentialModelCatalog({
         serverId,
-        // Workflow/default authoring has no execution Machine yet.
-        machineId: null,
+        machineId: props.context.machineId ?? null,
         enabled: credentialResourcesEnabled,
     });
     const teamCredentialResources = teamCredentialCatalog.resources;

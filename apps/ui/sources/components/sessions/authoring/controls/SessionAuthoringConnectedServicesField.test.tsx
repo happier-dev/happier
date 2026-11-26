@@ -2,6 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { teamSummaryFixture } from '@/dev/testkit';
+import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { type ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
 import { type PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -17,6 +20,7 @@ import { AgentInputContentPopover } from '@/components/sessions/agentInput/compo
 import { SelectionList } from '@/components/ui/selectionList';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { SessionAuthoringConnectedServicesField } from './SessionAuthoringConnectedServicesField';
+import { useSessionAuthoringControlFacts } from './useSessionAuthoringControlFacts';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness'))
     .createSocketIoClientBoundary(importOriginal));
@@ -26,11 +30,13 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-it('authors a connected pick during unread inheritance and preserves controlled echoes without reporting derived defaults', async () => {
+it('offers exact-Machine Team accounts while preserving personal inheritance and controlled echoes', async () => {
     const bridge = await loadSyncSingletonForTests();
     const previous = storage.getState();
     const accountId = 'authoring-purpose';
     const features = buildServerFeaturesResponse();
+    features.features.teams.enabled = true;
+    features.features.teams.credentialResources.enabled = true;
     features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
     const consumer = { pluginId: 'happier.agent.codex', localId: 'codex' };
     const service = { pluginId: consumer.pluginId, localId: 'openai-codex' };
@@ -41,6 +47,12 @@ it('authors a connected pick during unread inheritance and preserves controlled 
             credentialRevision: null, kind: 'oauth', expiresAt: null, lastUsedAt: null, providerIdentity: {} }],
     });
     const http = createHomeHubArtifactHttpBoundary(accountId, profile);
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'team-codex', teamId: 'engineering',
+        displayName: teamCredentialDisplayNameFixture('Team Codex'), resourceRevision: 1,
+        readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+        directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
+        connectedServiceSelections: [{ source: 'team_resource', resourceId: 'team-codex', deliveryMode: 'brokered' }],
+        sourcePresentation: { kind: 'connected_service', service } });
     const declarations = [{ purpose: 'primary', service }] satisfies readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     const value = { v: 1 as const, bindings: [{ purpose: { consumer, purpose: 'primary' },
         target: { kind: 'account' as const, account: { service, accountId: 'work' } } }] };
@@ -49,6 +61,14 @@ it('authors a connected pick during unread inheritance and preserves controlled 
         request: (input, init) => {
             const pathname = new URL(String(input)).pathname;
             if (pathname === '/v1/features') return Promise.resolve(Response.json(features));
+            if (pathname === '/v1/teams/list') return Promise.resolve(Response.json({
+                items: [teamSummaryFixture({ id: 'engineering' })], nextCursor: null,
+            }));
+            if (pathname === '/v1/teams/credential-resources/entitled/discover') {
+                const request = JSON.parse(String(init?.body)) as { executionMachineId?: string };
+                return Promise.resolve(Response.json({ resources: request.executionMachineId === 'review-machine' ? [resource] : [],
+                    nextCursor: null, failures: [] }));
+            }
             if (pathname === '/v1/account/entity-rows/connected-accounts/purposes') return Promise.resolve(denied
                 ? new Response(null, { status: 403 })
                 : Response.json({ status: 'present', revision: 5, content: { t: 'plain', v: { key: 'purposes', value } } }));
@@ -63,10 +83,17 @@ it('authors a connected pick during unread inheritance and preserves controlled 
     }], conflicts: [], errorReason: null } satisfies ConnectedAccountDescriptorProjectionState);
     applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 5, record: { key: 'purposes', value } }, true);
     const onChange = vi.fn<(value: ConnectedServiceBindingsV2 | null) => void>();
-    const renderField = (authored: ConnectedServiceBindingsV2 | null | undefined, mixedLabel?: string) => <SessionAuthoringConnectedServicesField
-        mixedLabel={mixedLabel} agentId="codex" agentIdentity={consumer} connectedAccounts={declarations} context={{ serverId: connection.home.id }}
-        value={authored} onChange={onChange} testID="authoring-auth" chipRenderContext={{ chipStyle: () => null, iconColor: '#000',
-            showLabel: true, textStyle: null, countTextStyle: null, chipAnchorRef: { current: null }, popoverAnchorRef: { current: null } }} />;
+    function Field(props: Readonly<{ authored: ConnectedServiceBindingsV2 | null | undefined; mixedLabel?: string; machineId?: string | null }>) {
+        const facts = useSessionAuthoringControlFacts({ serverId: connection.home.id, machineId: props.machineId ?? null });
+        if (!facts.connectedServices) throw new Error('Expected the authoring Connected Services context');
+        return <SessionAuthoringConnectedServicesField
+            mixedLabel={props.mixedLabel} agentId="codex" agentIdentity={consumer} connectedAccounts={declarations}
+            context={facts.connectedServices}
+            value={props.authored} onChange={onChange} testID="authoring-auth" chipRenderContext={{ chipStyle: () => null, iconColor: '#000',
+                showLabel: true, textStyle: null, countTextStyle: null, chipAnchorRef: { current: null }, popoverAnchorRef: { current: null } }} />;
+    }
+    const renderField = (authored: ConnectedServiceBindingsV2 | null | undefined, mixedLabel?: string, machineId: string | null = 'review-machine') => <Field
+        mixedLabel={mixedLabel} authored={authored} machineId={machineId} />;
     const wrapper = ({ children }: React.PropsWithChildren) => <AuthProvider initialCredentials={connection.credentials}>{children}</AuthProvider>;
     const screen = await renderScreen(renderField(undefined), { wrapper });
     let picker: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -83,6 +110,11 @@ it('authors a connected pick during unread inheritance and preserves controlled 
         const options = rootStep.sections.flatMap((section: { options: readonly { id: string; selected?: boolean; onSelect?: () => void }[] }) => section.options);
         const connected = options.find((option: { id: string }) => option.id.endsWith(':profile:work'));
         if (!connected?.onSelect) throw new Error('Expected the actual Work account option');
+        await vi.waitFor(async () => {
+            const currentContent = screen.findByType(AgentInputContentPopover).props.content;
+            await picker?.update(currentContent({ maxHeight: 420, requestClose() {} }));
+            expect(picker?.getTextContent()).toContain('Team Codex');
+        });
         await act(async () => { await connected.onSelect(); });
         expect(onChange).toHaveBeenLastCalledWith({ v: 2, bindingsByServiceId: {
             [serviceKey]: { source: 'connected', selection: 'profile', profileId: 'work' },
@@ -117,5 +149,15 @@ it('authors a connected pick during unread inheritance and preserves controlled 
         expect(await chosenRows()).not.toEqual([]);
         expect(await chosenRows('Mixed')).toEqual([]);
         expect(screen.getTextContent()).toContain('Mixed');
+
+        // Generic defaults without an execution Machine keep the personal account choices.
+        await picker.unmount();
+        await screen.update(renderField(authored, undefined, null));
+        const genericContent = screen.findByType(AgentInputContentPopover).props.content;
+        picker = await renderScreen(genericContent({ maxHeight: 420, requestClose() {} }), { wrapper });
+        expect(picker.getTextContent()).not.toContain('Team Codex');
+        const genericOptions = picker.findByType(SelectionList).props.rootStep.sections
+            .flatMap((section: { options: readonly { id: string }[] }) => section.options);
+        expect(genericOptions.some((option: { id: string }) => option.id.endsWith(':profile:work'))).toBe(true);
     } finally { await picker?.unmount(); await screen.unmount(); storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
 });

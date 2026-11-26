@@ -296,14 +296,14 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     ), [directory, machineId, machineName, serverId]);
 
     /**
-     * The Home a Connected Service binding is authored against. Only the Home
-     * is a fact of the surface; the Team credential resources it offers are
+     * The Home and execution Machine a Connected Service binding is authored against.
+     * The Team credential resources it offers are
      * observed by the control that actually mounts, so a host that never shows
      * the field opens no Team subscriptions.
      */
     const connectedServices = React.useMemo<SessionAuthoringConnectedServicesContext>(
-        () => ({ serverId }),
-        [serverId],
+        () => ({ serverId, machineId }),
+        [serverId, machineId],
     );
 
     return React.useMemo<SessionAuthoringControlFacts>(() => ({
