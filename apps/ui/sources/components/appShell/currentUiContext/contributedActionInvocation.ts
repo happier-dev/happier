@@ -147,7 +147,7 @@ export async function executeCapturedScopeContributedAction(
     const committed = resolveDeclaredContributedAction(declaration);
     let resolved = machineId && committed?.kind === 'machine' && committed.origin.machineId !== machineId ? null : committed;
     const parsedInput = PluginJsonValueV2Schema.safeParse(request.input ?? null);
-    if ((!resolved && !machineId) || !parsedInput.success || request.signal?.aborted || !accountLifetime.isCurrent()) {
+    if (!parsedInput.success || request.signal?.aborted || !accountLifetime.isCurrent()) {
         return refused('contributed_action_unavailable');
     }
     if (resolved && (!areServerProfileIdentifiersEquivalent(resolved.origin.serverId, scope.serverId)
@@ -156,9 +156,13 @@ export async function executeCapturedScopeContributedAction(
         && request.context.expectedContributedActionOccurrenceId !== resolved.action.occurrenceId) return refused('plugin_action_generation_retired');
     let expectedOccurrenceId = request.context.expectedContributedActionOccurrenceId;
     let capturedClientDeclaration: PluginUiActionProjection | undefined;
-    if (!resolved && machineId && declaration?.execution.target === 'client') {
-        const origin = readPluginUiContributionOrigin(declaration);
-        if (origin?.machineId === machineId && areServerProfileIdentifiersEquivalent(origin.serverId, scope.serverId)) {
+    if (!resolved && declaration?.execution.target === 'client') {
+        const accountOrigin = readPluginUiAccountExecutableOrigin(declaration);
+        const machineOrigin = accountOrigin ? null : readPluginUiContributionOrigin(declaration);
+        const origin = accountOrigin ?? machineOrigin;
+        // An external Machine can be the handler's operand while the executable belongs to the Account.
+        const matchesTarget = accountOrigin ? accountOrigin.accountId === scope.accountId : machineOrigin?.machineId === machineId;
+        if (origin && matchesTarget && areServerProfileIdentifiersEquivalent(origin.serverId, scope.serverId)) {
             if (expectedOccurrenceId !== undefined && expectedOccurrenceId !== declaration.occurrenceId) {
                 return refused('plugin_action_generation_retired');
             }
@@ -174,6 +178,7 @@ export async function executeCapturedScopeContributedAction(
             });
         }
     }
+    if (!resolved && !capturedClientDeclaration && !machineId) return refused('contributed_action_unavailable');
     if (resolved && invokeMounted) return invokeMounted();
     const followsAccountPublication = resolved?.action.execution.target === 'client'
         && !isPluginSurfaceClientActionOccurrencePinned({ hostAction,

@@ -475,6 +475,7 @@ function createClientTargetAction(input: Readonly<{
     confirmationWhen?: PluginProjectedActionV2['confirmationWhen'];
     surfaces?: PluginProjectedActionV2['surfaces'];
     accountPlacement?: boolean;
+    accountClient?: boolean;
     invokingUi?: true;
     sessionTarget?: ActionSessionTargetDeclarationV1;
 }>): PluginProjectedActionV2 {
@@ -489,7 +490,7 @@ function createClientTargetAction(input: Readonly<{
         ...(input.approvalScope ? { approvalScope: input.approvalScope } : {}),
         surfaces: input.surfaces ?? ['ui'],
         placementBindings: ['detailsPanel'],
-        execution: input.accountPlacement ? { target: 'account', ...(input.invokingUi ? { invokingUi: true } : {}), account: {
+        execution: input.accountPlacement && !input.accountClient ? { target: 'account', ...(input.invokingUi ? { invokingUi: true } : {}), account: {
             artifactId: CLIENT_ACTION_TARGET.artifactId, exportName: CLIENT_ACTION_TARGET.exportName,
         } } : {
             target: 'client',
@@ -557,6 +558,7 @@ function createClientActionActivation(input: Readonly<{
     occurrenceId?: string;
     artifactGraph?: PluginUiArtifactsManifestEntryV2;
     accountPlacement?: boolean;
+    accountClient?: boolean;
     invokingUi?: true;
     accountActionDeclaration?: import('@happier-dev/protocol/plugins/actions/v2').PluginActionContributionV2;
     omitProjectedAccountDeclaration?: boolean;
@@ -583,6 +585,7 @@ function createClientActionActivation(input: Readonly<{
         dangerLevel: input.dangerLevel,
         surfaces: input.surfaces,
         accountPlacement: input.accountPlacement,
+        accountClient: input.accountClient,
         invokingUi: input.invokingUi,
         sessionTarget: input.sessionTarget,
         confirmationWhen: input.confirmationWhen,
@@ -3143,12 +3146,18 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
-    it.each(['registered', 'absent'] as const)('settles a cold captured-scope client Action when its lazy executable is %s', async settlement => {
+    it.each([
+        { origin: 'Machine', settlement: 'registered' },
+        { origin: 'Machine', settlement: 'absent' },
+        { origin: 'Account', settlement: 'registered' },
+        { origin: 'Account', settlement: 'absent' },
+    ] as const)('settles a cold captured-scope $origin client Action when its lazy executable is $settlement', async ({ origin, settlement }) => {
         const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
         const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier('server-client-action'));
         await publishManageMachine(lifetime.scope);
         const handler = vi.fn(async () => ({ actions: [] }));
-        const fixture = createClientActionActivation({ accountLifetime: lifetime, handler });
+        const fixture = createClientActionActivation({ accountLifetime: lifetime, handler,
+            accountPlacement: origin === 'Account', accountClient: origin === 'Account' });
         const action = { pluginId: fixture.action.pluginId, localId: fixture.action.id };
         const machineId = CLIENT_ACTION_ORIGIN.materializationRef.machineId;
         const machineProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
