@@ -47,14 +47,12 @@ export function ReviewFindingAnchor(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  // Beside the code it is about, on the code's own inset, framed like the comment drafts that sit there.
+  // In the line's comment slot, on its edge and in the comment card's frame, so the slot reads as one column.
   anchor: {
-    marginVertical: theme.space.s6,
-    marginHorizontal: theme.space.s12,
-    paddingHorizontal: theme.space.s8,
+    paddingHorizontal: theme.space.s10,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border.default,
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     backgroundColor: theme.colors.surface.base,
   },
 }));

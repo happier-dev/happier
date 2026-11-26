@@ -26,6 +26,9 @@ it.each([{ renamed: false, authoring: true }, { renamed: true, authoring: true }
     const finding = buildReviewCommentFixture({ id: 'finding-line', reviewId: 'review', roundOrdinal: 1,
         engineId: 'codex', findingSeverity: 'high', anchor: { kind: 'line', filePath, line: 2, side: 'after' },
         finding: { id: 'line', title: 'Line finding', summary: 'Addition is required', severity: 'high', category: 'correctness' } });
+    const laterHuman = buildReviewCommentFixture({ id: 'human-line-later', reviewId: 'review', roundOrdinal: 1,
+        author: { kind: 'user', userId: 'alice' }, body: 'Later human line comment',
+        anchor: { kind: 'line', filePath: previousFilePath ?? filePath, line: 2, side: renamed ? 'before' : 'after' } });
     const fileNote = buildReviewCommentFixture({ id: 'human-file', reviewId: 'review', roundOrdinal: 1,
         author: { kind: 'user', userId: 'alice' }, body: 'Saved whole-file note',
         anchor: { kind: 'file', filePath: previousFilePath ?? filePath } });
@@ -42,7 +45,7 @@ it.each([{ renamed: false, authoring: true }, { renamed: true, authoring: true }
             filePath={filePath} diffContent={'@@ -1,3 +1,3 @@\n function total() {\n-  return 1;\n+  return 2;\n }\n'}
             fileContent={null} language="typescript" selectedLineKeys={new Set()} lineSelectionEnabled={false}
             onToggleLine={() => {}} reviewCommentsEnabled={authoring} reviewCommentDrafts={[draft]}
-            reviewComments={[human, finding, fileNote, fileFinding, foreign]} previousFilePath={previousFilePath} />
+            reviewComments={[human, finding, laterHuman, fileNote, fileFinding, foreign]} previousFilePath={previousFilePath} />
     </ReviewFindingAnchorContext.Provider>);
     if (authoring) await vi.waitFor(() => expect(screen.getTextContent()).toContain('Existing local draft'));
     else expect(screen.getTextContent()).not.toContain('Existing local draft');
@@ -50,6 +53,13 @@ it.each([{ renamed: false, authoring: true }, { renamed: true, authoring: true }
     expect(screen.getTextContent()).toContain('Saved whole-file note');
     expect(screen.getTextContent()).not.toContain('Other file must stay hidden');
     expect(screen.getTextContent().split('Line finding')).toHaveLength(2);
+    // One line's slot leads with its findings, then its comments in the order they arrived (a rename puts the
+    // comments on the old side's line, a different slot).
+    const text = screen.getTextContent();
+    const [findingAt, earlier, later] = ['Line finding', 'Saved human line comment', 'Later human line comment'].map(part => text.indexOf(part));
+    expect(findingAt).toBeGreaterThan(-1);
+    if (!renamed) expect(earlier).toBeGreaterThan(findingAt);
+    expect(later).toBeGreaterThan(earlier);
     expect(screen.getTextContent().split('Whole-file finding')).toHaveLength(2);
     await screen.pressByTestIdAsync('review-finding-anchor:finding-line');
     await screen.pressByTestIdAsync('review-finding-anchor:finding-file');

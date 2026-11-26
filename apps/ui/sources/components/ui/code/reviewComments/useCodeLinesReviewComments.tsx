@@ -12,6 +12,7 @@ import {
 } from './buildReviewCommentDraftFromCodeLine';
 import { resolveCodeLineAnchor } from './resolveCodeLineAnchor';
 import { ReviewCommentInlineComposer } from './ReviewCommentInlineComposer';
+import { reviewCommentSlot } from './ReviewCommentDraftFrame';
 import { ReviewCommentSavedDrafts } from './ReviewCommentSavedDrafts';
 
 function buildDraftsByResolvedLineId(params: Readonly<{
@@ -145,7 +146,7 @@ export function useCodeLinesReviewComments(params: {
 
         // One placement for both states, so saving a comment swaps the card in place.
         return (
-            <View style={{ marginTop: 6, marginRight: 8 }}>
+            <View style={reviewCommentSlot.slot}>
                 {drafts.length > 0 && !isActive ? (
                     <ReviewCommentSavedDrafts
                         drafts={drafts}

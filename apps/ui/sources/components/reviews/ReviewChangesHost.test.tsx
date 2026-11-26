@@ -198,7 +198,7 @@ it.each([
     const { ReviewChangesHost } = await import('./ReviewChangesHost');
     const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
     const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
-    const { ReviewCommentCard } = await import('./ReviewCommentCard');
+    const { ReviewCommentDraftFrame } = await import('@/components/ui/code/reviewComments/ReviewCommentDraftFrame');
     const comment = buildReviewCommentFixture({ id: 'saved-gutter', reviewId: 'gutter-review', roundOrdinal: 1,
         author: { kind: 'user', userId: 'alice' }, anchor: { kind: 'line', filePath: 'total.ts', line: 2, side: 'after' },
         body: 'Preserve addition: subtraction returns a negative total.', snapshot: { kind: 'none', capturedAt: 1 } });
@@ -219,7 +219,8 @@ it.each([
         .findAll(node => typeof node.props.onLayout === 'function')[0]?.props.onLayout({ nativeEvent: { layout: { width: 900, height: 360 } } }));
     await vi.waitFor(() => expect(screen.findAllByType(DiffViewer)).toHaveLength(1));
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('Preserve addition: subtraction returns a negative total.'));
-    expect(screen.findAllByType(ReviewCommentCard).map(card => card.props.comment.id)).toEqual(['saved-gutter']);
+    // A saved gutter comment keeps the card it was written in; the finding is not drawn a second time.
+    expect(screen.findAllByType(ReviewCommentDraftFrame).map(card => card.props.testID)).toEqual(['review-comment-saved-gutter']);
     expect(screen.getTextContent()).not.toContain('The reducer subtracts.');
     await screen.pressByTestIdAsync('review-finding-anchor:saved-finding');
     expect(onOpenComment).toHaveBeenCalledWith('saved-finding');

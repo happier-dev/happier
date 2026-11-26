@@ -117,30 +117,34 @@ export function ReviewFindingLine(
           findBlockId={find ? `${find}:severity` : undefined}
         />
       </View>
-      {find ? (
-        <StructuredFindText
-          blockId={`${find}:title`}
-          text={props.title}
-          numberOfLines={1}
-          style={styles.lineTitle}
-        />
-      ) : (
-        <Text style={styles.lineTitle} numberOfLines={1}>
-          {props.title}
-        </Text>
-      )}
-      {find ? (
-        <StructuredFindText
-          blockId={`${find}:reviewer`}
-          text={props.reviewer}
-          numberOfLines={1}
-          style={styles.lineReviewer}
-        />
-      ) : (
-        <Text style={styles.lineReviewer} numberOfLines={1}>
-          {props.reviewer}
-        </Text>
-      )}
+      {/* Title and who found it share the rest of the line; when both do not fit, the title takes up to two
+          lines and the meta moves beneath it, so the one thing the person came for is never the clipped text. */}
+      <View style={styles.lineBody}>
+        {find ? (
+          <StructuredFindText
+            blockId={`${find}:title`}
+            text={props.title}
+            numberOfLines={2}
+            style={styles.lineTitle}
+          />
+        ) : (
+          <Text style={styles.lineTitle} numberOfLines={2}>
+            {props.title}
+          </Text>
+        )}
+        {find ? (
+          <StructuredFindText
+            blockId={`${find}:reviewer`}
+            text={props.reviewer}
+            numberOfLines={1}
+            style={styles.lineReviewer}
+          />
+        ) : (
+          <Text style={styles.lineReviewer} numberOfLines={1}>
+            {props.reviewer}
+          </Text>
+        )}
+      </View>
     </>
   );
   if (!props.onPress)
@@ -173,25 +177,34 @@ const styles = StyleSheet.create((theme) => ({
   summary: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: theme.space.s4 },
   line: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: theme.space.s12,
     minHeight: 30,
+    paddingVertical: theme.space.s4,
     borderRadius: 6,
   },
   linePressed: { backgroundColor: theme.colors.surface.pressed },
   lineSeverity: { width: REVIEW_SEVERITY_COLUMN_WIDTH_PX },
+  lineBody: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    columnGap: theme.space.s12,
+  },
   lineTitle: {
     ...Typography.default(),
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
     minWidth: 0,
     fontSize: 14,
     color: theme.colors.text.primary,
   },
   lineReviewer: {
-    flexShrink: 0,
-    maxWidth: '30%',
+    flexShrink: 1,
+    minWidth: 0,
     ...Typography.variant('body'),
     color: theme.colors.text.tertiary,
-    textAlign: 'right',
   },
 }));
