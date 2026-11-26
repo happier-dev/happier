@@ -86,6 +86,14 @@ export const DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 = 'deployments.en
 export const DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 = 'telemetry.bindings';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1 = 'database.readAccess.bindings';
+const DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1 = 'copy-data-link:';
+/** Duplicate's reviewed data Link child names the source data Link it copies. */
+export const deploymentCopyDataLinkChildRoleV1 = (sourceTargetLinkId: string) => `${DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1}${sourceTargetLinkId}`;
+export function readDeploymentCopyDataLinkChildSourceV1(role: string | undefined): string | undefined {
+  const source = role?.startsWith(DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1)
+    ? role.slice(DEPLOYMENT_COPY_DATA_LINK_CHILD_ROLE_PREFIX_V1.length) : undefined;
+  return source || undefined;
+}
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
 export const DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 = 'deployments.domains.add' as const;

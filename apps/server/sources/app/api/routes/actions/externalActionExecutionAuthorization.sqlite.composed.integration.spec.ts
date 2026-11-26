@@ -328,9 +328,11 @@ import { prepareFoundSkillExport } from '../../../../../../cli/src/machines/tran
 import { registerMachineDirectTransferExportRpcHandlers } from '../../../../../../cli/src/api/machine/rpcHandlers.directTransferExports';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { deploymentCopyDataLinkChildRoleV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema,
     DeploymentBindingsPreparedInputV1Schema } from '@happier-dev/protocol';
 import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import { DeploymentTargetLinkInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { COPY_ENVIRONMENT_BINDINGS_ROLE } from '../../../../../../cli/src/deployments/copyEnvironmentForHost';
 
 import { machineOperationSupportForTest } from '@/testkit/machineOperationSupport.testkit';
@@ -1647,6 +1649,70 @@ describe("external Action execution authorization", () => {
             expect(result).toMatchObject({ ok: true });
             expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: other.environmentId } }))
                 .toMatchObject({ revision: other.revision });
+            // Duplicate's reviewed data Link (ORCHTOP-COMPOSED-GAPS-1125, 18:35Z): the provider created the copy, then Home
+            // refused this Link with effect_family. It links only a data copy of the reviewed source Environment's data Link
+            // to the Environment this Create allocated.
+            const linkContent = async () => {
+                const artifact = await createArtifact({ actorUserId: fixture.account.id, artifactId: crypto.randomUUID(),
+                    header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-target-link.v1', title: 'Copied database' })),
+                    body: decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })), dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!artifact.ok) throw new Error(artifact.error);
+                return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: artifact.artifact.headerVersion,
+                    contentBodyVersion: artifact.artifact.bodyVersion };
+            };
+            const contribution = { pluginId: 'happier.deploy.railway', localId: 'railway-postgres' };
+            const dataLink = async (environmentId: string) => db.deploymentTargetLink.create({ data: { environmentId,
+                createdByAccountId: fixture.account.id, role: 'data', state: 'deployed', sourceKind: 'plugin', targetKind: 'platform',
+                pluginId: contribution.pluginId, contributionLocalId: contribution.localId, ...await linkContent() } });
+            const sourceData = await dataLink(selected.environmentId);
+            const foreignData = await dataLink(other.environmentId);
+            const linkAt = async (role: string, environmentId: string, parent = { input: rootInput, authorization: projected }) => {
+                const linked = await invokeHostReviewedChildV1({ parent: { actionId, input: parent.input },
+                    context: { surface: 'cli', serverId: homeId, runtimeAccountId: fixture.account.id,
+                        externalActionTarget: root.binding.target, externalActionExecutionAuthorization: parent.authorization },
+                    child: { action: 'deployments.targets.link', role, input: {} },
+                    admittedReview: { action: 'deployments.targets.link', role, surface: 'cli' },
+                    execute: async (_input, context) => {
+                        const port = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+                        if (!port) throw new Error('reviewed_child_http_port_required');
+                        const current = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } });
+                        const path = `/v1/deployments/environments/${environmentId}/targets`;
+                        const body = DeploymentTargetLinkInputV1Schema.parse({ serverId: homeId, environmentId,
+                            expectedRevision: current.revision, requestKey: crypto.randomUUID(), targetId: contribution.localId,
+                            role: 'data', source: { kind: 'plugin', contribution }, targetKind: 'platform', machines: [],
+                            ...await linkContent() });
+                        const headers = await port.createRequestHeaders({ effectActionId: 'deployments.targets.link', method: 'POST', path, body });
+                        if (!headers) throw new Error('reviewed_child_http_headers_required');
+                        const response = await app.inject({ method: 'POST', url: path, payload: body, headers });
+                        return { ok: true, result: { status: response.statusCode, body: response.body } };
+                    } });
+                if (!linked.ok) throw new Error(linked.errorCode);
+                return linked.result as { status: number; body: string };
+            };
+            const copied = await linkAt(deploymentCopyDataLinkChildRoleV1(sourceData.id), destination.environmentId);
+            expect(copied.status, copied.body).toBe(200);
+            expect(JSON.parse(copied.body)).toMatchObject({ ok: true, environmentId: destination.environmentId });
+            for (const [role, environmentId] of [
+                [deploymentCopyDataLinkChildRoleV1(foreignData.id), destination.environmentId],
+                [deploymentCopyDataLinkChildRoleV1(sourceData.id), other.environmentId],
+                ['template.link', destination.environmentId],
+            ] as const) {
+                const refused = await linkAt(role, environmentId);
+                expect.soft(refused.status, `${role} ${environmentId === other.environmentId ? 'other' : 'destination'} ${refused.body}`).toBe(401);
+            }
+            // A Create without a copy source cannot link a data copy, even to an Environment its Account owns.
+            const { copyFrom: _copy, ...plainInput } = rootInput;
+            const plainCreate = { ...plainInput, requestKey: crypto.randomUUID() };
+            const plainRoot = await mint(app, fixture, actionId, { ...fixture.envelope, requestId: crypto.randomUUID(), input: plainCreate }, token);
+            const plainProjected = await projectExternalActionRequesterHttpAuthorization({ authorization: plainRoot,
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, target: plainRoot.binding.target,
+                installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey, isCurrent: async () => true });
+            if (!plainProjected) throw new Error('plain_create_requester_http_projection_required');
+            const withoutSource = await linkAt(deploymentCopyDataLinkChildRoleV1(sourceData.id), destination.environmentId,
+                { input: plainCreate, authorization: plainProjected });
+            expect(withoutSource.status, withoutSource.body).toBe(401);
+            expect(await db.deploymentTargetLink.count({ where: { environmentId: other.environmentId, role: 'data' } })).toBe(1);
+            expect(await db.deploymentTargetLink.count({ where: { environmentId: destination.environmentId, role: 'data' } })).toBe(1);
         } finally { restoreAdapter(); await app.close(); }
     });
 

@@ -39,6 +39,8 @@ export const declareDeploymentPreparationScopeV1 = (kind: DeploymentPreparationK
     ? [actionId, ids.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1,
       ids.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, ids.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, ...previewReads,
       ...(admission.preview && admission.mode === 'apply' ? [ids.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1] : []),
+      // Duplicate links each reviewed data copy to the Environment it creates.
+      ...(admission.copyFrom && admission.mode === 'apply' ? [ids.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1] : []),
       ...((admission.catalogApp || admission.preview) && admission.mode === 'apply'
         ? [ids.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, ids.DEPLOYMENT_DEPLOY_ACTION_ID_V1,
           ids.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, ids.DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1] : [])] : [];

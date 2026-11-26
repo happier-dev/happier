@@ -1,24 +1,17 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse, ActionsSettingsV1Schema, ProjectDeploymentDefaultsOutputV1Schema,
-    decodePlainArtifactStoredContent, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+    decodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentEnvironmentGetResultV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkResultV1Schema,
     DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { deploymentTargetRoleWithNativeSelectorV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
-import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
-import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
-import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createCommittedContributedActionInvoker, listRuntimeContributedActionDefinitions } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
-import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
@@ -30,64 +23,16 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { normalizeStoredComposeDefinitionInput } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
-import { nativeSelectorSchema, resultSchema as supabaseDataResultSchema } from '../../../../packages/plugins/deployment-supabase/src/data/schemas';
+
+import { installCopyDataProvider } from './copyEnvironment.installedHost.testkit';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('copies through the installed data declaration and reviewed children without reprovisioning a retried Create', async () => {
-    const pluginId = 'example.copy-data';
     const serverHttpBaseUrl = 'https://copy-home.test';
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
-    const account = { service: { pluginId, localId: 'service' }, accountId: 'fresh-account' };
-    let bindings: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
-    const connectedAccounts = createConnectedAccountPurposeBindingOwner({
-        store: { read: async () => bindings, update: async mutate => (bindings = mutate(bindings)), subscribe: () => ({ dispose() {} }) },
-        selectTarget: async () => { throw new Error('The author already selected a fresh account'); },
-        resolveTarget: async target => target.kind === 'account' ? { displayName: 'Fresh account', account: target.account } : null,
-        materializeAccount: async () => { throw new Error('This provider fixture uses no secret headers'); },
-        materializeNative: async () => { throw new Error('This provider has no native credentials'); },
-        projectTargetAccounts: async () => { throw new Error('No account enumeration'); },
-        assertTargetAccountMaterializable: async () => {},
-    });
-    const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
-        resolveContributes: async happyHomeDir => createResolvedContributionRegistry(projectLoadedPluginContributes({
-            loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
-        })),
-        runtimeOptions: { resolveCurrentMachineId: () => 'controller', connectedAccounts, actionFormConnectedAccounts: connectedAccounts,
-            deploymentAccountExecution: { credentials, serverUrl: serverHttpBaseUrl, serverId: 'home', serverIdentityId: 'home',
-                machineId: 'controller', isCurrent: async () => true } },
-        plugins: [{ manifest: { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Copy data fixture',
-            entrypoints: { daemon: './daemon.mjs' }, hostAccess: { required: [{ id: 'manage', capability: 'connectedAccounts',
-                reason: 'Use the explicitly selected account', scope: { serviceRefs: ['service'], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
-            contributes: {
-                connectedAccountDescriptors: [{ id: 'service', title: 'Provider', authentication: { defaultModeId: 'manual', modes: [{
-                    id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
-                }] } }],
-                actions: [{ id: 'provision', title: 'Create database', scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], placementBindings: [],
-                    execution: { target: 'daemon' }, hostAccess: ['manage'], dangerLevel: 'writesRemote',
-                    confirmation: { title: 'Create the selected database?' },
-                    connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
-                    inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema, nativeSelectorSchema),
-                    resultSchema: supabaseDataResultSchema('projects-provision'),
-                }],
-                deploymentTargets: [{ id: 'database', role: 'data', title: 'Database', icon: 'database', targetKind: 'postgres',
-                    targetSchema: { type: 'object', properties: {}, additionalProperties: false },
-                    linkSchema: { type: 'object', properties: {}, additionalProperties: false }, nativeSelectorSchema, dataV1: { projects: { provision: 'provision' } },
-                }],
-            },
-        }, files: { 'daemon.mjs': `export function activate(api) {
-            api.actions.register('provision', async input => {
-                const response = await fetch('https://copy-provider.test/projects', { method: 'POST', body: JSON.stringify(input) });
-                return await response.json();
-            });
-            api.connectedAccounts.register('service', {
-                authentication: { modes: { manual: { kind: 'manual', async complete() { return { status: 'connected', displayName: 'Provider', scopes: [] }; } } } },
-                async status() { return { status: 'connected', displayName: 'Provider', scopes: [] }; },
-                async refresh() { return { status: 'connected', displayName: 'Provider', scopes: [] }; },
-                async revoke() { return { status: 'remoteUnsupported' }; },
-                async materialize() { throw new Error('No credential disclosure'); },
-            });
-        }` } }],
+    const { runtime, pluginId, account } = await installCopyDataProvider({
+        credentials, serverHttpBaseUrl, serverId: 'home', machineId: 'controller',
     });
     try {
         expect(runtime.registry.pluginDiagnosticsByPluginId[pluginId] ?? []).toEqual([]);

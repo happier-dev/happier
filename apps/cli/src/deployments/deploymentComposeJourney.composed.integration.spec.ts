@@ -1,3 +1,6 @@
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DeploymentEnvironmentCreateActionResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { installCopyDataProvider } from './copyEnvironment.installedHost.testkit';
 import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -935,6 +938,203 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); }
         }
     }, 180_000);
+    it('replays a signed reviewed Duplicate and places its newly created managed database', async () => {
+        const credentials = readS0ControllerCredentials(home);
+        const restoreInstallation = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
+            () => installationBoundary.getStore() ?? readS0Installation(home));
+        const lifetime = new AbortController();
+        const cleanups: Array<() => Promise<void>> = [];
+        try {
+            await adoptServerProfileHomeConnectionDescriptor({
+                descriptor: { v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
+                    revision: 1, endpoints: [{ kind: 'https', url: home.baseUrl }] },
+                expectedProfileId: configuration.activeServerId, createIfMissing: true, observation: 'exact',
+            });
+            await runWithServerHttpBaseUrl(home.baseUrl, () => ensureCliActionPolicySettings(credentials, home.baseUrl));
+            await updateMachineRegistration(registration => ({
+                ...registration, accountId: home.accountId,
+                machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId },
+            }));
+            const { runtime: mounted, pluginId, account } = await installCopyDataProvider({
+                credentials, serverId: home.serverId, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
+                happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController,
+            });
+            cleanups.push(mounted.dispose);
+            const { listQualifiedConnectedAccountsV4, mutateQualifiedConnectedAccountCredentialV4 } = await import('@/api/client/qualifiedConnectedAccountApi');
+            const { sealQualifiedConnectedAccountContentEnvelope } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope');
+            const material = credentials.encryption;
+            if (!material) throw new Error('Duplicate fixture requires E2EE Account material');
+            const seal = (kind: 'credential' | 'configuration', payload: unknown) =>
+                sealQualifiedConnectedAccountContentEnvelope({ kind, payload, material, accountMode: 'e2ee',
+                    randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) });
+            await runWithServerHttpBaseUrl(home.baseUrl, async () => {
+                await mutateQualifiedConnectedAccountCredentialV4({ token: home.token, mutation: {
+                    ref: account, authenticationModeId: 'manual', expectedCredentialRevision: null,
+                    metadata: { kind: 'token', displayName: 'Copy database provider', scopes: [] },
+                    content: seal('credential', { v: 1, values: { token: randomUUID() } }),
+                    initialConfiguration: { expectedConfigurationRevision: null,
+                        replacementContentEnvelope: seal('configuration', { values: {}, secretRefs: {} }) },
+                } });
+                const inventory = await listQualifiedConnectedAccountsV4({ token: home.token, service: account.service });
+                expect(inventory.accounts).toContainEqual(expect.objectContaining({ ref: account, status: 'connected' }));
+            });
+            const requesterIdentity = sourceRequesterForHome(home);
+            const acquirePluginRuntimeRegistryLease = () => mounted.controller.acquireRuntimeRegistry({
+                resolveRuntimeRegistry: async () => mounted.registry,
+            });
+            const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, resolveRequesterIdentity: requesterIdentity,
+                serverId: home.serverId, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
+                acquirePluginRuntimeRegistryLease, signal: lifetime.signal });
+            const daemon = await createS0DeploymentDaemonIngress({ home, resolveDeploymentRequesterIdentity: requesterIdentity,
+                createDeploymentActionDeps: (requester, operations) => createDaemonDeploymentActionDeps({
+                    credentials: requester?.credentials ?? credentials, serverId: home.serverId,
+                    serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? home.baseUrl, machineId: home.machineId,
+                    resolveRequesterIdentity: requesterIdentity, runtime, acquirePluginRuntimeRegistryLease,
+                    runActionOperation: operations.runActionOperation,
+                    ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
+                }),
+            });
+            cleanups.push(daemon.close);
+            const artifacts = nativeDeploymentArtifacts(home);
+            const save = async (kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+                content: unknown) => {
+                const artifact = await artifacts.create({ header: { kind, title: 'Database copy fixture' }, body: JSON.stringify(content) });
+                return { contentArtifactId: artifact.artifactId, contentHeaderVersion: artifact.revision.headerVersion,
+                    contentBodyVersion: artifact.revision.bodyVersion };
+            };
+            const post = (path: string, body: unknown) => fetch(new URL(path, home.baseUrl), {
+                method: 'POST', headers: { Authorization: `Bearer ${home.token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const source = ProjectSourcesCreateOutputV1Schema.parse(await (await post('/v1/projects/sources', {
+                serverId: home.serverId, requestKey: randomUUID(), name: 'Billing', audience: [],
+            })).json());
+            if (!source.ok) throw new Error(source.error);
+            const document = 'services:\n  web:\n    image: nginx:alpine\n';
+            const firstTargetLink = { machines: [{ machineId: home.machineId, installationId: home.installationId }] };
+            const environment = DeploymentEnvironmentCreateResultV1Schema.parse(await (await post('/v1/deployments/environments', {
+                serverId: home.serverId, projectSourceId: source.source.id, requestKey: randomUUID(),
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: home.machineId, buildMachineId: home.machineId,
+                ...await save(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, { name: 'Billing staging', retainPreviousDeployments: 0,
+                    definition: { kind: 'stored', contentRevision: 1, document, profiles: [], services: ['web'],
+                        composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}` }, bindings: [] }),
+                firstTargetLink: { ...firstTargetLink, ...await save(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {}) },
+            })).json());
+            if (!environment.ok) throw new Error(environment.error);
+            const contribution = { pluginId, localId: 'database' };
+            const action = { pluginId, localId: 'provision' };
+            const credentialPrincipal = { kind: 'account' as const, accountId: home.accountId, purpose: { consumer: action, purpose: 'manage' },
+                target: { kind: 'account' as const, account } };
+            const { DeploymentTargetLinkContentV1Schema } = await import('@happier-dev/protocol/deployments/deploymentTargetLinkContentV1');
+            const sourceData = await save(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DeploymentTargetLinkContentV1Schema.parse({
+                credentialPrincipal,
+                providerIdentity: { providerAccountId: 'fresh-provider', providerResourceId: 'source-database', providerEnvironment: 'main' },
+                providerEnvironment: { kind: 'native', selection: { branchId: 'main' } },
+            }));
+            const linked = DeploymentTargetLinkResultV1Schema.parse(await (await post(
+                `/v1/deployments/environments/${environment.environmentId}/targets`, {
+                    serverId: home.serverId, environmentId: environment.environmentId, expectedRevision: environment.revision,
+                    requestKey: randomUUID(), targetId: contribution.localId, role: 'data', machines: [],
+                    source: { kind: 'plugin', contribution }, targetKind: 'postgres',
+                    ...sourceData,
+                })).json());
+            if (!linked.ok) throw new Error(linked.error);
+
+            const vendorCreates: string[] = [];
+            const realFetch = globalThis.fetch;
+            vi.stubGlobal('fetch', async (request: RequestInfo | URL, init?: RequestInit) => {
+                const url = new URL(request instanceof Request ? request.url : request.toString());
+                if (url.origin !== 'https://copy-provider.test') return realFetch(request, init);
+                if (url.pathname !== '/projects' || init?.method !== 'POST') return new Response(null, { status: 404 });
+                const resourceId = `database-${vendorCreates.length + 1}`;
+                vendorCreates.push(resourceId);
+                return Response.json({ state: 'provisioned', status: 'ACTIVE', ready: true, engine: 'postgres', providerResourceOrigin: 'created',
+                    providerConsole: { url: `https://copy-provider.test/projects/${resourceId}`, label: 'Database' },
+                    providerIdentity: { providerAccountId: 'fresh-provider', providerResourceId: resourceId, providerEnvironment: 'main' },
+                    providerEnvironment: { kind: 'native', selection: { branchId: 'main' } } }, { status: 201 });
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+                machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
+                actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+                    actionsSettingsV1: { v: 1, actions: { 'deployments.environments.create': { approvalRequiredSurfaces: ['cli'] } } },
+                }) }),
+            });
+            const context = (actionId: ReturnType<typeof ActionIdSchema.parse>) => ({ presentUserConfirmation: { actionId }, surface: 'cli' as const, authority: 'present_user' as const, serverId: home.serverId,
+                actionRequestId: randomUUID(), externalActionTarget: { kind: 'machine' as const, machineId: home.machineId } });
+            const invoke = (name: string, input: unknown) => {
+                const actionId = ActionIdSchema.parse(name);
+                return executor.execute(actionId, input, context(actionId));
+            };
+            const intent = { serverId: home.serverId, projectSourceId: source.source.id, requestKey: randomUUID(),
+                name: 'Billing sandbox', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: home.machineId, buildMachineId: home.machineId, firstTargetLink,
+                copyFrom: { environmentId: environment.environmentId, expectedRevision: linked.revision,
+                    choices: { secrets: [], values: [], data: [{ targetLinkId: linked.targetLinkId, kind: 'createEmpty',
+                        provision: { action, input: { v: 1, serverId: home.serverId, credentialRef: account, credentialPrincipal,
+                            providerAccountId: 'fresh-provider', providerEnvironment: { kind: 'native', selection: { branchId: 'main' } },
+                        } } }] },
+                },
+            };
+            const create = 'deployments.environments.create';
+            const preview = await invoke(create, { ...intent, mode: 'preview' });
+            if (!preview.ok) throw new Error(`Signed Preview refused: ${preview.errorCode}`);
+            const reviewed = DeploymentEnvironmentCreateActionResultV1Schema.parse(preview.result);
+            if ('ok' in reviewed) throw new Error(`Signed Preview did not produce a review: ${reviewed.ok ? 'created' : reviewed.error}`);
+            expect(reviewed.review.copy?.included).toContain(`data:${linked.targetLinkId}:createEmpty`);
+            expect(vendorCreates).toEqual([]);
+            const prepared = await executor.prepare(create, reviewed.input, context(create));
+            const pending = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+            if (!pending.ok) throw new Error(`Signed Prepare refused: ${pending.errorCode}`);
+            const approval = ActionApprovalRequestCreatedResultSchema.parse(pending.result);
+            expect(approval.actionId).toBe(create);
+            const unopened = await invoke('approval.request.get', { artifactId: approval.artifactId });
+            if (!unopened.ok) throw new Error(`Pending Duplicate approval unavailable: ${unopened.errorCode}`);
+            expect(unopened.result).toMatchObject({ request: { status: 'open', actionId: create } });
+            expect(vendorCreates).toEqual([]);
+
+            let approved: ActionExecuteResult;
+            const linkRequests: string[] = [];
+            const previousObserve = observeRootHttp;
+            observeRootHttp = observation => {
+                previousObserve?.(observation);
+                if (!vendorCreates.length) return;
+                const label = observation.method === 'GET'
+                    ? (observation.path === `/v1/artifacts/${sourceData.contentArtifactId}` ? 'source_data_read' : undefined)
+                    : observation.method === 'POST'
+                        ? (observation.path === '/v1/deployments/targets/list' ? 'target_list'
+                            : /^\/v1\/deployments\/environments\/[^/]+\/targets$/.test(observation.path) ? 'target_associate'
+                                : observation.path === '/v1/artifacts' ? 'artifact_create' : undefined)
+                        : undefined;
+                if (label) linkRequests.push(`${label}:${observation.status}`);
+            };
+            try { approved = await settlePublicApproval(invoke, pending); }
+            finally { observeRootHttp = previousObserve; }
+            if (!approved.ok) {
+                const targetPhase = approved.details?.phase === 'target';
+                throw new Error(`Approved Duplicate refused: ${approved.errorCode} (targetPhase=${targetPhase}, databaseCreated=${vendorCreates.length > 0}, Home=${linkRequests.join(',')})`);
+            }
+            const copied = DeploymentEnvironmentCreateResultV1Schema.parse(approved.result);
+            if (!copied.ok) throw new Error(copied.error);
+            const read = await invoke('deployments.environments.get', { serverId: home.serverId, environmentId: copied.environmentId });
+            if (!read.ok) throw new Error(read.errorCode);
+            const detail = DeploymentEnvironmentGetResultV1Schema.parse(read.result);
+            if (!detail.ok) throw new Error(detail.error);
+            const copiedData = detail.targetLinks.find(link => link.role === 'data');
+            expect(copiedData).toMatchObject({ source: { kind: 'plugin', contribution }, targetKind: 'postgres' });
+            expect(copiedData?.id).not.toBe(linked.targetLinkId);
+            const artifact = await artifacts.read(copiedData!.contentArtifactId);
+            expect(JSON.parse(String(artifact?.body))).toMatchObject({ providerResourceOrigin: 'created',
+                providerIdentity: { providerResourceId: vendorCreates[0] } });
+            await invoke('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' });
+            expect(vendorCreates).toHaveLength(1);
+        } finally {
+            lifetime.abort();
+            try { for (const dispose of cleanups.reverse()) await dispose(); }
+            finally { vi.unstubAllGlobals(); restoreInstallation.mockRestore(); }
+        }
+    }, 120_000);
+
     it('duplicates selected values and a shared secret through the signed create root without copying live grants', async () => {
         const cleanup: Array<() => Promise<void>> = [];
         try {

@@ -1470,7 +1470,13 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     const adoptBindings = binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID
         && effectActionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
         && proof.reviewedChild?.actionId === effectActionId && proof.reviewedChild.role === MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1;
-    const childEffect = effectActionId === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || configureEffect || domainEffect || deployEffect;
+    // Duplicate's reviewed data Link names the source data Link it copies; nothing else links under Create.
+    const copyDataLink = effectActionId === deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1
+        && proof.reviewedChild?.actionId === effectActionId
+        ? deploymentActionIds.readDeploymentCopyDataLinkChildSourceV1(proof.reviewedChild.role) : undefined;
+    if (effectActionId === deploymentActionIds.DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 && (!copyDataLink || !admission.copyFrom)) return null;
+    const childEffect = effectActionId === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || configureEffect || domainEffect || deployEffect
+        || copyDataLink !== undefined;
     if (domainEffect && proof.reviewedChild?.actionId !== effectActionId) return null;
     const environmentId = childEffect || receiptRead || effectActionId === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || proof.path.startsWith('/v1/artifacts/')
         ? await readPreviewCreateEnvironmentIdInTx(tx, binding, admission) : null;
@@ -1553,6 +1559,15 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
             const { actionOperationId: _operation, requestId: _request, placements: _placements, ...reviewedInput } = parsed.data;
             return admit(computeActionInputApprovalDigestV1(deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1, reviewedInput)
                 === proof.reviewedChild?.inputDigest);
+        }
+        if (copyDataLink && admission.copyFrom) {
+            const parsed = DeploymentTargetLinkInputV1Schema.safeParse(proof.body);
+            if (!parsed.success || proof.path !== `${base}/targets` || parsed.data.environmentId !== environmentId
+                || parsed.data.serverId !== binding.serverIdentityId || parsed.data.role !== 'data'
+                || parsed.data.replacesLinkId !== undefined || !matches(parsed.data)) return null;
+            const source = await tx.deploymentTargetLink.findFirst({ where: { id: copyDataLink,
+                environmentId: admission.copyFrom.environmentId, role: 'data', deletedAt: null }, select: { id: true } });
+            return admit(source !== null);
         }
         if (proof.path === `${base}/bindings`) {
             const parsed = DeploymentBindingsSetStorageInputV1Schema.safeParse(proof.body);

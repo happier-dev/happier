@@ -9,11 +9,12 @@ import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { deploymentCopyDataLinkChildRoleV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 type PartialResult = ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse>;
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 export const copyEnvironmentDataProvisionRole = (targetLinkId: string) => `copy-data-provision:${targetLinkId}`;
-export const copyEnvironmentDataLinkRole = (targetLinkId: string) => `copy-data-link:${targetLinkId}`;
+export const copyEnvironmentDataLinkRole = deploymentCopyDataLinkChildRoleV1;
 
 /** A provision Action can already have saved credentials before the subsequent link fails. */
 function producedSavedSecrets(output: Record<string, unknown>): PartialResult['savedSecrets'] {
