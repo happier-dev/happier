@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -54,6 +55,21 @@ import { useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentati
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 
 type CorruptOwnerEntry = Extract<SavedSecretCatalogCorruptEntryV1, { relationship: 'owner' }>;
+
+function SavedSecretApprovalItem({ onPress }: { onPress: () => void }) {
+    useCurrentUiContextLocalCommands([
+        { key: 'approval.review.open', title: t('approvals.title'), invoke: onPress },
+    ], { contextKey: 'saved-secret-approval' });
+    return <Item
+        testID="saved-secret-approval"
+        icon={<Icon name="shield-check" />}
+        title={t('approvals.title')}
+        subtitle={t('secrets.catalog.approvalPending')}
+        subtitleLines={0}
+        accessibilityLiveRegion="polite"
+        onPress={onPress}
+    />;
+}
 
 export type SecretsSettingsPageProps = Readonly<{
     /** The Account the shared rows belong to; their person-only Reveal and history run in it. Absent: no Reveal. */
@@ -234,15 +250,7 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
         <>
             {props.approvalId && props.onOpenApproval ? (
                 <ItemGroup>
-                    <Item
-                        testID="saved-secret-approval"
-                        icon={<Icon name="shield-check" />}
-                        title={t('approvals.title')}
-                        subtitle={t('secrets.catalog.approvalPending')}
-                        subtitleLines={0}
-                        accessibilityLiveRegion="polite"
-                        onPress={props.onOpenApproval}
-                    />
+                    <SavedSecretApprovalItem onPress={props.onOpenApproval} />
                 </ItemGroup>
             ) : null}
             {(props.sharedCatalogStale || visibleError) && props.onRetrySharedCatalog ? (

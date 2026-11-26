@@ -18,7 +18,7 @@ import type { SecretsSettingsPageProps } from './SecretsSettingsPage';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-installSettingsViewCommonModuleMocks();
+installSettingsViewCommonModuleMocks({ storage: 'real' });
 const homeHarness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homeHarness);
 
@@ -55,6 +55,7 @@ function ownedEntry(overrides: Partial<SavedSecretCatalogEntryV1> = {}): SavedSe
 
 const { SecretsSettingsPage, SecretUsedBySection } = await import('./SecretsSettingsPage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { Item } = await import('@/components/ui/lists/Item');
 
 function basePageProps(overrides: Partial<SecretsSettingsPageProps> = {}): SecretsSettingsPageProps {
     return {
@@ -89,7 +90,7 @@ async function renderPage(overrides: Partial<SecretsSettingsPageProps> = {}, acc
 }
 
 describe('SecretUsedBySection', () => {
-    const rowsOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) => node.props.testID === 'used-by:row' && node.props.title !== undefined);
+    const rowsOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(Item).filter((node) => node.props.testID === 'used-by:row');
 
     it('renders the Environment census without a private destination while retaining named Provider navigation', async () => {
         const { t } = await import('@/text');
@@ -166,6 +167,55 @@ describe('SecretUsedBySection', () => {
 });
 
 describe('SecretsSettingsPage', () => {
+    it('publishes only its visible pending approval link and refuses its withdrawn address', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { CurrentUiContextSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/currentUiContext');
+        const { t } = await import('@/text');
+        const home = await createPlainArtifactHomeFixture('https://secret-page-approval.test', { currentAccount: true });
+        const onOpenApproval = vi.fn();
+        function Publication() {
+            const commands = useCurrentUiContextComposedCommands();
+            const enrichment = React.useMemo(() => ({ commands }), [commands]);
+            usePublishCurrentUiContext(enrichment);
+            return null;
+        }
+        function Surface({ pending }: { pending: boolean }) {
+            return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                <Publication />
+                <SecretsSettingsPage {...basePageProps({ personalSecrets: [], approvalId: pending ? 'approval-1' : null, onOpenApproval })} />
+            </CurrentUiContextCommandsProvider>;
+        }
+        try {
+            const screen = await renderMountedCurrentUiContext(<Surface pending />);
+            const executor = createDefaultActionExecutor();
+            const commands = async () => {
+                const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+                if (!read.ok) throw new Error('Expected Saved Secrets page context');
+                return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+            };
+            expect(screen.findByTestId('saved-secret-approval')).not.toBeNull();
+            const inventory = await commands();
+            expect(inventory.map(command => command.title)).toEqual([t('approvals.title')]);
+            const review = inventory[0]!;
+            await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+                { commandId: review.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+            expect(onOpenApproval).toHaveBeenCalledOnce();
+            await screen.pressByTestIdAsync('saved-secret-approval');
+            expect(onOpenApproval).toHaveBeenCalledTimes(2);
+            await screen.update(<Surface pending={false} />);
+            expect(await commands()).toEqual([]);
+            expect(await executor.execute('ui.current_context.command.invoke', { commandId: review.id }, { surface: 'agent' }))
+                .toMatchObject({ ok: false });
+            expect(onOpenApproval).toHaveBeenCalledTimes(2);
+            await screen.unmount();
+        } finally { await standardCleanup(); await home.dispose(); }
+    });
+
     it('shows unavailable for an absent requested secret in another Account, while retaining its ordinary empty collection', async () => {
         const foreign = ownedEntry();
         const { screen, props } = await renderPage({
