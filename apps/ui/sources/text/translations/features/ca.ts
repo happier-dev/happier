@@ -21809,6 +21809,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
             sessionCreationUnavailable: "L’agent seleccionat no pot iniciar una sessió per a aquest flux de treball.",
             detachedExecutionUnavailable: "L’agent seleccionat no pot executar aquest pas del flux de treball en segon pla.",
             materializationUnavailable: "Happier no ha pogut preparar l’inici d’aquest flux de treball.",
+            connectedAccountPreparationBlocked: "Happier no ha pogut preparar el compte connectat per a aquesta execució.",
             profileUnavailable: "El perfil d’inici seleccionat per a aquest flux de treball no està disponible.",
             engineUnavailable: "L’agent seleccionat per a aquest rol no està disponible.",
         },

@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { composeExecutionRunWorkerUpdateHeadlineV1, composeWorkflowRunWorkerUpdateHeadlineV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { composeWorkflowRunWorkerUpdateV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
@@ -64,6 +65,22 @@ function workerMessage(id: string, update: WorkerUpdateV1): WorkerMessage {
 }
 
 describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
+    it.each(['connected_service_run_materialization_blocked', 'plugin_action_execution_placement_unavailable'])(
+        'presents a Workflow refusal (%s) while retaining the Agent text', async code => {
+            const update = composeWorkflowRunWorkerUpdateV1({
+                run: createWorkflowRunSummaryFixture({ state: 'failed', attentionRequired: false }),
+                failure: { recordId: 'failed-step', reason: { code, message: code } },
+            });
+            expect(update?.result).toBe(code);
+            if (!update) throw new Error('Expected a failed Workflow worker update');
+            const card = await renderCard(update, getActiveServerSnapshot().serverId);
+            expect(card.findByTestId('worker-update-issue')).not.toBeNull();
+            expect(card.getTextContent()).not.toContain(code);
+            await card.pressByTestIdAsync('worker-update-details-toggle');
+            expect(card.getTextContent()).toContain(code);
+        },
+    );
+
     it.each([1_800_000_000_000, null])('shows the carried failure and only a provider-reported reset (%s)', async resetAtMs => {
         const update: WorkerUpdateV1 = { v: 1, workerKind: 'execution_run', workerId: 'failed-child', ownerState: 'failed',
             wake: 'needs_you', headline: 'Background run failed', canInspect: true,

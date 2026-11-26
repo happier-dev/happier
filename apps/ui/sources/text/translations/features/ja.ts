@@ -21727,6 +21727,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
             sessionCreationUnavailable: "選択したエージェントは、このワークフローのセッションを開始できません。",
             detachedExecutionUnavailable: "選択したエージェントは、このステップをバックグラウンドで実行できません。",
             materializationUnavailable: "Happier はこのワークフローを開始する準備ができませんでした。",
+            connectedAccountPreparationBlocked: "Happier はこの実行に使用する接続済みアカウントを準備できませんでした。",
             profileUnavailable: "このワークフローで選択した起動プロファイルは利用できません。",
             engineUnavailable: "このロールに選択したエージェントは利用できません。",
         },

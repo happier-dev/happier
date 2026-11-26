@@ -21821,6 +21821,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
             sessionCreationUnavailable: "Выбранный агент не может начать сессию для этого рабочего процесса.",
             detachedExecutionUnavailable: "Выбранный агент не может выполнить этот шаг в фоновом режиме.",
             materializationUnavailable: "Happier не смог подготовить этот рабочий процесс к запуску.",
+            connectedAccountPreparationBlocked: "Happier не смог подготовить подключённый аккаунт для этого запуска.",
             profileUnavailable: "Выбранный для этого рабочего процесса профиль запуска недоступен.",
             engineUnavailable: "Агент, выбранный для этой роли, недоступен.",
         },

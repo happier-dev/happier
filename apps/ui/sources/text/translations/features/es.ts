@@ -21731,6 +21731,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
             sessionCreationUnavailable: "El agente seleccionado no puede iniciar una sesión para este flujo de trabajo.",
             detachedExecutionUnavailable: "El agente seleccionado no puede ejecutar este paso del flujo de trabajo en segundo plano.",
             materializationUnavailable: "Happier no pudo preparar este flujo de trabajo para iniciarlo.",
+            connectedAccountPreparationBlocked: "Happier no pudo preparar la cuenta conectada para esta ejecución.",
             profileUnavailable: "El perfil de inicio seleccionado para este flujo de trabajo no está disponible.",
             engineUnavailable: "El agente seleccionado para este rol no está disponible.",
         },

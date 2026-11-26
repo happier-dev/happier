@@ -41,6 +41,7 @@ const preExecutionProblemCopy = {
     sessionCreationUnavailable: 'The selected agent cannot start a session for this workflow.',
     detachedExecutionUnavailable: 'The selected agent cannot run this workflow step in the background.',
     materializationUnavailable: 'Happier couldn’t prepare this workflow to start.',
+    connectedAccountPreparationBlocked: "Happier couldn’t prepare the Connected Account for this Run.",
     profileUnavailable: 'The launch profile selected by this workflow is unavailable.',
     engineUnavailable: 'The agent selected for this role is unavailable.',
 };

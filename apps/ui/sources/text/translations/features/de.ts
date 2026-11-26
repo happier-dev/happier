@@ -21297,6 +21297,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
             sessionCreationUnavailable: "Der ausgewählte Agent kann für diesen Workflow keine Sitzung starten.",
             detachedExecutionUnavailable: "Der ausgewählte Agent kann diesen Workflow-Schritt nicht im Hintergrund ausführen.",
             materializationUnavailable: "Happier konnte diesen Workflow nicht auf den Start vorbereiten.",
+            connectedAccountPreparationBlocked: "Happier konnte das verbundene Konto für diesen Lauf nicht vorbereiten.",
             profileUnavailable: "Das Startprofil dieses Workflows ist nicht verfügbar.",
             engineUnavailable: "Der für diese Rolle ausgewählte Agent ist nicht verfügbar.",
         },

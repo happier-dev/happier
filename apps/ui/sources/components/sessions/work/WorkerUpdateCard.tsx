@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { WorkerDeliverableReferenceV1, WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
+import { classifyWorkerUpdateEventV1, type WorkerDeliverableReferenceV1, type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
 import type { WorkerUpdateFollowMatchV1 } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
@@ -42,6 +42,7 @@ import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transc
 import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/SessionPendingPromptCards';
 import { useSessionPendingPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
 import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
+import { describeKnownWorkflowRunFailure } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { createWorkflowInvocationRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -65,15 +66,18 @@ function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<
     const resultIsFailure = Boolean(update.runtimeIssueV1 && update.result
         && (update.result === preview || (preview && update.result.includes(preview))));
     const issue = presentSessionRuntimeIssue(update.runtimeIssueV1, resultIsFailure ? { failureText: update.result } : undefined);
+    const workflowEvent = update.workerKind === 'workflow_run' ? classifyWorkerUpdateEventV1(update) : null;
+    const workflowProblem = !resultIsFailure && update.result && (workflowEvent === 'failed_or_stopped' || workflowEvent === 'needs_you')
+        ? describeKnownWorkflowRunFailure(update.result) : null;
     const title = options.title ?? workerUpdateFallbackTitle(update);
     return {
         title,
         state: describeWorkerUpdateHeadline(update, { title, stateWord: options.stateWord }),
         // A Run named by its kind does not say the kind again beside the state word.
         kind: joinHappierFacts(title === kind ? null : kind, age),
-        result: resultIsFailure ? undefined : update.result,
-        issue: !resultIsFailure && issue.summary === update.result ? null : issue.summary,
-        details: issue.details,
+        result: resultIsFailure || workflowProblem ? undefined : update.result,
+        issue: workflowProblem?.message ?? (!resultIsFailure && issue.summary === update.result ? null : issue.summary),
+        details: workflowProblem ? update.result : issue.details,
         reset: issue.reset,
         engine: engineLabel ? joinHappierFacts(engineLabel, engine?.modelId) : null,
         truncated: update.truncated ? t('sessionWork.workerUpdate.truncated') : null,

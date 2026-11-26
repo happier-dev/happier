@@ -357,6 +357,10 @@ export function describeWorkflowTargetUnavailableProblem(diagnostic?: Readonly<{
             ? { messageKey: 'machineAgents.unsupportedArch' } : {}) });
 }
 
+const GENERIC_RUN_FAILURE: WorkflowProblemShape = {
+    messageKey: 'errors.operationFailed', repair: 'none', accessibilitySemantics: 'alert',
+};
+
 /** A Run can fail before it has an invocation that could carry its cause. */
 export function resolveWorkflowRunProblemPresentation(
     run: Pick<WorkflowRunSummaryV1, 'state' | 'errorCode'>,
@@ -369,17 +373,24 @@ export function resolveWorkflowRunProblemPresentation(
         repair: 'none', accessibilitySemantics: 'status',
     });
     if (code === null || (run.state !== 'failed' && run.state !== 'interrupted' && run.state !== 'dispatch_failed')) return null;
+    return describeKnownWorkflowRunFailure(code) ?? present(null, GENERIC_RUN_FAILURE);
+}
+
+/** Worker replies can carry either a known Run cause or ordinary result text. */
+export function describeKnownWorkflowRunFailure(code: string): WorkflowProblemPresentation | null {
     if (code === 'workspace_unavailable') return describeWorkflowTargetUnavailableProblem({ reason: code });
     if (code === 'plugin_action_execution_placement_unavailable') {
         return describeWorkflowTargetUnavailableProblem({ reason: 'action_unavailable' });
     }
     if (isWorkflowOperationErrorCode(code)) return describeWorkflowOperationProblem(code);
-    const problem = present(null, {
-        messageKey: code === 'invalid_template' ? 'automations.detail.runDetail.invalidTemplate' : 'errors.operationFailed',
-        repair: 'none', accessibilitySemantics: 'alert',
+    if (code === 'invalid_template') return present(null, {
+        ...GENERIC_RUN_FAILURE, messageKey: 'automations.detail.runDetail.invalidTemplate',
+    });
+    if (code === 'connected_service_run_materialization_blocked') return present(null, {
+        ...GENERIC_RUN_FAILURE, messageKey: 'workflows.problem.preExecution.connectedAccountPreparationBlocked',
     });
     const startupCause = presentSessionStartupFailureCause(code);
-    return startupCause ? { ...problem, message: startupCause } : problem;
+    return startupCause ? { ...present(null, GENERIC_RUN_FAILURE), message: startupCause } : null;
 }
 
 /**

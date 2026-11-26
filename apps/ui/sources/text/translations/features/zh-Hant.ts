@@ -21667,6 +21667,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
             sessionCreationUnavailable: "選取的代理程式無法為此工作流程啟動工作階段。",
             detachedExecutionUnavailable: "選取的代理程式無法在背景執行此工作流程步驟。",
             materializationUnavailable: "Happier 無法準備啟動此工作流程。",
+            connectedAccountPreparationBlocked: "Happier 無法為這次執行準備已連結帳戶。",
             profileUnavailable: "此工作流程選取的啟動設定檔無法使用。",
             engineUnavailable: "為此角色選取的代理程式無法使用。",
         },

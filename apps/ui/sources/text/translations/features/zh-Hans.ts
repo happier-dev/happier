@@ -21667,6 +21667,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
             sessionCreationUnavailable: "所选智能体无法为此工作流启动会话。",
             detachedExecutionUnavailable: "所选智能体无法在后台运行此工作流步骤。",
             materializationUnavailable: "Happier 无法为此工作流做好启动准备。",
+            connectedAccountPreparationBlocked: "Happier 无法为此次运行准备已连接账户。",
             profileUnavailable: "此工作流所选的启动配置不可用。",
             engineUnavailable: "为此角色选择的智能体不可用。",
         },

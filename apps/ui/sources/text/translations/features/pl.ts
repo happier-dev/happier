@@ -21819,6 +21819,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
             sessionCreationUnavailable: "Wybrany agent nie może rozpocząć sesji dla tego przepływu pracy.",
             detachedExecutionUnavailable: "Wybrany agent nie może wykonać tego kroku przepływu pracy w tle.",
             materializationUnavailable: "Happier nie mógł przygotować tego przepływu pracy do uruchomienia.",
+            connectedAccountPreparationBlocked: "Happier nie mógł przygotować połączonego konta dla tego uruchomienia.",
             profileUnavailable: "Profil uruchamiania wybrany dla tego przepływu pracy jest niedostępny.",
             engineUnavailable: "Agent wybrany do tej roli jest niedostępny.",
         },
