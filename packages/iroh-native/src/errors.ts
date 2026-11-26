@@ -59,6 +59,7 @@ const NATIVE_ERROR_CODES: Readonly<Record<string, IrohErrorCode>> = {
   'resource-limit': 'resource_limit',
   cancelled: 'cancelled',
   'transport-unavailable': 'transport',
+  'transport-unreachable': 'transport',
   transport: 'transport',
   'machine-control-invalid': 'invalid_descriptor',
   'machine-admission-rejected': 'unknown',

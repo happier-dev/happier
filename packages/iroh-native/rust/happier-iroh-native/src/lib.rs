@@ -837,8 +837,17 @@ fn machine_start_error(error: happier_iroh_core::IrohError) -> Value {
             happier_iroh_core::MachineFailureCode::EndpointIdentityMismatch.as_str(),
             "machine tunnel remote identity does not match the requested endpoint",
         ),
+        IrohError::TransportTimeout => {
+            error_response("transport-timeout", "machine tunnel transport timed out")
+        }
+        IrohError::TransportUnreachable => {
+            error_response("transport-unreachable", "machine tunnel peer has no address")
+        }
+        IrohError::TransportClosed => {
+            error_response("transport-closed", "machine tunnel transport closed")
+        }
         IrohError::Cancelled => error_response("cancelled", "machine tunnel start was cancelled"),
-        _ => error_response("transport-unavailable", "machine transport is unavailable"),
+        IrohError::Io(_) => error_response("transport-unavailable", "machine transport is unavailable"),
     }
 }
 
@@ -2445,6 +2454,50 @@ mod tests {
         assert_eq!(
             response["error"]["code"],
             happier_iroh_core::MachineFailureCode::EndpointIdentityMismatch.as_str()
+        );
+    }
+
+    #[test]
+    fn broker_http_open_reports_when_the_peer_has_no_address() {
+        let broker_key = temp_key_path("broker-no-address");
+        let client_key = temp_key_path("broker-client");
+        let (broker_handle, broker_endpoint_id, direct_address) =
+            create_disabled_endpoint(&broker_key);
+        let (client_handle, _, _) = create_disabled_endpoint(&client_key);
+        let admission = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let accepted = call_op(
+            json!({
+                "endpointHandle": broker_handle,
+                "admissionHost": "127.0.0.1",
+                "admissionPort": admission.local_addr().unwrap().port()
+            })
+            .to_string(),
+            happier_iroh_native_start_machine_acceptor_json,
+        );
+        assert_eq!(accepted["ok"], true, "{accepted}");
+
+        let mut request = json!({
+            "endpointHandle": client_handle,
+            "endpointId": broker_endpoint_id,
+            "handshakeJson": "{\"v\":1,\"kind\":\"provider_broker\"}",
+            "capProfile": "machineBulk"
+        });
+        // Dial without hints while this initiator still has no cached address.
+        let missing_address = start_machine_http_tunnel_json(&request.to_string());
+        request["directAddresses"] = json!([direct_address]);
+        let with_address = start_machine_http_tunnel_json(&request.to_string());
+
+        for handle in [client_handle, broker_handle] {
+            let closed = shutdown_endpoint_json(&json!({ "endpointHandle": handle }).to_string());
+            assert_eq!(closed["ok"], true, "{closed}");
+        }
+        remove_temp_key(&client_key);
+        remove_temp_key(&broker_key);
+
+        assert_eq!(with_address["ok"], true, "{with_address}");
+        assert_eq!(
+            missing_address["error"]["code"], "transport-unreachable",
+            "{missing_address}"
         );
     }
 
