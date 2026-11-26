@@ -24,6 +24,48 @@ function observeReviewPersistence(events: string[]) {
 }
 
 describe('Review roster leaves', () => {
+  it.each(['clawpatch', 'roborev', 'deepsec'].flatMap(engineId =>
+    ['claude', 'codex'].map(runnerId => ({ engineId, runnerId })),
+  ))('routes the Team model through the $runnerId runner of $engineId', async ({ engineId, runnerId }) => {
+    const records = createInMemoryReviewRecordPortV1();
+    const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const deps = {
+      reviewRecords: () => records,
+      // Machine inventory and process launch are the external boundaries. Review
+      // dispatch, target normalization and Run admission remain real.
+      reviewEnginesList: async () => ({ items: [{ value: engineId, label: engineId }] }),
+      executionRunCheckProtocolV2: async () => ({ ok: true as const }),
+      executionRunStart: async (_sessionId, request) => {
+        requests.push(ExecutionRunStartRequestSchema.parse(request));
+        return { runId: 'native-review-run', callId: 'call', sidechainId: 'call' };
+      },
+    } satisfies ActionExecutorDeps;
+    const executor = createActionExecutor(deps);
+    const reviewRound = await records.start({ reviewId: 'native-review', title: 'Native Review',
+      subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: ['reviewer-1'], startedAt: 1 });
+    const runnerAgentTarget = { kind: 'agent', identity: { pluginId: `happier.agent.${runnerId}`, localId: runnerId } };
+    const teamCredentialModel = { kind: 'team_credential_provider_model', teamId: 'qa-team', resourceId: 'muse-resource',
+      expectedResourceRevision: 0, deliveryMode: 'brokered', modelId: 'muse-spark-1.3-contributor',
+      agentTargetKey: `agent:happier.agent.${runnerId}/${runnerId}` };
+    const start = async (agentTargetKey: string) => {
+      const data = ReviewStartInputSchema.parse({ sessionId: 'source-session', scope: 'repository',
+        instructions: 'Review this repository.', reviewers: [{ kind: 'engine', engineId, runnerAgentTarget,
+          teamCredentialModel: { ...teamCredentialModel, agentTargetKey } }],
+        reviewRound, reviewReviewerId: 'reviewer-1', reviewRoundSettlement: 'workflow' });
+      return dispatchReviewDispatch2({ actionId: 'review.start', deps, data, parsed: { data }, ctx: { surface: 'ui' },
+        workflowSessionScope: null,
+        executeHostChild: (actionId, input, context) => executor.execute(actionId, input, context),
+        startExecutionRunWithSelection: (...args) => startExecutionRunWithSelectionV1(deps, ...args) });
+    };
+    expect(await start(teamCredentialModel.agentTargetKey)).toMatchObject({ ok: true, result: { reviewRound } });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ backendTarget: { kind: 'agent', identity: { localId: engineId } }, runnerAgentTarget, teamCredentialModel,
+      modelId: teamCredentialModel.modelId, intentInput: { reviewers: [{ engineId, runnerAgentTarget }] } });
+    expect(await start(`agent:happier.agent.${runnerId === 'claude' ? 'codex/codex' : 'claude/claude'}`))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(requests).toHaveLength(1);
+  });
+
   it.each([false, true])('assigns settlement to the actual round owner for an admitted Workflow caller (bound: %s)', async bound => {
     const records = createInMemoryReviewRecordPortV1();
     const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];

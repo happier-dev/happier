@@ -35,6 +35,7 @@ import type { JsonObject } from '../../../json/strictJsonValue.js';
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
 import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
 import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
+import { resolveBackendTargetKeyV2 } from '../../../backends/targets/backendTargetRefV2.js';
 import { reviewStartExecutionRunCompletion } from '../../specs/executionRunCompletion.js';
 import { readReviewStartEngineInventoryV1, selectReviewEngineItemV1, type ReviewEngineAdmissionV1 } from './engineAdmission.js';
 
@@ -530,7 +531,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const hostLaunch = ctx.reviewReviewerLaunchInputs?.[entry.index];
           const engineInput = { ...reviewInput, ...entry.selection, ...hostLaunch, intent: hostLaunch?.intent };
           const connections = resolveFanoutConnectedServicesSelections(engineInput, [entry.selection.engineId]);
-          const team = resolveFanoutTeamCredentialModel(engineInput, [entry.selection.engineId]);
+          const modelTarget = engineInput.runnerAgentTarget
+            ? resolveBackendTargetKeyV2(engineInput.runnerAgentTarget) : entry.selection.engineId;
+          const team = resolveFanoutTeamCredentialModel(engineInput, [modelTarget]);
           if (!connections.ok || !team.ok || (engineInput.teamCredentialSessionBindingConsent
             && engineInput.teamCredentialSessionBindingConsent.sessionId !== sessionId)) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
