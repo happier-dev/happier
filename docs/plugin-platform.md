@@ -6829,6 +6829,10 @@ Poll failures and
 readiness observations preserve it; actual configuration changes and changes to
 history-gap recovery advance it. Native Session PR attachment can continue
 when the first history notice is the only change to the configuration it read.
+When that observation advances the connection row during the binding commit,
+Channels can retry the atomic write against the newer physical revision after
+checking the same configuration authority. The retry keeps the binding and
+Session projection identities from the original attempt.
 Disabling or transferring a connection does not wait for provider stop proof.
 Deletion retains `finalizingDelete` only to
 resume bounded relation cleanup and settle already-attempted sends honestly.

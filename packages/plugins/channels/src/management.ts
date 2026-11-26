@@ -3827,30 +3827,42 @@ async function createConversationBindingWithAudience(
     connectionRowForPersistence = finalCurrent.row;
   }
   assertNewConversationBindingCanPersist(candidate.binding);
-  const result = await persistConversationBindingCreation({
-    collection,
-    guards: [candidate.binding.enabled
-      ? {
-        kind: 'put' as const,
-        value: connectionRowForPersistence.value,
-        expectedRevision: connectionRowForPersistence.revision,
-      }
-      : {
-        kind: 'assert' as const,
-        rowId: createInput.connectionId,
-        expectedRevision: connectionRowForPersistence.revision,
-      }],
-    rows: [{ rowId: newBindingId, value: candidate.row },
-      ...(projectionFrontier === null ? [] : [{ rowId: createConversationSessionProjectionFrontierRowId(newBindingId), value: projectionFrontier }])],
-    signal: context.signal,
-    assertNotAborted: () => assertNotAborted(context.signal),
-  });
-  if (result.status === 'conflict') {
+  const rows = [{ rowId: newBindingId, value: candidate.row },
+    ...(projectionFrontier === null ? [] : [{ rowId: createConversationSessionProjectionFrontierRowId(newBindingId), value: projectionFrontier }])];
+  for (;;) {
+    const result = await persistConversationBindingCreation({
+      collection,
+      guards: [candidate.binding.enabled
+        ? { kind: 'put', value: connectionRowForPersistence.value, expectedRevision: connectionRowForPersistence.revision }
+        : { kind: 'assert', rowId: createInput.connectionId, expectedRevision: connectionRowForPersistence.revision }],
+      rows,
+      signal: context.signal,
+      assertNotAborted: () => assertNotAborted(context.signal),
+    });
+    if (result.status !== 'conflict') return { kind: 'created', binding: candidate.binding };
     if (scopedIdentity !== undefined) {
       const retained = await collection.get(newBindingId, { signal: context.signal });
       if (retained !== null) {
         const current = readConversationBindingUpdateRow({ row: retained, bindingId: newBindingId });
-        if (sameConversationBindingTarget(current.binding.target, candidate.binding.target) && current.binding.deletionState === 'none') return { kind: 'created', binding: current.binding };
+        if (sameConversationBindingTarget(current.binding.target, candidate.binding.target) && current.binding.deletionState === 'none') {
+          return { kind: 'created', binding: current.binding };
+        }
+      } else if (typeof expectedConnection !== 'number' && result.conflicts.length === 1) {
+        const [conflict] = result.conflicts;
+        if (conflict?.rowId === createInput.connectionId && !conflict.deleted
+          && conflict.revision !== null && conflict.revision > connectionRowForPersistence.revision) {
+          // Poll settlement can advance the physical row after attach's final
+          // read. Keep the admitted target, identities and Session frontier,
+          // and retry only under the same connection configuration authority.
+          const current = await readCurrentBindingResolutionConnection({
+            ...connectionCurrentness, signal: context.signal,
+          });
+          if (current.kind !== 'current') return current;
+          if (current.row.revision >= conflict.revision) {
+            connectionRowForPersistence = current.row;
+            continue;
+          }
+        }
       }
     }
     throw pluginError(
@@ -3859,7 +3871,6 @@ async function createConversationBindingWithAudience(
       true,
     );
   }
-  return { kind: 'created', binding: candidate.binding };
 }
 
 async function readSessionPullRequestBindings(sessionId: string, context: PluginInvocationContext): Promise<Array<{ row: StateRow; binding: ConversationBindingV1 }>> {

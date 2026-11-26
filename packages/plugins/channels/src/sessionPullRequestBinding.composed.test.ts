@@ -16,7 +16,7 @@ import { CHANNELS_PLUGIN, CHANNELS_PROVIDER_POINT_REF, PLUGIN_MANIFEST } from '.
 import { CHANNEL_DELIVERIES_COLLECTION, CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_FIXED_ROW_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
 import { MemoryCollection } from './testkit/memoryCollection.js';
 import { createConversationSessionProjectionFrontierRowId } from './sessionProjection.js';
-import { readConversationBindingUpdateRow } from './accountLocalBindingPolicy.js';
+import { isChannelStateJsonRecord, readConversationBindingUpdateRow } from './accountLocalBindingPolicy.js';
 import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
 import { startConversationDeliveryAttempt } from './deliveryCustody.js';
 import { channelsOperationOnlyTargetedContributionsFixture } from './testkit/operationOnlyTargetedContributionsFixture.js';
@@ -467,6 +467,35 @@ describe('registered Session PR URL attach', () => {
       expect(relinked.pullRequestLinks.map(link => link.number).sort((a, b) => a - b)).toEqual([13, 14]);
       expect(await core.invokeAction('session-pull-request-binding-v1', { kind: 'list', sessionId: 'session-2' },
         { surface: 'mcp', services })).toMatchObject({ kind: 'links', pullRequestLinks: [{ number: 12 }] });
+      const commit = state.batch.bind(state);
+      const driveRacingAttach = async (number: number, sameTarget: boolean) => {
+        const create = vi.spyOn(state, 'batch').mockImplementationOnce(async operations => {
+          const winner = sameTarget ? operations : operations.map(operation => {
+            const value = operation.value;
+            if (!isChannelStateJsonRecord(value) || value['record-kind'] !== CHANNEL_STATE_RECORD_KIND.binding) return operation;
+            const payload = value.payload;
+            if (!isChannelStateJsonRecord(payload) || !isChannelStateJsonRecord(payload.target)
+              || !isChannelStateJsonRecord(payload.target.policy)) throw new Error('Missing binding target policy');
+            const target = { ...payload.target, policy: { ...payload.target.policy, deliveryMode: 'mirrorSession' } };
+            return { ...operation, value: { ...value, payload: { ...payload, target } } };
+          });
+          expect(await commit(winner)).toMatchObject({ status: 'updated' });
+          return commit(operations);
+        });
+        try {
+          return await core.invokeAction('session-pull-request-binding-v1', {
+            ...input, pullRequestUrl: `https://github.com/acme/widgets/pull/${number}`, credentialRef: rejoinCredential,
+          }, { surface: 'mcp', services });
+        } finally {
+          create.mockRestore();
+        }
+      };
+      const raced = await driveRacingAttach(16, true);
+      expect(raced).toMatchObject({ kind: 'attached', bindingId: expect.any(String) });
+      expect(await core.invokeAction('session-pull-request-binding-v1', {
+        ...input, pullRequestUrl: 'https://github.com/acme/widgets/pull/16', credentialRef: rejoinCredential,
+      }, { surface: 'mcp', services })).toEqual(raced);
+      await expect(driveRacingAttach(17, false)).rejects.toMatchObject({ code: 'channels_binding_create_conflict' });
     } finally { await core.dispose(); await completion.dispose(); await peer.dispose(); await provider.dispose(); }
   });
 });

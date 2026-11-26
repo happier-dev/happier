@@ -185,10 +185,12 @@ describe('CLI session pull request binding', () => {
       effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied',
+  it.each(['current', 'first poll settles', 'first poll wins the binding CAS', 'provider retired', 'connection changed', 'comments permission denied',
     'connected workflow trigger', 'unconnected workflow trigger', 'workflow attachment transport exception',
     'remove a single workflow trigger', 'preserve an originless workflow trigger binding'] as const)(
     'composes PR attachment in a Team Session with a fresh repository (%s)', async (authority) => {
+    const pollWinsBindingCas = authority === 'first poll wins the binding CAS';
+    const reopenAfterTriggerDeletion = authority === 'connected workflow trigger';
     const unexpectedAttachmentFailure = authority === 'workflow attachment transport exception';
     const removeSingleTrigger = authority === 'remove a single workflow trigger';
     const originless = authority === 'preserve an originless workflow trigger binding';
@@ -222,6 +224,31 @@ describe('CLI session pull request binding', () => {
     let providerRefusal: { code: string; firstFrame: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>['stackFrames'][number] | undefined } | undefined;
     let channelsContext: PluginInvocationContext | undefined;
     let firstPollSettled = false;
+    const settleFirstPoll = async (connectionId: string) => {
+      if (!channelsContext) throw new Error('Expected Channels invocation services');
+      const poll = await runConversationCheckpointedPollForInvocation({ connectionId, waitMs: 0 }, channelsContext);
+      expect(poll).toMatchObject({ kind: 'committed' });
+      expect((await state.get(connectionId))?.value.payload).toMatchObject({
+        historyGap: { reason: 'providerHistoryUnavailable' },
+      });
+      firstPollSettled = true;
+    };
+    const commitState = state.batch.bind(state);
+    if (pollWinsBindingCas) {
+      vi.spyOn(state, 'batch').mockImplementation(async operations => {
+        const guard = operations[0];
+        if (!firstPollSettled && operations.some(operation => operation.kind === 'put'
+          && operation.expectedRevision === 'absent' && operation.value !== null && typeof operation.value === 'object'
+          && CHANNEL_STATE_FIELD.recordKind in operation.value
+          && operation.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.binding)
+          && guard?.kind === 'assert' && typeof guard.rowId === 'string') {
+          // Let the real first poll settle after attach read its guard, just
+          // before storage evaluates the binding transaction.
+          await settleFirstPoll(guard.rowId);
+        }
+        return commitState(operations);
+      });
+    }
     let instances: WidgetInstanceV1[] = [];
     let adds = 0;
     let savedRow: ReturnType<typeof AutomationDefinitionDetailSchema.parse> | undefined;
@@ -244,13 +271,7 @@ describe('CLI session pull request binding', () => {
               row.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.connection);
             if (!connection) throw new Error('Expected an acknowledged fresh connection');
             if (authority === 'first poll settles') {
-              if (!channelsContext) throw new Error('Expected Channels invocation services');
-              const poll = await runConversationCheckpointedPollForInvocation({ connectionId: connection.rowId, waitMs: 0 }, channelsContext);
-              expect(poll).toMatchObject({ kind: 'committed' });
-              expect((await state.get(connection.rowId))?.value.payload).toMatchObject({
-                historyGap: { reason: 'providerHistoryUnavailable' },
-              });
-              firstPollSettled = true;
+              await settleFirstPoll(connection.rowId);
             } else {
               const { payload } = readConversationConnectionUpdateRow({ row: connection, connectionId: connection.rowId });
               await state.put(withConversationConnectionPayload({ row: connection, payload: {
@@ -397,7 +418,7 @@ describe('CLI session pull request binding', () => {
             get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
             set: async () => { throw new Error('No Settings writes'); }, reset: async () => { throw new Error('No Settings writes'); } }) },
         };
-        if (authority === 'first poll settles' && seed.plugin.id === CHANNELS_MANIFEST.id
+        if ((authority === 'first poll settles' || pollWinsBindingCas) && seed.plugin.id === CHANNELS_MANIFEST.id
           && seed.contribution.id === SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1) {
           // Place the background poll on the same Machine as the provider fixture.
           channelsContext = { ...seed, invokedAtMs: Date.now(), services: { ...services, actions: { ...services.actions,
@@ -447,8 +468,12 @@ describe('CLI session pull request binding', () => {
     const deps = workflowTrigger ? createCliActionExecutorHarness(hostParams, {
       invokeContributedAction: async function dispatchAfterCommittedSave({ action, input, context }) {
         expect(action).toEqual({ pluginId: CHANNELS_MANIFEST.id, localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
-        expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId, actionRequestId: linkRequestId });
         const binding = SessionPullRequestBindingInputV1Schema.parse(input);
+        if (reopenAfterTriggerDeletion && binding.kind === 'attach' && binding.target === undefined) {
+          const result = await invokeCore(action.localId, binding);
+          return parseActionExecuteFailure(result) ?? { ok: true as const, result };
+        }
+        expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId, actionRequestId: linkRequestId });
         if (binding.kind === 'list') return { ok: true, result: await invokeCore(action.localId, binding) };
         if (binding.kind === 'attach') {
           expect(binding).toMatchObject({ target: {
@@ -477,8 +502,10 @@ describe('CLI session pull request binding', () => {
       if (workflowTrigger) {
         const qualified = { kind: 'attach', sessionId, pullRequest: { repository: 'acme/widgets', number: 42 },
           credentialRef, expectedRepositoryId: '77' } as const;
-        const explicitlyAttached = await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified);
-        expect(explicitlyAttached).toMatchObject({ kind: 'attached', bindingId: expect.any(String) });
+        if (!reopenAfterTriggerDeletion) {
+          const explicitlyAttached = await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified);
+          expect(explicitlyAttached).toMatchObject({ kind: 'attached', bindingId: expect.any(String) });
+        }
 
         const ordinaryPost = boundary.post.getMockImplementation()!;
         boundary.post.mockImplementation(async (url: string, input: unknown) => {
@@ -612,6 +639,22 @@ describe('CLI session pull request binding', () => {
             ...(removeSingleTrigger ? [expect.objectContaining({ enabled: true, deletionState: 'none',
               target: expect.objectContaining({ kind: 'automation', automationId, scopedTrigger: expect.objectContaining({ triggerId: siblingId }) }) })] : []),
           ]);
+          if (reopenAfterTriggerDeletion) {
+            nativeResponse = ScmPullRequestOpenOrReuseResponseSchema.parse({ success: true, pullRequest, result: 'reused', nextAction: { kind: 'none' } });
+            expect(await open()).toBe(nativeResponse);
+            expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, { kind: 'list', sessionId })).toMatchObject({
+              kind: 'links', pullRequestLinks: [expect.objectContaining({ number: 42 })],
+            });
+            expect(await invokeCore('session-pull-request-watch-v1', { kind: 'get', sessionId })).toMatchObject({
+              kind: 'ready', bindings: expect.arrayContaining([expect.objectContaining({ link: expect.objectContaining({ number: 42 }) })]),
+            });
+            const reopened = readBindings();
+            expect(reopened).toHaveLength(2);
+            expect(reopened.filter(binding => binding.target.kind === 'automation')).toEqual(after);
+            expect(reopened.filter(binding => binding.target.kind === 'session')).toHaveLength(1);
+            expect(await open()).toBe(nativeResponse);
+            expect(readBindings()).toEqual(reopened);
+          }
         } else {
           expect(receipt).toMatchObject({ postWriteFailure: { ok: false, errorCode: 'github_credential_unavailable' } });
           expect(providerRefusal).toMatchObject({ code: 'github_credential_unavailable',
@@ -621,7 +664,7 @@ describe('CLI session pull request binding', () => {
         }
         return;
       }
-      if (authority !== 'current' && authority !== 'first poll settles') {
+      if (authority !== 'current' && authority !== 'first poll settles' && !pollWinsBindingCas) {
         const cause = authority === 'provider retired' ? 'channels_pr_link_provider_not_ready' : 'channels_pr_link_connection_not_ready';
         expect(await open()).toMatchObject({ success: true, pullRequest, result: 'created',
           outcome: { kind: 'effect_applied_with_warning',
@@ -641,12 +684,14 @@ describe('CLI session pull request binding', () => {
         return;
       }
       expect(await open()).toBe(nativeResponse);
-      if (authority === 'first poll settles') expect(firstPollSettled).toBe(true);
+      if (authority === 'first poll settles' || pollWinsBindingCas) expect(firstPollSettled).toBe(true);
       expect(adds).toBe(1); expect(attaches).toBe(1);
       expect(instances[0]?.bindings.session).toEqual({ kind: 'value', value: linkedSession });
       nativeResponse = ScmPullRequestOpenOrReuseResponseSchema.parse({ success: true, pullRequest, result: 'reused', nextAction: { kind: 'none' } });
       expect(await open()).toBe(nativeResponse);
       expect(adds).toBe(1); expect(attaches).toBe(2);
+      expect([...state.rows.values()].filter(row => !row.deleted
+        && row.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.binding)).toHaveLength(1);
       instances = []; // The person removed the widget at the external placement owner.
       expect(await invokeCore('session-pull-request-binding-v1', { kind: 'list', sessionId })).toMatchObject({ kind: 'links' });
       expect(await invokeCore('session-pull-request-watch-v1', { kind: 'get', sessionId })).toMatchObject({ kind: 'ready' });
