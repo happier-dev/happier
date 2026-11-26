@@ -41,7 +41,7 @@ import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmitte
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 import { describeTeamSetupBatch, runTeamSetupBatch } from './executor/teamSetup.js';
 import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
-import { TeamSetupBatchInputV1Schema } from '../teams/setupBatchV1.js';
+import type { TeamSetupBatchInputV1 } from '../teams/setupBatchV1.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
   readHostReviewedChildOriginalAuthorizationV1,
@@ -3924,7 +3924,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       options?.onAutomationAdmission?.(ctx);
     }
     if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && !requesterAppReview && !existingAdmission && isPresentUserHostInvocation(ctx)) {
-      const setup = TeamSetupBatchInputV1Schema.parse(admittedInput);
+      const setup = withoutClientActionInput(parsed.data) as TeamSetupBatchInputV1;
       if (!ctx.serverId || !isSameHome(setup.serverId, ctx.serverId, ctx) || !isSameHome(setup.homeId, ctx.serverId, ctx)) {
         return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
       }
@@ -6986,7 +6986,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         const dispatchRunsDispatch2Result = await dispatchRunsDispatch2({ actionId, data, parsed, ctx, deps });
         if (dispatchRunsDispatch2Result !== null) return dispatchRunsDispatch2Result;
         if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1) {
-          return await runTeamSetupBatch(TeamSetupBatchInputV1Schema.parse(parsed.data), ctx, executeHostChild);
+          const setup = withoutClientActionInput(parsed.data) as TeamSetupBatchInputV1;
+          return await runTeamSetupBatch(setup, ctx, executeHostChild);
         }
         const dispatchProjectsDispatch1Result = await dispatchProjectsDispatch1({ actionId, deps, parsed, ctx, executeHostChild, admittedClientContext });
         if (dispatchProjectsDispatch1Result !== null) return dispatchProjectsDispatch1Result;
