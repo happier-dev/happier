@@ -67,16 +67,16 @@ export async function importLegacyAgyConversation(profileDir: string, conversati
   if (conversation.location !== 'legacy' || !conversation.legacyProfileDir) return false;
   const legacy = join(conversation.legacyProfileDir, LEGACY_APP_DATA_DIR);
   const native = join(profileDir, AGY_APP_DATA_DIR);
-  // The database's SQLite sidecars and the `.meta` file travel with it.
-  const conversationFiles = new Set([`${id}.db`, `${id}.db-wal`, `${id}.db-shm`, `${id}.meta`]);
+  const conversations = { sourceRoot: join(legacy, 'conversations'), destinationRoot: join(native, 'conversations'), includeDirectory: () => false };
+  // The CLI store counts a conversation as present once its `.db` exists, so the database is copied
+  // last (each file lands atomically): an interrupted import leaves no `.db` and is retried next time.
+  const sidecars = new Set([`${id}.db-wal`, `${id}.db-shm`, `${id}.meta`]);
   await importConnectedServiceSessionFiles({ roots: [
-    {
-      sourceRoot: join(legacy, 'conversations'),
-      destinationRoot: join(native, 'conversations'),
-      includeDirectory: () => false,
-      includeFile: (relativePath) => conversationFiles.has(relativePath),
-    },
+    { ...conversations, includeFile: (relativePath) => sidecars.has(relativePath) },
     { sourceRoot: join(legacy, 'brain', id), destinationRoot: join(native, 'brain', id) },
+  ] });
+  await importConnectedServiceSessionFiles({ roots: [
+    { ...conversations, includeFile: (relativePath) => relativePath === `${id}.db` },
   ] });
   return true;
 }

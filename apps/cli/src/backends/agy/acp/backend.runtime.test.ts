@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -165,6 +165,32 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
         const copy = readFile(join(machine, 'antigravity-cli', 'conversations', 'machine-legacy.db'), 'utf8');
         await (imported ? expect(copy).resolves.toBe('legacy database') : expect(copy).rejects.toMatchObject({ code: 'ENOENT' }));
       } finally { await backend.dispose(); }
+    });
+  });
+
+  it('imports the database last, so an interrupted import is retried on the next resume', async () => {
+    await withTempDir('agy-launch-', async dir => {
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const profile = join(dir, 'profile');
+      const id = 'interrupted';
+      await mkdir(join(profile, 'antigravity-acp', 'conversations'), { recursive: true });
+      await mkdir(join(profile, 'antigravity-acp', 'brain', id), { recursive: true });
+      await writeFile(join(profile, 'antigravity-acp', 'conversations', `${id}.db`), 'legacy database');
+      await writeFile(join(profile, 'antigravity-acp', 'brain', id, 'task.md'), 'legacy artifact');
+      // A file where the artifact directory belongs makes the copy fail part-way (as ENOSPC/EACCES would).
+      await mkdir(join(profile, 'antigravity-cli', 'brain'), { recursive: true });
+      await writeFile(join(profile, 'antigravity-cli', 'brain', id), 'obstacle');
+      const resume = async () => {
+        const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: agy, GEMINI_HOME: profile } });
+        try { return await backend.loadSession!(id); } finally { await backend.dispose(); }
+      };
+      await expect(resume()).rejects.toThrow();
+      await expect(readFile(join(profile, 'antigravity-cli', 'conversations', `${id}.db`), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+
+      await rm(join(profile, 'antigravity-cli', 'brain', id));
+      await expect(resume()).resolves.toMatchObject({ sessionId: id });
+      expect(await readFile(join(profile, 'antigravity-cli', 'brain', id, 'task.md'), 'utf8')).toBe('legacy artifact');
+      expect(await readFile(join(profile, 'antigravity-cli', 'conversations', `${id}.db`), 'utf8')).toBe('legacy database');
     });
   });
 
