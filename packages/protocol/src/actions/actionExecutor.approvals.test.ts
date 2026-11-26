@@ -5545,6 +5545,11 @@ describe('createActionExecutor (approvals)', () => {
     let effects = 0;
     const executor = createExecutor({
       isApprovalExecutionOriginCurrent: async () => failurePhase !== 'settlement' || !unavailable,
+      ...(failurePhase === 'read' ? {
+        approvalRequestApprovedReplay: async () => unavailable
+          ? { ok: false as const, effectAttempted: false as const, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' }
+          : null,
+      } : {}),
       // Artifact IO is the real storage boundary; transitions and receipts use
       // the production owner and canonical schema beneath this boundary.
       approvalsGet: async () => {
@@ -5598,6 +5603,12 @@ describe('createActionExecutor (approvals)', () => {
     let stored = createApprovalRequest('open');
     let effects = 0;
     const executor = createExecutor({
+      approvalRequestApprovedReplay: async () => ({
+        ok: false as const,
+        effectAttempted: false as const,
+        errorCode: 'approval_context_unavailable',
+        error: 'approval_context_unavailable',
+      }),
       approvalsGet: async () => {
         if (stored.status === 'approved') throw Object.assign(new Error('pool acquisition failed'), { code: 'P2024' });
         return structuredClone(stored);
@@ -6146,4 +6157,253 @@ it.each([
   expect(result).toMatchObject({ ok: true, result: { status: expectedStatus } });
   expect(stored).toMatchObject({ status: expectedStatus, deciderRequirement: 'person' });
   if (status === 'approved') expect(stored.execution).toMatchObject({ errorCode: 'approval_canceled', effectAttempted: false });
+});
+
+
+describe('approval HTTP round-trip and CAS arbitration contracts', () => {
+  it('executes open -> approved -> executing -> executed with a single approvalsGet call', async () => {
+    let stored = createApprovalRequest('open');
+    const approvalsGet = vi.fn(async () => structuredClone(stored));
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+      const transition = decideApprovalRequestTransition(stored, request);
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { ok: true as const };
+    });
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-single-get' }));
+    const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
+
+    const res = await executor.execute('approval.request.decide', {
+      artifactId: 'a1',
+      decision: 'approve',
+    });
+
+    expect(res).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(approvalsGet).toHaveBeenCalledTimes(1);
+    expect(approvalsUpdate).toHaveBeenCalledTimes(3);
+    expect(sessionSendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays an approved request with a single approvalsGet call', async () => {
+    let stored = createApprovalRequest('approved');
+    const approvalsGet = vi.fn(async () => structuredClone(stored));
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+      const transition = decideApprovalRequestTransition(stored, request);
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { ok: true as const };
+    });
+    const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-replay-get' }));
+    const executor = createExecutor({ approvalsGet, approvalsUpdate, sessionSendMessage });
+
+    const res = await executor.replayApprovedApprovalRequest({ artifactId: 'a1' });
+
+    expect(res).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(approvalsGet).toHaveBeenCalledTimes(1);
+    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
+    expect(sessionSendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips trailing approvalsGet in settleApprovalExecutionPublication when replay acknowledgement carries terminal execution and non-retryable delivery, while preserving origin checks and incomplete/retryable fallbacks', async () => {
+    const createDeferredSessionApproval = (overrides: Record<string, unknown> = {}) => ApprovalRequestV2Schema.parse({
+      ...createApprovalRequest('open', { requestedSurface: 'agent' }),
+      approval: { flow: 'deferred', result: 'required' },
+      executionOriginV1: {
+        v: 1,
+        authority: 'account_automation',
+        surface: 'agent',
+        caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
+        serverId: 'home-1',
+        serverIdentityId: 'srv-1',
+        accountId: 'account-1',
+        sessionId: 's1',
+        requesterSessionMachineId: 'machine-1',
+        target: { kind: 'session', sessionId: 's1' },
+        actionId: 'session.message.send',
+        requestId: 'req-settle-1',
+        ...overrides,
+      },
+    });
+
+    // Case 1: Complete terminal replay acknowledgement with non-retryable delivery -> 0 trailing approvalsGet calls.
+    {
+      let stored = createDeferredSessionApproval();
+      const approvalsGet = vi.fn(async () => structuredClone(stored));
+      const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true as const };
+      });
+      const executor = createExecutor({
+        approvalsGet,
+        approvalsUpdate,
+        approvalRequestApprovedReplay: vi.fn(async () => ({
+          ok: true as const,
+          result: {
+            ok: true,
+            status: 'executed',
+            execution: { executedAtMs: 10, ok: true, effectAttempted: true, result: { status: 'accepted' } },
+            delivery: { status: 'accepted', localId: 'approval-result:a1' },
+          },
+        })),
+      });
+      const res = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }, {
+        surface: 'ui',
+        authority: 'present_user',
+        serverId: 'home-1',
+        serverIdentityId: 'srv-1',
+        runtimeAccountId: 'account-1',
+      });
+      expect(res).toMatchObject({
+        ok: true,
+        result: { status: 'executed', delivery: { status: 'accepted', localId: 'approval-result:a1' } },
+      });
+      expect(approvalsGet).toHaveBeenCalledTimes(1);
+    }
+
+    // Case 2: Foreign Account / Home must still be refused even when replayAcknowledgement is complete.
+    {
+      let stored = createDeferredSessionApproval();
+      const approvalsGet = vi.fn(async () => structuredClone(stored));
+      const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true as const };
+      });
+      const executor = createExecutor({
+        approvalsGet,
+        approvalsUpdate,
+        approvalRequestApprovedReplay: vi.fn(async () => ({
+          ok: true as const,
+          result: {
+            ok: true,
+            status: 'executed',
+            execution: { executedAtMs: 10, ok: true, effectAttempted: true },
+            delivery: { status: 'accepted', localId: 'approval-result:a1' },
+          },
+        })),
+      });
+      const res = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }, {
+        surface: 'ui',
+        authority: 'present_user',
+        serverId: 'home-1',
+        serverIdentityId: 'srv-1',
+        runtimeAccountId: 'foreign-account',
+      });
+      expect(res).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+      expect(approvalsGet).toHaveBeenCalledTimes(1);
+    }
+
+    // Case 3: Incomplete acknowledgement (missing delivery) still triggers trailing approvalsGet to settle delivery.
+    {
+      let stored = createDeferredSessionApproval();
+      const approvalsGet = vi.fn(async () => structuredClone(stored));
+      const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true as const };
+      });
+      const approvalRequestOutcomePublication = vi.fn(async () => ({
+        ok: true as const,
+        result: { delivery: { status: 'accepted', localId: 'approval-result:a1' } },
+      }));
+      const executor = createExecutor({
+        approvalsGet,
+        approvalsUpdate,
+        approvalRequestOutcomePublication,
+        approvalRequestApprovedReplay: vi.fn(async () => {
+          const executedAtMs = Math.max(stored.updatedAtMs, 10);
+          stored = ApprovalRequestV2Schema.parse({
+            ...stored,
+            status: 'executed',
+            updatedAtMs: executedAtMs,
+            decision: { kind: 'approve', decidedAtMs: executedAtMs, authority: 'present_user' },
+            execution: { executedAtMs, ok: true, effectAttempted: true, result: { status: 'accepted' } },
+          });
+          return {
+            ok: true as const,
+            result: {
+              ok: true,
+              status: 'executed',
+              execution: { executedAtMs, ok: true, effectAttempted: true, result: { status: 'accepted' } },
+            },
+          };
+        }),
+      });
+      const res = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }, {
+        surface: 'ui',
+        authority: 'present_user',
+        serverId: 'home-1',
+        serverIdentityId: 'srv-1',
+        runtimeAccountId: 'account-1',
+      });
+      expect(res, JSON.stringify(res)).toMatchObject({ ok: true, result: { delivery: { status: 'accepted', localId: 'approval-result:a1' } } });
+      expect(approvalsGet).toHaveBeenCalledTimes(2);
+      expect(approvalRequestOutcomePublication).toHaveBeenCalledTimes(1);
+    }
+
+    // Case 4: Retryable delivery acknowledgement still falls through to trailing approvalsGet + delivery retry.
+    {
+      let stored = createDeferredSessionApproval();
+      const retryableDelivery = {
+        status: 'rejected' as const,
+        code: 'session_input_target_unavailable' as const,
+        failureCause: {
+          errorClass: 'Error',
+          errorCode: 'server_unreachable',
+          httpStatus: null,
+          phase: 'approval.result.delivery' as const,
+        },
+      };
+      const approvalsGet = vi.fn(async () => structuredClone(stored));
+      const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true as const };
+      });
+      const approvalRequestOutcomePublication = vi.fn(async () => ({
+        ok: true as const,
+        result: { delivery: { status: 'accepted', localId: 'approval-result:a1' } },
+      }));
+      const executor = createExecutor({
+        approvalsGet,
+        approvalsUpdate,
+        approvalRequestOutcomePublication,
+        approvalRequestApprovedReplay: vi.fn(async () => {
+          const executedAtMs = Math.max(stored.updatedAtMs, 10);
+          stored = ApprovalRequestV2Schema.parse({
+            ...stored,
+            status: 'executed',
+            updatedAtMs: executedAtMs,
+            decision: { kind: 'approve', decidedAtMs: executedAtMs, authority: 'present_user' },
+            execution: { executedAtMs, ok: true, effectAttempted: true, result: { status: 'accepted' } },
+            delivery: retryableDelivery,
+          });
+          return {
+            ok: true as const,
+            result: {
+              ok: true,
+              status: 'executed',
+              execution: { executedAtMs, ok: true, effectAttempted: true, result: { status: 'accepted' } },
+              delivery: retryableDelivery,
+            },
+          };
+        }),
+      });
+      const res = await executor.execute('approval.request.decide', { artifactId: 'a1', decision: 'approve' }, {
+        surface: 'ui',
+        authority: 'present_user',
+        serverId: 'home-1',
+        serverIdentityId: 'srv-1',
+        runtimeAccountId: 'account-1',
+      });
+      expect(res).toMatchObject({ ok: true, result: { delivery: { status: 'accepted', localId: 'approval-result:a1' } } });
+      expect(approvalsGet).toHaveBeenCalledTimes(2);
+      expect(approvalRequestOutcomePublication).toHaveBeenCalledTimes(1);
+    }
+  });
 });

@@ -1596,11 +1596,28 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         // A signed effect receiver returns its receipt to the deciding Account;
         // that scoped root cannot authorize an unrelated Session input.
         if (context.externalActionExecutionAuthorization) return null;
+        const isReceivingOriginContext = Boolean(origin.accountId)
+          && context.runtimeAccountId === origin.accountId
+          && (context.serverIdentityId ?? context.serverId) === (origin.serverIdentityId ?? origin.serverId);
         if ((request.status === 'open' && origin.requesterSessionMachineId)
           || (request.status === 'approved' && !request.execution && isApprovalRequestExecutionApproved(request))) {
           // Accepted/blocking replays can still be waiting on another approval.
           // Only an execution acknowledgement warrants observing its receipt.
-          if (!replayAcknowledgement?.ok || !readRecord(replayAcknowledgement.result).execution) return null;
+          if (!replayAcknowledgement?.ok) return null;
+          const ackRecord = readRecord(replayAcknowledgement.result);
+          if (!ackRecord.execution) return null;
+          const ackDelivery = SessionInputAdmissionResultV1Schema.safeParse(ackRecord.delivery);
+          if (typeof ackRecord.status === 'string'
+            && isApprovalRequestV2TerminalStatus(ackRecord.status)
+            && ackDelivery.success
+            && !(origin.requesterSessionMachineId && canReplayApprovalResultDeliveryV1(ackDelivery.data))) {
+            // The destination is the admitted caller, never an Action operand or the
+            // deciding person's current Session. Keep the receiving Account/Home.
+            if (!isReceivingOriginContext) {
+              return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+            }
+            return { delivery: ackDelivery.data };
+          }
           return await observeApprovalReplayOutcome({
             readRequest: async () => deps.approvalsGet
               ? await deps.approvalsGet({ artifactId, serverId: context.serverId ?? null }) : null,
@@ -1611,8 +1628,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if (!isApprovalRequestV2TerminalStatus(request.status)) return null;
         // The destination is the admitted caller, never an Action operand or the
         // deciding person's current Session. Keep the receiving Account/Home.
-        if (!origin.accountId || context.runtimeAccountId !== origin.accountId
-          || (context.serverIdentityId ?? context.serverId) !== (origin.serverIdentityId ?? origin.serverId)) {
+        if (!isReceivingOriginContext) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
         if (request.delivery && !(origin.requesterSessionMachineId && canReplayApprovalResultDeliveryV1(request.delivery))) {
@@ -1748,6 +1764,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     expectedServerIdentityId?: string | null;
     ctx: ActionExecutorContext;
     observeExecution?: boolean;
+    /** Caller just read or committed `approved` in this call; server CAS on `claimExecution` remains the arbiter. */
+    skipInitialRead?: boolean;
     preExecutionFailure?: ActionExecuteFailure;
     replayOutcomeUnknown?: ActionExecuteFailure;
     /**
@@ -1918,32 +1936,34 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       return updateFailure ? await persistenceFailure(updateFailure) : finishExecution(nextFailed, failure);
     };
 
-    let latestRaw: unknown;
-    try {
-      latestRaw = deps.approvalsGet
-        ? await deps.approvalsGet({ artifactId: args.artifactId, serverId: args.artifactServerId })
-        : null;
-    } catch (error) {
-      const failure = { ok: false as const, ...normalizeActionExecutorThrownError(error, 'approval.artifact_read') };
-      if (args.request.status !== 'executing') {
-        // This executor has issued no claim or dispatch. Preserve consent;
-        // a later attempt still observes and respects another executor's CAS.
-        return { ...failure, effectAttempted: false };
+    if (!args.skipInitialRead) {
+      let latestRaw: unknown;
+      try {
+        latestRaw = deps.approvalsGet
+          ? await deps.approvalsGet({ artifactId: args.artifactId, serverId: args.artifactServerId })
+          : null;
+      } catch (error) {
+        const failure = { ok: false as const, ...normalizeActionExecutorThrownError(error, 'approval.artifact_read') };
+        if (args.request.status !== 'executing') {
+          // This executor has issued no claim or dispatch. Preserve consent;
+          // a later attempt still observes and respects another executor's CAS.
+          return { ...failure, effectAttempted: false };
+        }
+        // An unreadable receipt cannot rule out another executor's claim.
+        // The normal CAS writer either records that uncertainty or reports its
+        // own persistence failure; it never publishes a false no-effect fact.
+        return await persistExecutionFailure(args.request, executionOutcomeUnknown(failure), true);
       }
-      // An unreadable receipt cannot rule out another executor's claim.
-      // The normal CAS writer either records that uncertainty or reports its
-      // own persistence failure; it never publishes a false no-effect fact.
-      return await persistExecutionFailure(args.request, executionOutcomeUnknown(failure), true);
-    }
-    const latestParsed = StoredApprovalRequestSchema.safeParse(latestRaw);
-    const latestRequest = latestParsed.success ? latestParsed.data : null;
-    if (latestRequest) {
-      const recordedExecutionResult = buildActionExecuteResultFromRecordedApprovalExecution(latestRequest);
-      if (recordedExecutionResult) {
-        return finishExecution(latestRequest, recordedExecutionResult);
-      }
-      if (latestRequest.v === 2 && latestRequest.status === 'executing') {
-        return executionOutcomeUnknown();
+      const latestParsed = StoredApprovalRequestSchema.safeParse(latestRaw);
+      const latestRequest = latestParsed.success ? latestParsed.data : null;
+      if (latestRequest) {
+        const recordedExecutionResult = buildActionExecuteResultFromRecordedApprovalExecution(latestRequest);
+        if (recordedExecutionResult) {
+          return finishExecution(latestRequest, recordedExecutionResult);
+        }
+        if (latestRequest.v === 2 && latestRequest.status === 'executing') {
+          return executionOutcomeUnknown();
+        }
       }
     }
     if (args.preExecutionFailure) {
@@ -8473,6 +8493,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             : {}),
           ctx,
           observeExecution: true,
+          skipInitialRead: true,
         });
         return executed.ok ? withApprovalResultDeliveryV1(buildApprovalDecisionResult(executed.request, {
           exec: executed.exec, authority: resolveHostStampedAuthority(ctx),

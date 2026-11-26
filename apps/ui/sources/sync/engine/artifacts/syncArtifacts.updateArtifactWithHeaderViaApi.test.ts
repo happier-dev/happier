@@ -191,6 +191,62 @@ describe('updateArtifactWithHeaderViaApi', () => {
     const editorPrivateKey = openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(recipientRows[1]!.encryptedProvenanceDataKey!), recipientSecretKeyOrSeed: editorSecret });
     expect(editorPrivateKey).toEqual(privateKey);
   });
+  it('skips E2EE provenance initialization when savedBy is explicitly null while preserving it for ordinary document writes', async () => {
+    const artifactId = '22222222-2222-4222-8222-222222222222';
+    const ownerSecret = new Uint8Array(32).fill(25);
+    const encryption = await Encryption.createFromContentKeyPair({
+      publicKey: x25519.getPublicKey(ownerSecret),
+      machineKey: ownerSecret,
+    });
+    const dataKey = new Uint8Array(32).fill(26);
+    const codec = new ArtifactEncryption(dataKey);
+    const ownerEnvelope = encodeBase64(await encryption.encryptEncryptionKey(dataKey));
+    const cache: ArtifactDataKeyCache = new Map([[artifactId, { envelope: ownerEnvelope, dataKey }]]);
+    let current: DecryptedArtifact = {
+      id: artifactId,
+      ownerAccountId: 'owner',
+      access: 'owner',
+      title: 'Approval',
+      rawHeader: { title: 'Approval' },
+      header: { title: 'Approval' },
+      body: 'Before',
+      provenance: undefined,
+      headerVersion: 1,
+      bodyVersion: 1,
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      storageMode: 'e2ee',
+      isDecrypted: true,
+    };
+    const calls: string[] = [];
+    let lastWrite: ArtifactUpdateRequest | undefined;
+    const request = async (path: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${path}`);
+      if (init?.method !== 'POST') throw new Error(`Unexpected non-POST request when savedBy is null: ${path}`);
+      lastWrite = JSON.parse(String(init.body)) as ArtifactUpdateRequest;
+      return Response.json({ success: true, headerVersion: 2, bodyVersion: 2 });
+    };
+    const { updateArtifactWithHeaderViaApi } = await import('./syncArtifacts');
+    await updateArtifactWithHeaderViaApi({
+      credentials: { token: createAccountTokenForTests('owner') },
+      artifactId,
+      header: { title: 'Approval' },
+      body: 'After',
+      savedBy: null,
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      encryption,
+      artifactDataKeys: cache,
+      request,
+      getArtifact: () => current,
+      updateArtifact: row => { current = row; },
+    });
+    expect(calls).toEqual([`POST /v1/artifacts/${artifactId}`]);
+    expect(lastWrite?.provenance).toBeUndefined();
+    expect(lastWrite?.provenanceDataEncryptionKey).toBeUndefined();
+    expect(current.headerVersion).toBe(2);
+    expect(current.bodyVersion).toBe(2);
+  });
   it.each(['plain', 'e2ee'] as const)('deliberately clears a %s file through the binary-aware route and keeps later text edits on the ordinary route', async (mode) => {
     const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(9)) : null;
     const dataKey = ArtifactEncryption.generateDataEncryptionKey();

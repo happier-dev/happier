@@ -1840,7 +1840,7 @@ describe('createDefaultActionExecutor approvals', () => {
             expect(homes.requests.filter(entry => entry.serverId === homeId).map(entry => entry.path).sort()).toEqual([
                 '/v1/account/encryption',
                 '/v2/account/settings',
-                heldInventory ? '/v1/artifacts/read' : '/v1/artifacts/' + artifactId,
+                '/v1/artifacts/' + artifactId,
                 '/v1/machines/read-batch',
                 path,
             ].sort());
@@ -2540,5 +2540,143 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(outgoing).toMatchObject([{ method: 'machine-exact:' + RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED,
             params: { artifactId: 'approval-plugin-install' } }]);
         expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
+    });
+
+    it('completes an App-owned E2EE approval decision within 4 Artifact HTTP requests without recipient prep or document provenance init, and falls back on version_mismatch', async () => {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { ArtifactEncryption } = await import('@/sync/encryption/artifactEncryption');
+        const { encodeBase64: uiEncodeBase64 } = await import('@/encryption/base64');
+        const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+
+        const secret = new Uint8Array(32).fill(41);
+        const secretBase64Url = uiEncodeBase64(secret, 'base64url');
+        const e2eeToken = createAccountTokenForTests('account-e2ee', { currentAccount: true });
+        const e2eeHomeId = await homes.addHome({
+            name: 'E2EE Approval Home',
+            serverUrl: 'https://post-actions.test',
+            serverIdentityId: 'srv_e2ee_approval_home',
+            accountId: 'account-e2ee',
+            accountEncryptionMode: 'e2ee',
+            currentAccount: true,
+            active: false,
+            credentials: { token: e2eeToken, secret: secretBase64Url },
+        });
+        homes.answer(e2eeHomeId, '/v1/account/encryption/currentness', {
+            body: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
+        });
+        homes.answer(e2eeHomeId, '/v1/account/profile', {
+            body: { name: 'Captain E2EE', firstName: 'Captain', lastName: 'E2EE', timestamp: 10 },
+        });
+        const encryption = await Encryption.create(secret);
+        const dataKey = ArtifactEncryption.generateDataEncryptionKey();
+        const codec = new ArtifactEncryption(dataKey);
+        const encryptedDataKey = uiEncodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64');
+
+        const seedE2eeApproval = async (artifactId: string, requestId: string) => {
+            const request = ApprovalRequestSchema.parse({
+                v: 2,
+                status: 'open',
+                createdAtMs: 1,
+                updatedAtMs: 1,
+                createdBy: { surface: 'cli' },
+                requestedSurface: 'cli',
+                approval: { flow: 'deferred', result: 'required' },
+                executionOriginV1: {
+                    v: 1,
+                    authority: 'account_automation',
+                    surface: 'cli',
+                    caller: { kind: 'host' },
+                    serverId: e2eeHomeId,
+                    serverIdentityId: 'srv_e2ee_approval_home',
+                    accountId: 'account-e2ee',
+                    machineId: 'machine-exact',
+                    actionId: 'account.name.set',
+                    requestId,
+                },
+                actionId: 'account.name.set',
+                actionArgs: { name: 'Captain E2EE' },
+                summary: 'Set my name (E2EE)',
+            });
+            // Seed CLI-created E2EE approval artifact with NO provenanceDataEncryptionKey.
+            const created = await homes.artifacts(e2eeHomeId).handle('/v1/artifacts', {
+                method: 'POST',
+                body: JSON.stringify({
+                    id: artifactId,
+                    header: await codec.encryptHeader(buildApprovalRequestArtifactHeaderV1(request)),
+                    body: await codec.encryptBody({ body: JSON.stringify(request) }),
+                    dataEncryptionKey: encryptedDataKey,
+                }),
+            });
+            expect(created?.ok).toBe(true);
+            return request;
+        };
+
+        const artifactId = 'e2ee-app-approval-1';
+        await seedE2eeApproval(artifactId, 'e2ee-app-req-1');
+        const e2eeExecutor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => e2eeHomeId });
+        const requestStart = homes.requests.length;
+
+        const decided = await e2eeExecutor.execute('approval.request.decide', {
+            artifactId,
+            decision: 'approve',
+        }, { surface: 'ui', serverId: e2eeHomeId });
+
+        expect(decided).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        const artifactHttp = homes.requests
+            .slice(requestStart)
+            .filter(req => req.serverId === e2eeHomeId && req.path.startsWith(`/v1/artifacts/${artifactId}`));
+        const recipientCalls = artifactHttp.filter(req => req.path.includes('/access/recipients') || req.path.includes('/access/key-envelopes'));
+        const artifactGets = artifactHttp.filter(req => req.path === `/v1/artifacts/${artifactId}` && req.method === 'GET');
+        const artifactPosts = artifactHttp.filter(req => req.path === `/v1/artifacts/${artifactId}` && req.method === 'POST');
+        expect(recipientCalls).toEqual([]);
+        expect(artifactGets).toHaveLength(1);
+        expect(artifactPosts).toHaveLength(3);
+        expect(artifactHttp.length).toBeLessThanOrEqual(4);
+
+        const storedRow = homes.artifacts(e2eeHomeId).read(artifactId);
+        expect(storedRow?.provenanceDataEncryptionKey ?? null).toBeNull();
+        const openedBody = await codec.decryptBody(storedRow!.body);
+        expect(ApprovalRequestSchema.parse(JSON.parse(openedBody!.body as string))).toMatchObject({
+            status: 'executed',
+            execution: { ok: true },
+        });
+
+        // Also verify version_mismatch mid-flow clears cached basis and refreshes cleanly via fresh GET.
+        const artifactId2 = 'e2ee-app-approval-2';
+        const open2 = await seedE2eeApproval(artifactId2, 'e2ee-app-req-2');
+        let postSeen = 0;
+        homes.artifacts(e2eeHomeId).beforeNextUpdate(async () => {
+            postSeen += 1;
+            const rejected = ApprovalRequestSchema.parse({
+                ...open2,
+                status: 'rejected',
+                updatedAtMs: 5,
+                decision: { kind: 'reject', decidedAtMs: 5 },
+            });
+            // Competing writer commits rejection before approve POST lands.
+            const res = await homes.artifacts(e2eeHomeId).handle(`/v1/artifacts/${artifactId2}`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    header: await codec.encryptHeader(buildApprovalRequestArtifactHeaderV1(rejected)),
+                    body: await codec.encryptBody({ body: JSON.stringify(rejected) }),
+                    expectedHeaderVersion: 1,
+                    expectedBodyVersion: 1,
+                }),
+            });
+            expect(res?.ok).toBe(true);
+        });
+        const conflictStart = homes.requests.length;
+        const raced = await e2eeExecutor.execute('approval.request.decide', {
+            artifactId: artifactId2,
+            decision: 'approve',
+        }, { surface: 'ui', serverId: e2eeHomeId });
+        expect(postSeen).toBe(1);
+        expect(raced).toMatchObject({ ok: false });
+        const conflictGets = homes.requests
+            .slice(conflictStart)
+            .filter(req => req.serverId === e2eeHomeId && req.path === `/v1/artifacts/${artifactId2}` && req.method === 'GET');
+        // Initial GET + post-conflict fresh GET receipt observation.
+        expect(conflictGets.length).toBeGreaterThanOrEqual(2);
     });
 });

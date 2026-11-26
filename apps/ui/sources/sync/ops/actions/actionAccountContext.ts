@@ -178,7 +178,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             createArtifact: async (_header: Readonly<Record<string, unknown>>, _body: string) => unavailable(),
             createArtifactDocument: async (_input: ArtifactCreateOperation) => artifactUnavailable(),
             updateArtifactDocument: async (_input: ArtifactUpdateOperation) => artifactUnavailable(),
-            updateArtifact: async (_artifactId: string, _header: ArtifactHeader, _body: string, _basis?: DecryptedArtifact, _onIssued?: () => void) => unavailable(),
+            updateArtifact: async (_artifactId: string, _header: ArtifactHeader, _body: string, _basis?: DecryptedArtifact, _onIssued?: () => void, _options?: Readonly<{ savedBy?: ArtifactSavedByV1 | null }>): Promise<DecryptedArtifact | null> => unavailable(),
             workflowArtifacts, artifactAccessGrants, encodeArtifactListCursor,
             homeHubArtifactTransport: { read: artifactUnavailable, create: artifactUnavailable, update: artifactUnavailable } satisfies HomeHubArtifactTransportV1,
             listArtifacts: async (_options: Parameters<WorkflowDefinitionArtifactOperations['list']>[0]) => artifactUnavailable(),
@@ -949,21 +949,27 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             createArtifact: async (header: Readonly<Record<string, unknown>>, body: string) => (await createArtifactDocument({ header, body })).artifactId,
             // `basis` is the exact read a caller validated its change against; its
             // versions become the CAS expectation. Without one, the latest row is.
-            updateArtifact: async (artifactId: string, header: ArtifactHeader, body: string, basis?: DecryptedArtifact, onIssued?: () => void) => {
+            updateArtifact: async (artifactId: string, header: ArtifactHeader, body: string, basis?: DecryptedArtifact, onIssued?: () => void, options?: Readonly<{ savedBy?: ArtifactSavedByV1 | null }>): Promise<DecryptedArtifact | null> => {
                 const current = basis ?? await fetchArtifact(artifactId, { fresh: true });
                 const artifactOptions = await artifactParams();
+                let committed: DecryptedArtifact | null = null;
                 await updateArtifactWithHeaderViaApi({
                     ...artifactOptions, artifactId, header, body,
+                    ...(options?.savedBy !== undefined ? { savedBy: options.savedBy } : {}),
                     expectedRevision: current?.bodyVersion === undefined ? undefined
                         : { headerVersion: current.headerVersion, bodyVersion: current.bodyVersion },
-                    ...(onIssued ? { request: ((path, init, options) => artifactOptions.request(path, init, {
-                        ...options,
-                        ...(init?.method === 'POST' ? { onIssued: () => { onIssued(); options?.onIssued?.(); } } : {}),
+                    ...(onIssued ? { request: ((path, init, reqOptions) => artifactOptions.request(path, init, {
+                        ...reqOptions,
+                        ...(init?.method === 'POST' ? { onIssued: () => { onIssued(); reqOptions?.onIssued?.(); } } : {}),
                     })) satisfies ServerFetch } : {}),
                     getArtifact: () => current ?? undefined,
-                    updateArtifact: (artifact: DecryptedArtifact) => { if (canPublish()) storage.getState().updateArtifact(artifact); },
+                    updateArtifact: (artifact: DecryptedArtifact) => {
+                        committed = artifact;
+                        if (canPublish()) storage.getState().updateArtifact(artifact);
+                    },
                 });
                 assertCurrent();
+                return committed;
             },
         };
     } catch (error) {

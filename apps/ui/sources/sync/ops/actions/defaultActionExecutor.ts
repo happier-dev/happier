@@ -1442,8 +1442,8 @@ type VoiceActionExecutorBinding = Readonly<{
 
   const connectedServiceAction = accountContext ? createUiConnectedServiceAction(accountContext, opts?.connectedServiceQuotaReadOptions) : undefined;
   const approvalArtifacts = createApprovalArtifactAccess({
-    read: artifactId => accountContext ? accountContext.fetchArtifact(artifactId, { fresh: true })
-      : sync.fetchArtifactWithBody(artifactId, { fresh: true }),
+    read: artifactId => accountContext ? accountContext.fetchArtifact(artifactId, { fresh: true, prepareRecipientKeys: false })
+      : sync.fetchArtifactWithBody(artifactId, { fresh: true, prepareRecipientKeys: false }),
     // Scoped executors live for one invocation, unlike the shared fallback.
     reuseWriteBasis: Boolean(accountContext),
     ...(!accountContext ? {
@@ -1462,25 +1462,37 @@ type VoiceActionExecutorBinding = Readonly<{
     const artifactAccount = settlement ?? accountContext;
     const basis = approvalArtifacts.takeWriteBasis(artifactId);
     const acquired = artifactAccount === accountContext ? basis : null;
+    const readFreshApproval = (id: string) => artifactAccount
+      ? artifactAccount.fetchArtifact(id, { fresh: true, prepareRecipientKeys: false })
+      : sync.fetchArtifactWithBody(id, { fresh: true, prepareRecipientKeys: false });
     try {
-      const written = await writeApprovalRequestArtifact({
+      let writeAttempted = false;
+      const attemptWrite = (cachedBasis: typeof acquired) => writeApprovalRequestArtifact({
         artifactId, request, expectedStatus,
-        read: async id => acquired ?? await (artifactAccount ? artifactAccount.fetchArtifact(id, { fresh: true }) : sync.fetchArtifactWithBody(id, { fresh: true })),
-        write: async (basis, header, body) => {
+        read: async id => cachedBasis ?? await readFreshApproval(id),
+        write: async (writeBasis, header, body) => {
+          writeAttempted = true;
           if (artifactAccount) {
-            await artifactAccount.updateArtifact(artifactId, header, body, basis);
+            const committed = await artifactAccount.updateArtifact(artifactId, header, body, writeBasis, undefined, { savedBy: null });
+            if (artifactAccount === accountContext && committed) {
+              approvalArtifacts.rememberWriteBasis(committed);
+            }
             return;
           }
           // Focused Sync borrows this validated read as its expected CAS basis.
-          storage.getState().updateArtifact(basis);
-          try { await sync.updateArtifactWithHeader(artifactId, header, body); }
+          storage.getState().updateArtifact(writeBasis);
+          try { await sync.updateArtifactWithHeader(artifactId, header, body, { savedBy: null }); }
           catch (error) {
-            const latest = await sync.fetchArtifactWithBody(artifactId, { fresh: true });
+            const latest = await sync.fetchArtifactWithBody(artifactId, { fresh: true, prepareRecipientKeys: false });
             if (latest) storage.getState().updateArtifact(latest);
             throw error;
           }
         },
       });
+      let written = await attemptWrite(acquired);
+      if (acquired && !writeAttempted && !written.ok) {
+        written = await attemptWrite(null);
+      }
       if (written.ok) {
         approvalCoordinator.notifyApprovalUpdated({ artifactId, request });
         // Background Home readers observe consent through the existing feed.
@@ -5185,7 +5197,7 @@ type VoiceActionExecutorBinding = Readonly<{
     approvalsList: accountContext ? args => listApprovalArtifactsV1({ ...args,
       readPage: options => accountContext.workflowArtifacts.list(options),
       read: async artifactId => {
-        const artifact = await accountContext.fetchArtifact(artifactId);
+        const artifact = await accountContext.fetchArtifact(artifactId, { prepareRecipientKeys: false });
         return artifact?.header ? { header: artifact.rawHeader ?? artifact.header, body: artifact.body, updatedAt: artifact.updatedAt } : null;
       },
     }) : undefined,
@@ -5218,7 +5230,7 @@ type VoiceActionExecutorBinding = Readonly<{
     }),
 
     executionRunHostActionApprovalReplay: accountContext ? createExecutionRunHostApprovalReplay({
-      read: artifactId => accountContext.fetchArtifact(artifactId, { fresh: true }),
+      read: artifactId => accountContext.fetchArtifact(artifactId, { fresh: true, prepareRecipientKeys: false }),
       decide: async ({ sessionId, artifactId, decision, signal }) => actionSessionRpc({
         serverId: accountContext.serverId, sessionId, method: RPC_METHODS.APPROVAL_REQUEST_DECIDE,
         payload: { artifactId, decision }, timeoutMs: null, ...(signal ? { signal } : {}),
@@ -5231,7 +5243,7 @@ type VoiceActionExecutorBinding = Readonly<{
     observeDeferredActionResult: accountContext ? async args => {
       const { waitForDeferredActionResult } = await import('@/components/approvals/observeActionApprovalContinuation');
       return waitForDeferredActionResult({ ...args, lifetime: accountContext.accountLifetime,
-        fetchArtifact: (artifactId, signal) => accountContext.fetchArtifact(artifactId, { signal }) });
+        fetchArtifact: (artifactId, signal) => accountContext.fetchArtifact(artifactId, { signal, prepareRecipientKeys: false }) });
     } : undefined,
 
     approvalsWaitForDecision: async ({ artifactId, request, serverId, signal }) => {
@@ -5265,7 +5277,8 @@ type VoiceActionExecutorBinding = Readonly<{
         readRequest: async () => {
           assertCurrent();
           // A wake invalidates the durable Artifact, not the optimistic approval cache.
-          const full = await (accountContext ? accountContext.fetchArtifact(artifactId) : sync.fetchArtifactWithBody(artifactId));
+          const full = await (accountContext ? accountContext.fetchArtifact(artifactId, { prepareRecipientKeys: false })
+            : sync.fetchArtifactWithBody(artifactId, { prepareRecipientKeys: false }));
           assertCurrent();
           if (!full?.header || typeof full.body !== 'string') return null;
           const parsed = approvalArtifactBodyMatchesHeaderV1(full.header, full.body);

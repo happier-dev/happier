@@ -30,7 +30,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
   }>): Promise<boolean>;
   executeApprovedActionForRequest(args: Readonly<{
     artifactId: string; request: ApprovalRequest; artifactServerId: string | null; ctx: ActionExecutorContext;
-    preExecutionFailure?: ActionExecuteFailure; observeExecution?: boolean;
+    preExecutionFailure?: ActionExecuteFailure; observeExecution?: boolean; skipInitialRead?: boolean;
   }>): Promise<Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult; delivery?: SessionInputAdmissionResultV1 }> | ActionExecuteFailure>;
 }>): Replay {
   return async (args, machineIngress) => {
@@ -142,7 +142,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
             serverId: args.currentAccount.serverId, serverIdentityId: args.currentAccount.serverIdentityId,
             ...(args.currentAccount.actionsSettings ? { actionsSettings: args.currentAccount.actionsSettings } : {}) } : {}),
           ...(args.callerAuthority === 'present_user' ? { authority: 'present_user' as const } : {}),
-        }, observeExecution: true });
+        }, observeExecution: true, skipInitialRead: true });
       return executed.ok ? withApprovalResultDeliveryV1(buildApprovalDecisionResult(executed.request, {
         exec: executed.exec, authority: args.callerAuthority,
       }), executed.delivery) : executed;

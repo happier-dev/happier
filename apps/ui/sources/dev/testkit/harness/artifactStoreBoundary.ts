@@ -380,8 +380,9 @@ export function createArtifactStoreBoundary(params: Readonly<{
         const next: Artifact = {
             ...current,
             ...(headerChange ? { header: headerChange.bytes, headerVersion: headerChange.expected + 1 } : {}),
-            ...(bodyChange ? { body: bodyChange.bytes, bodyVersion: bodyChange.expected + 1 } : {}),
-            ...(typeof provenance === 'string' || provenance === null ? { provenance } : {}),
+            ...(bodyChange ? { body: bodyChange.bytes, bodyVersion: bodyChange.expected + 1,
+                provenance: typeof provenance === 'string' ? provenance : null } : {}),
+            ...(!bodyChange && (typeof provenance === 'string' || provenance === null) ? { provenance } : {}),
             ...(typeof provenanceDataEncryptionKey === 'string' || provenanceDataEncryptionKey === null ? { provenanceDataEncryptionKey } : {}),
             ...classification,
             ...(headerChange ? approvalProjection(headerChange.bytes, input) : {}),

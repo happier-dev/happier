@@ -7,6 +7,7 @@ import { requireSessionOrganizationMutationScope, writeSessionOrganizationWorksp
 import { registerSyncRuntime } from './sync';
 import { ViewDemandSync, type PeripheralFeed } from './engine/viewDemandSync';
 import { readAutomationRunHistoryDemand, readAutomationDefinitionDetailsDemand } from './domains/automations/automationReadDemand';
+import type { ArtifactSavedByV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { SESSION_MESSAGES_PAGE_SIZE, type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, isMachineProjectionChangeKindV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { repairTeamLabelEnvelopes } from './ops/teams/teamLabelEnvelopes';
@@ -10166,7 +10167,7 @@ class Sync {
         artifactId: string,
         header: Readonly<Record<string, unknown>>,
         body: ArtifactBodyInput,
-        options?: Readonly<{ expectedRevision: Readonly<{ headerVersion: number; bodyVersion: number }>; signal?: AbortSignal }>,
+        options?: Readonly<{ expectedRevision?: Readonly<{ headerVersion: number; bodyVersion: number }>; savedBy?: ArtifactSavedByV1 | null; signal?: AbortSignal }>,
     ): Promise<void> {
         if (!this.credentials) {
             throw new Error('Not authenticated');
@@ -10176,6 +10177,7 @@ class Sync {
             credentials: this.credentials,
             artifactId,
             expectedRevision: options?.expectedRevision,
+            ...(options?.savedBy !== undefined ? { savedBy: options.savedBy } : {}),
             signal: options?.signal,
             header,
             body,

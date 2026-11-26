@@ -29,10 +29,13 @@ export function createApprovalArtifactAccess(deps: Readonly<{
         get,
         takeWriteBasis: (artifactId: string) => {
             const acquired = writeBasis?.id === artifactId ? writeBasis : null;
-            // Consume even on refusal/conflict. Later transitions read afresh;
-            // the writer validates this body's transition and keeps its CAS versions.
+            // Consume even on refusal/conflict so retries read afresh; a committed
+            // write explicitly hands back its server-acknowledged revision below.
             writeBasis = null;
             return acquired;
+        },
+        rememberWriteBasis: (artifact: DecryptedArtifact | null) => {
+            if (deps.reuseWriteBasis) writeBasis = artifact;
         },
     };
 }

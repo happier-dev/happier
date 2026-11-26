@@ -111,14 +111,37 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
     resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl() }),
     getAccountEncryptionMode: options => timeWebLatencyPhase('approval.account_mode', () => getAccountEncryptionMode(options)),
   });
+  type ApprovalUpdateHandle = NonNullable<Awaited<ReturnType<typeof rawAccountArtifactStore.readForUpdate>>>;
+  const wrapApprovalUpdateHandle = (handle: ApprovalUpdateHandle): ApprovalUpdateHandle => ({
+    ...handle,
+    update: async (content) => {
+      const updated = await timeWebLatencyPhase('approval.artifact.update', () => handle.update(content));
+      return updated.ok ? { ...updated, next: wrapApprovalUpdateHandle(updated.next) } : updated;
+    },
+  });
+  const MAX_CACHED_APPROVAL_UPDATE_HANDLES = 32;
+  const approvalUpdateBasisByArtifactId = new Map<string, ApprovalUpdateHandle>();
+  const rememberApprovalUpdateBasis = (artifactId: string, handle: ApprovalUpdateHandle) => {
+    approvalUpdateBasisByArtifactId.delete(artifactId);
+    approvalUpdateBasisByArtifactId.set(artifactId, handle);
+    while (approvalUpdateBasisByArtifactId.size > MAX_CACHED_APPROVAL_UPDATE_HANDLES) {
+      const oldestKey = approvalUpdateBasisByArtifactId.keys().next().value;
+      if (oldestKey === undefined) break;
+      approvalUpdateBasisByArtifactId.delete(oldestKey);
+    }
+  };
+  const takeApprovalUpdateBasis = (artifactId: string): ApprovalUpdateHandle | null => {
+    const handle = approvalUpdateBasisByArtifactId.get(artifactId) ?? null;
+    if (handle) approvalUpdateBasisByArtifactId.delete(artifactId);
+    return handle;
+  };
   const accountArtifactStore = { ...rawAccountArtifactStore,
     read: (...args: Parameters<typeof rawAccountArtifactStore.read>) => timeWebLatencyPhase('approval.artifact.read', () => rawAccountArtifactStore.read(...args)),
     update: (...args: Parameters<typeof rawAccountArtifactStore.update>) => timeWebLatencyPhase('approval.artifact.update', () => rawAccountArtifactStore.update(...args)),
     readForUpdate: async (artifactId: string, options?: Parameters<typeof rawAccountArtifactStore.readForUpdate>[1]) => {
       const current = await timeWebLatencyPhase('approval.artifact.read', () =>
         rawAccountArtifactStore.readForUpdate(artifactId, { ...options, prepareRecipients: false }));
-      return current ? { ...current,
-        update: (content: Parameters<typeof current.update>[0]) => timeWebLatencyPhase('approval.artifact.update', () => current.update(content)) } : null;
+      return current ? wrapApprovalUpdateHandle(current) : null;
     },
   };
   // Decisions read current content under the Artifact's normal access/mode
@@ -307,8 +330,13 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
 
     approvalsGet: async ({ artifactId, serverId }) => {
       setApprovalTraceArtifactId(artifactId);
-      const artifact = await readApprovalArtifact(artifactId);
-      if (!artifact) return null;
+      approvalUpdateBasisByArtifactId.delete(artifactId);
+      const current = await accountArtifactStore.readForUpdate(artifactId, {
+        prepareRecipients: false,
+        ...(params.approvalAuthorizationHeaders ? { authorizationHeaders: params.approvalAuthorizationHeaders } : {}),
+      });
+      if (!current) return null;
+      const { artifact } = current;
       const header = artifact.header;
       if (!header) return null;
       const body = artifact.body;
@@ -319,49 +347,78 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
         && !approvalArtifactMatchesServerScope(header, normalizeArtifactServerId(serverId))) {
         return null;
       }
+      if (parsed?.family === 'built_in') {
+        rememberApprovalUpdateBasis(artifactId, current);
+      }
       return parsed?.request ?? null;
     },
 
     approvalsUpdate: async ({ artifactId, request, serverId, expectedStatus }) => {
       setApprovalTraceArtifactId(artifactId);
-      const current = await accountArtifactStore.readForUpdate(artifactId, { authorizationHeaders: params.approvalAuthorizationHeaders });
-      if (!current) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
-      const { artifact } = current;
-      const existingHeader = artifact.header;
-      if (!existingHeader) {
-        return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
-      }
+      const readFresh = () => accountArtifactStore.readForUpdate(artifactId, {
+        ...(params.approvalAuthorizationHeaders ? { authorizationHeaders: params.approvalAuthorizationHeaders } : {}),
+      });
+      const evaluateBasis = (current: ApprovalUpdateHandle) => {
+        const { artifact } = current;
+        const existingHeader = artifact.header;
+        if (!existingHeader) {
+          return { ok: false as const, result: { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const } };
+        }
+        const existingBody = artifact.body;
+        const existing = readBuiltInApprovalArtifact(existingHeader, existingBody);
+        if (existing?.v === 1 && !approvalArtifactMatchesServerScope(existingHeader, normalizeArtifactServerId(serverId))) {
+          return { ok: false as const, result: { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const } };
+        }
+        if (!existing) {
+          return {
+            ok: false as const,
+            result: {
+              ok: false,
+              errorCode: 'subject_mismatch',
+              error: 'approval_request_subject_mismatch',
+              writeCommitted: false as const,
+            },
+          };
+        }
+        // The Protocol subject/transition owner is shared with the UI adapter:
+        // immutable subject (settlements may only apply the Action's declared
+        // input projection), the lifecycle edges, and the refusal of a repeated
+        // `executing` claim. This store only commits against the revision it read.
+        const transition = decideApprovalRequestTransition(existing, request, { expectedStatus });
+        if (!transition.ok) return { ok: false as const, result: { ...transition, writeCommitted: false as const } };
+        if (!transition.changed) return { ok: false as const, result: { ok: true as const } };
+        return { ok: true as const, current, existing, existingHeader };
+      };
 
-      const existingBody = artifact.body;
-      const existing = readBuiltInApprovalArtifact(existingHeader, existingBody);
-      if (existing?.v === 1 && !approvalArtifactMatchesServerScope(existingHeader, normalizeArtifactServerId(serverId))) {
-        return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
+      let fromCache = false;
+      let current = takeApprovalUpdateBasis(artifactId);
+      if (current) {
+        fromCache = true;
+      } else {
+        current = await readFresh();
       }
-      if (!existing) {
-        return {
-          ok: false,
-          errorCode: 'subject_mismatch',
-          error: 'approval_request_subject_mismatch',
-          writeCommitted: false as const,
-        };
+      if (!current) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
+
+      let evaluation = evaluateBasis(current);
+      if (!evaluation.ok && fromCache) {
+        const fresh = await readFresh();
+        if (!fresh) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
+        evaluation = evaluateBasis(fresh);
       }
-      // The Protocol subject/transition owner is shared with the UI adapter:
-      // immutable subject (settlements may only apply the Action's declared
-      // input projection), the lifecycle edges, and the refusal of a repeated
-      // `executing` claim. This store only commits against the revision it read.
-      const transition = decideApprovalRequestTransition(existing, request, { expectedStatus });
-      if (!transition.ok) return { ...transition, writeCommitted: false as const };
-      if (!transition.changed) return { ok: true };
+      if (!evaluation.ok) return evaluation.result;
 
       // V1's Home marker belongs to retained history, not replay authority or
       // the deciding caller's routing hint. Keep this validated CAS basis's index.
       const header = buildApprovalRequestArtifactHeaderV1(request, {
-        legacyServerId: existing.v === 1 ? normalizeArtifactServerId(existingHeader.serverId) : null,
+        legacyServerId: evaluation.existing.v === 1 ? normalizeArtifactServerId(evaluation.existingHeader.serverId) : null,
       });
-      const updated = await current.update({
+      const updated = await evaluation.current.update({
         header, body: JSON.stringify(request) });
 
-      if (updated.ok) return { ok: true };
+      if (updated.ok) {
+        rememberApprovalUpdateBasis(artifactId, updated.next);
+        return { ok: true };
+      }
       return updated;
     },
   };

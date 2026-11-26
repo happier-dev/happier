@@ -608,6 +608,7 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const writeProvenance = async (input: Readonly<{ artifactId: string; header: Readonly<Record<string, unknown>>; bodyVersion: number; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; restoredFromBodyVersion?: number; signal?: AbortSignal; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders }>, stored: StoredArtifact | undefined, contentCodec: Codec): Promise<Readonly<{
     wire: Readonly<{ provenance?: string; provenanceDataEncryptionKey?: string }>;
+    decoded?: ArtifactRevisionProvenanceV1;
     prepareRecipients?: () => Promise<void>;
   }>> => {
     const savedBy = input.savedBy === undefined ? params.savedBy : input.savedBy;
@@ -661,6 +662,7 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     return { wire: { provenance: codec.encode(metadata),
       ...(!existing && codec.mode === 'e2ee' ? { provenanceDataEncryptionKey: ownerEnvelope } : {}) },
+      decoded: provenance,
       ...(prepareRecipients ? { prepareRecipients } : {}) };
   };
   const prepareCurrent = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders) => {
@@ -969,15 +971,15 @@ export function createAccountArtifactStore(params: Readonly<{
       body, expectedBodyVersion: input.expectedRevision.bodyVersion,
       ...provenance.wire, ...(kind === undefined ? {} : { kind, ...(artifactKindCarriesApprovalSessionHintV1(nextHeader.kind)
         ? deriveApprovalArtifactQueryHintsV1(nextHeader) : {}) }) };
-    return { ok: true, stored, blob, header, body, kind, provenance, wire, afterCommit: async () => {
+    return { ok: true, stored, codec, blob, header, body, nextHeader, contentBody: content.body, kind, provenance, wire, afterCommit: async () => {
       await provenance.prepareRecipients?.();
       if (input.prepareRecipients) await prepare({ ...stored,
         provenanceDataEncryptionKey: provenance.wire.provenanceDataEncryptionKey ?? stored.provenanceDataEncryptionKey },
         codec, input.signal, input.authorizationHeaders);
     } } as const;
   };
-  const update = async (input: UpdateInput, storedBasis?: StoredArtifact) => {
-    const prepared = await prepareUpdateContent(input, storedBasis);
+  const executeUpdate = async (input: UpdateInput, storedBasis?: StoredArtifact, openedCodec?: Codec) => {
+    const prepared = await prepareUpdateContent(input, storedBasis, openedCodec);
     if (!prepared.ok) return prepared;
     const { stored, blob, header, body, kind, provenance, wire } = prepared;
     let attempt;
@@ -1060,8 +1062,12 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     if (response.data?.success === true) await prepared.afterCommit();
     return response.data?.success === true
-      ? { ok: true, revision: readAcknowledgedRevision(response.data) } as const
+      ? { ok: true, revision: readAcknowledgedRevision(response.data), prepared } as const
       : { ok: false, errorCode: 'update_failed', error: 'artifact_update_failed' } as const;
+  };
+  const update = async (input: UpdateInput, storedBasis?: StoredArtifact, openedCodec?: Codec) => {
+    const res = await executeUpdate(input, storedBasis, openedCodec);
+    return res.ok ? { ok: true, revision: res.revision } as const : res;
   };
   const prepareJsonUpdate = async (input: UpdateInput, storedBasis?: StoredArtifact, openedCodec?: Codec) => {
     const prepared = await prepareUpdateContent(input, storedBasis, openedCodec);
@@ -1079,6 +1085,91 @@ export function createAccountArtifactStore(params: Readonly<{
       },
       afterCommit: prepared.afterCommit,
     } as const;
+  };
+  type AccountArtifactUpdateFailure = Extract<Awaited<ReturnType<typeof update>>, Readonly<{ ok: false }>>;
+  type AccountArtifactUpdateHandle = Readonly<{
+    artifact: AccountArtifact;
+    storageMode: Codec['mode'];
+    prepareJsonUpdate: (content: Pick<AccountArtifact, 'header'> & Readonly<{ body: ArtifactBodyV1; beforeWrite?: () => void | Promise<void> }>) => ReturnType<typeof prepareJsonUpdate>;
+    openAssociatedContent: (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; content: ArtifactAssociatedStoredContent }>) => unknown;
+    sealAssociatedContent: (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; value: unknown }>) => ArtifactAssociatedStoredContent;
+    associatedContentCommitment: (domain: string, components: readonly string[]) => string;
+    update: (content: Omit<UpdateInput, 'artifactId' | 'expectedRevision'>) => Promise<
+      | Readonly<{ ok: true; revision: AccountArtifactRevision; next: AccountArtifactUpdateHandle }>
+      | AccountArtifactUpdateFailure
+    >;
+  }>;
+  const buildUpdateHandle = (
+    stored: StoredArtifact,
+    codec: Codec,
+    artifact: AccountArtifact,
+    options?: Parameters<typeof projectStoredArtifact>[1],
+  ): AccountArtifactUpdateHandle => {
+    const assertAssociatedResource = (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision }>) => {
+      options?.signal?.throwIfAborted();
+      if (input.artifactId !== stored.id || input.expectedRevision.headerVersion !== stored.headerVersion
+        || input.expectedRevision.bodyVersion !== stored.bodyVersion) throw new ArtifactEncryptionMaterialUnavailableError();
+    };
+    return {
+      artifact,
+      storageMode: codec.mode,
+      /** Reuse this operation's admitted bytes/key; commit still checks current Account mode. */
+      prepareJsonUpdate: (content) =>
+        prepareJsonUpdate({ ...content, artifactId: stored.id,
+          expectedRevision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
+          ...(options?.signal ? { signal: options.signal } : {}),
+          ...(options?.authorizationHeaders ? { authorizationHeaders: options.authorizationHeaders } : {}) }, stored, codec),
+      /** The admitted resource supplies its mode/key, never the recipient Account's codec. */
+      openAssociatedContent: (input): unknown => {
+        assertAssociatedResource(input);
+        if (input.content.t === 'plain') {
+          if (codec.mode !== 'plain') throw new ArtifactEncryptionMaterialUnavailableError();
+          return input.content.v;
+        }
+        if (codec.mode !== 'e2ee') throw new ArtifactEncryptionMaterialUnavailableError();
+        const opened = codec.decode(input.content.c);
+        if (opened === null) throw new ArtifactEncryptionMaterialUnavailableError();
+        return opened;
+      },
+      sealAssociatedContent: (input): ArtifactAssociatedStoredContent => {
+        assertAssociatedResource(input);
+        return codec.mode === 'plain' ? { t: 'plain', v: input.value } : { t: 'encrypted', c: codec.encode(input.value) };
+      },
+      /** Associated records use this admitted resource key for private equality as well as content. */
+      associatedContentCommitment: (domain, components): string => codec.mode === 'plain'
+        ? computeCanonicalDomainSeparatedDigest(domain, [stored.id, ...components])
+        : computeCanonicalDomainSeparatedKeyedDigest(codec.dataKey!, domain, [stored.id, ...components]),
+      update: async (content) => {
+        const res = await executeUpdate({ ...content,
+          artifactId: stored.id, expectedRevision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
+          ...(options?.signal ? { signal: options.signal } : {}),
+          ...(options?.authorizationHeaders ? { authorizationHeaders: options.authorizationHeaders } : {}) }, stored, codec);
+        if (!res.ok) return res;
+        const nextStored: StoredArtifact = {
+          ...stored,
+          header: res.prepared.header,
+          body: res.prepared.body,
+          headerVersion: res.revision.headerVersion,
+          bodyVersion: res.revision.bodyVersion,
+          seq: stored.seq + 1,
+          updatedAt: Date.now(),
+          provenance: res.prepared.provenance.wire.provenance ?? null,
+          ...(res.prepared.provenance.wire.provenanceDataEncryptionKey !== undefined
+            ? { provenanceDataEncryptionKey: res.prepared.provenance.wire.provenanceDataEncryptionKey } : {}),
+        };
+        const { provenance: _prevProvenance, ...artifactBase } = artifact;
+        const nextArtifact: AccountArtifact = {
+          ...artifactBase,
+          header: res.prepared.nextHeader,
+          body: res.prepared.contentBody,
+          ...(res.prepared.provenance.decoded ? { provenance: res.prepared.provenance.decoded } : {}),
+          revision: res.revision,
+          seq: nextStored.seq,
+          updatedAt: nextStored.updatedAt,
+        };
+        return { ok: true as const, revision: res.revision, next: buildUpdateHandle(nextStored, res.prepared.codec, nextArtifact, options) };
+      },
+    };
   };
   const store = {
     read,
@@ -1102,44 +1193,7 @@ export function createAccountArtifactStore(params: Readonly<{
       if (!stored) return null;
       const codec = await timeWebLatencyPhase('artifact.read.open', () => openStored(stored, undefined, options));
       const artifact = await projectStoredArtifact(stored, options, codec);
-      const assertAssociatedResource = (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision }>) => {
-        options?.signal?.throwIfAborted();
-        if (input.artifactId !== stored.id || input.expectedRevision.headerVersion !== stored.headerVersion
-          || input.expectedRevision.bodyVersion !== stored.bodyVersion) throw new ArtifactEncryptionMaterialUnavailableError();
-      };
-      return { artifact, storageMode: codec.mode,
-        /** Reuse this operation's admitted bytes/key; commit still checks current Account mode. */
-        prepareJsonUpdate: (content: Pick<AccountArtifact, 'header'> & Readonly<{ body: ArtifactBodyV1; beforeWrite?: () => void | Promise<void> }>) =>
-          prepareJsonUpdate({ ...content, artifactId: stored.id,
-            expectedRevision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
-            ...(options?.signal ? { signal: options.signal } : {}),
-            ...(options?.authorizationHeaders ? { authorizationHeaders: options.authorizationHeaders } : {}) }, stored, codec),
-        /** The admitted resource supplies its mode/key, never the recipient Account's codec. */
-        openAssociatedContent: (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision;
-          content: ArtifactAssociatedStoredContent }>): unknown => {
-          assertAssociatedResource(input);
-          if (input.content.t === 'plain') {
-            if (codec.mode !== 'plain') throw new ArtifactEncryptionMaterialUnavailableError();
-            return input.content.v;
-          }
-          if (codec.mode !== 'e2ee') throw new ArtifactEncryptionMaterialUnavailableError();
-          const opened = codec.decode(input.content.c);
-          if (opened === null) throw new ArtifactEncryptionMaterialUnavailableError();
-          return opened;
-        },
-        sealAssociatedContent: (input: Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision;
-          value: unknown }>): ArtifactAssociatedStoredContent => {
-          assertAssociatedResource(input);
-          return codec.mode === 'plain' ? { t: 'plain', v: input.value } : { t: 'encrypted', c: codec.encode(input.value) };
-        },
-        /** Associated records use this admitted resource key for private equality as well as content. */
-        associatedContentCommitment: (domain: string, components: readonly string[]): string => codec.mode === 'plain'
-          ? computeCanonicalDomainSeparatedDigest(domain, [stored.id, ...components])
-          : computeCanonicalDomainSeparatedKeyedDigest(codec.dataKey!, domain, [stored.id, ...components]),
-        update: (content: Omit<UpdateInput, 'artifactId' | 'expectedRevision'>) => update({ ...content,
-        artifactId: stored.id, expectedRevision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
-        ...(options?.signal ? { signal: options.signal } : {}),
-        ...(options?.authorizationHeaders ? { authorizationHeaders: options.authorizationHeaders } : {}) }, stored) };
+      return buildUpdateHandle(stored, codec, artifact, options);
     },
     /** Qualified host APIs admit their own identity; reuse the Account codec, not ordinary Artifact visibility. */
     prepareStoredEnvelope: async (content: Readonly<{
