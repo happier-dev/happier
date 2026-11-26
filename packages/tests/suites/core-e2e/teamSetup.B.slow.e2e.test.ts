@@ -663,7 +663,12 @@ describe('TS.B.composeRetire native setup', () => {
     beforeEach(async () => {
         worktrees = await createWorktrees('compose-retire', { autostart: true }, true);
         const { roots, workspaces } = worktrees;
-        await Promise.all(workspaces.map(workspace => prepare(workspace)));
+        const settled = await Promise.all(workspaces.map(workspace => prepare(workspace)));
+        for (const [index, workspace] of workspaces.entries()) {
+            expect(settled[index]).toMatchObject({ kind: 'found', operation: {
+                actionId: 'projects.prepare', scope: { machineId: workspace.machineId }, state: 'succeeded',
+            } });
+        }
         await Promise.all(roots.map(retainNativeProject));
         await Promise.all(roots.map(async root => {
             const native = nativeProjects.get(root);

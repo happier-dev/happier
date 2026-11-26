@@ -2082,6 +2082,72 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
     });
 
+    it('carries the admitted finite Setup requester to its autostart Machine and settles the parent', async () => {
+        const h = await harness({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] },
+            services: { web: { source: { kind: 'command', command: 'echo web' }, runtime: { autostart: true } } } });
+        const input = { workspace: h.address, phase: 'setup' };
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'finite-autostart', input,
+            target: { kind: 'machine', machineId: h.address.machineId } });
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'setup-proof', binding: {
+            accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+            accountEncryptionMode: 'plain', serverIdentityId: h.address.serverId, machineId: h.address.machineId,
+            installationId: 'installation', actionId: 'projects.prepare', requestId: envelope.requestId,
+            target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        } });
+        h.get.mockImplementation(async url => {
+            if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+            if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+                mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+            } };
+            return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        });
+        const admitted = await admitRequesterAccountActionContext({ authorization, credentials: { token: ownerToken, encryption: null },
+            serverId: h.address.serverId, serverIdentityId: h.address.serverId, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl,
+            isCurrent: async () => true });
+        if (!admitted) throw new Error('Requester custody not admitted');
+        try {
+            const post = h.post.getMockImplementation()!;
+            h.post.mockImplementation(async (url, body, options) => String(url).endsWith('/verify')
+                ? { status: 200, data: { ok: true } } : post(url, body, options));
+            const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
+                serverId: h.address.serverId, serverIdentityId: h.address.serverId, serverHttpBaseUrl: h.runtime.serverHttpBaseUrl,
+                target: authorization.binding.target, installationId: 'installation', privateKey: h.receivingInstallation.secretKey,
+                isCurrent: admitted.isCurrent });
+            if (!carrier) throw new Error('Requester HTTP custody not admitted');
+            const { credentials: _credentials, ...runtime } = h.runtime;
+            const execute = createFiniteActionWithCapturedRequester({ ...runtime, accountAuthorization: carrier },
+                { ...h.context, transportRequestId: envelope.requestId, originalActionEnvelope: envelope, callerInputAuthorization: carrier });
+            const accepted = await execute({ actionId: 'projects.prepare', input,
+                context: { serverId: h.address.serverId, authority: 'present_user', surface: 'ui',
+                    actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['ui'] } }),
+                    // The addressed service Machine is the downstream transport boundary.
+                    executeHostReviewedChildAction: async (action, operands, context) => {
+                        expect(action).toBe('localServices.launcher.start');
+                        expect(operands).toMatchObject({ machineId: h.address.machineId, workspace: h.address });
+                        if (context.callerInputAuthorization !== carrier) {
+                            return { ok: false, errorCode: 'project_requester_authorization_unavailable', error: 'project_requester_authorization_unavailable' };
+                        }
+                        return { ok: true, result: { protocolVersion: 1, machineId: h.address.machineId, targetId: 'started',
+                            status: 'succeeded', snapshot: { v: 1, machineId: h.address.machineId, updatedAt: 1, targets: [] } } };
+                    } } });
+            const operation = ProjectCommandActionOutputV1Schema.parse(accepted).operation;
+            await expect.poll(() => h.spawned.length || h.operationRuntime.store.get({
+                accountId: 'owner', machineId: h.address.machineId,
+            }, operation.operationId)?.state === 'failed').toBeTruthy();
+            expect(h.spawned, JSON.stringify(h.operationRuntime.store.get({
+                accountId: 'owner', machineId: h.address.machineId,
+            }, operation.operationId))).toHaveLength(1);
+            h.spawned[0]!.pty.exit(0);
+            expect(await h.operationRuntime.runner.waitForTerminal({ accountId: 'owner', machineId: h.address.machineId }, operation.operationId))
+                .toMatchObject({ state: 'succeeded' });
+        } finally {
+            h.spawned.forEach(({ pty }) => pty.exit(0));
+            await h.operationRuntime.runner.retireProjectFiniteOperations();
+            await admitted.dispose();
+        }
+    });
+
     it('runs a fresh explicit Setup after an earlier completed run for the same effect', async () => {
         const manifest = { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } };
         const h = await harness(manifest);

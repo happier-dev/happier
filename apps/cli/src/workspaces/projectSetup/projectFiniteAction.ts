@@ -1116,6 +1116,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             // admits its own setup. A one-slot host must not queue behind itself.
             if (setupState.settled) {
                 const autostartFailure = await startProjectSetupAutostartServices({ ...setupState.settled, context: args.context,
+                    callerInputAuthorization: ingress.callerInputAuthorization,
                     parent: { actionId: request.actionId, input: projectNativeJsonValueForTransport(request.input) as Record<string, JsonValue> } });
                 if (autostartFailure) return autostartFailure;
             }
