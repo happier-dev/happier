@@ -32,6 +32,9 @@ import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@h
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { getActionSpec, SessionSendMessageInputSchema, type SessionMessageSendAuthoredInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ComposerSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 import type { RoleOverrideRecordV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import type { NativeComposerInputHandle } from '@/components/ui/forms/nativeComposerInput';
@@ -40,7 +43,7 @@ import { changeTextTestInstance, createMachineFixture, createSessionFixture, ren
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -242,7 +245,7 @@ let emittedHumanReviewerRequests: Array<ReturnType<typeof ReviewReviewersSetInpu
 let refuseWorkflowStart = false;
 let artifactStore: ReturnType<typeof createArtifactStoreBoundary>;
 let detachedInputs: Array<{ input: Record<string, unknown>; machineId: string }>;
-let outbound: ServedHomeRequest[];
+let outbound: Array<{ input: Extract<SessionMessageSendAuthoredInput, { message: string }>; machineId: string }>;
 let pluginProjection = false;
 let secretAvailable = false;
 let publishedProfiles: Array<ReturnType<typeof AIBackendProfileSchema.parse>> = [];
@@ -411,11 +414,13 @@ function draft(runId = 'run_1') {
     if (!('composer' in document)) throw new Error('Expected a Run composer draft');
     return { ...snapshot, document };
 }
-function admitted() { return record(outbound.at(-1)?.body); }
-function admittedRunId() { return outbound.at(-1)?.path.split('/execution-runs/')[1]?.split('/')[0]; }
+function admitted() { return record(outbound.at(-1)?.input); }
+function admittedRunId() {
+    const recipient = outbound.at(-1)?.input.recipient;
+    return recipient?.kind === 'execution_run' ? recipient.runId : undefined;
+}
 function outboundText() {
-    const content = record(admitted().content);
-    return JSON.stringify(content);
+    return JSON.stringify(admitted());
 }
 
 describe('SessionInteractiveExecutionRunDraftView — real composer and Action path', () => {
@@ -594,6 +599,24 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     machineId: 'machine_1', ownerAccountId: 'account_1', origin: { kind: 'direct' } }) };
             },
         });
+        const messageSend = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId,
+            accountId: 'account_1', machineId: 'machine_1', actionId: 'session.message.send', tokenEpoch: 0,
+            execute: async (raw, { target }) => {
+                const input = SessionSendMessageInputSchema.parse(raw);
+                if (!('message' in input) || !input.localId) throw new Error('Expected a launcher message with its captured identity');
+                outbound.push({ input, machineId: target.machineId });
+                await admissionGate;
+                return SessionMessageSendResultV1Schema.parse(admissionFailure
+                    ? { status: 'rejected', code: 'session_input_unauthorized' }
+                    : { status: 'accepted', localId: input.localId });
+            },
+        });
+        const messageDescriptor = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId,
+            accountId: 'account_1', machineId: 'machine_1', actionId: 'action.spec.get', tokenEpoch: 0,
+            execute: () => ({ actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), {
+                surface: 'ui', includeOutputSchema: false,
+            }) }),
+        });
         home = await serveActionHomes({
             homes: [{ key: 'home', serverUrl, serverIdentityId,
                 accountId: 'account_1', currentAccount: true }],
@@ -620,6 +643,12 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     headers: request.headers, signal: request.signal,
                     ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
                 if (workflowResponse) return workflowResponse;
+                for (const boundary of [messageSend, messageDescriptor]) {
+                    const response = await boundary.handle(request.url, { method: request.method,
+                        headers: request.headers, signal: request.signal,
+                        ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+                    if (response) return response;
+                }
                 const artifactUrl = new URL(request.url);
                 const artifactResponse = artifactStore.handle(artifactUrl.pathname + artifactUrl.search, { method: request.method,
                     headers: request.headers, signal: request.signal,
@@ -690,16 +719,6 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     }) }));
                 }
                 if (request.path === '/v1/sessions/session_1/messages' && transcriptMessagesBoundary) return transcriptMessagesBoundary(request);
-                if (request.path.includes('/execution-runs/') && request.path.endsWith('/pending')) {
-                    if (request.method === 'GET') return Response.json({ pending: [], discarded: [], pendingVersion: 1, pendingCount: 0 });
-                    outbound.push(request);
-                    await admissionGate;
-                    if (admissionFailure) return Response.json({ error: 'execution_run_not_allowed' }, { status: 409 });
-                    const body = record(request.body);
-                    const recipient = { kind: 'execution_run', runId: request.path.split('/execution-runs/')[1]!.split('/')[0] };
-                    return Response.json({ didWrite: true, recipient, requestedAction: body.requestedAction,
-                        pending: { ...body, recipient, status: 'queued', position: 1, createdAt: 1, updatedAt: 1 }, pendingVersion: 1, pendingCount: 1 });
-                }
                 return undefined;
             }).handle,
         });
@@ -1381,7 +1400,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             expect(opened.mock.calls[0]![0]).not.toHaveProperty('sessionId');
             expect(opened.mock.calls[0]![0]).not.toHaveProperty('workspace');
             expect(emittedStarts).toEqual([expect.objectContaining({ intent: 'delegate', launchOrigin: { kind: 'session', sessionId: 'session_1', draftCorrelationId: expect.any(String) } })]);
-            expect(outbound[0]).toMatchObject({ path: '/v2/sessions/session_1/execution-runs/run_1/pending' });
+            expect(outbound[0]).toMatchObject({ machineId: 'machine_1', input: { sessionId: 'session_1', recipient: { kind: 'execution_run', runId: 'run_1' } } });
             expect(outboundText()).toContain('selected code');
         }
     });
@@ -1469,8 +1488,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await send();
         expect(emittedStarts[0]).toMatchObject({ intent: 'delegate', runClass: 'long_lived', launchOrigin: { kind: 'session', sessionId: 'session_1', draftCorrelationId: expect.any(String) } });
         await waitFor(() => expect(opened).toHaveBeenCalledWith('run_1', undefined, { title: 'Inspect this' }));
-        expect(outbound[0]).toMatchObject({ home: 'home', accountId: 'account_1', path: '/v2/sessions/session_1/execution-runs/run_1/pending' });
-        expect(admitted()).toMatchObject({ localId: inputId, targetMachineId: 'machine_1' });
+        expect(outbound[0]).toMatchObject({ machineId: 'machine_1', input: { sessionId: 'session_1', recipient: { kind: 'execution_run', runId: 'run_1' } } });
+        expect(home.requests).toContainEqual(expect.objectContaining({ home: 'home', accountId: 'account_1', path: '/v1/actions/session.message.send' }));
+        expect(admitted()).toMatchObject({ localId: inputId });
         expect(outboundText()).toContain('Inspect this');
     });
 
@@ -1613,7 +1633,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     });
     it('clears the accepted Run draft before navigation retires the Account binding', async () => {
         let atNavigation: unknown;
-        await mount({ onRunStarted: () => { atNavigation = draft()?.document.composer.text.value; retireActiveServerAccountScopeLifetime(); } });
+        await mount({ onRunStarted: () => { atNavigation = draft()?.document.composer.text.value ?? ''; retireActiveServerAccountScopeLifetime(); } });
         await send();
         await waitFor(() => expect(atNavigation).toBe(''));
         expect(input().props.value).toBe('');
