@@ -1,3 +1,4 @@
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
 import { useRouter } from 'expo-router';
@@ -34,6 +35,7 @@ import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
 import { joinList } from '@/utils/text/joinList';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveMachineTargetUnavailableReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
@@ -112,6 +114,10 @@ function RunningHereRow(
     props.operation.snapshot.title ??
     command?.cwd ??
     '';
+  const openOutput = () => { void output.open(props.operation, { title: `${name} · ${props.machineName}`, name }); };
+  useCurrentUiContextLocalCommands([
+    { key: 'output', title: `${t('projectWorkers.open')}: ${name}`, invoke: openOutput },
+  ], { contextKey: props.operation.snapshot.operationId });
   return (
     <Item
       testID={props.testID}
@@ -138,7 +144,7 @@ function RunningHereRow(
             display="secondary"
             title={t('projectWorkers.open')}
             testID={`${props.testID}.open`}
-            onPress={() => void output.open(props.operation, { title: `${name} · ${props.machineName}`, name })}
+            onPress={openOutput}
           />
         </View>
       }
@@ -224,7 +230,19 @@ export function FreshCopyRow(
       trigger={trigger}
     />
   );
+  const openFailureDetails = () => { if (props.notice) showFreshCopyFailureDetails(props.notice); };
+  useCurrentUiContextLocalCommands(props.notice?.kind === 'failed' && props.notice.failure ? [
+    { key: 'failure-details', title: `${t('approvals.technicalDetails')}: ${props.copy.relationship.relationshipId}`, invoke: openFailureDetails },
+  ] : [], { contextKey: props.copy.relationship.relationshipId });
   const approvalId = props.notice?.kind === 'approval' ? props.approvalId : null;
+  // A removal refused because the Machine that controls this copy is offline, stopped or suspended names that
+  // Machine, as your Machine list names it; read only while that refusal shows.
+  const refusal = props.notice?.kind === 'failed' ? props.notice.failure : undefined;
+  const controllerMachineId = props.copy.relationship.controllerMachineId;
+  const controllerIds = React.useMemo(() => [controllerMachineId], [controllerMachineId]);
+  const controllerName = useMachineDisplayNamesById(controllerIds, { serverId: props.serverId, presented: Boolean(refusal) })[controllerMachineId];
+  const reason = (refusal && controllerName ? resolveMachineTargetUnavailableReasonCopy(refusal.details, controllerName) : null)
+    ?? props.notice?.reason;
   // The executor's typed dependencies, named from your own operations where known (31s3).
   const active = useActiveActionOperations();
   const dependencies = props.notice?.dependencies ?? [];
@@ -307,12 +325,12 @@ export function FreshCopyRow(
           testID={`${props.testID}.notice`}
           tone={props.notice.kind === 'saving' || props.notice.kind === 'approval' ? 'neutral' : 'warning'}
           title={props.notice.text}
-          description={props.notice.reason}
+          description={reason}
           details={dependencyLines.length > 0 ? dependencyLines : undefined}
           secondaryAction={props.notice.kind === 'failed' && props.notice.failure ? {
             label: t('approvals.technicalDetails'),
             testID: `${props.testID}.technicalDetails`,
-            onPress: () => showFreshCopyFailureDetails(props.notice!),
+            onPress: openFailureDetails,
           } : null}
           action={
             approvalId
@@ -469,6 +487,12 @@ export function MachineProjectWorkSection(
     />
   );
 
+  const openCapacity = () => setCapacityOpen(true);
+  const openHandoffSettings = () => router.push('/settings/session/handoff');
+  useCurrentUiContextLocalCommands([
+    ...(compact && !disabled ? [{ key: 'capacity', title: t('projectWorkers.capacity'), invoke: openCapacity }] : []),
+    { key: 'handoff-settings', title: t('projectWorkers.manageInSync'), invoke: openHandoffSettings },
+  ], { contextKey: JSON.stringify([props.serverId, props.machineId]) });
   return (
     <>
       <ItemGroup
@@ -545,7 +569,7 @@ export function MachineProjectWorkSection(
                   // Only a read policy has a ceiling to show; loading never claims No limit.
                   detail={!value ? t('common.loading') : value.runAtMost === null ? t('projectWorkers.noLimit') : String(value.runAtMost)}
                   disabled={disabled}
-                  onPress={() => setCapacityOpen(true)}
+                  onPress={openCapacity}
                 />
                 <Popover
                   open={capacityOpen}
@@ -592,7 +616,7 @@ export function MachineProjectWorkSection(
             testID={`${testID}.sync`}
             icon="arrow-right"
             title={t('projectWorkers.manageInSync')}
-            onPress={() => router.push('/settings/session/handoff')}
+            onPress={openHandoffSettings}
           />
         }
       >

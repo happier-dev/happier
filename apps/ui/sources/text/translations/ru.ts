@@ -7393,6 +7393,11 @@ export const ru: TranslationStructure = {
     errors: {
     networkError: "Произошла ошибка сети",
     machineNotAnswering: 'Эта машина не отвечает. Повторите, когда она снова будет в сети.',
+    machineNotAnsweringNamed: ({ machine }: { machine: string }) => `Машина ${machine} не отвечает. Повторите, когда она снова будет в сети.`,
+    machineStopped: 'Эта машина остановлена. Повторите, когда она снова заработает.',
+    machineStoppedNamed: ({ machine }: { machine: string }) => `Машина ${machine} остановлена. Повторите, когда она снова заработает.`,
+    machineSuspended: 'Эта машина приостановлена. Повторите, когда она снова заработает.',
+    machineSuspendedNamed: ({ machine }: { machine: string }) => `Машина ${machine} приостановлена. Повторите, когда она снова заработает.`,
     requesterCredentialDisclosureRequired: "Настройка синхронизации на машину другого человека или перенос туда сервиса пока недоступны. Ничего не отправлено.",
     sessionHeldByPerson: "Человек остановил этот сеанс. Сообщение ждёт, пока кто-нибудь его не возобновит.",
     custodianOnly: "Здесь это может сделать только владелец этой машины.",

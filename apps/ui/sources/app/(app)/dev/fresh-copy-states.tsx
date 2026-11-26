@@ -3,9 +3,9 @@ import * as React from 'react';
 
 import { FreshCopyStatesSpecimen, type FreshCopySpecimenState } from '@/components/dev/projects/FreshCopyStatesSpecimen';
 
-const STATES: readonly FreshCopySpecimenState[] = ['confirm', 'retired', 'refused', 'inUse'];
+const STATES: readonly FreshCopySpecimenState[] = ['confirm', 'retired', 'refused', 'inUse', 'machineStopped', 'machineSuspended', 'machineOffline'];
 
-/** Dev-only: Fresh copy removal states. `?state=confirm|retired|refused|inUse` (default confirm). */
+/** Dev-only: Fresh copy removal states. `?state=confirm|retired|refused|inUse|machineStopped|machineSuspended|machineOffline` (default confirm). */
 export default function FreshCopyStatesDevScreen() {
     const params = useLocalSearchParams<{ state?: string }>();
     const state = STATES.find((candidate) => candidate === params.state) ?? 'confirm';

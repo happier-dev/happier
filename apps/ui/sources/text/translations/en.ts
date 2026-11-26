@@ -8766,6 +8766,11 @@ const enSettingsFeatures = {
 const enErrors = {
   networkError: 'Network error occurred',
   machineNotAnswering: 'That Machine isn’t answering. Try again once it’s back online.',
+  machineNotAnsweringNamed: ({ machine }: { machine: string }) => `${machine} isn’t answering. Try again once it’s back online.`,
+  machineStopped: 'That Machine is stopped. Try again once it’s running.',
+  machineStoppedNamed: ({ machine }: { machine: string }) => `${machine} is stopped. Try again once it’s running.`,
+  machineSuspended: 'That Machine is suspended. Try again once it’s running.',
+  machineSuspendedNamed: ({ machine }: { machine: string }) => `${machine} is suspended. Try again once it’s running.`,
   requesterCredentialDisclosureRequired: "Setting up a Sync to, or moving a Service to, a machine that belongs to another person isn’t available yet. Nothing was sent.",
   sessionHeldByPerson: "A person stopped this Session. The message waits until someone resumes it.",
   custodianOnly: "Only this machine’s owner can do this here.",

@@ -296,6 +296,10 @@ describe('Machine fresh-copy model', () => {
   });
 
   it.each([
+    ...(['machine_stopped', 'machine_suspended', 'machine_offline'] as const).map(reason => ({
+      errorCode: 'target_unavailable', details: { reason, requiredFact: 'machine_online', remedy: 'reconnect_machine' }, kind: 'failed',
+    })),
+    { errorCode: 'target_unavailable', details: {}, kind: 'failed' },
     { errorCode: 'indeterminate', details: { kind: 'outcomeUnknown' }, kind: 'unknown' },
     { errorCode: 'workspace_sync_relationship_in_use', details: { dependencies: [{ workspaceRefId: 'target', operationId: 'busy', state: 'running' }] }, kind: 'in_use' },
   ])('retains and refreshes $kind without repeating retirement', async failure => {
@@ -309,6 +313,7 @@ describe('Machine fresh-copy model', () => {
     await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
     expect(hook.getCurrent().copies).toHaveLength(1);
     expect(hook.getCurrent().notices.get('copy')).toMatchObject({ kind: failure.kind, failure: { details: failure.details } });
+    expect(hook.getCurrent().copies![0]!.relationship.controllerMachineId).toBe('controller');
     await waitForHomeGovernance(() => expect(rpc.machine.mock.calls.some(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST)).toBe(true));
     expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(1);
     await hook.unmount();

@@ -7,9 +7,34 @@ import { preloadTranslations, setPreferredLanguageFromSettings, SUPPORTED_LANGUA
 
 import {
   isLocalServiceActionRefusedByPolicy,
+  resolveMachineAvailabilityReasonCopy,
+  resolveMachineTargetUnavailableReasonCopy,
   resolvePluginSurfaceStatePresentation,
   resolveReasonCopy,
 } from './resolveReasonCopy';
+
+describe('Machine availability refusal copy', () => {
+  const diagnostic = (reason: string) => ({ reason, requiredFact: 'machine_online', remedy: 'reconnect_machine' });
+  it.each([
+    ['machine_offline', 'errors.machineNotAnswering', 'errors.machineNotAnsweringNamed'],
+    ['machine_stopped', 'errors.machineStopped', 'errors.machineStoppedNamed'],
+    ['machine_suspended', 'errors.machineSuspended', 'errors.machineSuspendedNamed'],
+  ] as const)('says %s in its own words, naming the Machine when the viewer knows it', (reason, unnamed, named) => {
+    expect(resolveMachineTargetUnavailableReasonCopy(diagnostic(reason))).toBe(t(unnamed));
+    expect(resolveMachineTargetUnavailableReasonCopy({ diagnostic: diagnostic(reason) }, 'Studio Mac'))
+      .toBe(t(named, { machine: 'Studio Mac' }));
+    expect(resolveMachineAvailabilityReasonCopy(reason)).toBe(t(unnamed));
+  });
+  it('keeps stopped and suspended distinct from not answering', () => {
+    const sentences = ['machine_offline', 'machine_stopped', 'machine_suspended'].map(reason => resolveMachineAvailabilityReasonCopy(reason));
+    expect(new Set(sentences).size).toBe(3);
+  });
+  it('adds nothing for a refusal that carries no availability reason (a viewer without access)', () => {
+    expect(resolveMachineTargetUnavailableReasonCopy({})).toBeNull();
+    expect(resolveMachineTargetUnavailableReasonCopy({ reason: 'machine_stopped' }, 'Studio Mac')).toBeNull();
+    expect(resolveMachineAvailabilityReasonCopy('access_denied', 'Studio Mac')).toBeNull();
+  });
+});
 
 it('explains stopped Service history whose current declaration is unavailable', () => {
   const copy = resolveReasonCopy({ kind: 'localServiceLauncher', reasonCode: 'launcher_start_declaration_unavailable' });

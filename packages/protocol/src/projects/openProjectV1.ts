@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isRpcError, isRpcMethodNotFoundError, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { MachineAvailabilityDiagnosticV1Schema } from '../machines/machineAccessV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';
@@ -136,11 +137,12 @@ const UNSENT_PROJECT_OPEN_PRESERVED_RPC_CODES: ReadonlySet<string> = new Set([
 
 export function readProjectOpenUnsentRefusalV1(error: unknown): z.infer<typeof OpenProjectRefusalV1Schema> {
   const rpcCode = readRpcErrorCode(error);
+  const availability = MachineAvailabilityDiagnosticV1Schema.safeParse(isRpcError(error) ? error.details : undefined);
   const code = isRpcMethodNotFoundError(error)
     ? RPC_ERROR_CODES.UPDATE_REQUIRED
     : rpcCode && UNSENT_PROJECT_OPEN_PRESERVED_RPC_CODES.has(rpcCode)
       ? rpcCode
-      : 'machine_unreachable';
+      : availability.success ? availability.data.reason : 'machine_unreachable';
   return {
     kind: 'refused',
     code,

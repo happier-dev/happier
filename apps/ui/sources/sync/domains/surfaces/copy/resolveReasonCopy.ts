@@ -914,15 +914,28 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesA
     }
 }
 
-/** The Home's typed Machine refusal uses the same copy wherever it reaches a surface. */
-function resolveMachineAvailabilityReasonCopy(reason: string | null | undefined): string | null {
-    return reason === 'machine_offline' || reason === 'machine-unavailable'
-        ? t('errors.machineNotAnswering') : null;
+/**
+ * The Home's typed Machine refusal uses the same copy wherever it reaches a surface. Stopped and suspended are the
+ * provider's observed power, said as the Machine page's power row says it. `machine` is the Machine's name as the
+ * viewer's own Machine list shows it; without one the sentence says "That Machine".
+ */
+export function resolveMachineAvailabilityReasonCopy(reason: string | null | undefined, machine?: string | null): string | null {
+    switch (reason) {
+        case 'machine_offline':
+        case 'machine-unavailable':
+            return machine ? t('errors.machineNotAnsweringNamed', { machine }) : t('errors.machineNotAnswering');
+        case 'machine_stopped':
+            return machine ? t('errors.machineStoppedNamed', { machine }) : t('errors.machineStopped');
+        case 'machine_suspended':
+            return machine ? t('errors.machineSuspendedNamed', { machine }) : t('errors.machineSuspended');
+        default:
+            return null;
+    }
 }
 
-export function resolveMachineTargetUnavailableReasonCopy(details: unknown): string | null {
+export function resolveMachineTargetUnavailableReasonCopy(details: unknown, machine?: string | null): string | null {
     const diagnostic = MachineAvailabilityDiagnosticV1Schema.safeParse(readRecord(details).diagnostic ?? details).data;
-    return resolveMachineAvailabilityReasonCopy(diagnostic?.reason);
+    return resolveMachineAvailabilityReasonCopy(diagnostic?.reason, machine);
 }
 
 /** Home can report Machine custody directly or as the native reason inside a transport refusal. */

@@ -7367,6 +7367,11 @@ export const zhHans: TranslationStructure = {
   errors: {
     networkError: "发生网络错误",
     machineNotAnswering: '那台机器没有响应。请等它恢复在线后再试。',
+    machineNotAnsweringNamed: ({ machine }: { machine: string }) => `${machine} 没有响应。请等它恢复在线后再试。`,
+    machineStopped: '那台机器已停止。请等它运行后再试。',
+    machineStoppedNamed: ({ machine }: { machine: string }) => `${machine} 已停止。请等它运行后再试。`,
+    machineSuspended: '那台机器已暂停。请等它运行后再试。',
+    machineSuspendedNamed: ({ machine }: { machine: string }) => `${machine} 已暂停。请等它运行后再试。`,
     requesterCredentialDisclosureRequired: "尚不支持设置同步到他人的机器，或将服务移到他人的机器。未发送任何内容。",
     sessionHeldByPerson: "有人停止了此会话。消息会等待，直到有人恢复它。",
     custodianOnly: "只有这台机器的所有者才能在这里执行此操作。",

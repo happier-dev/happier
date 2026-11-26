@@ -20,13 +20,23 @@ import { t } from '@/text';
  * Dev-only: the Machine page's Fresh copies section in the removal states QA cannot reach without removing a
  * copy. It mounts the shipped row and notice owners with fixture data; nothing it shows issues an Action.
  * `?state=confirm` (default, press Remove… to see the choices), `retired` (removed, another Machine did not
- * answer), `refused` (the other Machine refused the dependency check) or `inUse`.
+ * answer), `refused` (the other Machine refused the dependency check), `inUse`, or the Machine that controls
+ * the copy refusing as `machineStopped`, `machineSuspended` or `machineOffline` (named from your Machine list).
  */
 export type FreshCopySpecimenState =
   | 'confirm'
   | 'retired'
   | 'refused'
-  | 'inUse';
+  | 'inUse'
+  | 'machineStopped'
+  | 'machineSuspended'
+  | 'machineOffline';
+
+const MACHINE_AVAILABILITY_REASONS = {
+  machineStopped: 'machine_stopped',
+  machineSuspended: 'machine_suspended',
+  machineOffline: 'machine_offline',
+} as const;
 
 const noop = () => {};
 
@@ -92,8 +102,22 @@ export function FreshCopyStatesSpecimen(
     };
   }, [serverId, sourceMachineId, targetMachineId]);
   const uncheckedMachineIds = React.useMemo(() => [sourceMachineId], [sourceMachineId]);
-  const notice: MachineFreshCopyNotice | null =
-    props.state === 'refused'
+  const availabilityReason = props.state === 'machineStopped' || props.state === 'machineSuspended'
+    || props.state === 'machineOffline' ? MACHINE_AVAILABILITY_REASONS[props.state] : null;
+  const notice: MachineFreshCopyNotice | null = availabilityReason
+    ? {
+        relationshipId: 'specimen-copy',
+        targetRootPath: copy.target.rootPath,
+        kind: 'failed',
+        text: t('projectWorkers.removeFailed'),
+        failure: {
+          ok: false,
+          errorCode: 'target_unavailable',
+          error: 'target_unavailable',
+          details: { reason: availabilityReason, requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+        },
+      }
+    : props.state === 'refused'
       ? {
           relationshipId: 'specimen-copy',
           targetRootPath: copy.target.rootPath,

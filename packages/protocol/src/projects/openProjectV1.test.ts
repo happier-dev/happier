@@ -4,6 +4,25 @@ import { RPC_ERROR_CODES, RpcError } from '../rpc/errors.js';
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('OpenProject V1 wire admission', () => {
+  it('preserves the Machine owner availability reason through the Open surface result', () => {
+    for (const reason of ['machine_stopped', 'machine_suspended', 'machine_offline'] as const) {
+      const error = Object.assign(new RpcError('Unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE), {
+        details: { reason, requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+      });
+      expect(OpenProjectResultV1Schema.parse(readProjectOpenUnsentRefusalV1(error))).toMatchObject({
+        kind: 'refused', code: reason, effectAttempted: false,
+      });
+    }
+    const unknown = Object.assign(new RpcError('Unavailable', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE), {
+      details: { reason: 'unknown' },
+    });
+    expect(readProjectOpenUnsentRefusalV1(unknown).code).toBe('machine_unreachable');
+    const forbidden = Object.assign(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN), {
+      details: { reason: 'machine_stopped', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+    });
+    expect(readProjectOpenUnsentRefusalV1(forbidden).code).toBe(RPC_ERROR_CODES.FORBIDDEN);
+  });
+
   it('admits a managed folder attach only through the chosen controller', () => {
     const input = { serverId: 'home', machineId: 'controller', source: { kind: 'folder', path: '/guest/project' },
       materialization: { kind: 'attach',

@@ -7955,6 +7955,11 @@ localTailscale: {
   errors: {
     networkError: "ネットワークエラーが発生しました",
     machineNotAnswering: 'そのマシンは応答していません。オンラインに戻ったらもう一度お試しください。',
+    machineNotAnsweringNamed: ({ machine }: { machine: string }) => `${machine} が応答していません。オンラインに戻ったらもう一度お試しください。`,
+    machineStopped: 'そのマシンは停止しています。稼働したらもう一度お試しください。',
+    machineStoppedNamed: ({ machine }: { machine: string }) => `${machine} は停止しています。稼働したらもう一度お試しください。`,
+    machineSuspended: 'そのマシンは一時停止中です。稼働したらもう一度お試しください。',
+    machineSuspendedNamed: ({ machine }: { machine: string }) => `${machine} は一時停止中です。稼働したらもう一度お試しください。`,
     requesterCredentialDisclosureRequired: "別の人のマシンへの同期の設定や、そこへのサービスの移動はまだ利用できません。何も送信されていません。",
     sessionHeldByPerson: "このセッションは人によって停止されました。誰かが再開するまでメッセージは待機します。",
     custodianOnly: "ここでこれを行えるのはこのマシンの所有者だけです。",

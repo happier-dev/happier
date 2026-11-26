@@ -36,11 +36,17 @@ describe('Project Open refusal presentation', () => {
     it('retains distinct Source and transport refusals', () => {
         expect(projectOpenRefusalPresentation('source_changed', null).title).toBe(t('projects.open.sourceChanged'));
         expect(projectOpenRefusalPresentation('machine_unreachable', null).title).toBe(t('workspaceSync.start.blocked.targetMachineOffline'));
-        expect(projectOpenRefusalPresentation('machine_offline', null).title).toBe(t('workspaceSync.start.blocked.targetMachineOffline'));
+    });
+    it.each([
+        ['machine_offline', 'errors.machineNotAnswering'],
+        ['machine_stopped', 'errors.machineStopped'],
+        ['machine_suspended', 'errors.machineSuspended'],
+    ] as const)('says the Machine owner\'s %s reason in the Machines sentence, code behind Details', (code, sentence) => {
+        expect(projectOpenRefusalPresentation(code, 'main')).toEqual({ title: t(sentence), details: [code] });
     });
     it('gives every typed refusal a cause and a next step, never its code', () => {
         const typed = ['REMOTE_AUTH_REQUIRED', 'REMOTE_RATE_LIMITED', 'FEATURE_UNSUPPORTED', 'BACKEND_UNAVAILABLE', 'target_mismatch',
-            'machine_offline', 'ref_not_found', 'invalid_folder', 'source_changed', 'source_unavailable',
+            'machine_offline', 'machine_stopped', 'machine_suspended', 'ref_not_found', 'invalid_folder', 'source_changed', 'source_unavailable',
             'requester_authority_unavailable', 'requester_account_unavailable', 'session_requester_unavailable',
             'machine_admission_unavailable', 'machine_access_denied', 'invalid_input'];
         for (const code of typed) {
@@ -48,7 +54,9 @@ describe('Project Open refusal presentation', () => {
             expect(shown.title, code).not.toBe(t('projects.open.failed'));
             expect(shown.title, code).not.toBe(t('projects.open.unsupported'));
             // These titles already say what to do next ("Try again in a few minutes", "Choose a folder…", "Review it, then open again").
-            if (!['REMOTE_RATE_LIMITED', 'invalid_folder', 'source_changed'].includes(code)) expect(shown.description, code).toBeTruthy();
+            if (!['REMOTE_RATE_LIMITED', 'invalid_folder', 'source_changed', 'machine_offline', 'machine_stopped', 'machine_suspended'].includes(code)) {
+                expect(shown.description, code).toBeTruthy();
+            }
             expect([shown.title, shown.description], code).not.toContain(code);
             expect(`${shown.title} ${shown.description ?? ''}`, code).not.toMatch(/projects\.open\.|[a-z]+_[a-z_]+/);
         }

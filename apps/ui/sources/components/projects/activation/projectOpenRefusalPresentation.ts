@@ -3,7 +3,7 @@ import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionE
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { resolveMachineCustodyRefusalCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { resolveMachineAvailabilityReasonCopy, resolveMachineCustodyRefusalCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
 type ProjectOpenRefusalPresentation = Readonly<{ title: string; description?: string; details: readonly string[] }>;
@@ -41,6 +41,9 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
         return shown(t('projects.open.accessUnconfirmed'), t('projects.open.accessUnconfirmedHint'));
     if (code === 'invalid_input') return shown(t('projects.open.requestUnreadable'), t('projects.open.requestUnreadableHint'));
     if (code === RPC_ERROR_CODES.UPDATE_REQUIRED) return shown(t('errors.machineActionUnsupported'));
+    // The Machines owner's observed reason (offline, stopped, suspended): its one sentence already says when to retry.
+    const availabilityCopy = resolveMachineAvailabilityReasonCopy(code);
+    if (availabilityCopy) return shown(availabilityCopy);
     if (code.includes('unreachable') || code.includes('offline'))
         return shown(t('workspaceSync.start.blocked.targetMachineOffline'), t('projects.open.machineOfflineHint'));
     if (gitRef && code.includes('ref')) return shown(t('projects.open.refMissing', { ref: gitRef }), t('projects.open.refMissingHint'));

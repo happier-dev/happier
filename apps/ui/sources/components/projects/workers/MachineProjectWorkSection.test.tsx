@@ -55,7 +55,8 @@ vi.mock(
 );
 vi.mock('@/text', async () =>
   (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-    translate: (key, params) => key === 'projectWorkers.removeUnchecked' ? `${key}(${params?.machines})` : key,
+    translate: (key, params) => key === 'projectWorkers.removeUnchecked' ? `${key}(${params?.machines})`
+      : key.startsWith('errors.machine') && key.endsWith('Named') ? `${key}(${params?.machine})` : key,
   }),
 );
 vi.mock(
@@ -113,6 +114,7 @@ afterEach(async () => {
  */
 async function setup(
   options: Readonly<{
+    mounted?: boolean;
     machineId?: string;
     machineName?: string;
     holdPolicyRead?: boolean;
@@ -322,18 +324,21 @@ async function setup(
       machineName="hz-build-1"
     />
   );
-  const screen = await renderScreen(
-    options.announced
+  const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+  const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+  let reader: ReturnType<typeof useOptionalCurrentUiContextReader> = null;
+  function Observe() { reader = useOptionalCurrentUiContextReader(); return null; }
+  const body = options.announced
       ? <CheckoutReachabilityScope scope={{ serverId: fixture.home.id, machineId }}>{section}</CheckoutReachabilityScope>
-      : section,
-  );
+      : section;
+  const screen = await renderScreen(options.mounted ? <><Observe />{body}</> : body, options.mounted ? { wrapper: await createMountedCurrentUiContextWrapper() } : undefined);
   if (!options.role && !options.holdPolicyRead && !options.deferMachineDiscovery && !options.presenceBeforeDiscovery)
     await vi.waitFor(() =>
       expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(
         false,
       ),
     );
-  return { screen, sent, releasePolicyRead, policyReadCount: () => policyReads,
+  return { screen, getReader: () => reader!, sent, releasePolicyRead, policyReadCount: () => policyReads,
     discoverMachine: () => storage.getState().applyMachines([machine]),
     decideCopyApproval: (artifactId: string) => receiver.execute('approval.request.decide', {
       artifactId, decision: 'approve',
@@ -409,6 +414,22 @@ async function seedWorkerCopy(targetMachineId = 'm1') {
 }
 
 describe('Machine › Work from your projects through the Machine policy Actions', () => {
+  it('publishes the complete compact navigation inventory and retires it on unmount', async () => {
+    viewport.compact = true;
+    const { screen, getReader } = await setup({ mounted: true });
+    try {
+    const reader = getReader();
+    expect(reader.readCurrentUiContext()!.commands.map(command => command.title)).toEqual(['projectWorkers.capacity', 'projectWorkers.manageInSync']);
+    const address = reader.readCurrentUiContext()!.commands[0]!.id;
+    const resolved = reader.resolveCurrentUiCommand(address)!;
+    if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+    await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    expect(screen.findAll(node => node.props.open === true).length).toBeGreaterThan(0);
+    await screen.unmount();
+    expect(reader.resolveCurrentUiCommand(address)).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('keeps a real failed policy read unavailable even while the Machine answers, and retries that read', async () => {
     const { screen, releasePolicyRead } = await setup({ holdPolicyRead: true });
     const successfulRead = machineHttp.read;
@@ -456,7 +477,8 @@ describe('Machine › Work from your projects through the Machine policy Actions
     expect(sent).toHaveLength(0);
   });
   it('shows an own queued run from its canonical phase facts, never as running on an acceptance clock', async () => {
-    const { screen } = await setup();
+    const { screen, getReader } = await setup({ mounted: true });
+    try {
     const scope = storage.getState().profileScope;
     if (!scope || !fixture) throw new Error('expected_scope');
     const { actionOperationStore } =
@@ -505,6 +527,23 @@ describe('Machine › Work from your projects through the Machine policy Actions
     expect(subtitle).toContain('projectWorkers.ahead');
     // Accepted is not launched: no elapsed clock before a terminal exists.
     expect(subtitle).not.toMatch(/\d:\d\d/);
+    const reader = getReader();
+    expect(reader.readCurrentUiContext()!.commands.map(row => row.title)).toEqual(['projectWorkers.manageInSync', 'projectWorkers.open: test']);
+    const rowCommand = reader.readCurrentUiContext()!.commands[1]!;
+    const resolved = reader.resolveCurrentUiCommand(rowCommand.id)!;
+    if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+    vi.mocked(Modal.show).mockClear();
+    await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    await vi.waitFor(() => expect(Modal.show).toHaveBeenCalled());
+    expect(vi.mocked(Modal.show).mock.lastCall?.[0].props).toMatchObject({ operationId: 'own-1' });
+    vi.mocked(Modal.show).mockClear();
+    await screen.pressByTestIdAsync('work.running:own-1.open');
+    await vi.waitFor(() => expect(Modal.show).toHaveBeenCalled());
+    expect(vi.mocked(Modal.show).mock.lastCall?.[0].props).toMatchObject({ operationId: 'own-1' });
+    await screen.unmount();
+    expect(reader.resolveCurrentUiCommand(rowCommand.id)).toBeNull();
+    } finally { await screen.unmount(); }
+
   });
 
   it('says once that an unreachable Machine is not answering and takes no policy edits it cannot receive', async () => {
@@ -926,7 +965,8 @@ describe('Machine › Work from your projects through the Machine policy Actions
   });
 
   it('says why a refused removal kept the copy, with the code and phase under Technical details', async () => {
-    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    const { screen, getReader } = await setup({ waive: ['projects.worker.copy.retire'], mounted: true });
+    try {
     await seedWorkerCopy();
     rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
       if (method === 'projects.worker.copy.retire') return {
@@ -940,7 +980,7 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const menu = () =>
       screen.findAll(
         (node) =>
-          typeof node.props.onSelect === 'function' &&
+          typeof node.props?.onSelect === 'function' &&
           Array.isArray(node.props.items) &&
           node.props.items.some((item: { id: string }) => item.id === 'files'),
       )[0]!;
@@ -962,6 +1002,47 @@ describe('Machine › Work from your projects through the Machine policy Actions
     expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('RPC_FORBIDDEN'));
     expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('custodian_only'));
     expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('approvals.failureTechnicalLabels.effectAttempted: false'));
+    expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+    const reader = getReader();
+    expect(reader.readCurrentUiContext()!.commands.map(row => row.title)).toEqual([
+      'projectWorkers.manageInSync', 'approvals.technicalDetails: proven-worker-target',
+    ]);
+    const details = reader.readCurrentUiContext()!.commands.find(row => row.title.startsWith('approvals.technicalDetails:'))!;
+    const resolved = reader.resolveCurrentUiCommand(details.id)!;
+    if (resolved.command.kind !== 'hostLocal') throw new Error('expected_local');
+    alert.mockClear();
+    await act(async () => { await resolved.command.invoke({ signal: resolved.retirementSignal, context: { surface: 'agent' } }); });
+    expect(alert).toHaveBeenCalledWith('approvals.technicalDetails', expect.stringContaining('workspace_sync_dependencies_unavailable'));
+    await screen.unmount();
+    expect(reader.resolveCurrentUiCommand(details.id)).toBeNull();
+    } finally { await screen.unmount(); }
+
+  });
+
+  it.each([
+    ['machine_stopped', true, 'errors.machineStoppedNamed(Studio Mac)'],
+    ['machine_suspended', true, 'errors.machineSuspendedNamed(Studio Mac)'],
+    ['machine_offline', true, 'errors.machineNotAnsweringNamed(Studio Mac)'],
+    ['machine_stopped', false, 'errors.machineStopped'],
+  ] as const)('says the controlling Machine is %s when Remove is refused (controller known: %s)', async (reason, known, sentence) => {
+    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    const { scope } = await seedWorkerCopy();
+    if (known) await act(async () => {
+      const controller = createHydratedPlainMachineFixture({ id: 'source-machine', accountId: scope.accountId, machine: { active: false } });
+      storage.getState().applyMachines([{ ...controller, metadata: { ...controller.metadata!, displayName: 'Studio Mac' } }]);
+    });
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return { ok: false, error: 'target_unavailable', errorCode: 'target_unavailable',
+        details: { reason, requiredFact: 'machine_online', remedy: 'reconnect_machine' } };
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () => screen.findAll(node => typeof node.props.onSelect === 'function'
+      && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'files'))[0]!;
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => { menu().props.onSelect('keep'); });
+    const notice = () => screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props;
+    await vi.waitFor(() => expect(notice()?.title).toBe('projectWorkers.removeFailed'));
+    expect(notice()?.description).toBe(sentence);
     expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
   });
 

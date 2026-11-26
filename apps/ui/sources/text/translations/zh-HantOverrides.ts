@@ -6494,6 +6494,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     errors: {
         networkError: '發生網路錯誤',
         machineNotAnswering: '那台機器沒有回應。請等它恢復連線後再試。',
+        machineNotAnsweringNamed: ({ machine }: { machine: string }) => `${machine} 沒有回應。請等它恢復連線後再試。`,
+        machineStopped: '那台機器已停止。請等它運作後再試。',
+        machineStoppedNamed: ({ machine }: { machine: string }) => `${machine} 已停止。請等它運作後再試。`,
+        machineSuspended: '那台機器已暫停。請等它運作後再試。',
+        machineSuspendedNamed: ({ machine }: { machine: string }) => `${machine} 已暫停。請等它運作後再試。`,
         requesterCredentialDisclosureRequired: "尚不支援設定同步到他人的機器，或將服務移到他人的機器。未傳送任何內容。",
         sessionHeldByPerson: "有人停止了此工作階段。訊息會等待，直到有人繼續它。",
         custodianOnly: "只有這台機器的擁有者才能在這裡執行此操作。",
