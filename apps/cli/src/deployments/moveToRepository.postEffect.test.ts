@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentMoveToRepositoryInputV1Schema, DeploymentMoveToRepositoryResultV1Schema } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
 import { ProjectSourceV1Schema, ProjectSourceRepositorySelectorV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
@@ -17,7 +17,7 @@ import { mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountR
 import { createDeploymentRepositoryRemovalFixture } from './deploymentRepositoryRemoval.testkit';
 
 describe('Move definition post-effect continuation', () => {
-  it.each(['source-refusal', 'merged-rest-null'] as const)('retains the opened PR and continues through %s', async scenario => {
+  it.each(['source-refusal', 'workspace-refusal', 'merged-rest-null'] as const)('retains the opened PR and continues through %s', async scenario => {
     mockProjectAccountRowsHttpBoundary([]);
     const removal = await createDeploymentRepositoryRemovalFixture({ serverId: 'home', serverHttpBaseUrl: 'https://home.test',
       machineId: 'machine', accountId: 'owner', credentials: { token: 'requester', encryption: null } });
@@ -51,7 +51,9 @@ describe('Move definition post-effect continuation', () => {
       const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
         requestId: 'move-source-refusal', failureCause: { phase: 'projects.sources.update', errorClass: 'Error',
           errorCode: 'action_forbidden', httpStatus: 403 } });
-      let sourceRefusal = true;
+      let sourceRefusal = scenario === 'source-refusal';
+      let workspaceRefusal = scenario === 'workspace-refusal';
+      let sourceWrites = 0;
       const unexpected = async (): Promise<never> => { throw new Error('Unexpected subsequent effect'); };
       // Home storage and Forge HTTP are boundaries; repository admission, native Git and PR composition remain real.
       const move = createDeploymentMoveToRepositoryForHost({ serverId: 'home', machineId: 'machine',
@@ -60,11 +62,14 @@ describe('Move definition post-effect continuation', () => {
         readSource: async () => ({ ok: true, source, canManage: true }),
         updateSource: async input => {
           if (sourceRefusal) return refusal;
+          sourceWrites++;
           expect(input).toMatchObject({ sourceId: source.id, expectedRevision: source.revision, patch: { repository: sourceRepository } });
           source = { ...source, revision: source.revision + 1, repository: sourceRepository };
           return { ok: true, source, canManage: true };
         },
         acceptWorkspace: async (_workspace, attached, identity) => {
+          if (workspaceRefusal) throw createActionExecuteFailureError({ ok: false,
+            errorCode: 'project_account_rows_conflict', error: 'project_account_rows_conflict' });
           workspace.source = { sourceId: attached.id, revision: attached.revision };
           workspace.repositoryIdentity = identity;
         },
@@ -94,13 +99,17 @@ describe('Move definition post-effect continuation', () => {
           mergedDocument: definition.document, currentDocument: definition.document } });
         return;
       }
-      expect(result).toMatchObject({ kind: 'partial', phase: refusal.failureCause!.phase, errorCode: refusal.errorCode,
+      expect(result).toMatchObject({ kind: 'partial',
+        ...(scenario === 'workspace-refusal'
+          ? { phase: 'source', errorCode: 'project_account_rows_conflict' }
+          : { phase: refusal.failureCause!.phase, errorCode: refusal.errorCode }),
         continuation: { pullRequest: { number: 4, url: 'https://github.com/octocat/Hello-World/pull/4' },
           headCommit: expect.stringMatching(/^[a-f0-9]{40,64}$/), document: definition.document } });
       if (result.kind !== 'partial' || !result.continuation) throw new Error('Move must retain its opened PR');
       expect(runScmExecutable(remote.remotePath, 'git', ['show', `${result.continuation.headCommit}:deploy/compose.yaml`]))
         .toBe(definition.document.trimEnd());
       sourceRefusal = false;
+      workspaceRefusal = false;
       const retry = { ...input, continuation: result.continuation };
       const retried = DeploymentMoveToRepositoryResultV1Schema.parse(await removal.run(
         'deployments.environments.moveToRepository', retry, {}, context => move(retry, context, unexpected)));
@@ -109,6 +118,7 @@ describe('Move definition post-effect continuation', () => {
         source: { id: source.id, revision: 2 },
       } });
       expect(source.repository).toEqual(sourceRepository);
+      expect(sourceWrites).toBe(1);
       expect(workspace.source).toEqual({ sourceId: source.id, revision: source.revision });
       expect(forge.httpRequests.filter(({ method, path }) => method === 'POST' && path.endsWith('/pulls'))).toHaveLength(1);
     } finally {

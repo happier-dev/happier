@@ -16,6 +16,7 @@ import {
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
 import type { MachineWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { matchesRepositoryWorkspaceIntentV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { ScmBackendRegistry } from '@/scm/registry';
@@ -138,17 +139,27 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
       if (!('kind' in validated) || validated.kind !== 'validated') return validated;
       const selectors = input.selectors ?? input.continuation?.selectors ?? { profiles: definition.profiles, services: definition.services,
         ...(definition.primaryService ? { primaryService: definition.primaryService } : {}) };
-      const attachRepository: AttachRepository | undefined = loaded.source.repository ? undefined : async continuation => {
+      const workspaceNeedsAttachment = input.continuation && input.sourceRepository
+        && !matchesRepositoryWorkspaceIntentV1(workspace, {
+          source: { sourceId: source.id, revision: source.revision }, repositoryIdentity: repository,
+        });
+      const attachRepository: AttachRepository | undefined = loaded.source.repository && !workspaceNeedsAttachment ? undefined : async continuation => {
         try {
-          if (!host.updateSource || !host.acceptWorkspace) return { kind: 'partial', phase: 'source',
+          if (!host.acceptWorkspace) return { kind: 'partial', phase: 'source',
             errorCode: 'project_requester_authority_unavailable', continuation };
-          const attached = await host.updateSource({ serverId: input.serverId, sourceId: source.id,
-            expectedRevision: loaded.source.revision, patch: { repository: source.repository } }, context);
-          if (!attached.ok) return { kind: 'partial',
-            phase: ('failureCause' in attached ? attached.failureCause?.phase : undefined) ?? 'source',
-            errorCode: 'errorCode' in attached ? attached.errorCode : attached.error, continuation };
-          continuation = { ...continuation, source: { id: attached.source.id, revision: attached.source.revision } };
-          await host.acceptWorkspace(workspace, attached.source, repository, context);
+          let attachedSource = loaded.source;
+          if (!attachedSource.repository) {
+            if (!host.updateSource) return { kind: 'partial', phase: 'source',
+              errorCode: 'project_requester_authority_unavailable', continuation };
+            const attached = await host.updateSource({ serverId: input.serverId, sourceId: source.id,
+              expectedRevision: attachedSource.revision, patch: { repository: source.repository } }, context);
+            if (!attached.ok) return { kind: 'partial',
+              phase: ('failureCause' in attached ? attached.failureCause?.phase : undefined) ?? 'source',
+              errorCode: 'errorCode' in attached ? attached.errorCode : attached.error, continuation };
+            attachedSource = attached.source;
+            continuation = { ...continuation, source: { id: attachedSource.id, revision: attachedSource.revision } };
+          }
+          await host.acceptWorkspace(workspace, attachedSource, repository, context);
           return continuation;
         } catch (error) {
           return { kind: 'partial', phase: 'source', errorCode: projectDeploymentException(error).errorCode, continuation };
