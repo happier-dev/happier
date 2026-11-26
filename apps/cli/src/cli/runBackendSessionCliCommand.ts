@@ -5,6 +5,7 @@ import { errorFrame, warn } from '@happier-dev/cli-common/output';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readBackendTargetRefV2, readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { SessionExecutionTargetV1Schema, type SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import {
   HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY,
@@ -59,7 +60,7 @@ import {
   reconcileAgentSessionScopedEnvironment,
   stripSessionControlEnvOverrides,
   stripSessionControlUnsetEnvKeys,
-  TERMINAL_SESSION_MACHINE_ID_ENV_KEY,
+  TERMINAL_SESSION_EXECUTION_TARGET_ENV_KEY,
 } from '@/session/runtime/control/sessionControlEnvironment';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import type { HostPrivateLateSessionEnvironmentResolver } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
@@ -154,8 +155,8 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   return runInHostedSessionScope({}, () => withSessionRunnerOwnership(async () => {
     // This Session's process environment (the live `process.env` for a runner).
     const sessionEnvironment = sessionProcessEnvironment();
-    const terminalMachineId = sessionEnvironment[TERMINAL_SESSION_MACHINE_ID_ENV_KEY]?.trim();
-    delete sessionEnvironment[TERMINAL_SESSION_MACHINE_ID_ENV_KEY];
+    const terminalExecutionTarget = sessionEnvironment[TERMINAL_SESSION_EXECUTION_TARGET_ENV_KEY];
+    delete sessionEnvironment[TERMINAL_SESSION_EXECUTION_TARGET_ENV_KEY];
     let releaseForegroundAdmission: (() => void | Promise<void>) | null = null;
     let restoreForegroundRuntimeEnvironment: (() => void) | null = null;
     const foregroundHandoffComplete = Symbol('foregroundHandoffComplete');
@@ -502,7 +503,7 @@ Provider CLI Options:
         ]);
         await ensureDaemonRunningForSessionCommand();
 
-        const spawnAndAttach = async (machineId: string, attemptId: string): Promise<never> => {
+        const spawnAndAttach = async (executionTarget: SessionExecutionTargetV1, attemptId: string): Promise<never> => {
           const [{ requestDaemonSignedRootActionExecution }, { readAgentCatalogSnapshot },
             { SessionSpawnNewInputV2Schema }, { SessionSpawnNewActionResultV1Schema }, { handleAttachCommand }] = await Promise.all([
             import('@/daemon/controlClient'), import('@/agent/catalog/snapshot'),
@@ -515,7 +516,7 @@ Provider CLI Options:
           if (!selectedAgentTarget) throw new Error('agent_contribution_unavailable');
           const input = SessionSpawnNewInputV2Schema.parse({
             creationKey: attemptId,
-            executionTarget: { serverId: configuration.activeServerId, machineId },
+            executionTarget,
             directory: { kind: 'path', path: directoryIntent }, agentTarget: selectedAgentTarget,
             agentArgs: parsed.providerArgs,
             ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
@@ -530,7 +531,7 @@ Provider CLI Options:
             ...(parsed.initialTitle ? { title: parsed.initialTitle } : {}),
           });
           const execution = await requestDaemonSignedRootActionExecution({ actionId: 'session.spawn_new', input,
-            surface: 'cli', actionRequestId: attemptId, target: { kind: 'machine', machineId } },
+            surface: 'cli', actionRequestId: attemptId, target: { kind: 'machine', machineId: executionTarget.machineId } },
           { ...(params.context.signal ? { signal: params.context.signal } : {}) });
           if (!execution.ok) throw Object.assign(new Error(execution.error), { code: execution.errorCode });
           if (await tryHandleApprovalRequestCreated({ envelopeKind: 'session_create', json: false, result: execution.result })) {
@@ -553,8 +554,8 @@ Provider CLI Options:
 
         admitForegroundRuntime = async () => {
           const attemptId = randomUUID();
-          if (terminalMachineId && !normalizedExistingSessionId && !resume && !parsed.nativeForkSource) {
-            return await spawnAndAttach(terminalMachineId, attemptId);
+          if (terminalExecutionTarget !== undefined && !normalizedExistingSessionId && !resume && !parsed.nativeForkSource) {
+            return await spawnAndAttach(SessionExecutionTargetV1Schema.parse(JSON.parse(terminalExecutionTarget)), attemptId);
           }
           const admission = await admitDaemonForegroundAgentRuntime({
             v: 1,
@@ -603,7 +604,10 @@ Provider CLI Options:
           });
           if (!admission.ok) {
             if (admission.sessionSpawnRequired) {
-              return await spawnAndAttach(admission.sessionSpawnRequired.machineId, attemptId);
+              return await spawnAndAttach({
+                serverId: configuration.activeServerId,
+                machineId: admission.sessionSpawnRequired.machineId,
+              }, attemptId);
             }
             throw createForegroundAdmissionError(admission.error);
           }

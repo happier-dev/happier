@@ -48,7 +48,7 @@ import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteS
 import { createNodePtyProvider } from '@/terminal/pty/provider';
 import { resolveTerminalShell } from '@/terminal/pty/shells';
 import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
-import { TERMINAL_SESSION_MACHINE_ID_ENV_KEY } from '@/session/runtime/control/sessionControlEnvironment';
+import { TERMINAL_SESSION_EXECUTION_TARGET_ENV_KEY } from '@/session/runtime/control/sessionControlEnvironment';
 import { getSharedTerminalProcessRegistry, type TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
 import {
   resolveDaemonTerminalLaunch,
@@ -718,11 +718,14 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     placement: ReturnType<typeof resolveTerminalPlacement>, sessionId: string | undefined) => {
     if (!params.deps?.nativeOperationRuntime) return undefined;
     let live = true;
-    const machineId = placement === 'member' && !sessionId && request.launch?.kind === 'happier_cli'
-      ? context.machineAdmission?.machineId : undefined;
+    const executionTarget = placement === 'member' && requesterIdentity.kind === 'isolated' && !sessionId && request.launch?.kind === 'happier_cli'
+      ? { serverId: requesterIdentity.requester.serverId, machineId: requesterIdentity.requester.machineId }
+      : undefined;
     const material: AgentLaunchOperationMaterialization = Object.freeze({
       materializationKey: JSON.stringify(['terminal', sessionId ?? null, request.terminalKey]),
-      environment: Object.freeze<Record<string, string>>(machineId ? { [TERMINAL_SESSION_MACHINE_ID_ENV_KEY]: machineId } : {}),
+      environment: Object.freeze<Record<string, string>>(executionTarget
+        ? { [TERMINAL_SESSION_EXECUTION_TARGET_ENV_KEY]: JSON.stringify(executionTarget) }
+        : {}),
       selectedMaterials: Object.freeze([]),
     });
     try {

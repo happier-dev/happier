@@ -456,7 +456,9 @@ describe('foreground CLI runner authority scope', () => {
       const endCodes: number[] = [];
       const hosted = Boolean(fileStoreAgent || diagnosticDebug || memberTerminal);
       const run = hosted ? runAddedHostedSession({ environment: { ...process.env, NODE_ENV: 'test',
-        ...(memberTerminal ? { HAPPIER_TERMINAL_SESSION_MACHINE_ID: 'signed-pty-machine' } : {}),
+        ...(memberTerminal ? {
+          HAPPIER_TERMINAL_SESSION_EXECUTION_TARGET: JSON.stringify({ serverId: 'foreground-fixture', machineId: 'signed-pty-machine' }),
+        } : {}),
         ...(diagnosticDebug ? { DEBUG: diagnosticDebug.session } : {}) },
         workingDirectory: directory, end: code => { endCodes.push(code); } }, invoke) : invoke();
       if (attachHandoff || hosted || policyHandoff === 'approval') await run;

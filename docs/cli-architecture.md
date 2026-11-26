@@ -2857,11 +2857,11 @@ address is unavailable, the terminal returns `requester_home_unavailable`
 before PTY spawn.
 
 For a fresh Agent command in a member terminal, Open and Restart also carry
-the admitted Machine ID into the CLI launch. The CLI consumes it once and
-requests `session.spawn_new` on that Machine through the signed Action owner
-with the member's Account. Session creation has its own admission and preserves
-its refusal. A local Machine association used by the member's CLI and control
-daemon does not select the new Session's execution target.
+the admitted portable Home identity and Machine ID into the CLI launch. The CLI
+consumes that execution target once and requests `session.spawn_new` through the
+signed Action owner with the member's Account. Session creation has its own
+admission and preserves its refusal. The member's CLI and local control daemon
+use the URL-selected profile for local settings and state.
 
 The separated member's CLI and its autostarted daemon use the member's
 Happier home for writable install, tools and plugin state. The published

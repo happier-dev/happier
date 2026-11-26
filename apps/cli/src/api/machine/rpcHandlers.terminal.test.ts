@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createServer } from 'node:http';
 import axios from 'axios';
 import { mkdtemp, mkdir, realpath, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,8 +61,15 @@ import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalA
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import nacl from 'tweetnacl';
-import { updateSettings } from '@/persistence';
-import { reloadConfiguration } from '@/configuration';
+import { updateSettings, writeDaemonState } from '@/persistence';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
+import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
+import { deriveServerIdFromUrl } from '@/server/serverId';
+import { createCliMachineActionServerScopeCurrent } from '@/session/actions/cliActionDeps/machineTransport';
+import { SignedRootActionExecuteRequestSchema } from '@/daemon/externalActions/signedRootActionControl';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -616,15 +624,70 @@ describe('registerMachineTerminalRpcHandlers', () => {
         expect(DaemonTerminalEnsureResponseSchema.parse(openedCli)).toMatchObject({ ok: true, reused: false });
         await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!(cli, signedContext))
           .resolves.toMatchObject({ ok: true, reused: false });
+        const homeId = signedContext.callerInputAuthorization!.binding.serverIdentityId;
         for (const frame of frames.slice(-2)) {
           expect(frame.args).toEqual(['--server-url', homeApplicationUrl, 'codex']);
-          expect(frame.environment).toHaveProperty('HAPPIER_TERMINAL_SESSION_MACHINE_ID', 'machine');
+          expect(JSON.parse(frame.environment.HAPPIER_TERMINAL_SESSION_EXECUTION_TARGET!))
+            .toEqual({ serverId: homeId, machineId: 'machine' });
           expect(frame.environment).not.toHaveProperty('HAPPIER_SERVER_URL');
           expect(frame.environment).not.toHaveProperty('HAPPIER_LOCAL_SERVER_URL');
           expect(frame.environment).not.toHaveProperty('HAPPIER_WEBAPP_URL');
           expect(frame.environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
           expect(frame.environment).not.toHaveProperty('HAPPIER_SESSION_CREDENTIAL_FILE');
           expect(frame.selectedMaterials).toEqual([]);
+        }
+
+        const frame = frames.at(-2)!;
+        const isCurrentScope = createCliMachineActionServerScopeCurrent({ serverId: 'custodian-profile', serverIdentityId: homeId });
+        const outcomes: Array<{ serverId?: string; machineId?: string; errorCode?: string }> = [];
+        const control = createServer(async (request, response) => {
+          const reply = (body: unknown) => {
+            response.writeHead(200, { 'content-type': 'application/json' });
+            response.end(JSON.stringify(body));
+          };
+          if (request.url === '/ping') return reply({ status: 'ok' });
+          if (request.url !== '/actions/root/execute') return reply({ ok: false, errorCode: 'unexpected_route' });
+          let body = '';
+          for await (const chunk of request) body += String(chunk);
+          const root = SignedRootActionExecuteRequestSchema.safeParse(JSON.parse(body));
+          const spawn = root.success && root.data.actionId === 'session.spawn_new'
+            ? SessionSpawnNewInputV2Schema.safeParse(root.data.input) : null;
+          const target = spawn?.success ? spawn.data.executionTarget : undefined;
+          if (!target) return reply({ ok: false, errorCode: 'invalid_spawn_input' });
+          if (!await isCurrentScope(target)) {
+            outcomes.push({ ...target, errorCode: 'server_scope_mismatch' });
+            return reply({ ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' });
+          }
+          outcomes.push(target);
+          return reply({ ok: true, result: { kind: 'approval_request_created',
+            artifactId: 'fixture-approval', actionId: 'session.spawn_new' } });
+        });
+        await new Promise<void>(resolve => control.listen(0, '127.0.0.1', resolve));
+        const address = control.address();
+        if (!address || typeof address === 'string') throw new Error('Member control fixture did not bind');
+        const childScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+          'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_SESSION_AUTOSTART_DAEMON']);
+        const reportError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const reportApproval = vi.spyOn(console, 'log').mockImplementation(() => {});
+        try {
+          childScope.patch({ HAPPIER_HOME_DIR: join(h.root, 'member-cli'), HAPPIER_SESSION_AUTOSTART_DAEMON: '0' });
+          const { rest } = await applyEphemeralServerSelectionFromPrefixArgs([...frame.args]);
+          expect(configuration.activeServerId).toBe(deriveServerIdFromUrl(homeApplicationUrl));
+          writeDaemonState({ pid: process.pid, httpPort: address.port, controlToken: 'fixture-local-control',
+            startedAt: Date.now(), startedWithCliVersion: configuration.currentCliVersion });
+          await runAddedHostedSession({ environment: { ...frame.environment, HAPPIER_SESSION_AUTOSTART_DAEMON: '0' },
+            workingDirectory: frame.cwd, end() {} }, () => runBackendSessionCliCommand({
+            context: { args: rest, rawArgv: [], terminalRuntime: null,
+              sessionStart: { credentials: { token: 'fixture-member-account', encryption: null }, machineId: 'member-local-daemon' } },
+            backendIdForSessionRuntime: 'codex', runtimeAuthorityAgentId: 'codex', resolveSessionRuntimePreferences: null,
+          }));
+          expect(outcomes, JSON.stringify(reportError.mock.calls)).toEqual([{ serverId: homeId, machineId: 'machine' }]);
+        } finally {
+          reportApproval.mockRestore();
+          reportError.mockRestore();
+          childScope.restore();
+          reloadConfiguration();
+          await new Promise<void>((resolve, reject) => control.close(error => error ? reject(error) : resolve()));
         }
 
         const spawned = h.provider.spawned.length;
@@ -644,7 +707,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
           error: expect.stringMatching(/Home.*address/i),
         });
         expect(h.provider.spawned).toHaveLength(spawned);
-      } finally { launcherEnvironment.restore(); }
+      } finally { launcherEnvironment.restore(); reloadConfiguration(); }
     } finally { registration.dispose(); await h.dispose(); }
   });
 
