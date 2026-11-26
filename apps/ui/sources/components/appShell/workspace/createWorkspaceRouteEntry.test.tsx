@@ -88,7 +88,7 @@ describe('WorkspaceRouteEntry', () => {
         const ref = { kind: 'workflow', params: { id: 'deploy' } };
         const base = { ...workspace(true), state: createWorkspaceState({ id: 'workflow-tab', target: ref, pinned: false, preview: false }) };
         const element = (title: string) => <WorkspaceNavigationProvider value={base}
-            destinationTitles={{ 'workflow-tab': { ref, title } }}><WorkspaceWindowTitle /><WorkspaceRouteEntry Body={() => { throw new Error('Expo must not mount the workspace body'); }} /></WorkspaceNavigationProvider>;
+            destinationTitles={{ 'workflow-tab': { ref, title, source: 'page' } }}><WorkspaceWindowTitle /><WorkspaceRouteEntry Body={() => { throw new Error('Expo must not mount the workspace body'); }} /></WorkspaceNavigationProvider>;
         // The browser document is a platform boundary; title selection and route ownership stay real.
         const browserDocument = { title: '' };
         vi.stubGlobal('document', browserDocument);

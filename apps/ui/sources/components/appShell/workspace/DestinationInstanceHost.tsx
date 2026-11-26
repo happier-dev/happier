@@ -204,7 +204,7 @@ function DestinationNavigationChrome(props: Readonly<{
             const target = identity.current.ref;
             if (!mounted || !publishTitle || !tabId || !target) return;
             const title = pageTitle !== undefined ? pageTitle : fallbackTitle;
-            if (title !== undefined) dispose = publishTitle(tabId, target, title?.trim() ? title : null);
+            if (title !== undefined) dispose = publishTitle(tabId, target, title?.trim() ? title : null, pageTitle !== undefined ? 'page' : 'fallback');
         };
         return {
             mount: () => {

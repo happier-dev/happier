@@ -83,9 +83,9 @@ describe('DestinationInstanceHost', () => {
             useDestinationPageTitle('Discover');
             return null;
         }
-        const published: Array<Readonly<{ q: string | undefined; title: string | null }>> = [];
-        const publishDestinationTitle = (_tabId: string, ref: { params: Readonly<Record<string, string>> }, title: string | null) => {
-            published.push({ q: ref.params.q, title });
+        const published: Array<Readonly<{ q: string | undefined; title: string | null; source: string | undefined }>> = [];
+        const publishDestinationTitle = (_tabId: string, ref: { params: Readonly<Record<string, string>> }, title: string | null, source?: 'page' | 'fallback') => {
+            published.push({ q: ref.params.q, title, source });
             return () => {};
         };
         const scene = (q: string) => {
@@ -109,7 +109,7 @@ describe('DestinationInstanceHost', () => {
         published.length = 0;
         for (const q of ['gi', 'git', 'gith']) await screen.update(scene(q));
         // Three keystrokes: the page's setters never change, and the owner hears the same title under each new target.
-        expect({ publisherIdentities: publishers.size, last: published.at(-1) }).toEqual({ publisherIdentities: 1, last: { q: 'gith', title: 'Discover' } });
+        expect({ publisherIdentities: publishers.size, last: published.at(-1) }).toEqual({ publisherIdentities: 1, last: { q: 'gith', title: 'Discover', source: 'page' } });
         await screen.unmount();
     });
     it('settles delayed navigation only for the current focused destination, including after its content disappears', async () => {

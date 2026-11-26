@@ -98,7 +98,7 @@ describe('workspace entity Action admission', () => {
         h.workspace.dispatch({ type: 'setTarget', tabId: 'anchor', target: ref });
         h.workspace.dispatch({ type: 'setFallbackTitle', tabId: 'anchor', title: t('tabs.sessions') });
         const scene = (title: string | null) => createWorkspaceDropScene(h.workspace.state, h.catalog, {
-            paneId: 'group:1', destinationTitles: { anchor: { ref, title } },
+            paneId: 'group:1', destinationTitles: { anchor: { ref, title, source: 'page' } },
         });
         expect(scene('Atlas review').paneTitle).toBe('Atlas review');
         expect(scene('Atlas renamed').locateTab('anchor')).toEqual({ paneId: 'group:1', title: 'Atlas renamed' });

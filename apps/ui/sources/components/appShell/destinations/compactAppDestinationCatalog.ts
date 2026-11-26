@@ -1276,8 +1276,9 @@ function resolvePublishedOrStaticInstanceTitle(
     // rename their destination. Explicit entity routes have no static identity here.
     if (staticTitle && (ref.kind === 'settings'
         || (destination?.kind === 'builtin' && pathname === destination.routePath))) return staticTitle;
-    // Approval history stays open by workspace policy. Its live index lifecycle,
-    // including header-only socket updates, must supersede the page's earlier title.
+    // Approval tabs reuse the open page's subject-aware base while their stored lifecycle
+    // owns the status suffix. A fallback publication never replaces the stored title.
+    // The always-mounted strip takes no Machine subscription to resolve that subject.
     if (isApprovalInstanceRef(ref) && storedTitle) return storedTitle;
     const title = options?.publishedTitle?.ref === ref
         ? options.publishedTitle.title
@@ -1307,7 +1308,7 @@ export function readDestinationInstanceTitle(catalog: readonly CompactAppDestina
     const state = readRegisteredStorageState();
     const missing = resolveKnownMissingInstanceTitle(ref, state);
     if (missing) return missing;
-    const stored = resolveStoredInstanceTitle(ref, state, resolveSavedInstanceTitle(catalog, ref, options?.fallbackTitle));
+    const stored = resolveStoredInstanceTitle(ref, state, resolveSavedInstanceTitle(catalog, ref, options?.fallbackTitle), options?.publishedTitle);
     if (ref.kind === 'project') {
         const state = readRegisteredStorageState();
         const project = resolveProjectInstanceTitle(ref, state ? readProjectWorkspaceRefs(state) : EMPTY_WORKSPACE_REFS);
@@ -1431,7 +1432,7 @@ function resolveKnownMissingInstanceTitle(ref: DestinationRef, state: ReturnType
 }
 
 /** Retained tabs read the same Account projections as their pages, without mounting page effects. */
-function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeof readRegisteredStorageState>, fallbackTitle?: string | null): string | null {
+function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeof readRegisteredStorageState>, fallbackTitle?: string | null, published?: WorkspaceDestinationTitle): string | null {
     if (readSettingsEntityTitleDemand(ref)) return resolveSettingsEntityInstanceTitle(ref, state);
     if (!state?.profileScope || (ref.params.serverId
         && !areServerProfileIdentifiersEquivalent(state.profileScope.serverId, ref.params.serverId))) return null;
@@ -1441,7 +1442,8 @@ function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeo
         if (!artifact.isDecrypted) return t('common.unavailable');
         if (!isApprovalArtifactKindV1(artifact.header?.kind)) return null;
         const parsed = typeof artifact.body === 'string' ? approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body) : null;
-        const title = resolveApprovalRequestTitle(readApprovalArtifactTitleInput(artifact, parsed, artifact.sessions ?? [])).title;
+        const title = resolveApprovalRequestTitle({ ...readApprovalArtifactTitleInput(artifact, parsed, artifact.sessions ?? []),
+            publishedTitle: published?.ref === ref ? published : undefined }).title;
         const status = ApprovalRequestV2StatusSchema.safeParse(readApprovalArtifactDisplayStatus(artifact));
         return status.success ? `${title} · ${formatApprovalStatusLabel(status.data)}` : title;
     }
@@ -1475,9 +1477,9 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
     let storeInputs: readonly unknown[] | undefined;
     let inputs: readonly unknown[] | undefined;
     let projection: ReturnType<typeof project> | undefined;
-    function project(state: ReturnType<typeof readRegisteredStorageState>, source: ReturnType<typeof selectSessionDisplayNameSource> | null) {
+    function project(state: ReturnType<typeof readRegisteredStorageState>, source: ReturnType<typeof selectSessionDisplayNameSource> | null, published?: WorkspaceDestinationTitle) {
         return {
-            stored: resolveStoredInstanceTitle(ref, state, savedTitle),
+            stored: resolveStoredInstanceTitle(ref, state, savedTitle, published),
             missing: resolveKnownMissingInstanceTitle(ref, state),
             session: session ? sessionDisplayTitle(source) : null,
             project: ref.kind === 'project' && state ? resolveProjectInstanceTitle(ref, readProjectWorkspaceRefs(state)) : null,
@@ -1489,9 +1491,9 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
     let title: string | null = null;
     return {
         entry, catalog, fallbackTitle, settingsDemand, session, managedRunId, route,
-        read(state: ReturnType<typeof readRegisteredStorageState>) {
+        read(state: ReturnType<typeof readRegisteredStorageState>, published?: WorkspaceDestinationTitle) {
             // Producer-owned record/container identities decide whether canonical lookup is needed.
-            const nextStoreInputs = [state?.profileScope,
+            const nextStoreInputs = [state?.profileScope, isApprovalInstanceRef(ref) ? published : null,
                 artifactId ? state?.artifacts[artifactId] : null,
                 managedRunId && state?.profileScope ? state.workflowRunsById[workflowRunStoreKey(managedRunId, state.profileScope)] : null,
                 ref.kind === 'project' ? state?.projectAccountRows : null,
@@ -1505,7 +1507,7 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
             const projectRows = ref.kind === 'project' && state ? readCurrentProjectAccountRows(state) : null;
             const projectRef = ref.kind === 'project' && ref.params.workspaceRefId && state
                 ? resolveWorkspaceRefById(readProjectWorkspaceRefs(state), ref.params.workspaceRefId, ref.params.serverId) : null;
-            const nextInputs = [state?.profileScope, artifactId ? state?.artifacts[artifactId] : null,
+            const nextInputs = [state?.profileScope, isApprovalInstanceRef(ref) ? published : null, artifactId ? state?.artifacts[artifactId] : null,
                 managedRunId && state?.profileScope ? state.workflowRunsById[workflowRunStoreKey(managedRunId, state.profileScope)] : null,
                 projectRef?.kind === 'resolved' ? projectRef.ref : projectRef?.kind, isProjectAccountRowsCensusComplete(projectRows),
                 artifactId && state ? isArtifactInventoryLoaded(state, ref.kind === 'workflow' ? ['workflow-definition.v1'] : undefined) : false,
@@ -1513,7 +1515,7 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
                 ...Object.values(source ?? {})];
             if (!projection || !inputs || !shallow(inputs, nextInputs)) {
                 inputs = nextInputs;
-                projection = project(state, source);
+                projection = project(state, source, published);
             }
             return projection;
         },
@@ -1692,7 +1694,7 @@ export function useDestinationInstanceTitleSources(
                 getSnapshot: () => {
                     if (address && !readSessionRecordingVisibility()(address)) return t('session.untitled');
                     const state = readRegisteredStorageState();
-                    return projection.title(projection.read(state), projection.readSettings(state), discussion, published, pending);
+                    return projection.title(projection.read(state, published), projection.readSettings(state), discussion, published, pending);
                 },
                 subscribe: (listener: () => void) => {
                     const stopStore = getStorage().subscribe(listener, {

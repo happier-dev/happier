@@ -11,8 +11,9 @@ import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/w
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
 import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { storage } from '@/sync/domains/state/storage';
-import { hrefForDestinationRef, readDestinationInstanceTitle, resolveCompactAppDestinations, resolveDestinationRefFromHref, useActivateAppDestination, useCompactAppDestinations, useDestinationInstanceTitles, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, readDestinationInstanceTitle, resolveCompactAppDestinations, resolveDestinationRefFromHref, useDestinationInstanceTitleSources, useActivateAppDestination, useCompactAppDestinations, useDestinationInstanceTitles, type CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
 import { useHydrateSessionForRoute, useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
 import { AppPaneProvider, useAppPaneContext } from '../panes/AppPaneProvider';
 import { qualifyPaneScopeId } from '../panes/paneScopeIdentity';
@@ -1783,6 +1784,84 @@ describe('consumed workspace navigation owner', () => {
         expect(target.kind).toBe(scenario === 'cancelled' ? 'session' : 'inbox');
         expect(guard.requestDecision).toHaveBeenCalledTimes(scenario === 'dirty' || scenario === 'cancelled' ? 1 : 0);
         if (guard.prepareGuard) expect(guard.prepareGuard).toHaveBeenCalledOnce();
+    });
+
+    it('uses the published approval subject with live status, retains it, and isolates strip title renders', async () => {
+        boundary.pathname = '/inbox/approvals/subject-request';
+        boundary.params = { id: 'subject-request', serverId: 'home-a' };
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: true, workflows: false, friends: false,
+        } });
+        const request: ApprovalRequestV1 = { v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'system' }, actionId: 'session.title.set',
+            actionArgs: { sessionId: 'A1', title: 'Release notes' }, summary: 'Rename the release session' };
+        const artifact = (status: ApprovalRequestV1['status']): DecryptedArtifact => ({
+            id: 'subject-request', isDecrypted: true, title: request.summary,
+            header: buildApprovalRequestArtifactHeaderV1({ ...request, status }),
+            headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        });
+        storage.setState({ artifacts: { 'subject-request': artifact('open') } });
+        let stripCommits = 0;
+        let unrelatedCommits = 0;
+        let showPage = false;
+        const pageTitle = 'List Machine services · Build Machine';
+        const unrelatedEntries = [{ key: 'unrelated', ref: { kind: 'settings', params: { pageId: 'appearance' } } }];
+        const UnrelatedLeaf = React.memo(function UnrelatedLeaf({ source }: { source: { subscribe: (listener: () => void) => () => void; getSnapshot: () => string | null } }) {
+            React.useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot);
+            React.useLayoutEffect(() => { unrelatedCommits++; });
+            return null;
+        });
+        function UnrelatedTitle() {
+            const sources = useDestinationInstanceTitleSources(catalog, unrelatedEntries);
+            return <UnrelatedLeaf source={sources.get('unrelated')!} />;
+        }
+        let publishPage: (title: string) => void = () => {};
+        function Page() {
+            const [title, setTitle] = React.useState<string>();
+            publishPage = setTitle;
+            useDestinationPageTitle(title);
+            return <Stack.Screen options={{ title: 'Approval' }} />;
+        }
+        const scene = () => <WorkspaceProvider enabled catalog={catalog}>{navigation => {
+            const group = navigation.state.groups[navigation.state.focusedGroupId];
+            const tab = navigation.state.tabs[group.activeTabId];
+            return <>
+                {React.createElement('WorkspaceOwner', { navigation })}
+                <React.Profiler id="strip" onRender={() => { stripCommits++; }}>
+                    <WorkspaceGroupTabs workspace={navigation} group={group} catalog={catalog} focused placement="bar" />
+                </React.Profiler>
+                <UnrelatedTitle />
+                <DestinationTitlesProbe navigation={navigation} catalog={catalog} />
+                {showPage ? <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={boundary.pathname} focused visible><Page /></DestinationInstanceHost> : null}
+            </>;
+        }}</WorkspaceProvider>;
+        const screen = await renderScreen(scene());
+        const nav = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
+        const tabId = nav().state.groups[nav().state.focusedGroupId].activeTabId;
+        const title = () => screen.root.findByType('DestinationTitles').props.titles.get(tabId);
+        expect(title()).toBe(`${request.summary} · ${t('approvals.status.open')}`);
+        const beforePresence = [stripCommits, unrelatedCommits];
+        await act(async () => storage.setState({ machines: { presence: createMachineFixture({ id: 'presence', activeAt: 2 }) } }));
+        const presence = [stripCommits - beforePresence[0], unrelatedCommits - beforePresence[1]];
+        expect(presence).toEqual([0, 0]);
+        // A generic route title is not a subject reading.
+        await act(async () => { nav().publishDestinationTitle?.(tabId, nav().state.tabs[tabId].target, 'Approval', 'fallback'); });
+        expect(title()).toBe(`${request.summary} · ${t('approvals.status.open')}`);
+        showPage = true;
+        await screen.update(scene());
+        expect(nav().readDestinationTitles?.()[tabId]?.source).toBe('fallback');
+        const beforePublish = [stripCommits, unrelatedCommits];
+        await act(async () => { publishPage(pageTitle); });
+        const publication = [stripCommits - beforePublish[0], unrelatedCommits - beforePublish[1]];
+        console.info('APPROVAL-TITLE renders', { presence, publication });
+        expect(publication).toEqual([1, 0]);
+        expect(nav().readDestinationTitles?.()[tabId]?.source).toBe('page');
+        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.open')}`);
+        showPage = false;
+        await screen.update(scene());
+        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.open')}`);
+        await act(async () => storage.setState({ artifacts: { 'subject-request': artifact('failed') } }));
+        expect(title()).toBe(`${pageTitle} · ${t('approvals.status.failed')}`);
     });
 
     it.each([false, true])('settles a retained approval tab from the live request lifecycle without mounting its page (phone=%s)', async phone => {

@@ -11,6 +11,7 @@ import { getDesktopAppWindowPlacedTabs, getDesktopAppWindowTransfers, subscribeD
 export type WorkspaceDestinationTitle = Readonly<{
     ref: DestinationRef;
     title: string | null;
+    source: 'page' | 'fallback';
     /** An automatic collection landing keeps the collection's chrome identity until explicit navigation. */
     redirectSource?: DestinationRef;
 }>;
@@ -55,7 +56,7 @@ export type WorkspaceNavigationContextValue = Readonly<{
      * `useWorkspaceDestinationTitles`.
      */
     readDestinationTitles?: () => WorkspaceDestinationTitles;
-    publishDestinationTitle?: (tabId: string, ref: DestinationRef, title: string | null) => () => void;
+    publishDestinationTitle?: (tabId: string, ref: DestinationRef, title: string | null, source?: WorkspaceDestinationTitle['source']) => () => void;
     tabSyncStatus?: WorkspaceTabSyncStatus;
     canvasControlsRef?: React.MutableRefObject<SplitCanvasHostControls | null>;
     canGoBack: boolean;

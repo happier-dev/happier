@@ -99,10 +99,10 @@ describe('Project destination instance titles', () => {
     it('uses the template publisher page identity while ordinary plugin publishing keeps its route title', () => {
         const template = destination('/settings/plugins/publish?templateArtifactId=garden&templateServerId=home-a');
         const generic = destination('/settings/plugins/publish');
-        expect(readDestinationInstanceTitle(catalog, template, { publishedTitle: { ref: template, title: 'Publish Garden' } }))
+        expect(readDestinationInstanceTitle(catalog, template, { publishedTitle: { source: 'page', ref: template, title: 'Publish Garden' } }))
             .toBe('Publish Garden');
         expect(readDestinationInstanceTitle(catalog, template, { fallbackTitle: 'Publish Garden' })).toBe('Publish Garden');
-        expect(readDestinationInstanceTitle(catalog, generic, { publishedTitle: { ref: generic, title: 'Checking package' } }))
+        expect(readDestinationInstanceTitle(catalog, generic, { publishedTitle: { source: 'page', ref: generic, title: 'Checking package' } }))
             .toBe(t('settingsPlugins.publish.title'));
     });
     it('masks live, published and saved Session chrome titles while sharing, then restores them', async () => {
@@ -125,7 +125,7 @@ describe('Project destination instance titles', () => {
             await act(async () => { setScreenSharingPrivacyActive(true); });
             expect([...hook.getCurrent().values()]).toEqual([t('session.untitled'), t('session.untitled'), t('session.untitled'), 'Public identity', t('session.untitled')]);
             expect(readDestinationInstanceTitle(catalog, entries[0]!.ref, {
-                publishedTitle: { ref: entries[0]!.ref, title: 'Published private identity' },
+                publishedTitle: { source: 'page', ref: entries[0]!.ref, title: 'Published private identity' },
             })).toBe(t('session.untitled'));
             expect(readDestinationInstanceTitle(catalog, entries[2]!.ref, { fallbackTitle: 'Saved private identity' })).toBe(t('session.untitled'));
             await act(async () => { setScreenSharingPrivacyActive(false); });
@@ -180,11 +180,11 @@ describe('Project destination instance titles', () => {
             const ref = destination(href);
             const destinationTitle = readDestinationInstanceTitle(catalog, ref);
             expect(destinationTitle).toBeTruthy();
-            expect(readDestinationInstanceTitle(catalog, ref, { publishedTitle: { ref, title: headline } }), href)
+            expect(readDestinationInstanceTitle(catalog, ref, { publishedTitle: { source: 'page', ref, title: headline } }), href)
                 .toBe(destinationTitle);
         }
         const detail = destination('/settings/agents/codex');
-        expect(readDestinationInstanceTitle(catalog, detail, { publishedTitle: { ref: detail, title: 'Codex detail' } }))
+        expect(readDestinationInstanceTitle(catalog, detail, { publishedTitle: { source: 'page', ref: detail, title: 'Codex detail' } }))
             .toBe('Codex detail');
     });
     it('settles deleted Session identities without treating an uncached or other-Home Session as deleted', async () => {
@@ -277,6 +277,10 @@ describe('Project destination instance titles', () => {
             storage.setState((state) => ({ ...state, artifacts: { ...state.artifacts, [stored.id]: stored } }));
             const ref = destination(`/inbox/approvals/${stored.id}`);
             expect(readDestinationInstanceTitle(catalog, ref)).toMatch(new RegExp(`${t('approvals.status.failed')}$`));
+            expect(readDestinationInstanceTitle(catalog, ref, { publishedTitle: { ref, title: 'List Machine services · Build Machine', source: 'page' } }))
+                .toBe(`List Machine services · Build Machine · ${t('approvals.status.failed')}`);
+            expect(readDestinationInstanceTitle(catalog, ref, { publishedTitle: { ref, title: 'Approval', source: 'fallback' } }))
+                .toBe(readDestinationInstanceTitle(catalog, ref));
             // Without its body this device can only read the stored header's status.
             storage.setState((state) => ({ ...state, artifacts: { ...state.artifacts, [stored.id]: { ...stored, body: undefined } } }));
             expect(readDestinationInstanceTitle(catalog, ref)).toMatch(new RegExp(`${t('approvals.status.executed')}$`));
@@ -384,10 +388,10 @@ describe('Project destination instance titles', () => {
         expect(entries.map(entry => readDestinationInstanceTitle(catalog, entry.ref))).toEqual(expected);
         expect([...hook.getCurrent().values()]).toEqual(expected);
         expect(readDestinationInstanceTitle(catalog, entries[0]!.ref, {
-            publishedTitle: { ref: entries[0]!.ref, title: 'Unsaved edit' },
+            publishedTitle: { source: 'page', ref: entries[0]!.ref, title: 'Unsaved edit' },
         })).toBe('Unsaved edit');
         expect(readDestinationInstanceTitle(catalog, entries[0]!.ref, {
-            publishedTitle: { ref: entries[0]!.ref, title: null },
+            publishedTitle: { source: 'page', ref: entries[0]!.ref, title: null },
         })).toBe(t('common.unavailable'));
         expect(readDestinationInstanceTitle(catalog, { ...entries[1]!.ref,
             params: { ...entries[1]!.ref.params, serverId: 'other-home' } })).toBe(t('common.unavailable'));

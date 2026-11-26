@@ -22,6 +22,8 @@ export type ApprovalRequestTitleInput = Pick<ActionApprovalPresentationInput, 'e
     storedTitle: string | null | undefined;
     /** The request's own generated summary: a first line that only restates it is not a title the person chose. */
     previewSummary?: string | null;
+    /** A mounted page already resolved its subject; retained tabs reuse that base. */
+    publishedTitle?: Readonly<{ title: string | null; source: 'page' | 'fallback' }>;
     actionId?: string | null;
     qualifiedActionId?: string | null;
     actionArgs?: unknown;
@@ -96,7 +98,8 @@ export function resolveApprovalRequestTitle(
   // A generated title already identifies the Action, including its named subject.
   // The Inbox facts and page Action row must not repeat it beside that title.
   const titleNamesAction = Boolean(subjectName && actionTitle) || generated;
-  return { title, actionTitle: titleNamesAction ? null : actionTitle, detail: detail || null };
+  const publishedBase = input.publishedTitle?.source === 'page' ? input.publishedTitle.title : null;
+  return { title: publishedBase || title, actionTitle: titleNamesAction ? null : actionTitle, detail: detail || null };
 }
 
 /**

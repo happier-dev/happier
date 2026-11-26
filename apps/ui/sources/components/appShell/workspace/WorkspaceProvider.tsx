@@ -213,19 +213,19 @@ export function WorkspaceProvider(props: Readonly<{
     const destinationTitles = publishedTitles.scopeKey === scopeKey ? publishedTitles.titles : NO_DESTINATION_TITLES;
     const latest = React.useRef({ owner, router, catalog: props.catalog, enabled: props.enabled, entry, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref, findSeedContext, destinationTitles, readPaneDriver, paneSubscription, pathname, segments, expoHref: '' });
     latest.current = { owner, router, catalog: props.catalog, enabled: props.enabled, entry, phone, phoneTransport, hostsRoute, scope, scopeKey, phoneTabHref, findSeedContext, destinationTitles, readPaneDriver, paneSubscription, pathname, segments, expoHref };
-    const publishDestinationTitle = React.useCallback((tabId: string, ref: DestinationRef, title: string | null) => {
+    const publishDestinationTitle = React.useCallback((tabId: string, ref: DestinationRef, title: string | null, source: WorkspaceDestinationTitle['source'] = 'fallback') => {
         // The body may finish an effect after navigation. Its old identity must
         // never name the new destination retained under the same tab key.
         if (latest.current.scopeKey !== scopeKey || latest.current.owner.getState().tabs[tabId]?.target !== ref) return () => {};
         setPublishedTitles(current => {
             const previous = current.scopeKey === scopeKey ? current.titles[tabId] : undefined;
-            if (previous?.ref === ref && previous.title === title) return current;
+            if (previous?.ref === ref && previous.title === title && previous.source === source) return current;
             return { scopeKey, titles: { ...(current.scopeKey === scopeKey ? current.titles : {}), [tabId]: {
-                ref, title, ...(previous?.ref === ref && previous.redirectSource ? { redirectSource: previous.redirectSource } : {}),
+                ref, title, source, ...(previous?.ref === ref && previous.redirectSource ? { redirectSource: previous.redirectSource } : {}),
             } } };
         });
         return () => setPublishedTitles(current => {
-            if (current.scopeKey !== scopeKey || current.titles[tabId]?.ref !== ref || current.titles[tabId]?.title !== title) return current;
+            if (current.scopeKey !== scopeKey || current.titles[tabId]?.ref !== ref || current.titles[tabId]?.title !== title || current.titles[tabId]?.source !== source) return current;
             const state = latest.current.owner.getState();
             // Keep the last known title through refresh and explicit close/reopen.
             // Replaced previews and destinations have no surviving title lifetime.
