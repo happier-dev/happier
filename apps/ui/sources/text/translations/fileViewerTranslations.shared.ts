@@ -81,7 +81,6 @@ export type FileViewerTranslations = Readonly<{
     loadStopped: (params: Readonly<{ name: string }>) => string;
     loadAgain: string;
     recordingCantPlay: string;
-      recordingCantPlay: "This device can't play this recording.",
     videoCantPlayTitle: string;
     audioCantPlayTitle: string;
     mediaCantPlayBody: string;
@@ -236,6 +235,7 @@ export const fileViewerTranslationsEnglish = {
         `Downloading ${loaded} of ${total} MB`,
       loadStopped: ({ name }) => `Stopped loading ${name}`,
       loadAgain: 'Load again',
+      recordingCantPlay: "This device can't play this recording.",
       videoCantPlayTitle: "This video can't play here",
       audioCantPlayTitle: "This audio can't play here",
       mediaCantPlayBody:
