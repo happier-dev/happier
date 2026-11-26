@@ -1600,7 +1600,7 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('opens on the table its location names and reads its structure once', async () => {
+  it('opens the selected table and Refresh reads its structure and rows once', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'page', mountNonce: 'page' },
@@ -1629,16 +1629,16 @@ describe('Database workbench surfaces', () => {
     });
     try {
       await settle(20);
-      expect(executeAction.mock.calls.some(([call]) => call.action === databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1))).toBe(true);
+      const countReads = (action: string) => executeAction.mock.calls.filter(([call]) => call.action === action).length;
+      const rows = databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1);
+      const structure = databaseActionLocalIdV1(DATABASE_STRUCTURE_READ_ACTION_ID_V1);
       // The row leads with its key; on a narrow host the columns that drop still speak in a line under it.
       expect(await fixture.getByText('48212')).toBeTruthy();
       expect(await fixture.getByText('INV-2026-04812 · open')).toBeTruthy();
-      // One structure read serves the page; nothing re-reads it per row or per cell.
-      expect(
-        executeAction.mock.calls.filter(
-          ([call]) => call.action === databaseActionLocalIdV1(DATABASE_STRUCTURE_READ_ACTION_ID_V1),
-        ),
-      ).toHaveLength(1);
+      expect([countReads(structure), countReads(rows)]).toEqual([1, 1]);
+      await fixture.press(await fixture.getByRole('button', { name: 'Refresh' }));
+      await settle(20);
+      expect([countReads(structure), countReads(rows)]).toEqual([2, 2]);
     } finally {
       await fixture.dispose();
     }

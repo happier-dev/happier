@@ -88,9 +88,9 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         expect(page.get().data).toBe(held);
         expect(calls).toHaveLength(beforeReveal);
 
-        page.invalidate();
+        instance.refresh(targetKey, relation);
         await page.demand();
-        expect(calls.slice(beforeReveal)).toEqual(['rows.read']);
+        expect(calls.slice(beforeReveal)).toEqual(['relation.structure', 'rows.read']);
         expect(page.get().data?.rows[0]?.cells).toEqual([{ type: 'integer', value: firstId }]);
         expect(otherPage.get().data).toBe(untouched);
         const refreshed = page.get().data;
