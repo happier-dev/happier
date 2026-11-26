@@ -6350,6 +6350,18 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    } | {
+        ok: false;
+        errorCode: 'deployment_conflict';
+        error: string;
+        effectAttempted: false;
+        details: {
+            environmentId: string;
+            domainId: string;
+            reason: 'domain_id_in_use';
+            requiredFact: 'domainId';
+            remedy?: string | undefined;
+        };
     };
     readonly "deployments.domains.remove": {
         domain: {
@@ -6600,6 +6612,18 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    } | {
+        ok: false;
+        errorCode: 'deployment_conflict';
+        error: string;
+        effectAttempted: false;
+        details: {
+            environmentId: string;
+            domainId: string;
+            reason: 'domain_id_in_use';
+            requiredFact: 'domainId';
+            remedy?: string | undefined;
+        };
     };
     readonly "deployments.domains.dns.create": {
         ok: true;
@@ -6880,6 +6904,18 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    } | {
+        ok: false;
+        errorCode: 'deployment_conflict';
+        error: string;
+        effectAttempted: false;
+        details: {
+            environmentId: string;
+            domainId: string;
+            reason: 'domain_id_in_use';
+            requiredFact: 'domainId';
+            remedy?: string | undefined;
+        };
     } | {
         ok: true;
         environmentId: string;
@@ -7171,6 +7207,18 @@ export type DeploymentsActionResultById = {
             remedy: 'share_machine_with_source_owner';
         };
         effectAttempted?: false | undefined;
+    } | {
+        ok: false;
+        errorCode: 'deployment_conflict';
+        error: string;
+        effectAttempted: false;
+        details: {
+            environmentId: string;
+            domainId: string;
+            reason: 'domain_id_in_use';
+            requiredFact: 'domainId';
+            remedy?: string | undefined;
+        };
     };
     readonly "deployments.domains.list": {
         domains: {
@@ -8469,6 +8517,12 @@ export type DeploymentsActionResultById = {
         requiredFact?: string | undefined;
         remedy?: string | undefined;
         failure?: undefined | {
+            environmentId: string;
+            domainId: string;
+            reason: 'domain_id_in_use';
+            requiredFact: 'domainId';
+            remedy?: string | undefined;
+        } | {
             environmentId: string;
             domainId: string;
             step: 'native_execution';

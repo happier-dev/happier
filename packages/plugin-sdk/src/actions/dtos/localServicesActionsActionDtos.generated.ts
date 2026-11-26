@@ -654,6 +654,12 @@ export type LocalServicesActionsActionResultById = {
                 } | {
                     environmentId: string;
                     domainId: string;
+                    reason: 'domain_id_in_use';
+                    requiredFact: 'domainId';
+                    remedy?: string | undefined;
+                } | {
+                    environmentId: string;
+                    domainId: string;
                     step: 'native_execution';
                     providerOutput?: string | undefined;
                     reason?: 'target_link_revision_mismatch' | undefined;
@@ -1353,6 +1359,12 @@ export type LocalServicesActionsActionResultById = {
                     requiredFact?: string | undefined;
                     remedy?: string | undefined;
                     failure?: undefined | {
+                        environmentId: string;
+                        domainId: string;
+                        reason: 'domain_id_in_use';
+                        requiredFact: 'domainId';
+                        remedy?: string | undefined;
+                    } | {
                         environmentId: string;
                         domainId: string;
                         step: 'native_execution';
