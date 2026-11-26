@@ -339,7 +339,7 @@ describe('createCliActionExecutorFromCredentials', () => {
     const sessionId = 'c123456789012345678901234';
     const credentials = {
       token: 'token_home_b',
-      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+      encryption: null,
     };
     const features = FeaturesResponseSchema.parse({
       features: {

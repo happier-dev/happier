@@ -42,7 +42,7 @@ it('preserves the installed Prepare owner refusal through the credentialed daemo
         externalActionExecutionAuthorization: authorization,
         originalActionEnvelope: { v: 1, requestId: 'prepare', target, input } });
     const result = await executor.execute(actionId, input, context);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'action_failed',
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'admission_unavailable',
         failureCause: { errorCode: 'admission_unavailable' } });
 });
 
