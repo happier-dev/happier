@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -245,9 +246,71 @@ test('predecessor setup params are what each released desktop sent, filled from 
   for (const tag of ['ui-desktop-v0.2.19', 'ui-desktop-v0.2.21', 'ui-desktop-v0.2.22']) {
     assert.deepEqual(resolvePredecessorSetupParams(tag, target), resolvePredecessorSetupParams('ui-desktop-v0.2.17', target));
   }
-  // An uncharacterized release has no params, so the upgrade scenario reports BLOCKED.
-  assert.equal(resolvePredecessorSetupParams('ui-desktop-v0.2.99', target), null);
 });
+
+// Real Git objects are the boundary: working-tree bytes must never authorize a tagged release.
+const SETUP_CONTRACT_FILES = [
+  'apps/ui/sources/components/systemTasks/buildLocalMachineSetupSystemTaskSpec.ts',
+  'apps/bootstrap/src/systemTasks/kinds/setupThisComputer.ts',
+];
+const SETUP_TARGET = { relayUrl: 'http://relay:3005', webappUrl: 'http://relay:3005', channel: 'stable', accountId: 'acct-1' };
+
+function setupContractRepo(dir, latestContents = ['builder', 'parser']) {
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  git('init');
+  git('config', 'user.name', 'Setup contract test');
+  git('config', 'user.email', 'setup-test@example.invalid');
+  const release = (tag, contents) => {
+    SETUP_CONTRACT_FILES.forEach((file, index) => {
+      mkdirSync(join(dir, file, '..'), { recursive: true });
+      writeFileSync(join(dir, file), contents[index]);
+    });
+    git('add', '--', ...SETUP_CONTRACT_FILES);
+    git('commit', '--allow-empty', '-m', 'test: setup contract fixture');
+    git('tag', '-a', tag, '-m', tag);
+  };
+  release('ui-desktop-v0.2.12', ['builder', 'parser']);
+  release('ui-desktop-v0.2.17', ['builder', 'parser']);
+  release('ui-desktop-v0.2.22', latestContents);
+  return release;
+}
+
+test('an uncharacterized predecessor reuses the newest byte-identical characterized tag', () => withTempDir((dir) => {
+  const release = setupContractRepo(dir);
+  release('ui-desktop-v0.2.23', ['builder', 'parser']);
+  // Dirty source is deliberately different from the immutable tag objects.
+  writeFileSync(join(dir, SETUP_CONTRACT_FILES[0]), 'uncommitted change');
+  assert.deepEqual(resolvePredecessorSetupParams('ui-desktop-v0.2.23', SETUP_TARGET, { repoDir: dir }),
+    resolvePredecessorSetupParams('ui-desktop-v0.2.22', SETUP_TARGET));
+}));
+
+for (const [index, file] of SETUP_CONTRACT_FILES.entries()) {
+  test(`an uncharacterized predecessor with changed ${file} blocks with characterization guidance`, () => withTempDir((dir) => {
+    const release = setupContractRepo(dir);
+    const contents = ['builder', 'parser'];
+    contents[index] = 'changed contract';
+    release('ui-desktop-v0.2.23', contents);
+    assert.throws(() => resolvePredecessorSetupParams('ui-desktop-v0.2.23', SETUP_TARGET, { repoDir: dir }), (error) => {
+      assert.match(error.message, /ui-desktop-v0\.2\.23/);
+      assert.ok(error.message.includes(file));
+      assert.match(error.message, /characteriz/);
+      return true;
+    });
+  }));
+}
+
+test('contract resolution can use an older matching characterization and fails closed on missing tag objects', () => withTempDir((dir) => {
+  const release = setupContractRepo(dir, ['new builder', 'new parser']);
+  release('ui-desktop-v0.2.23', ['builder', 'parser']);
+  assert.deepEqual(resolvePredecessorSetupParams('ui-desktop-v0.2.23', SETUP_TARGET, { repoDir: dir }),
+    resolvePredecessorSetupParams('ui-desktop-v0.2.17', SETUP_TARGET));
+  assert.throws(() => resolvePredecessorSetupParams('ui-desktop-v0.2.99', SETUP_TARGET, { repoDir: dir }), /ui-desktop-v0\.2\.99.*missing tag object/);
+  release('ui-desktop-v0.2.24', ['builder', 'parser']);
+  execFileSync('git', ['rm', '--', SETUP_CONTRACT_FILES[1]], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', 'test: remove contract consumer'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['tag', 'ui-desktop-v0.2.25'], { cwd: dir, stdio: 'pipe' });
+  assert.throws(() => resolvePredecessorSetupParams('ui-desktop-v0.2.25', SETUP_TARGET, { repoDir: dir }), /ui-desktop-v0\.2\.25.*setupThisComputer\.ts/);
+}));
 
 test('upgrade fails when the service keeps running the previous CLI (stale daemon)', () => {
   assert.ok(evaluateUpgrade(UPGRADE_OK()).every((entry) => entry.pass));
