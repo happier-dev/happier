@@ -518,6 +518,8 @@ export function createMachinePresenceSnapshotSource<T>(
     let detach: (() => void) | null = null;
     const notify = () => { for (const listener of [...listeners]) listener(); };
     const subscribe = (listener: () => void) => {
+        // Empty slots still return their summary, without attaching to any presence source.
+        if (!subscribeToMembership && !observedTargets.some(target => target.machineIds?.length !== 0)) return () => {};
         listeners.add(listener);
         if (detach) {
             // Like a fresh attachment, re-sample what may have moved since this subscriber's render read.

@@ -36,7 +36,9 @@ export function scopeStorageSubscriptions(store: StoreApi<StorageState>): Scoped
             let paths: readonly (readonly PropertyKey[])[] = [];
             let stop: (() => void) | undefined;
             let notify: Parameters<StoreApi<StorageState>['subscribe']>[0] | undefined;
-            const bind = () => subscribeStoragePaths(paths, event => { if (event.kind === 'state') notify?.(event.state, event.previous); });
+            const bind = () => paths.length > 0
+                ? subscribeStoragePaths(paths, event => { if (event.kind === 'state') notify?.(event.state, event.previous); })
+                : undefined;
             const read = (state: StorageState, select: (state: StorageState) => T | StorageState, scope?: StorageSubscriptionScope) => {
                 const keys = new Set<keyof StorageState>();
                 let wholeState = false;

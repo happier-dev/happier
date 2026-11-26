@@ -78,7 +78,7 @@ function useCredentialScopeEntries(
     serverIds: readonly (string | null | undefined)[],
     projectionLifecycle?: ServerCredentialAccountScopeProjectionLifecycle,
 ): ReadonlyMap<string, ScopeEntry> {
-    const profilesGeneration = useServerProfilesGeneration();
+    const profilesGeneration = useServerProfilesGeneration(serverIds.some(serverId => Boolean(serverId?.trim())));
     // The runtime renders this frame on admission/renewal. Rebind to that exact
     // Sync lifetime without reading or subscribing to ambient Account custody.
     const embedded = isEmbedWindowContext();
@@ -157,6 +157,8 @@ function useCredentialScopeEntries(
                 return new Map([...current].filter(([serverId]) => trackedServerIds.has(serverId)));
             });
         }
+
+        if (trackedServerIds.size === 0) return;
 
         const publishEntry = (serverId: string, entry: ScopeEntry): void => {
             setEntries((current) => {

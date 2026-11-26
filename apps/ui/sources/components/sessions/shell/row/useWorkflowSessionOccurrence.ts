@@ -10,7 +10,7 @@ import { projectWorkflowFlow } from '@/components/workflows/flow/workflowFlowPro
 import { formatWorkflowOccurrenceLabel, projectWorkflowFlowRunStates, projectWorkflowInvocationStructure } from '@/components/workflows/run/workflowInvocationStructure';
 import { isTerminalWorkflowInvocationLifecycle } from '@/components/work/status/resolveWorkStatusTone';
 import { isWorkflowAttentionInvocation, isWorkflowRunStopPending } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { getPreferredLanguage, subscribePreferredLanguage } from '@/text/preferredLanguage';
 
 type Occurrence = Readonly<{ title: string; lifecycle?: WorkflowInvocationLifecycleV1; blockKind?: string; runStopPending?: boolean }>;
 type Facts = WorkflowRunInvocations['factsById'];
@@ -71,18 +71,23 @@ function projectConversationOccurrences(row: WorkflowRunRow, facts: Facts, langu
 export function useWorkflowSessionOccurrence(params: Readonly<{
     sessionId: string; origin?: SessionAwarenessOriginV1; serverId?: string; enabled: boolean;
 }>): Occurrence | null {
-    const language = usePreferredLanguage();
-    const scope = storage(state => state.profileScope);
-    const runId = params.enabled && params.origin?.kind === 'run_step' && scope
+    const candidateRunId = params.enabled && params.origin?.kind === 'run_step' ? params.origin.runId : null;
+    const scope = storage(state => candidateRunId ? state.profileScope : null);
+    const runKey = candidateRunId && scope
         && (!params.serverId || areServerProfileIdentifiersEquivalent(scope.serverId, params.serverId))
-        ? params.origin.runId ?? null : null;
-    const row = storage(state => runId ? state.workflowRunsById[workflowRunStoreKey(runId)] ?? null : null);
-    const facts = storage(state => runId ? state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.factsById ?? null : null);
+        ? workflowRunStoreKey(candidateRunId) : null;
+    const row = storage(state => runKey ? state.workflowRunsById[runKey] ?? null : null,
+        runKey ? { workflowRunsById: [runKey] } : undefined);
+    const facts = storage(state => runKey ? state.workflowRunInvocationsByRunId[runKey]?.factsById ?? null : null,
+        runKey ? { workflowRunInvocationsByRunId: [runKey] } : undefined);
+    const hasOccurrenceInputs = Boolean(row?.detail && facts);
+    const subscribeLanguage = React.useCallback((listener: () => void) =>
+        hasOccurrenceInputs ? subscribePreferredLanguage(listener) : () => {}, [hasOccurrenceInputs]);
+    const readLanguage = () => hasOccurrenceInputs ? getPreferredLanguage() : null;
+    const language = React.useSyncExternalStore(subscribeLanguage, readLanguage, readLanguage);
     return React.useMemo(() => {
-        if (!runId) return null;
         // Without exact evidence, keep the canonical saved Session title. History
         // must not replace the authored step name with a generic Workflow label.
-        return (row && facts ? projectConversationOccurrences(row, facts, language).get(params.sessionId) : null)
-            ?? null;
-    }, [facts, language, params.sessionId, row, runId]);
+        return row && facts && language ? projectConversationOccurrences(row, facts, language).get(params.sessionId) ?? null : null;
+    }, [facts, language, params.sessionId, row]);
 }

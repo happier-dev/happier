@@ -80,6 +80,114 @@ describe('reactive Machine presence', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('attaches no default Session-row readers and wakes only the row that acquires demand', async () => {
+        const [{ renderScreen }, subscriptions, locale, requests, homeRuntime, { sessionListRuntimeClock },
+            { useSessionProjectScmSummarySelection }, { useWorkflowSessionOccurrence }, { useSessionManagedWakeStatus },
+            { projectManager }, { createSessionFixture }, { workflowRunRowFromSummary },
+            { createWorkflowRunSummaryFixture, createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture },
+            { WorkflowRunGetResultV1Schema }] = await Promise.all([
+            import('@/dev/testkit/render/renderScreen'), import('@/sync/domains/state/storageSubscriptions'),
+            import('@/text/preferredLanguage'), import('@/sync/domains/machines/reachability/machineReachability'),
+            import('@/sync/domains/server/serverRuntime'), import('@/hooks/session/sessionListRuntimeClock'),
+            import('@/sync/store/scmHooks'), import('@/components/sessions/shell/row/useWorkflowSessionOccurrence'),
+            import('@/components/sessions/pending/useSessionManagedWakeStatus'),
+            import('@/sync/runtime/orchestration/projectManager'), import('@/dev/testkit/fixtures/sessionFixtures'),
+            import('@/sync/store/domains/workflowRuns'), import('@/dev/testkit/fixtures/workflowRunFixtures'),
+            import('@happier-dev/protocol/workflows/actionsV1'),
+        ]);
+        const storeSubscribe = vi.spyOn(subscriptions, 'subscribeStoragePaths');
+        const localeSubscribe = vi.spyOn(locale, 'subscribePreferredLanguage');
+        const subscribeReachability = requests.subscribeMachineRequestReachability;
+        let liveReachabilityReaders = 0;
+        const reachabilitySubscribe = vi.spyOn(requests, 'subscribeMachineRequestReachability').mockImplementation(listener => {
+            liveReachabilityReaders++;
+            const stop = subscribeReachability(listener);
+            return () => { liveReachabilityReaders--; stop(); };
+        });
+        const clockSubscribe = vi.spyOn(sessionListRuntimeClock, 'subscribeWake');
+        const homeSubscribe = vi.spyOn(homeRuntime, 'subscribeActiveServer');
+        const profileSubscribe = vi.spyOn(serverProfiles, 'subscribeServerProfiles');
+        const scmSubscribe = vi.spyOn(projectManager, 'subscribeScmSnapshots');
+        const readers = [storeSubscribe, localeSubscribe, reachabilitySubscribe, clockSubscribe, homeSubscribe, profileSubscribe, scmSubscribe];
+        const attachmentCounts = () => readers.map(spy => spy.mock.calls.length);
+        const rowIds = Array.from({ length: 24 }, (_, index) => `row-${index}`);
+        const renders = new Map<string, number>();
+        const machine = createMachineFixture({ id: 'row-machine', active: false, activeAt: 0,
+            managedInputRuntime: { nativeReady: false, wakeState: 'starting', state: 'starting' } });
+        const sessionId = rowIds[0]!;
+        const session = createSessionFixture({ id: sessionId, serverId,
+            metadata: { machineId: machine.id, path: '/repo', host: 'host', sessionDirectoryV1: { v: 1, kind: 'managed' } } });
+        const run = createWorkflowRunSummaryFixture({ id: 'row-run' });
+        const definition = createWorkflowDefinitionFixture();
+        const detail = WorkflowRunGetResultV1Schema.parse({ run, definition, authoredDefinition: definition,
+            callerAccess: { canEdit: true }, checkpoint: null, acceptedContext: {
+                startedBy: 'user', source: { kind: 'inline' }, inputs: {}, machineId: machine.id,
+                executionTarget: { kind: 'session' }, materializedLeaves: [], frozenChildren: {},
+                workspaceTarget: { project: { machineId: machine.id, directory: '/repo', checkoutRootPath: '/repo' } },
+                origin: { kind: 'direct' },
+            } });
+        const invocation = createWorkflowInvocationIndexFixture({ id: 'row-step', runId: run.id, lifecycle: 'running' });
+        const createRow = (id: string, enabled: boolean) => createSessionListRenderableSessionFixture({
+            id, encryptionMode: 'plain', active: false, pendingCount: enabled ? 1 : 0,
+            ...(enabled ? { pendingActivationAuthorization: { status: 'waiting', requestId: 'accepted-input', requestedAt: 10,
+                managedWakeTargetV1: { homeId: serverId, managedId: 'managed-row', enrolledMachineId: machine.id,
+                    expectedIntentRevision: 1, reason: 'admitted-work',
+                    origin: { kind: 'session-input', session: { homeId: serverId, sessionId: id },
+                        pendingRequestId: 'accepted-input', requestedAt: 10 } } } } : {}),
+        });
+        let machineState: string | null | undefined;
+        let stepTitle: string | undefined;
+        const Row = React.memo(({ id, enabled, homeId }: { id: string; enabled: boolean; homeId: string }) => {
+            renders.set(id, (renders.get(id) ?? 0) + 1);
+            useSessionProjectScmSummarySelection(enabled ? id : null, homeId, snapshot => snapshot);
+            const occurrence = useWorkflowSessionOccurrence({ sessionId: id, serverId: homeId, enabled,
+                origin: enabled ? { kind: 'run_step', runId: run.id } : undefined });
+            const wake = useSessionManagedWakeStatus(createRow(id, enabled), homeId);
+            if (enabled) {
+                machineState = wake?.managedWakeMachine?.state;
+                stepTitle = occurrence?.title;
+            }
+            return null;
+        });
+        const rows = (enableFirst: boolean) => <>{rowIds.map((id, index) =>
+            <Row key={id} id={id} enabled={enableFirst && index === 0} homeId={index < 12 ? serverId : 'other-home'} />)}</>;
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        storage.setState({ profileScope: { serverId, accountId: 'account-a' } });
+        storage.getState().applySessions([session]);
+        storage.getState().upsertWorkflowRuns([{ ...workflowRunRowFromSummary(run, null), detail }]);
+        storage.getState().upsertWorkflowRunInvocation({ runId: run.id, parentRevision: run.revision,
+            invocation: { ...invocation, opened: { index: invocation, parentRevision: run.revision,
+                progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step', attempt: invocation.attempt,
+                    logicalInvocationRecordId: invocation.id, invocationPath: { blockId: 'analyze', scope: [] },
+                    execution: { kind: 'session', sessionId, localInputId: 'row-input' } } } } });
+        readers.forEach(spy => spy.mockClear());
+        const screen = await renderScreen(rows(false));
+        try {
+            expect.soft(attachmentCounts()).toEqual([0, 0, 0, 0, 0, 0, 0]);
+            expect([...renders.values()]).toEqual(rowIds.map(() => 1));
+            readers.forEach(spy => spy.mockClear());
+            await screen.update(rows(true));
+            await waitForHomeGovernance(() => expect(machineState).toBe('starting'));
+            expect(stepTitle).toBeTruthy();
+            expect(scmSubscribe).toHaveBeenCalledTimes(1);
+            expect(localeSubscribe).toHaveBeenCalledTimes(1);
+            expect(liveReachabilityReaders).toBe(1);
+            const firstRenders = renders.get(sessionId)!;
+            await act(async () => locale.commitPreferredLanguage(locale.getPreferredLanguage() === 'fr' ? 'en' : 'fr'));
+            expect(renders.get(sessionId)).toBe(firstRenders + 1);
+            await act(async () => storage.getState().applyMachines([{ ...machine,
+                managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep' } }], false, { sourceServerId: serverId }));
+            expect(machineState).toBe('asleep');
+            expect(renders.get(sessionId)).toBe(firstRenders + 2);
+            expect(rowIds.slice(1).map(id => renders.get(id))).toEqual(rowIds.slice(1).map(() => 1));
+        } finally {
+            await screen.unmount();
+            readers.forEach(spy => spy.mockRestore());
+            locale.commitPreferredLanguage(null);
+            projectManager.removeSession(sessionId);
+        }
+    });
+
     it('keeps empty Machine observations inert while a real Home credential resolves', async () => {
         let observations = 0;
         const hook = await renderHook(() => {
