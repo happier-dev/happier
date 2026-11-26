@@ -31,11 +31,14 @@ describe('session capability notice sidecar', () => {
     } })).toBeNull();
   });
   it('preserves the sidecar through the stored transcript reader without requiring it to be valid', () => {
-    for (const capabilityNoticeV1 of [notice, { ...notice, v: 2 }]) {
+    const correlated = { ...notice, items: [{ ...notice.items[0], requestId: '8888511a-7215-4f28-a706-ce09732d4194' }] };
+    for (const capabilityNoticeV1 of [notice, correlated, { ...notice, v: 2 }]) {
       const record = { role: 'agent', content: { type: 'event', id: 'notice', data: {
         type: 'message', message: 'Still visible', capabilityNoticeV1,
       } } };
-      expect(TranscriptRawRecordV1Schema.parse(record)).toEqual(record);
+      const parsed = TranscriptRawRecordV1Schema.parse(record);
+      expect(parsed).toEqual(record);
+      expect(read(record.content.data)).toEqual(capabilityNoticeV1.v === 1 ? capabilityNoticeV1 : null);
     }
   });
 });

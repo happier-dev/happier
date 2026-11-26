@@ -70,7 +70,10 @@ it.each(['claude', 'opencode'] as const)('never discovers daemon-home %s servers
       dispatch: async operation => ({ ok: true, result: await owner.dispatch(operation, context) }) });
     try {
       const preparation = await runner.port.prepare({ catalog: { v: 1, servers: [], bindings: [] }, directory: home });
-      await expect(preparation.discoverNativeServers()).rejects.toMatchObject({ code: 'requester_native_discovery_unavailable' });
+      await expect(preparation.discoverNativeServers()).rejects.toMatchObject({
+        code: 'requester_native_discovery_unavailable', retryable: false,
+        details: { requestId: preparation.preparationId },
+      });
     } finally { await runner.dispose(); }
     expect(nativeReads).toBe(0);
     allowNativeAccountState = true;

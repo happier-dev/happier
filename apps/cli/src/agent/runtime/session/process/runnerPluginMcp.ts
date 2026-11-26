@@ -46,7 +46,8 @@ export function createRunnerPluginMcpPort(input: Readonly<{
             if (result.kind !== 'mcp.plugin.discovered') throw new Error('plugin_mcp_discovery_unavailable');
             lifetime.throwIfAborted();
             if (result.unavailableReason) throw new PluginError({ code: result.unavailableReason,
-              message: 'Native MCP discovery is unavailable for this requester', retryable: false });
+              message: 'Native MCP discovery is unavailable for this requester', retryable: false,
+              details: { requestId: preparationId } });
             return result.detectedServers;
           },
           async materialize(servers) {

@@ -3,11 +3,17 @@ import { readSessionCapabilityNoticeV1, type SessionCapabilityNoticeV1 } from '@
 import { mcpServerRoute, MCP_COLLECTION_ROUTE } from '@/components/settings/mcpServers/collection/mcpServerCollectionModel';
 import { SKILLS_COLLECTION_ROUTE, skillDisplayName, skillHref } from '@/components/settings/skills/skillsCollectionModel';
 import { describeCapabilityNoticeReason, readCapabilityNoticeReason } from '@/components/capabilities/status/capabilityNoticeReason';
+import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { t } from '@/text';
 
 type NoticeItem = SessionCapabilityNoticeV1['items'][number];
 
-export type CapabilityNoticePresentation = Readonly<{ lines: readonly string[]; href: string; linkLabel: string }>;
+export type CapabilityNoticePresentation = Readonly<{
+  lines: readonly string[];
+  href: string;
+  linkLabel: string;
+  technicalDetails: readonly TechnicalDetailsLine[];
+}>;
 
 function describeReason(item: NoticeItem): string | null {
   const reason = readCapabilityNoticeReason(item);
@@ -30,10 +36,14 @@ export function describeCapabilityNotice(event: unknown): CapabilityNoticePresen
   });
   const [first] = notice.items;
   const itemId = notice.items.length === 1 ? first.itemId : undefined;
+  const technicalDetails = notice.items.flatMap(item => item.requestId ? [
+    { key: `${item.requestId}:code`, label: t('approvals.failureTechnicalLabels.causeCode'), value: item.code },
+    { key: `${item.requestId}:id`, label: t('approvals.failureTechnicalLabels.requestId'), value: item.requestId },
+  ] : []);
   if (first.kind === 'prompt_library') {
-    return { lines, href: '/settings/prompts', linkLabel: t('promptLibrary.library') };
+    return { lines, href: '/settings/prompts', linkLabel: t('promptLibrary.library'), technicalDetails };
   }
   return first.kind === 'mcp_server'
-    ? { lines, href: itemId ? mcpServerRoute(itemId) : MCP_COLLECTION_ROUTE, linkLabel: t('capabilities.notice.openMcp') }
-    : { lines, href: itemId ? skillHref(itemId) : SKILLS_COLLECTION_ROUTE, linkLabel: t('capabilities.notice.openSkills') };
+    ? { lines, href: itemId ? mcpServerRoute(itemId) : MCP_COLLECTION_ROUTE, linkLabel: t('capabilities.notice.openMcp'), technicalDetails }
+    : { lines, href: itemId ? skillHref(itemId) : SKILLS_COLLECTION_ROUTE, linkLabel: t('capabilities.notice.openSkills'), technicalDetails };
 }

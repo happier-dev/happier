@@ -252,17 +252,19 @@ describe('resolveRunnerMcpServers catalog admission', () => {
     const homeId = 'srv_test-home';
     const profileId = 'test-home';
     const notices: unknown[] = [];
+    const discoveryRequestId = '8888511a-7215-4f28-a706-ce09732d4194';
     const requesterSession: HappyMcpSessionClient = {
       ...session(),
       getServerBinding: () => ({ serverId: profileId, serverUrl: 'https://test-home.example.test' }),
       enqueueSessionEventCommitted: async event => { notices.push(event); return { persisted: true, delivered: true }; },
       ...(accountId === 'member' ? { getPluginMcpPort: () => ({
         prepare: async () => ({
-          preparationId: '8888511a-7215-4f28-a706-ce09732d4194',
+          preparationId: discoveryRequestId,
           items: [],
           discoverNativeServers: async () => {
             const { PluginError } = await import('@happier-dev/plugin-sdk');
-            throw new PluginError({ code: 'requester_native_discovery_unavailable', message: 'Native discovery unavailable' });
+            throw new PluginError({ code: 'requester_native_discovery_unavailable', message: 'Native discovery unavailable',
+              details: { requestId: discoveryRequestId } });
           },
           materialize: async servers => servers,
           dispose: async () => {},
@@ -315,7 +317,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       expect(materialReads).toBeGreaterThan(0);
       if (accountId === 'member') {
         expect(notices.map(readSessionCapabilityNoticeV1)).toContainEqual(expect.objectContaining({
-          items: [expect.objectContaining({ code: 'requester_native_discovery_unavailable' })],
+          items: [expect.objectContaining({ code: 'requester_native_discovery_unavailable', requestId: discoveryRequestId })],
         }));
       }
       const sdkServers = await resolveAgentSessionMcpLaunchConfigs(admitted.mcpServers, {});

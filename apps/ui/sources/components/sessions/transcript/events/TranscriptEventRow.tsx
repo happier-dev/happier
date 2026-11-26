@@ -11,6 +11,7 @@ import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { AgentTransitionDividerRow } from '@/components/sessions/transcript/agentTransition/AgentTransitionDividerRow';
 import { Text } from '@/components/ui/text/Text';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
@@ -718,6 +719,13 @@ function TranscriptEventRowContent(props: TranscriptEventRowProps & Readonly<{ c
                         </Text>
                     ) : null}
                     {capabilityNotice && props.navigationEnabled !== false ? <CapabilityNoticeLink notice={capabilityNotice} /> : null}
+                    {capabilityNotice?.technicalDetails.length && props.navigationEnabled !== false ? (
+                        <TechnicalDetailsDisclosure
+                            title={t('approvals.technicalDetails')}
+                            testID="transcript-event-capability-notice-technical-details"
+                            lines={capabilityNotice.technicalDetails}
+                        />
+                    ) : null}
                     {props.footer}
                     {showTerminalComposerClearAction ? (
                         <TerminalComposerClearEventAction

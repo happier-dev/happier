@@ -5670,6 +5670,13 @@ existing catalog snapshot. Read-only Session tool projection still denies
 unclassified tools; checking an `allow_read_only` server first supplies the read
 annotations needed to expose its read tools after restart with resume.
 
+In unreleased 0.3 development, a requester native MCP discovery warning can
+carry the discovery preparation's UUID as an optional request ID on the
+existing capability notice. The Session transcript shows it in Technical
+details. Older stored notices remain readable, and older transcript readers
+drop the optional presentation field. The request ID carries no authority
+and does not affect notice deduplication.
+
 ## Bot template format (0.3 development)
 
 `bot_template.v1` uses one closed Protocol schema for private drafts and released

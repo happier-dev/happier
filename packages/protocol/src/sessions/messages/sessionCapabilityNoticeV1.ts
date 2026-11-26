@@ -13,6 +13,7 @@ export const SessionCapabilityNoticeV1Schema = lazyZodSchema(() => z.strictObjec
     itemId: z.optional(z.string().check(z.minLength(1))),
     code: z.string().check(z.minLength(1)),
     detail: z.optional(z.string().check(z.minLength(1))),
+    requestId: z.optional(z.uuid()),
   })),
 }));
 export type SessionCapabilityNoticeV1 = z.infer<typeof SessionCapabilityNoticeV1Schema>;

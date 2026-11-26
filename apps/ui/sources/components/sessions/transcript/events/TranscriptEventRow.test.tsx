@@ -969,6 +969,17 @@ describe('TranscriptEventRow runtime-config-outcome', () => {
             type: 'message', message, capabilityNoticeV1: { v: 1, items },
         }) as unknown as AgentEvent;
 
+        it('reveals the native MCP refusal and its request ID in Technical details', async () => {
+            const requestId = '8888511a-7215-4f28-a706-ce09732d4194';
+            const screen = await renderScreen(<TranscriptEventRow event={notice([
+                { kind: 'mcp_server', name: 'Native MCP discovery', code: 'requester_native_discovery_unavailable', requestId },
+            ])} />);
+            expect(screen.getTextContent()).not.toContain(requestId);
+            await screen.pressByTestIdAsync('transcript-event-capability-notice-technical-details');
+            expect(screen.getTextContent()).toContain(requestId);
+            expect(screen.getTextContent()).toContain('requester_native_discovery_unavailable');
+        });
+
         it('says in plain words which server was left out and why, and opens that server', async () => {
             const screen = await renderScreen(<TranscriptEventRow event={notice([
                 { kind: 'mcp_server', name: 'Linear', itemId: 'srv 1', code: 'missing_value_ref', detail: 'env:LINEAR_API_KEY' },

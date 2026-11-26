@@ -1,5 +1,5 @@
 import { formatMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { McpServerConfig } from '@/agent';
 import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -293,6 +293,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     selectedServers?: readonly Readonly<{ serverId: string; wireName: string }>[];
     materializedServers?: readonly Readonly<{ serverId?: string; wireName: string }>[];
     refusalCode?: string;
+    requestId?: string;
   }>) => {
     const now = performance.now();
     logger.infoFile('[mcp] Startup phase', { sessionId: params.session.sessionId, phase,
@@ -496,8 +497,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     const nativeServers = params.detectedMcpServers ?? (daemonPluginPreparation
       ? await daemonPluginPreparation.discoverNativeServers().catch(error => {
         if (!isPluginError(error) || error.code !== 'requester_native_discovery_unavailable') throw error;
+        const requestId = readPluginErrorRequestIdV1(error);
         nativeDiscoveryNotices.push({ kind: 'mcp_server', name: 'Native MCP discovery', code: error.code,
-          detail: 'Native MCP configuration cannot be discovered as this member. Selected MCP servers remain available.' });
+          detail: 'Native MCP configuration cannot be discovered as this member. Selected MCP servers remain available.',
+          ...(requestId === undefined ? {} : { requestId }) });
         return [];
       })
       : pluginRegistry?.discoverMcpServersForDetection && params.agentId
@@ -517,6 +520,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     recordStartupPhase('native_discovery', {
       ...(nativeNames.length > 0 ? { selectedServers: selectedServerFacts(resolvedSelection) } : {}),
       refusalCode: nativeDiscoveryNotices[0]?.code,
+      requestId: nativeDiscoveryNotices[0]?.requestId,
     });
   }
   if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
