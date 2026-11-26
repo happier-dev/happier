@@ -6,6 +6,7 @@ import { formatHappierDataBytes, useHappierCollection, type CompositionSegment }
 
 import { formatStorageDay } from '@/components/machines/storage/storageCategoryText';
 import type { ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
+import { presentArtifactActionFailure } from '@/components/artifacts/artifactActionFailure';
 import { StorageCapacityRow } from '@/components/storage/StorageCapacityRow';
 import { StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
@@ -22,6 +23,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 /**
@@ -91,6 +93,7 @@ export function DiscussionStorageView(props: Readonly<{
     participant?: boolean;
     /** The read failed and nothing is kept: the sentence says so and offers Try again. */
     onRetry?: (() => void) | null;
+    failure?: ArtifactActionFailure | null;
     /** Reads the owner's next page; `null` when it has none. */
     onMore?: (() => void) | null;
     loadingMore?: boolean;
@@ -105,6 +108,7 @@ export function DiscussionStorageView(props: Readonly<{
     onDownload?: ((file: DiscussionStorageFile) => void) | null;
     onRemove: (file: DiscussionStorageFile) => void;
 }>): React.ReactElement {
+    const { failure } = props;
     usePreferredLanguage();
     const { theme } = useUnistyles();
     const phone = useDeviceType() === 'phone';
@@ -148,7 +152,12 @@ export function DiscussionStorageView(props: Readonly<{
             {props.onRetry ? (
                 <StorageSaySection testID="storage:discussion:say" lead={t('artifacts.browser.storageView.say.failed')}
                     text={t('artifacts.browser.storageView.say.failedBody')}
-                    trailing={<TextLinkButton testID="storage:discussion:retry" tone="strong" label={t('common.retry')} onPress={props.onRetry} />} />
+                    trailing={<>
+                        <TextLinkButton testID="storage:discussion:retry" tone="strong" label={t('common.retry')} onPress={props.onRetry} />
+                        {failure ? <> <TextLinkButton testID="storage:discussion:first-failed:details"
+                            label={t('approvals.technicalDetails')}
+                            onPress={() => showActionFailureDetails(presentArtifactActionFailure(failure, ''))} /></> : null}
+                    </>} />
             ) : (
                 // The count is the scope's own (every page); a Home that does not count says the size alone.
                 <StorageSaySection testID="storage:discussion:say"

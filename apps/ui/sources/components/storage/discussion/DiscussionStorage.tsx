@@ -158,7 +158,7 @@ function DiscussionStorage(props: Readonly<{
         <DiscussionStorageView totalBytes={read.inventory?.totalBytes ?? null} accountTotalBytes={props.accountTotalBytes}
             fileCount={read.inventory?.kinds?.discussionAttachments?.itemCount ?? null}
             files={files} presentation={props.presentation} discussionTitle={title} participant={props.participant === true} onRetry={failed ? read.retry : null} onMore={read.more}
-            loadingMore={read.loadingMore} moreFailure={read.moreFailure} namesFailure={exact.failure} onRetryNames={exact.retry}
+            failure={read.failure} loadingMore={read.loadingMore} moreFailure={read.moreFailure} namesFailure={exact.failure} onRetryNames={exact.retry}
             busy={removal.busy} onShowInMessage={showInMessage} onRemove={remove} />
     );
 }

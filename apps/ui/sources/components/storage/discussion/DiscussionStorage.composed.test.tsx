@@ -211,6 +211,7 @@ let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: 
 
 async function serve(options: Readonly<{
   offWindowReadable?: boolean;
+  refuseFirstOnce?: boolean;
   /** The Home refuses the first ask for the next page with its typed cursor refusal. */
   refuseNextOnce?: boolean;
   /** The first exact message read fails with the Discussion owner's typed refusal. */
@@ -252,6 +253,9 @@ async function serve(options: Readonly<{
           return Response.json({ ...summary(1_840 * MB), page: { items: [] } });
         }
         scopedReads.push(request.url);
+        if (options.refuseFirstOnce && scopedReads.length === 1) {
+          return Response.json({ error: 'storage_size_out_of_range' }, { status: 503 });
+        }
         const second = request.url.searchParams.get('cursor') === 'page-2';
         if (second && refuseNext) {
           refuseNext = false;
@@ -714,6 +718,38 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         expect(header?.subpage?.title).toBe('artifacts.browser.storageView.title');
         expect(scopedReads).toHaveLength(1);
         expect(scopedReads.every((url) => url.searchParams.get('discussionId') === DISCUSSION)).toBe(true);
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('shows the first inventory refusal and retries the first page', async () => {
+    const disconnect = await serve({ refuseFirstOnce: true });
+    try {
+      const screen = await renderScreen(
+        <AppPaneProvider>
+          <SurfaceStateSizeProvider size="pane">
+            <DiscussionDetailsPanel actions={[]} storage={source()} />
+          </SurfaceStateSizeProvider>
+        </AppPaneProvider>,
+      );
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('discussion-details-storage')).not.toBeNull());
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('discussion-details-storage'), 'onPress'); });
+        await layOut(screen);
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:discussion:retry')).not.toBeNull());
+        expect(screen.findHostByTestId(`storage:discussion:file:${VIDEO}`)).toBeNull();
+        const { Modal } = await import('@/modal');
+        const details = screen.findHostByTestId('storage:discussion:first-failed:details');
+        expect(details).not.toBeNull();
+        await act(async () => { invokeTestInstanceHandler(details, 'onPress'); });
+        expect(JSON.stringify(vi.mocked(Modal.alert).mock.calls.at(-1))).toContain('storage_size_out_of_range');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:discussion:retry'), 'onPress'); });
+        await vi.waitFor(() => expect(screen.findHostByTestId(`storage:discussion:file:${VIDEO}`)).not.toBeNull());
+        expect(scopedReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, null]);
       } finally {
         await screen.unmount();
       }
