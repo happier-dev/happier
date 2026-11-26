@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
@@ -7,6 +8,17 @@ import { createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixt
 import { Modal } from '@/modal';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { t } from '@/text';
+
+const push = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push } }).module);
 
 /**
  * The configurator outlives the picker that opened it (lab m-pick): the host closes first, then the
@@ -252,5 +264,76 @@ describe('useManagedMachineSelectionOffers', () => {
         metadata: { ...machine.metadata!, displayName: 'Renamed Mac' } }], false, { sourceServerId: 'server-a' }));
       expect(hook.getCurrent().map(runsOn)).toContain('Renamed Mac');
     } finally { await hook.unmount(); standardCleanup(); storage.setState(beforeState, true); }
+  });
+});
+
+describe('managed machine offers approval navigation', () => {
+  it('publishes only the foreground machine picker commands and opens its preset-read approval like Details', async () => {
+    const homes = createHomeGovernanceHarness();
+    installHomeGovernanceBoundaries(homes);
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { NewSessionMachineSelectionContent } = await import('../NewSessionMachineSelectionContent');
+    try {
+      // The terminal bearer narrows this UI read to Account automation, whose Ask opens a durable approval.
+      const accountId = 'owner';
+      const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId, session: 'terminal-test' })).toString('base64url')}.test`;
+      const serverId = await homes.addHome({ name: 'Build', serverUrl: 'https://managed-offers.test',
+        serverIdentityId: 'srv_managed_offers', accountId, credentials: { token } });
+      const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId };
+      storage.setState({ profileScope: scope, settingsScope: scope });
+      publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+      homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
+      await act(async () => { storage.getState().applySettingsLocal({ managedMachineCreationEnabled: true }); });
+      await homes.requireUiApproval(serverId, 'machines.presets.list');
+      const authority = captureActiveServerAccountScopeLifetime();
+      function Publication() {
+        const commands = useCurrentUiContextComposedCommands();
+        usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+        return null;
+      }
+      function BackgroundCommand() {
+        useCurrentUiContextLocalCommands([{ key: 'page.open', title: 'Open page settings', invoke: () => {} }]);
+        return null;
+      }
+      const pickerProps = { groups: [], selectedMachine: null, selectedServerId: scope.serverId, recentMachines: [],
+        favoriteMachines: [], onSelectMachine: vi.fn(), onSelectScopedMachine: vi.fn(), onSelectManagedMachine: vi.fn() };
+      const surface = (visible: boolean) => <CurrentUiContextCommandsProvider authority={authority}>
+        <Publication /><BackgroundCommand />
+        {visible ? <NewSessionMachineSelectionContent {...pickerProps} maxHeight={400} showSearch={false}
+          currentUiContextCommandScope="placement.machine" currentUiContextForegroundOverlay /> : null}
+      </CurrentUiContextCommandsProvider>;
+      const executor = createDefaultActionExecutor();
+      const readCommands = async () => {
+        const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+        if (!read.ok) throw new Error(`Expected current context, got ${read.errorCode}`);
+        return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+      };
+      const screen = await renderMountedCurrentUiContext(surface(false));
+      try {
+        expect((await readCommands()).map(command => command.title)).toEqual(['Open page settings']);
+        await screen.update(surface(true));
+        const control = 'managed-machine-selection-approval.action';
+        await waitForHomeGovernance(() => expect(screen.findByTestId(control)).not.toBeNull());
+        const [approval] = homes.artifacts(serverId).list();
+        if (!approval) throw new Error('Expected the persisted preset list approval');
+        const expectedRoute = buildApprovalHref(approval.id, scope.serverId);
+        await screen.pressByTestIdAsync(control);
+        expect(push.mock.calls).toEqual([[expectedRoute]]);
+        const inventory = await readCommands();
+        expect(inventory.map(command => command.title).sort()).toEqual([t('common.choose'), t('common.close'), t('approvals.details')].sort());
+        const commandId = inventory.find(command => command.title === t('approvals.details'))!.id;
+        await act(async () => {
+          expect(await executor.execute('ui.current_context.command.invoke', { commandId }, { surface: 'agent' })).toMatchObject({ ok: true });
+        });
+        expect(push.mock.calls).toEqual([[expectedRoute], [expectedRoute]]);
+        await screen.update(surface(false));
+        expect(screen.findByTestId(control)).toBeNull();
+        expect((await readCommands()).map(command => command.title)).toEqual(['Open page settings']);
+        expect(await executor.execute('ui.current_context.command.invoke', { commandId }, { surface: 'agent' })).toMatchObject({ ok: false });
+      } finally { await screen.unmount(); }
+    } finally { standardCleanup(); await homes.reset(); push.mockClear(); }
   });
 });

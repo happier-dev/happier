@@ -189,6 +189,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         <>
         {props.managedMachines === undefined && props.selectedServerId && props.onSelectManagedMachine ?
             <React.Suspense fallback={null}><ManagedMachineSelectionOffers key={props.selectedServerId} serverId={props.selectedServerId}
+                currentUiContextForegroundOverlay={props.currentUiContextForegroundOverlay}
                 onOffers={receiveOffers} onUse={props.onSelectManagedMachine} startsSession={props.managedMachineStartsSession}
                 onConfigure={props.onConfigureManagedMachine} presentConfiguration={props.presentManagedMachineConfiguration} /></React.Suspense> : null}
         <SelectionList

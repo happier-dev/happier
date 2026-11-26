@@ -1,4 +1,5 @@
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import * as React from 'react';
 import { shallow } from 'zustand/shallow';
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
@@ -49,6 +50,7 @@ export type PresentManagedMachineConfiguration = (request: ManagedMachineConfigu
 
 type OffersProps = Readonly<{
     serverId: string;
+    currentUiContextForegroundOverlay?: boolean;
     initialConfiguration?: ManagedMachineConfigurationContinuation;
     onOffers: (serverId: string, offers: readonly ManagedMachineSelectionOffer[], projection: ManagedMachineDestinationProjection) => void;
     onUse: ManagedMachineUse;
@@ -171,6 +173,10 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
     const state = presets.statesByServerId[props.serverId];
     const homeId = getServerProfileById(props.serverId)?.serverIdentityId;
     const router = useRouter();
+    const openApproval = () => router.push(buildApprovalHref(approval.approvalId!, props.serverId) as never);
+    useCurrentUiContextLocalCommands(approval.approvalId ? [{
+        key: 'approval.open', title: t('approvals.details'), invoke: openApproval,
+    }] : [], { foregroundOverlay: props.currentUiContextForegroundOverlay, contextKey: scopeKey });
     const configure = useManagedMachineConfigurator({ serverId: props.serverId, binding,
         initialConfiguration: props.initialConfiguration, onUse: props.onUse, onConfigure: props.onConfigure, startsSession: props.startsSession,
         presentConfiguration: props.presentConfiguration });
@@ -181,7 +187,7 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
     }); }, [offers, binding, state?.loading, state?.error, props.serverId, props.onOffers]);
     return <>
         {approval.approvalId ? <AttentionBanner testID="managed-machine-selection-approval" title={t('approvals.title')} description={t('approvals.status.open')}
-            action={{ label: t('approvals.details'), onPress: () => router.push(buildApprovalHref(approval.approvalId!, props.serverId) as never) }} /> : null}
+            action={{ label: t('approvals.details'), onPress: openApproval }} /> : null}
         {state?.error ? <SurfaceStateCard kind="error" title={t('machinePresets.loadFailed')} diagnosticCode={state.error}
             action={{ label: t('common.retry'), onPress: presets.refresh }} /> : null}
     </>;
