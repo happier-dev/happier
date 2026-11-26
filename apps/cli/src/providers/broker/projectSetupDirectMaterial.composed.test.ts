@@ -1,10 +1,11 @@
 import { expect, it, onTestFinished } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import nacl from 'tweetnacl';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { PROJECT_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import { createExternalActionRequesterServerRequestHeaders, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createRequesterTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { prepareFiniteConnectedAccountProcessEnvironment } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
@@ -14,7 +15,10 @@ import { createAccountSettingsConnectedAccountSecrets, createQualifiedConnectedA
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { resolveSystemToolLaunchPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
-import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { reloadConfiguration } from '@/configuration';
+import { readCurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { listQualifiedConnectedAccountsV4, listQualifiedConnectedAccountGroupsV4, readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -32,6 +36,7 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
   const { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 }: typeof import('../../../../server/sources/app/plugins/availability/currentDeclaration') = await import(server + 'app/plugins/availability/currentDeclaration');
   const { registerTeamCredentialResourceRoutes }: typeof import('../../../../server/sources/app/teams/credentials/registerTeamCredentialResourceRoutes') = await import(server + 'app/teams/credentials/registerTeamCredentialResourceRoutes');
   const { registerExternalActionRoutes }: typeof import('../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes') = await import(server + 'app/api/routes/actions/registerExternalActionRoutes');
+  const { registerPluginAvailabilityRoutes }: typeof import('../../../../server/sources/app/plugins/availability/routes') = await import(server + 'app/plugins/availability/routes');
   const { registerQualifiedConnectedAccountCredentialRoutesV4 }: typeof import('../../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4') = await import(server + 'app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4');
   const { mutateQualifiedConnectedServiceCredential }: typeof import('../../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository') = await import(server + 'app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository');
   const homeId = 'srv_finite_setup_tool';
@@ -44,29 +49,55 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
   const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors.find(value => value.id === 'github-account')!;
   const selected = await createTeamDirectActionMaterialFixture({ manifest: PLUGIN_MANIFEST,
     serviceId: descriptor.id, authenticationModeId: descriptor.authentication.defaultModeId,
-    actionId: 'gh', purposeId: 'github.cli', homeServerIdentityId: homeId });
-  const app = createAuthenticatedTestApp({ authentication: 'real' });
+    actionId: 'gh', purposeId: 'github.cli', homeServerIdentityId: homeId, seedRecipientDeclaration: false });
+  const app = createAuthenticatedTestApp({
+    authentication: 'real', bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1,
+  });
   onTestFinished(() => app.close());
   const statuses: number[] = [];
   app.addHook('onResponse', async (request: { url: string }, reply: { statusCode: number }) => {
     if (request.url.endsWith('/direct-material')) statuses.push(reply.statusCode);
   });
   registerExternalActionRoutes(app);
+  registerPluginAvailabilityRoutes(app);
   registerTeamCredentialResourceRoutes(app);
   registerQualifiedConnectedAccountCredentialRoutesV4(app);
   const serverUrl = await app.listen({ host: '127.0.0.1', port: 0 });
-  const signing = nacl.sign.keyPair();
-  const installationId = crypto.randomUUID();
+  const happyHomeDir = await mkdtemp(join(tmpdir(), 'finite-setup-plugin-'));
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID']);
+  env.patch({ HAPPIER_HOME_DIR: happyHomeDir, HAPPIER_SERVER_URL: serverUrl, HAPPIER_LOCAL_SERVER_URL: '', HAPPIER_ACTIVE_SERVER_ID: '' });
+  reloadConfiguration();
+  onTestFinished(async () => { env.restore(); reloadConfiguration(); await rm(happyHomeDir, { recursive: true, force: true }); });
+  await updateMachineRegistration(() => ({ machineId: selected.machine.id }));
+  const installation = await readCurrentMachineInstallation();
+  if (!installation) throw new Error('Fixture Machine installation is missing');
+  const { installationId, publicKey, privateKey } = installation.identity;
   await db.machine.update({ where: { id: selected.machine.id }, data: {
-    installationId, installationPublicKey: signing.publicKey, operationProtocolCapabilitiesRevision: 1,
+    accountId: selected.custodian.id, installationId, installationPublicKey: Buffer.from(publicKey, 'base64url'), operationProtocolCapabilitiesRevision: 1,
+    operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
   } });
-  await db.pluginMachineMaterialization.create({ data: { accountId: selected.recipient.id, serverIdentityId: homeId,
+  await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.machine.id, accountId: selected.recipient.id,
+    accessLevel: 'view', createdByAccountId: selected.custodian.id } });
+  await db.pluginMachineMaterialization.create({ data: { accountId: selected.custodian.id, serverIdentityId: homeId,
     machineId: selected.machine.id, materializationId: installationId, pluginId: PLUGIN_MANIFEST.id,
     version: PLUGIN_MANIFEST.version, sourceClass: 'bundledFirstParty', portableRelease: false,
     archiveDigestSha256: createReleaseLessDeclarationV1(selected.manifest).manifestDigestSha256,
     uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
   const token = await createAccountTokenForTests(selected.recipient.id, { kind: 'account', authority: 'present_user' });
+  const custodianToken = await createAccountTokenForTests(selected.custodian.id, { kind: 'account', authority: 'present_user' });
   const credentials = { token, encryption: null } as const;
+  const availability = async (action: 'account.plugins.availability.intent.set' | 'account.plugins.availability.intent.read',
+    accountToken: string, input: object) => {
+    const response = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1[action],
+      headers: { authorization: `Bearer ${accountToken}` }, payload: { pluginId: PLUGIN_MANIFEST.id, ...input } });
+    expect(response.statusCode).toBe(200);
+    return response.json();
+  };
+  const readAvailability = async (accountToken: string) =>
+    PluginAvailabilityIntentReadActionOutputV1Schema.parse(await availability('account.plugins.availability.intent.read', accountToken, {}));
+  await availability('account.plugins.availability.intent.set', token, {
+    enabled: true, expectedRevision: null, desiredVersion: null, offlineUiHosting: 'disabled', writableCollections: [],
+  });
   const target = { kind: 'machine' as const, machineId: selected.machine.id };
   const actionId = PROJECT_PREPARE_ACTION_ID_V1;
   const workspace = { serverId: homeId, workspaceId: crypto.randomUUID(), machineId: selected.machine.id, rootPath: '/workspace' };
@@ -75,11 +106,15 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
     const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(root),
       headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: selected.machine.id,
         envelope: { v: 1, requestId, target, input } } });
-    if (issued.statusCode !== 200) throw new Error(`Home refused test Action issuance with HTTP ${issued.statusCode}`);
+    if (issued.statusCode !== 200) {
+      const { error, failureCause } = issued.json();
+      throw new Error(`Home refused test Action ${root} with HTTP ${issued.statusCode}: ${error} (${failureCause?.errorCode ?? 'no cause'})`);
+    }
     const admitted = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
     expect(admitted.binding.accountId).toBe(selected.recipient.id);
+    expect(admitted.binding.custodianAccountId).toBe(selected.custodian.id);
     const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted, serverId: homeId,
-      serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, target: admitted.binding.target, installationId, privateKey: signing.secretKey });
+      serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, target: admitted.binding.target, installationId, privateKey: Buffer.from(privateKey, 'base64url') });
     if (!authorization) throw new Error('Home did not verify the issued Action');
     const context = { serverId: homeId, externalActionExecutionAuthorization: authorization };
     const resolveRequestHeaders = createExternalActionRequesterServerRequestHeaders(context);
@@ -98,8 +133,6 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
   const open = (consumer: Partial<typeof selected.consumer>, proof = signed) =>
     client.open({ ...openRequest(consumer, proof), resolvePlatformOperationRequestHeaders: proof.resolveRequestHeaders });
 
-  const happyHomeDir = await mkdtemp(join(tmpdir(), 'finite-setup-plugin-'));
-  onTestFinished(() => rm(happyHomeDir, { recursive: true, force: true }));
   const controller = createPluginReloadController({ happyHomeDir });
   onTestFinished(() => controller.shutdown());
   const getAccountEncryptionMode = async () => 'plain' as const;
@@ -124,7 +157,12 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
       subscribe: () => ({ dispose() {} }) } });
   const plugin = await createAdmittedPluginRuntimeFixture({ happyHomeDir, controller, runtimeOptions: {
     pluginIds: [PLUGIN_MANIFEST.id], connectedAccounts: runtime.owner,
-    scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() },
+    accountStorageDependencies: {
+      readCredentials: async () => ({ token: custodianToken, encryption: null }),
+      isCurrentAccount: () => true,
+      resolveAccountScopeKey: () => selected.custodian.id,
+      resolveBaseUrl: () => serverUrl,
+    },
   } });
   onTestFinished(plugin.dispose);
   const declarations = resolveSystemToolLaunchPurposeDeclarations(controller.getState().activeRegistry!.contributes);
@@ -137,6 +175,12 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
   const accessRemoved = { code: 'plugin_connected_account_direct_access_removed' };
   await expect(prepare()).rejects.toMatchObject(accessRemoved);
   expect(statuses).toEqual([]);
+  const beforePublication = await open({});
+  await plugin.registry.claimReleaseLessDeclarations();
+  expect((await readAvailability(token)).currentDeclaration).toBeNull();
+  expect(await readAvailability(custodianToken))
+    .toMatchObject({ machineDeclarations: [{ machineId: selected.machine.id, machineInstallationId: installationId }] });
+  statuses.length = 0;
 
   const prepared = await prepare(signed);
   try {
@@ -146,6 +190,7 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
     expect(child.stdout).toBe('');
     expect(statuses).toEqual([200]);
   } finally { prepared.dispose(); }
+  expect(beforePublication).toMatchObject({ ok: false, operationError: { error: 'plugin_declaration_not_found' } });
 
   const materialPath = `/v2/teams/${selected.team.id}/credential-resources/${selected.resource.id}/direct-material`;
   const { teamId: _teamId, ...wrongRequestId } = openRequest({ operationId: 'local-setup-operation' });
@@ -160,20 +205,20 @@ it('delivers signed GitHub Direct material to a finite Project Setup process and
   await expect(open({ purpose: { ...selected.purpose, purpose: 'other-purpose' } })).resolves.toMatchObject(refused);
   const staleVersion = PLUGIN_MANIFEST.version === '0.0.0' ? '0.0.1' : '0.0.0';
   await expect(open({ pluginVersion: staleVersion })).resolves.toMatchObject(refused);
-  const selectionKey = { accountId: selected.recipient.id, pluginId: PLUGIN_MANIFEST.id };
+  const selectionKey = { accountId: selected.custodian.id, pluginId: PLUGIN_MANIFEST.id };
+  const forInstallation = (id: string, manifest = selected.manifest) =>
+    mergeReleaseLessDeclarationV2({ stored: null, declaration: createReleaseLessDeclarationV1(manifest),
+      publisher: { machineId: selected.machine.id, installationId: id } }).stored;
   const altered = { ...selected.manifest, contributes: { ...selected.manifest.contributes,
     systemTools: selected.manifest.contributes.systemTools.map(tool => tool.id !== selected.purpose.consumer.localId ? tool : {
       ...tool, connectedAccountLaunch: { ...tool.connectedAccountLaunch!, service: 'other-service' },
     }) } };
   await db.accountPluginIntent.update({ where: { accountId_pluginId: selectionKey },
-    data: { releaseLessDeclaration: createReleaseLessDeclarationV1(altered) } });
+    data: { releaseLessDeclaration: forInstallation(installationId, altered) } });
   await expect(open({})).resolves.toMatchObject(refused);
-  const declaration = createReleaseLessDeclarationV1(selected.manifest);
-  const forInstallation = (id: string) => mergeReleaseLessDeclarationV2({ stored: declaration, declaration,
-    publisher: { machineId: selected.machine.id, installationId: id } }).stored;
   await db.accountPluginIntent.update({ where: { accountId_pluginId: selectionKey },
     data: { releaseLessDeclaration: forInstallation(crypto.randomUUID()) } });
-  await expect(open({})).resolves.toMatchObject(refused);
+  await expect(open({})).resolves.toMatchObject({ ok: false, operationError: { error: 'plugin_declaration_not_found' } });
   await db.accountPluginIntent.update({ where: { accountId_pluginId: selectionKey },
     data: { releaseLessDeclaration: forInstallation(installationId) } });
 

@@ -22,6 +22,7 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     authenticationModeId?: string;
     deliveryMode?: 'direct' | 'brokered';
     homeServerIdentityId?: string;
+    seedRecipientDeclaration?: boolean;
 }> = {}) {
     const custodian = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
     const recipient = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
@@ -47,8 +48,10 @@ export async function createTeamDirectActionMaterialFixture(options: Readonly<{
     const setDeclaredService = async (serviceRef: string) => await db.accountPluginIntent.update({
         where: { accountId_pluginId: { accountId: recipient.id, pluginId: manifest.id } },
         data: { releaseLessDeclaration: createReleaseLessDeclarationV1(declareManifest(serviceRef)) } });
-    await db.accountPluginIntent.create({ data: { accountId: recipient.id, pluginId: manifest.id, enabled: true, writableCollections: [],
-        desiredVersion: null, releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
+    if (options.seedRecipientDeclaration !== false) {
+        await db.accountPluginIntent.create({ data: { accountId: recipient.id, pluginId: manifest.id, enabled: true, writableCollections: [],
+            desiredVersion: null, releaseLessDeclaration: createReleaseLessDeclarationV1(manifest) } });
+    }
     const sourceAccount = { service: { pluginId: manifest.id, localId: options.serviceId ?? 'cloud' }, accountId: 'custodian-cloud' };
     const contributionContractVersion = 'artifact-example-1';
     const written = await mutateQualifiedConnectedServiceCredential({ accountId: custodian.id,
