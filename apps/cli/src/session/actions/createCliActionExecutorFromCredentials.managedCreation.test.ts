@@ -146,7 +146,7 @@ describe('managed creation preference at CLI Action origination', () => {
         expect(fetch).not.toHaveBeenCalled();
     });
 
-    it('uses only the originating credential scope and never the receiving controller preference', async () => {
+    it('uses only the originating credential scope and refuses reception without an Automation admission owner', async () => {
         const originToken = 'origin-account-token';
         publishPreference('different-account-token', false);
         const outputs: string[] = [];
@@ -170,9 +170,13 @@ describe('managed creation preference at CLI Action origination', () => {
             machineId: 'controller', custodianAccountId: 'controller-account', installationId: 'installation',
             actionId: 'machines.managed.acquire', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43), target,
         } });
-        expect(await harness.executor.execute('machines.managed.acquire', input, { surface: 'ui', authority: 'present_user',
+        const received = await harness.executor.execute('machines.managed.acquire', input, { surface: 'ui', authority: 'present_user',
             runtimeAccountId: 'foreign-requester', externalActionExecutionAuthorization: authorization,
-            externalActionTarget: target, presentUserConfirmation: confirmation })).toMatchObject({ ok: true });
-        expect(outputs).toEqual(['machines.managed.acquire', 'machines.managed.acquire', 'machines.managed.acquire']);
+            externalActionTarget: target, presentUserConfirmation: confirmation });
+        // A structural authorization does not supply the absent credential-backed Automation owner.
+        expect(received).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+            effectAttempted: false, failureCause: { phase: 'action.automations.admission', errorClass: 'Error',
+                errorCode: 'target_unavailable', nativeErrorReason: 'action_automation_owner_unavailable', httpStatus: null } });
+        expect(outputs).toEqual(['machines.managed.acquire', 'machines.managed.acquire']);
     });
 });
