@@ -1305,6 +1305,32 @@ describe('workflow library page anatomy', () => {
             expect(screen.findByTestId('workflow-examples:more')).not.toBeNull();
         }
     });
+    it('keeps first-visit Workflows narrowed by the active Hunt filter and search', async () => {
+        execute.mockImplementation(async (actionId: string) => {
+            if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
+            if (actionId === 'workflow.run.list') return { ok: true, result: { runs: [], metadataByRunId: {} } };
+            return { ok: false, errorCode: 'unexpected', error: 'unexpected' };
+        });
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-home:firstVisit')).not.toBeNull());
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const action = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: storage.getState().profileScope!.serverId };
+        await act(async () => {
+            expect(await action.execute('workflow.library.view.set', { filters: { view: 'hunts' } }, context))
+                .toMatchObject({ ok: true });
+        });
+        expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
+        expect(screen.findByTestId('workflow-builtins:builtin:repository-review')).not.toBeNull();
+        expect(screen.findByTestId('workflow-builtins:builtin:keep-going')).toBeNull();
+        await act(async () => {
+            await action.execute('workflow.library.view.set', { filters: { view: 'all' }, searchQuery: 'no matching workflow' }, context);
+        });
+        expect(screen.findByTestId('workflows-home:firstVisit')).toBeNull();
+        expect(screen.findByTestId('workflows-home:noMatch')).not.toBeNull();
+        await act(async () => { await action.execute('workflow.library.view.reset', {}, context); });
+        expect(screen.findByTestId('workflows-home:firstVisit')).not.toBeNull();
+    });
     it('keeps a saved row retained in the window while it is carried, and releases it after', async () => {
         const definitionId = '10000000-0000-4000-8000-000000000011';
         execute.mockImplementation(async (actionId: string) => actionId === 'workflow.definition.list'

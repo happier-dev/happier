@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS, type HappierCollectionWindow } from '@happier-dev/plugin-ui/presentation';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { workflowListFilterFieldsV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
 
 import { useGlobalSearchParams, useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -274,7 +275,8 @@ export function WorkflowsLibraryHome(): React.ReactElement {
         return keys.length === 0 ? undefined : keys;
     }, [carriedRowKey, deepLinkedRowKey]);
 
-    const firstVisit = libraryIsEmpty && history.status === 'loaded' && history.rows.length === 0;
+    const firstVisit = libraryIsEmpty && history.status === 'loaded' && history.rows.length === 0
+        && needle.length === 0 && !workflowListFilterFieldsV1.some(field => field.isActive(libraryView.filters));
     if (firstVisit && !deleted) return <WorkflowsFirstVisit onNewWorkflow={newWorkflow} onImport={importWorkflow} onCreateWithAgent={createWithAgent} />;
 
     const search = <CompactSearchField testID="workflows-home:search" accessibilityLabel={t('workflows.destination.searchPlaceholder')}
