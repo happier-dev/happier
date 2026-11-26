@@ -1020,6 +1020,41 @@ it('keeps the reported reset when pace has no window and labels a truly expired 
   ]);
 });
 
+it('labels a reading that expires while mounted and leaves the other meter untouched', async () => {
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const now = Math.ceil(Date.now() / 60_000) * 60_000 + 10_000;
+  const observedAtMs = now - 4 * 60_000;
+  const resetAtMs = now + 3 * HOUR + 30_000;
+  const meter = { meterId: 'weekly', label: 'Weekly', usedPct: 14, resetAtMs, windowDurationMs: 7 * DAY };
+  const first = quotaRead('early', observedAtMs, [meter], {}, { staleAfterMs: 5 * 60_000 });
+  const other = quotaRead('later', observedAtMs + 30_000, [meter], {}, { staleAfterMs: 5 * 60_000 });
+  vi.useFakeTimers({ now, toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  try {
+    const screen = await renderPlanAccessibility(<WidgetPresentationProvider value={{ size: 'medium',
+      footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
+      <UsageProjectionsWidget {...bodyProps([first, other])} id="usage_projections" testID="proj" />
+    </WidgetPresentationProvider>);
+    try {
+      const otherMeter = () => screen.findHostByTestId('proj.window.later.weekly')!.props;
+      const originalOtherMeter = otherMeter();
+      const quotaReads = () => mountedHome!.requests.filter(request => request.path.includes('/provider-account-usage'));
+      const originalReadCount = quotaReads().length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(59_999); });
+      expect(screen.findByTestId('proj.window.early.weekly.freshness')).toBeFalsy();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expectProjectionRowReading(screen, 'proj.window.early.weekly', 'freshness', [
+        'Weekly', '86% left', t('surfaceState.asOf', { time: formatAsOfTime(observedAtMs, now + 60_000) }),
+        '2h', t('usage.board.plans.paceStale'),
+      ]);
+      expect(otherMeter()).toBe(originalOtherMeter);
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+      expect(otherMeter()).not.toBe(originalOtherMeter);
+      expect(screen.findByTestId('proj.window.later.weekly.freshness')).toBeTruthy();
+      expect(quotaReads()).toHaveLength(originalReadCount);
+    } finally { await screen.unmount(); }
+  } finally { vi.useRealTimers(); }
+});
+
 it('counts a used-up window by its value, even when its reading is past the reading horizon (acceptance r230 #75)', async () => {
   const now = Date.now();
   const read = (accountId: string, resetAtMs: number) => {
