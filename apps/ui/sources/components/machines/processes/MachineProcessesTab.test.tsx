@@ -929,25 +929,20 @@ describe('MachineProcessesTab', () => {
       stops.push(rpc.payload);
       return { status: 'ended', outcomes: [{ ref: 'runner', outcome: 'ended' }] };
     } });
-    const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
-    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
     const approvals = home.artifacts(serverId);
     await act(async () => { chooseMenuItem(screen, 'o:session:refactor', 'stop'); });
-    await vi.waitFor(() => expect(approvals.list()).toHaveLength(1));
-    const first = approvals.list()[0]!;
-    const request = () => ApprovalRequestV2Schema.parse(JSON.parse(approvals.readPlainBody(first.id)!));
-    expect(request()).toMatchObject({ status: 'open', actionId: 'machines.processes.stop',
-      actionArgs: { targets: [{ ref: 'runner', expect: { owner: { kind: 'session', sessionId: 'refactor' } } }] } });
+    await vi.waitFor(() => expect(screen.findByTestId('machine-processes-stop-guest-confirm')).not.toBeNull());
     expect(stops).toHaveLength(0);
-    // Explicit Ask retains durable approval custody, rather than a default-only inline confirmation.
+    expect(approvals.list()).toHaveLength(0);
+    // The person's configured Ask is answered in the existing flow; Cancel never issues Stop.
+    await act(async () => { screen.pressByTestId('machine-processes-stop-guest-cancel'); });
     expect(screen.findByTestId('machine-processes-stop-guest-confirm')).toBeNull();
-    expect((await decideApprovalAsInbox(serverId, first.id, 'cancel')).ok).toBe(true);
-    expect(request().status).toBe('canceled');
     expect(screen.findByTestId('machine-processes-row-o:session:refactor')).not.toBeNull();
     expect(stops).toHaveLength(0);
     await act(async () => { chooseMenuItem(screen, 'o:session:refactor', 'stop'); });
-    await vi.waitFor(() => expect(approvals.list()).toHaveLength(2));
+    await vi.waitFor(() => expect(screen.findByTestId('machine-processes-stop-guest-confirm')).not.toBeNull());
     expect(stops).toHaveLength(0);
+    expect(approvals.list()).toHaveLength(0);
   });
 
   it('keeps Stop session as the alternative inside shared Kill-tree policy without issuing Kill', async () => {
