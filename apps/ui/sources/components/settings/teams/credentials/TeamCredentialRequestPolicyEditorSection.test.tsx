@@ -148,7 +148,7 @@ describe('TeamCredentialRequestPolicyEditorSection', () => {
         expect(screen.findByTestId('team-credential-request-policy-protocol:openai_responses')).toBeNull();
     });
 
-    it('keeps an existing policy visible and explicitly repairable while support is unavailable', async () => {
+    it('keeps an existing policy visible without offering to clear it while support is unavailable', async () => {
         const { TeamCredentialRequestPolicyEditorSection } = await import('./TeamCredentialRequestPolicyEditorSection');
         let latestDraft: TeamCredentialPolicyDraft = {
             ...EMPTY_TEAM_CREDENTIAL_POLICY_DRAFT,
@@ -167,7 +167,8 @@ describe('TeamCredentialRequestPolicyEditorSection', () => {
         const screen = await renderScreen(<ControlledEditor />);
 
         expect(screen.findByTestId('team-credential-request-policy-stored-unsupported')).not.toBeNull();
-        await screen.pressByTestIdAsync('team-credential-request-policy-clear');
-        expect(latestDraft.allowedModelIds).toBeNull();
+        const clear = screen.findByTestId('team-credential-request-policy-clear');
+        expect(clear?.props.accessibilityState?.disabled ?? clear?.props.disabled).toBe(true);
+        expect(latestDraft.allowedModelIds).toEqual(['stored-model']);
     });
 });

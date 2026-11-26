@@ -589,6 +589,8 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             && grant.accessLevel === defaultGrant?.accessLevel
             && grant.canApprovePermissions === defaultGrant?.canApprovePermissions);
 
+    const noTeamContextLabel = t(grants.length === 0 ? 'session.access.private' : 'session.access.noPrimaryTeam');
+
     return {
         query,
         placementPending: differsFromDefault || primaryTeamPolicyUnavailable || contextDecisionError !== null
@@ -609,7 +611,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                 ...(contextUnavailableReason ? { operation: 'error' as const, unavailableReason: contextUnavailableReason }
                     : pendingContextDecision ? { operation: 'saving' as const } : {}),
                 options: [
-                    { teamId: null, label: t('session.access.private'),
+                    { teamId: null, label: noTeamContextLabel,
                         ...(primaryTeamPolicy?.sessionCreationPolicy === 'team_required' ? { blockedReason: {
                             code: 'session_access_team_policy_required', message: t('session.access.required'),
                         } } : primaryTeamPolicyUnavailable && !privateWithoutTeam && contextUnavailableReason ? {
@@ -632,7 +634,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                 ],
                 ...(pendingContextTeamId !== undefined ? { confirmation: {
                     teamId: pendingContextTeamId,
-                        label: pendingContextTeamId === null ? t('session.access.private')
+                        label: pendingContextTeamId === null ? noTeamContextLabel
                         : pendingContextTarget?.name ?? t('session.access.team'),
                     consequences: projectSessionAccessContextChange({
                         target: pendingContextTeamId === null ? null : pendingContextTarget,

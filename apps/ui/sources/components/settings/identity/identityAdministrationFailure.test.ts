@@ -65,6 +65,10 @@ describe('identityAdministrationFailure', () => {
         expect(identityAdministrationFailure('').kind).toBe('unknown');
     });
 
+    it('describes a lost write response as unconfirmed', () => {
+        expect(identityAdministrationFailureMessage('outcome_unknown')).toBe(t('homeGovernance.errorOutcomeUnknown'));
+    });
+
     it('owns retryability so a client cannot disagree with what the screen shows', () => {
         // Only a transient transport/provider condition may offer Retry. A
         // permission loss or a conflicting write must not invite a blind retry.

@@ -436,6 +436,21 @@ describe('useNewSessionAccessDraftController', () => {
         expect(latest!.placementPending).toBe(true);
     });
 
+    it('labels the absence of a primary Team without implying retained recipients are removed', async () => {
+        const initial: SessionInitialAccessDraftV1 = { grants: [{
+            subject: { kind: 'account', accountId: 'account-recipient' },
+            accessLevel: 'view',
+            canApprovePermissions: false,
+        }] };
+        let latest: Controller | null = null;
+        await renderScreen(<Probe initial={initial} availability="available"
+            onReady={(controller) => { latest = controller; }} />);
+
+        expect(latest!.model.grants).toHaveLength(1);
+        expect(latest!.model.context?.options.find((option) => option.teamId === null)?.label)
+            .toBe(t('session.access.noPrimaryTeam'));
+    });
+
     it('keeps Team context choices on the canonical Team cursor as more candidates load', async () => {
         runTeamActionMock
             .mockResolvedValueOnce({

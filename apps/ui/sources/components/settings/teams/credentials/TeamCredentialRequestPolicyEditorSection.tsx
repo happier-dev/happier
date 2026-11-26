@@ -139,8 +139,7 @@ export const TeamCredentialRequestPolicyEditorSection = React.memo(
                         testID={`${testIDPrefix}-clear`}
                         title={t('teams.credentials.requestPolicy.clear')}
                         destructive
-                        disabled={busy}
-                        onPress={clearStoredPolicy}
+                        disabled
                         showChevron={false}
                     /> : null}
                 </ItemGroup>

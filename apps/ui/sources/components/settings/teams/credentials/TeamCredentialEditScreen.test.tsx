@@ -58,6 +58,7 @@ const TEAM_GET_PATH = '/v1/teams/get';
 const CREDENTIALS_LIST_PATH = '/v1/teams/credential-resources/list';
 const CREDENTIAL_GET_PATH = '/v1/teams/credential-resources/get';
 const CREDENTIAL_UPDATE_PATH = '/v1/teams/credential-resources/update';
+const REQUEST_POLICY_SUPPORT_PATH = '/v1/teams/credential-resources/request-policy-support/get';
 const LIMITS_LIST_PATH = '/v1/teams/credential-resources/limits/list';
 const ARTIFACT_CREATE_PATH = '/v1/artifacts';
 const developmentPoolName = MachinePoolPrivateLabelProjectionV1Schema.parse({
@@ -171,6 +172,7 @@ async function renderEditor(params?: Readonly<{
     section?: 'access' | 'request_policy' | 'limits';
     sourceReadFails?: boolean;
     limitsRefusal?: Readonly<{ status: number; error: string }>;
+    requestPolicySupportUnavailable?: boolean;
     resourceOverrides?: Parameters<typeof teamCredentialResourceFixture>[0];
 }>) {
     const serverId = await harness.addHome({
@@ -244,6 +246,11 @@ async function renderEditor(params?: Readonly<{
     });
     harness.answer(serverId, CREDENTIAL_GET_PATH, { body: resource });
     harness.answer(serverId, CREDENTIAL_UPDATE_PATH, { body: { resourceId: resource.id, revision: resource.revision + 1 } });
+    if (params?.requestPolicySupportUnavailable) {
+        harness.answer(serverId, REQUEST_POLICY_SUPPORT_PATH, {
+            body: { status: 'unavailable', reason: 'source_unavailable' },
+        });
+    }
     harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, { body: TeamCredentialResourceDiscoveryPageV1Schema.parse({ resources: [], nextCursor: null, failures: [] }) });
     harness.answer(serverId, LIMITS_LIST_PATH, params?.limitsRefusal
         ? { status: params.limitsRefusal.status, body: { error: params.limitsRefusal.error } }
@@ -934,6 +941,28 @@ describe('TeamCredentialEditScreen broker placement', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-edit-save');
         expect(routerBack).not.toHaveBeenCalled();
     });
+});
+
+it('keeps saved request restrictions when support is unavailable', async () => {
+    const { screen } = await renderEditor({
+        section: 'request_policy',
+        requestPolicySupportUnavailable: true,
+        resourceOverrides: { requestPolicy: {
+            allowedModelIds: ['stored-model'],
+            allowedProtocolKinds: null,
+            reasoningEffort: null,
+        } },
+    });
+
+    await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('team-credential-request-policy-support-loading')).toBeNull();
+        expect(screen.findByTestId('team-credential-request-policy-stored-unsupported')).not.toBeNull();
+    });
+    const clear = screen.findByTestId('team-credential-request-policy-clear');
+    expect(clear?.props.accessibilityState?.disabled ?? clear?.props.disabled).toBe(true);
+    const save = screen.findByTestId('team-credential-edit-save');
+    expect(save?.props.accessibilityState?.disabled ?? save?.props.disabled).toBe(true);
+    expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(0);
 });
 
 describe('TeamCredentialEditScreen disclosure narrowing', () => {

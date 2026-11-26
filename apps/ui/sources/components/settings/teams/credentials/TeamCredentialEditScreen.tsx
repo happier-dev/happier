@@ -303,18 +303,18 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const requestPolicy = teamCredentialPolicyFromDraft(policyDraft);
     const requestPolicyChanged = JSON.stringify(policyDraft)
         !== JSON.stringify(resourceDraft.baseline.requestPolicy);
-    const requestPolicyEditorProjection = requestPolicySupport.status === 'ready'
-        && requestPolicySupport.result?.status === 'available'
+    const requestPolicyEditorSupport = requestPolicySupport.status === 'ready' && requestPolicySupport.result
+        ? requestPolicySupport.result
+        : { status: 'unavailable', reason: 'model_catalog_unavailable' } as const;
+    const requestPolicyEditorProjection = requestPolicyEditorSupport.status === 'available'
         ? projectTeamCredentialRequestPolicyEditorSupport({
-            models: requestPolicySupport.result.models,
+            models: requestPolicyEditorSupport.models,
             draft: policyDraft,
         })
         : null;
     const requestPolicyChangeSupported = !requestPolicyChanged
-        || requestPolicy === null
-        || (requestPolicySupport.status === 'ready'
-            && requestPolicySupport.result?.status === 'available'
-            && requestPolicyEditorProjection?.storedPolicyUnsupported === false);
+        || (requestPolicyEditorProjection !== null
+            && (requestPolicy === null || !requestPolicyEditorProjection.storedPolicyUnsupported));
     const usageLimitDelta = teamCredentialUsageLimitDeltaFromDraft(limitDrafts, resourceDraft.baseline.limits);
     const managerFieldsValid = !resource.capabilities.managePolicy
         || (nameValid && requestPolicyChangeSupported);
@@ -471,9 +471,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                             ...draft,
                             requestPolicy: typeof next === 'function' ? next(draft.requestPolicy) : next,
                         }))}
-                        support={requestPolicySupport.status === 'ready' && requestPolicySupport.result
-                            ? requestPolicySupport.result
-                            : { status: 'unavailable', reason: 'model_catalog_unavailable' }}
+                        support={requestPolicyEditorSupport}
                         busy={busy}
                     />
                     {requestPolicySupport.status !== 'ready' ? <ItemGroup description={requestPolicySupport.error

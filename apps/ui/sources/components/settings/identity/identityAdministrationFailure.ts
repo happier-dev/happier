@@ -312,6 +312,7 @@ export function identityAdministrationFailureMessage(code: string, context?: 'ma
         if (code === 'identity_provider_unreadable') return t('identityAdministration.oidcConfigurationUnreadable');
     }
     switch (code) {
+        case 'outcome_unknown': return t('homeGovernance.errorOutcomeUnknown');
         case 'oidc_discovery_failed': return t('identityAdministration.oidcDiscoveryFailed');
         case 'oidc_endpoint_forbidden': return t('identityAdministration.oidcEndpointForbidden');
         case 'oidc_issuer_mismatch': return t('identityAdministration.oidcIssuerMismatch');
