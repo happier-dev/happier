@@ -2038,6 +2038,13 @@ marker evidence. Visible-console startup reports the early exit immediately;
 the tracked exit owner completes retirement separately and logs cleanup failure
 without discarding the remaining custody evidence.
 
+In current development, routine `writeSessionMarker` refreshes preserve the existing
+marker’s `activeTurnId` for the same Session under the marker mutation lock.
+`updateSessionMarkerActiveTurn` owns lifecycle changes to that field. A delayed
+metadata webhook therefore cannot resurrect a completed turn or erase an active
+one before daemon reattachment; the webhook does not copy volatile turn state.
+The marker format and restart-admission rules are unchanged.
+
 Development startup recovery uses `daemonProcessScopeIdentity.ts` to keep runners
 within their owning Happier home and daemon lifecycle. Markerless recovery requires
 recorded home and lifecycle identity; older runners without an explicit lifecycle
