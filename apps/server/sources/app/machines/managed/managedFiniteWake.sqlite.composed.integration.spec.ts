@@ -484,6 +484,26 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { emitted.mockRestore(); restoreEnv(env); }
     });
 
+    it.runIf(process.env.HAPPIER_DB_PROVIDER === 'postgres')('reads the signed managed policy census and wake worklist in one snapshot', async () => {
+        const { measurePostgresCreate } = await import('./managedProjectionVolume.testkit');
+        const test = await setup();
+        const controller = { machineId: test.controller.id, installationId: test.controller.installationId! };
+        const proof = createManagedPolicyCensusProofV1({ homeId, controller, custodianAccountId: test.account.id,
+            privateKey: test.controllerKeys.secretKey });
+        await withAuthenticatedTestApp(registerManagedMachineRoutes, async app => {
+            for (const managedId of [undefined, test.row.id]) {
+                const census = await measurePostgresCreate(() => app.inject({ method: 'POST',
+                    url: '/v1/machines/managed/controller/policies', headers: { 'x-test-user-id': test.account.id },
+                    payload: { homeId, controller, proof, ...(managedId ? { managedId } : {}) } }));
+                expect(census.value.statusCode, census.value.body).toBe(200);
+                expect(census.value.json()).toMatchObject({ machines: [{ id: test.row.id }], targets: [] });
+                const transactions = census.statements.filter(sql => /^COMMIT\b/u.test(sql)).length;
+                console.info('MANAGED_POLICY_CENSUS_TRANSACTIONS', JSON.stringify({ exact: managedId !== undefined, transactions }));
+                expect.soft(transactions).toBe(1);
+            }
+        });
+    });
+
     it.each([false, true])('reads selected current resources without fleet wake discovery (controller-free: %s)', async controllerFree => {
         const test = await setup();
         const controller = { machineId: test.controller.id, installationId: test.controller.installationId! };
