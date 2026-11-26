@@ -7,7 +7,7 @@ import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { useCodeLinesReviewComments } from '@/components/ui/code/reviewComments/useCodeLinesReviewComments';
-import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentCard } from '@/components/reviews/ReviewCommentCard';
 import { ReviewFindingAnchor, ReviewFindingAnchorContext } from '@/components/reviews/ReviewFindingAnchor';
@@ -41,6 +41,8 @@ export type DiffReviewCommentsViewerProps = Pick<UnifiedDiffViewerProps, 'findAc
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     reviewComments?: readonly ReviewCommentV1[];
+    reviewCommentSource?: ReviewCommentSource;
+    virtualized?: boolean;
     serverId?: string;
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
@@ -83,6 +85,8 @@ function areDiffReviewCommentsViewerPropsEqual(
         && previous.reviewCommentsEnabled === next.reviewCommentsEnabled
         && areDraftArraysEquivalent(previous.reviewCommentDrafts, next.reviewCommentDrafts)
         && previous.reviewComments === next.reviewComments
+        && previous.reviewCommentSource === next.reviewCommentSource
+        && previous.virtualized === next.virtualized
         && previous.serverId === next.serverId
         && previous.onUpsertReviewCommentDraft === next.onUpsertReviewCommentDraft
         && previous.onDeleteReviewCommentDraft === next.onDeleteReviewCommentDraft
@@ -93,6 +97,7 @@ function areDiffReviewCommentsViewerPropsEqual(
 }
 
 function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
+    const reviewCommentSource = props.reviewCommentSource ?? 'diff';
     const { height: windowHeight } = usePresentationWindowDimensions();
     const wrapLinesSetting = useSetting('wrapLinesInDiffs');
     const showLineNumbersSetting = useSetting('showLineNumbers');
@@ -108,7 +113,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
     const effectiveLineThreshold = lineThreshold > 0
         ? Math.min(lineThreshold, reviewLineThreshold)
         : lineThreshold;
-    const virtualized = props.reviewCommentsEnabled === true
+    const virtualized = props.virtualized ?? (props.reviewCommentsEnabled === true
         ? resolveInlineDiffVirtualization({
             unifiedDiff: props.unifiedDiff,
             oldText: null,
@@ -116,7 +121,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
             lineThreshold: effectiveLineThreshold,
             byteThreshold,
         })
-        : true;
+        : true);
     const viewport = useInlineDiffViewportStyle(virtualized, resolveInlineDiffVirtualizedMaxHeight(windowHeight));
     const lineModelIntraLineDiff = virtualized ? DISABLED_INTRA_LINE_WORD_DIFF : intraLineDiff;
 
@@ -130,15 +135,15 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
         return filterReviewCommentDraftsForFile({
             enabled: props.reviewCommentsEnabled === true,
             filePath: props.filePath,
-            source: 'diff',
+            source: reviewCommentSource,
             drafts: props.reviewCommentDrafts,
         });
-    }, [props.filePath, props.reviewCommentDrafts, props.reviewCommentsEnabled]);
+    }, [props.filePath, props.reviewCommentDrafts, props.reviewCommentsEnabled, reviewCommentSource]);
 
     const controls = useCodeLinesReviewComments({
         enabled: props.reviewCommentsEnabled,
         filePath: props.filePath,
-        source: 'diff',
+        source: reviewCommentSource,
         lines,
         drafts: draftsForFile,
         onUpsertDraft: props.onUpsertReviewCommentDraft,
@@ -152,7 +157,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
             if (comment.parentCommentId || (comment.anchor.kind !== 'line' && comment.anchor.kind !== 'range')) continue;
             const filePath = comment.anchor.side === 'before' && comment.anchor.filePath === props.previousFilePath
                 ? comment.anchor.filePath : props.filePath;
-            const resolution = resolveCodeLineAnchor({ filePath, source: 'diff', lines, anchor: comment.anchor });
+            const resolution = resolveCodeLineAnchor({ filePath, source: reviewCommentSource, lines, anchor: comment.anchor });
             const lineId = resolution.lines.at(-1)?.id;
             if (!lineId) continue;
             const comments = result.get(lineId);
@@ -160,7 +165,7 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
             else result.set(lineId, [comment]);
         }
         return result;
-    }, [props.reviewComments, props.filePath, props.previousFilePath, lines]);
+    }, [props.reviewComments, props.filePath, props.previousFilePath, lines, reviewCommentSource]);
     const labels = commentsByLineId.size > 0 ? buildReviewCommentLabels() : null;
     const openFinding = React.useContext(ReviewFindingAnchorContext);
     const renderAfterLine = React.useCallback((line: CodeLine) => {

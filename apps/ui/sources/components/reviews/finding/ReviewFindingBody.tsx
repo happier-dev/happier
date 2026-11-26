@@ -6,6 +6,7 @@ import { HappierReviewFindingBody } from '@happier-dev/plugin-ui';
 import type { HappierWorkHost } from '@happier-dev/plugin-ui/presentation';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewSeenBeforeResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
@@ -15,6 +16,8 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ReviewFindingPluginContent } from '@/components/reviews/plugins/ReviewPluginContent';
 import { CodeBlockViewFrame } from '@/components/ui/code/blocks/CodeBlockViewFrame';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { DiffReviewCommentsViewer } from '@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer';
+import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
@@ -164,7 +167,8 @@ function ReviewFindingWhere(
  * landed-line band (the no-Machine Changes excerpts).
  */
 export function ReviewFindingCode(
-  props: Readonly<{ unifiedDiff: string; path: string | null; highlightLineIds?: ReadonlySet<string> }>,
+  props: Readonly<{ unifiedDiff: string; path: string | null; highlightLineIds?: ReadonlySet<string>;
+    reviewComments?: readonly ReviewCommentV1[]; reviewCommentSource?: ReviewCommentSource }>,
 ) {
   const { theme } = useUnistyles();
   const firstHighlight = props.highlightLineIds?.values().next().value;
@@ -189,7 +193,19 @@ export function ReviewFindingCode(
       }
       containerStyle={styles.code}
     >
-      <DiffViewer
+      {props.path && props.reviewComments ? <DiffReviewCommentsViewer
+        filePath={props.path}
+        unifiedDiff={props.unifiedDiff}
+        reviewComments={props.reviewComments}
+        reviewCommentSource={props.reviewCommentSource}
+        reviewCommentsEnabled={false}
+        reviewCommentDrafts={NO_REVIEW_COMMENT_DRAFTS}
+        virtualized={false}
+        showLineNumbers
+        showPrefix={props.highlightLineIds === undefined}
+        wrapLines
+        {...(firstHighlight === undefined ? {} : { highlightLineId: firstHighlight, highlightLineIds: props.highlightLineIds })}
+      /> : <DiffViewer
         mode="unified"
         unifiedDiff={props.unifiedDiff}
         filePath={props.path}
@@ -199,10 +215,12 @@ export function ReviewFindingCode(
         showPrefix={props.highlightLineIds === undefined}
         wrapLines
         {...(firstHighlight === undefined ? {} : { highlightLineId: firstHighlight, highlightLineIds: props.highlightLineIds })}
-      />
+      />}
     </CodeBlockViewFrame>
   );
 }
+
+const NO_REVIEW_COMMENT_DRAFTS = [] as const;
 
 /** "Claude found it · Codex agrees": who reported the finding, first reporter first. */
 function ReviewFindingReviewers(

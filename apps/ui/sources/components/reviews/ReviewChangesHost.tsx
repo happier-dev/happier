@@ -43,7 +43,7 @@ import { ReviewFindingCode } from './finding/ReviewFindingBody';
 import { ReviewCommentSnapshotView } from './ReviewCommentSnapshotView';
 import { resolveReviewCommentBodyText, resolveReviewCommentSnapshot, splitReviewCommentBody } from './content';
 import { buildReviewCommentLabels } from './sessionSurfaceLabels';
-import { ReviewFindingAnchorContext } from './ReviewFindingAnchor';
+import { ReviewFindingAnchor, ReviewFindingAnchorContext } from './ReviewFindingAnchor';
 
 type ReviewChangesView = 'files' | 'walkthrough';
 
@@ -86,7 +86,8 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
             // A finding's own title names its excerpt; a plain comment falls back to its body's title line.
             const title = comment.finding?.title ?? splitReviewCommentBody(resolveReviewCommentBodyText(comment.body, labels)).title;
             const path = 'filePath' in comment.anchor ? comment.anchor.filePath : null;
-            const line = 'startLine' in comment.anchor ? comment.anchor.startLine : null;
+            const line = comment.anchor.kind === 'line' ? comment.anchor.line
+                : 'startLine' in comment.anchor ? comment.anchor.startLine : null;
             return <View key={comment.id} style={excerptStyles.item}>
                 <HappierPressable testID={`review-changes-excerpt:${comment.id}`} accessibilityRole="button"
                     onPress={() => props.onOpenComment(comment.id)} style={excerptStyles.head}>
@@ -96,7 +97,10 @@ function ReviewEvidenceExcerpts(props: Pick<ReviewChangesHostProps, 'comments' |
                     {comment.findingSeverity ? <Text variant="label" style={excerptStyles.severity}>
                         {reviewSeverityLabel(comment.findingSeverity)}</Text> : null}
                 </HappierPressable>
-                {snapshot?.kind === 'text' ? <ReviewFindingCode {...capturedExcerpt(snapshot, path, line)} path={path} /> : null}
+                {comment.anchor.kind === 'file' && comment.finding
+                    ? <ReviewFindingAnchor comment={comment} onOpen={props.onOpenComment} /> : null}
+                {snapshot?.kind === 'text' ? <ReviewFindingCode {...capturedExcerpt(snapshot, path, line)} path={path}
+                    reviewComments={[comment]} reviewCommentSource={snapshot.source === 'workingTree' ? 'file' : 'diff'} /> : null}
                 <ReviewCommentSnapshotView comment={comment} labels={labels} />
             </View>;
         })}
