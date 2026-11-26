@@ -155,7 +155,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   useTriageCurrentUiContextPublication(host, currentContext);
   if (unavailable) return <ErrorState title="These details are unavailable" titleKey="plugins.triage.resource.unavailable" action={
     <Row gap="small"><Button title="Retry" titleKey="plugins.triage.surface.actions.retry" variant="secondary" onPress={() => execute({ kind: 'refresh' })} />
-      <Button title="Open on GitHub" titleKey="plugins.triage.resource.openOnGithub" variant="plain" onPress={() => host.openExternalLink(resource.url)} /></Row>
+      <Button title="Open source" titleKey="plugins.triage.tasks.write.openSource" variant="plain" onPress={() => host.openExternalLink(resource.url)} /></Row>
   } />;
   if (row === null || selection === null) return <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />;
   const pin = { row: projectTriageWindowRow(row, indexTriagePinsByEntry(pins.pins), { text }),

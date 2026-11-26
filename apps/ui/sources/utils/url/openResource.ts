@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { PluginUiResourceIntentV1, PluginUiOpenResourceIntentV1 } from '@happier-dev/protocol/plugins/ui';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import {
   usePluginSurfaceDestinationNavigationBinding,
@@ -91,7 +92,7 @@ async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind
   // Contributions offer a handler; declaration order never appoints a winner.
   if (matches.length !== 1) return external();
   const match = matches[0]!;
-  const destination = { pluginId: match.pluginId, localId: match.destination };
+  const destination = qualifyPluginContributionReferenceV1(match.destination, match.pluginId);
   const placements = selectPluginSurfacePlacementsByDestination(projection, destination);
   if (placements.length !== 1) return external();
   const resource = { kind: match.kind, url };

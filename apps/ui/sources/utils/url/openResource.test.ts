@@ -3,11 +3,14 @@ import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspac
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { router } from 'expo-router';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { parsePluginManifest, type ParsedPluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import { createPluginSurfaceLocalHostHandlers } from '@/components/plugins/surfaces/pluginSurfaceLocalHostHandlers';
 import { PLUGIN_MANIFEST as AUTHORED_TRIAGE_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
-import { projectPluginUiDeclarationEntriesV1, projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
+import { createStablePluginDeclarativeModel, projectPluginUiDeclarationEntriesV1, projectPluginReactNativeArtifactEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui';
+import { TRIAGE_APP_PAGE_DESTINATION_V1 } from '@happier-dev/triage-protocol/v1';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { createPluginUiResourceProjection } from '@/dev/testkit/fixtures/pluginUiResourceProjection';
@@ -23,15 +26,24 @@ const PLUGIN_MANIFEST = PluginManifestV2Schema.parse(AUTHORED_TRIAGE_MANIFEST);
 const initialSettings = storage.getState().settings;
 afterEach(() => storage.setState({ settings: initialSettings }));
 
-function triageResourceProjection() {
+function triageResourceProjection(contributor?: ParsedPluginManifest) {
   const pluginId = PLUGIN_MANIFEST.id;
-  const declarations = <T extends { id: string }>(definitions: readonly T[]) => definitions.map(definition => ({
+  const declarations = <T extends { id: string }>(pluginId: string, definitions: readonly T[]) => definitions.map(definition => ({
     pluginId, identity: { pluginId, localId: definition.id }, definition,
   }));
   const entries = projectPluginUiDeclarationEntriesV1({ registry: {
-    uiViewsV2: declarations(PLUGIN_MANIFEST.contributes.ui.views),
-    uiRenderersV2: declarations(PLUGIN_MANIFEST.contributes.ui.renderers),
-  }, artifactEntries: PLUGIN_MANIFEST.contributes.ui.renderers.flatMap(renderer => renderer.kind === 'reactNative'
+    uiViewsV2: [
+      ...declarations(pluginId, PLUGIN_MANIFEST.contributes.ui.views),
+      ...(contributor ? declarations(contributor.id, contributor.contributes.ui.views) : []),
+    ],
+    uiRenderersV2: [
+      ...declarations(pluginId, PLUGIN_MANIFEST.contributes.ui.renderers),
+      ...(contributor ? declarations(contributor.id, contributor.contributes.ui.renderers) : []),
+    ],
+  }, modelsByRendererKey: Object.fromEntries(contributor?.contributes.ui.renderers.flatMap(renderer =>
+    renderer.kind === 'declarative' ? [[`${contributor.id}\0${renderer.id}`, createStablePluginDeclarativeModel({
+      pluginId: contributor.id, renderer, settings: [], actions: [], destinations: [],
+    })]] : []) ?? []), artifactEntries: PLUGIN_MANIFEST.contributes.ui.renderers.flatMap(renderer => renderer.kind === 'reactNative'
     // Executable bytes are outside this routing contract; the daemon's admitted loadable facts are the boundary fixture.
     ? [projectPluginReactNativeArtifactEntryV1({ pluginId, pluginVersion: PLUGIN_MANIFEST.version,
       contributionId: renderer.id, artifactId: renderer.artifact, generatedOwnerKind: 'renderer',
@@ -41,12 +53,50 @@ function triageResourceProjection() {
     resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: { pluginUi: { family: 'pluginUi',
       entriesById: Object.fromEntries(Object.entries(entries).map(([id, entry]) => [id, { ...entry, occurrenceId: 'triage-install',
         executionOrigin: { serverIdentityId: 'srv_home', materializationRef: {
-          pluginId, machineId: 'machine', materializationId: 'triage-install',
+          pluginId: entry.pluginId, machineId: 'machine', materializationId: 'triage-install',
         } },
       }])) } } });
 }
 
 describe('open resource intent', () => {
+  it('routes a contributor URL to the qualified Triage destination and withdraws the offer with the contributor', async () => {
+    storage.setState({ settings: { ...initialSettings, scmResourceOpenLocation: 'happier' } });
+    const destination = TRIAGE_APP_PAGE_DESTINATION_V1;
+    const contributor = definePlugin({
+      id: 'acme.forge', version: '0.1.0', displayName: 'Acme Forge',
+      ui: {
+        renderers: [{ id: 'settings-content', kind: 'declarative', root: { kind: 'text', text: 'Forge settings' } }],
+        views: [{
+          id: 'settings', renderer: 'settings-content', container: 'appPage', target: { kind: 'app' }, title: 'Forge',
+          resourceLinks: [{ kind: 'issue', urlPattern: '^https://forge\\.example/issues/[0-9]+$', destination }],
+        }],
+      },
+    });
+    const admitted = parsePluginManifest(contributor.manifest);
+    if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+    const projection = triageResourceProjection(admitted.manifest);
+    const launches: unknown[] = [];
+    const external: string[] = [];
+    const resource = { kind: 'issue', url: 'https://forge.example/issues/42' } as const;
+    const navigation = createPluginSurfaceDestinationNavigationBinding({
+      placements: selectPluginDestinationSurfacePlacements(projection), projection, targetKind: 'app',
+      accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
+        onRetire: () => ({ dispose() {} }) },
+      scopedLaunchFacts: { serverId: 'home', machineId: 'machine', interactionEnabled: true },
+    });
+    navigation.registerOwner({ container: 'appPage', handler: resolution => {
+      launches.push(resolution.request);
+      return { ok: true };
+    } });
+    const openExternal = async (url: string) => { external.push(url); return true; };
+    expect(await requestOpenResourceUrl(resource.url, { navigation, openExternal })).toBe(true);
+    expect(launches).toEqual([{ destination, input: { resource } }]);
+    expect(external).toEqual([]);
+
+    expect(await requestOpenResourceUrl(resource.url, { navigation, projection: triageResourceProjection(), openExternal })).toBe(true);
+    expect(launches).toHaveLength(1);
+    expect(external).toEqual([resource.url]);
+  });
   it('opens an Artifact in the bound Home through the canonical Artifact viewer', async () => {
     const surface = createSurfaceContextFixture();
     const host = createPluginSurfaceLocalHostHandlers({ surfaceContext: surface,

@@ -338,9 +338,18 @@ GitHub PR, issue, Dependabot and code-scanning links offer these details in the
 Session panel or PRs & Issues page. Actions run links use the existing native CI
 run detail. Secret-scanning links have no native source detail and retain the
 external fallback. A configured connection that cannot resolve a recognized
-resource leaves an explicit **On GitHub** escape to the exact requested URL.
+resource offers **Open source** to recover the exact requested URL.
 The core resource opener owns the Account preference and destination selection;
 source resolution does not reinterpret that preference.
+
+In 0.3 development source, a contributor can offer its own issue, pull request
+or alert URL from its existing UI view declaration. Set the `resourceLinks`
+entry's `destination` to `TRIAGE_APP_PAGE_DESTINATION_V1` from
+`@happier-dev/triage-protocol/v1`, alongside its `kind` and `urlPattern`. The
+host uses the offer while the declaring view and the Triage destination are
+available in the Account. The source's `resolveResource` operation maps the
+original URL to the exact entry. If the source cannot resolve it, **Open source**
+opens the original URL.
 
 In 0.3 development source, `get` accepts the optional source-minted
 `lastKnownLocator` for the exact entry. Without one, a source may use its own

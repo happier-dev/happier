@@ -29,5 +29,5 @@
       "@happier-dev/plugin-ui/components": ["../../../plugin-ui/src/components/index.ts"]
     }
   },
-  "include": ["accountCollections.ts", "actions.ts", "browser.ts", "agentRuntimeSurfaces.ts", "index.ts", "languageServers.ts", "managedProvider.ts", "machineAccess.ts", "machineProvisioners.ts", "providerEndpointPolicies.ts", "providerEndpointPolicyEditor.tsx", "promptAsset.ts", "projectWorkers.ts", "publicServices.ts", "run.ts", "sessionRecap.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
+  "include": ["accountCollections.ts", "actions.ts", "browser.ts", "agentRuntimeSurfaces.ts", "index.ts", "languageServers.ts", "managedProvider.ts", "machineAccess.ts", "machineProvisioners.ts", "providerEndpointPolicies.ts", "providerEndpointPolicyEditor.tsx", "promptAsset.ts", "projectWorkers.ts", "publicServices.ts", "run.ts", "sessionLinkAuthoring.tsx", "sessionRecap.ts", "targetedContributions.ts", "testing.ts", "workflowTriggers.ts"]
 }

@@ -12,7 +12,9 @@ const mounted: PluginUiTestkit[] = [];
 afterEach(async () => { await act(async () => { for (const fixture of mounted.splice(0)) await fixture.dispose(); }); });
 
 it.each(['session', 'app'] as const)('restores the exact %s resource without ephemeral launch input', async kind => {
-  const resource = { kind: 'issue' as const, url: 'https://github.com/octo/repo/issues/19#comment-3' };
+  const resource = { kind: 'issue' as const, url: kind === 'session'
+    ? 'https://github.com/octo/repo/issues/19#comment-3'
+    : 'https://forge.example/octo/repo/issues/19#comment-3' };
   const opened: string[] = [];
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -26,12 +28,12 @@ it.each(['session', 'app'] as const)('restores the exact %s resource without eph
     });
   });
   mounted.push(fixture);
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open on GitHub' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open source' })); });
   expect(opened).toEqual([resource.url]);
 });
 
 it('settles an unavailable resource and offers its exact external URL', async () => {
-  const url = 'https://github.com/octo/repo/pull/17?tab=checks#issuecomment-3';
+  const url = 'https://forge.example/octo/repo/pull/17?tab=checks#comment-3';
   const opened: string[] = [];
   const locations: string[] = [];
   const resolutions: unknown[] = [];
@@ -53,7 +55,7 @@ it('settles an unavailable resource and offers its exact external URL', async ()
     });
   });
   mounted.push(fixture);
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open on GitHub' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open source' })); });
   expect(opened).toEqual([url]);
   expect(resolutions).toEqual([{ v: 1, resource: { kind: 'pullRequest', url } }]);
   expect(locations).toEqual([`resource/${encodeURIComponent(JSON.stringify({ kind: 'pullRequest', url }))}`]);

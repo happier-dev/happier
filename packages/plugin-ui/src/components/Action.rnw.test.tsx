@@ -13,8 +13,9 @@ import { Action, ActionPanel } from './Action.js';
 import { projectPluginActionRejectionV1, projectPluginActionControlExecutionV1, useExecutePluginAction } from '../hostApi/executeAction.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { createPluginUiHostApiClientFromTransport } from '../../../plugin-sdk/src/ui/clientTransport.js';
-import { createPluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createPluginUiTestkit, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import { LinkedSessionFacts, sessionLinkPlugin } from '../../../plugin-sdk/fixtures/authoring-inference/sessionLinkAuthoring.js';
 import { defineUiSurface } from '../surfaceEntry.js';
 import { useSurfaceContext } from './PluginUiProvider.js';
 
@@ -877,6 +878,31 @@ describe('plugin-ui Action family dispatches through the canonical host API', ()
       await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open detail' })); });
       expect(opened).toEqual([{ view: { pluginId: 'acme.review', localId: 'detail' }, input: { id: '7' }, presentation: 'window' }]);
     } finally { await fixture.dispose(); }
+  });
+
+  it.each([
+    ['session-42', 'session-42'],
+    ['session-withdrawn', 'Choose another Session to link.'],
+  ])('shows the authored link outcome for %s through the mounted Action hook', async (sessionId, outcomeText) => {
+    const host = await createPluginTestkit({ manifest: sessionLinkPlugin.manifest, module: sessionLinkPlugin });
+    try {
+      const page = await createPluginUiTestkit({
+        identity: { instanceId: 'session-link', mountNonce: 'session-link-mount' },
+        authorPlugin: { id: sessionLinkPlugin.manifest.id, version: sessionLinkPlugin.manifest.version },
+        surface: defineUiSurface(() => <LinkedSessionFacts selectedSessionId={sessionId} />),
+        surfaceContext: createSurfaceContext(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { async executeAction({ action, input, signal }) {
+          const contract = sessionLinkPlugin.actionContracts['link-session'];
+          expect(action).toEqual({ pluginId: contract.pluginId, localId: contract.localId });
+          return (await host.invokeAction(contract.localId, input ?? null, { surface: 'ui', signal })) ?? null;
+        } },
+      });
+      try {
+        await act(async () => { await page.press(await page.getByRole('button', { name: 'Link Session' })); });
+        await expect(page.getByText(outcomeText)).resolves.toBeDefined();
+      } finally { await page.dispose(); }
+    } finally { await host.dispose(); }
   });
 
   it('resolves a declared translation key for the action label and falls back to author text', () => {

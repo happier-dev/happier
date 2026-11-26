@@ -10,6 +10,7 @@ export type {
     PluginUiReadAuthorityReferenceV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ActionExecutionOptions } from '../actions/service.js';
+import type { ActionContract } from '../actions/contracts.js';
 import type { FileDownloadResultV1 } from '../protocol/fileDownload.js';
 /** Contributed Action and input only; the host holds the receiving destination. */
 export type DownloadFileRequest = import('@happier-dev/protocol/plugins/ui/client').PluginUiDownloadFileRequestV1;
@@ -344,13 +345,17 @@ export type PluginUiActionReference = PluginReference;
 /** The producer-derived input for one UI action reference. */
 export type PluginUiActionInputFor<TAction extends PluginUiActionReference> =
     TAction extends PluginInvocableActionId
-            ? PluginActionInputById[TAction]
+        ? PluginActionInputById[TAction]
+        : TAction extends ActionContract<infer TInput>
+            ? TInput
             : JsonValue;
 
 /** The JSON result observable through the mounted UI action transport. */
 export type PluginUiActionResultFor<TAction extends PluginUiActionReference> =
     TAction extends PluginInvocableActionId
-            ? PluginActionResultById[TAction]
+        ? PluginActionResultById[TAction]
+        : TAction extends ActionContract<JsonValue, infer TResult>
+            ? PluginUiActionTransportResult<TResult>
             : JsonValue;
 
 /**

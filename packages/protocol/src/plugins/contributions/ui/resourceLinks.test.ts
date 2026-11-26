@@ -24,7 +24,10 @@ describe('SCM resource link contribution', () => {
 
   it('retains resource handlers through canonical declaration projection', () => {
     const pluginId = 'acme.forge';
-    const resourceLinks = [{ kind: 'pullRequest', urlPattern: '^https://forge.example/.+/pull/[0-9]+$', destination: 'details' }];
+    const resourceLinks = [{
+      kind: 'pullRequest', urlPattern: '^https://forge.example/.+/pull/[0-9]+$',
+      destination: { pluginId: 'happier.triage', localId: 'resource-details' },
+    }];
     const entries = projectPluginUiDeclarationEntriesV1({ registry: {
       uiRenderersV2: [{ pluginId, identity: { pluginId, localId: 'native' }, definition: {
         id: 'native', kind: 'declarative', root: { kind: 'text', text: 'Resource' },

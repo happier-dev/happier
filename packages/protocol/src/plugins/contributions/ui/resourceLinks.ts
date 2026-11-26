@@ -1,6 +1,6 @@
 import { z } from '../../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { PluginContributionLocalIdSchema } from '../../contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, PluginContributionLocalIdSchema } from '../../contributionIdentity.js';
 import { asProtocolZod } from '../../actions/internalProtocolZodAdapter.js';
 import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '../../actions/protocolComposableSchema.js';
 
@@ -23,12 +23,12 @@ export const PluginUiOpenResourceIntentV1Schema = defineProtocolUnion([
 ]);
 export type PluginUiOpenResourceIntentV1 = ReturnType<typeof PluginUiOpenResourceIntentV1Schema.parse>;
 
-/** Integration-owned recognition and same-plugin destination, carried by its declared UI view. */
+/** Integration-owned recognition and a local or qualified destination, carried by its declared UI view. */
 export const PluginUiResourceLinkV1Schema = lazyZodSchema(() => z.strictObject({
   kind: PluginUiResourceKindV1Schema,
   urlPattern: z.string().check(z.refine(value => {
     try { new RegExp(value); return true; } catch { return false; }
   }, 'Resource URL pattern must be a regular expression.')),
-  destination: asProtocolZod(PluginContributionLocalIdSchema),
+  destination: asProtocolZod(defineProtocolUnion([PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema])),
 }));
 export type PluginUiResourceLinkV1 = z.infer<typeof PluginUiResourceLinkV1Schema>;
