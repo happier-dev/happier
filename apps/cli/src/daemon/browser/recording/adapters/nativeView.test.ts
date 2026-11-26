@@ -80,7 +80,7 @@ describe('browser recording native-view capture adapter', () => {
       nowMs: () => 5000,
     });
 
-    const recording = createRecording();
+    const recording = createRecording({ mimeType: 'video/webm' });
     const started = await adapter.start({ recording });
     expect(started.status).toBe('started');
 

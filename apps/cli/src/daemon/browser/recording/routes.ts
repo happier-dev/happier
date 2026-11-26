@@ -8,6 +8,7 @@ export type BrowserRecordingStartContext = Readonly<{
   browserRecordingEnabled: boolean;
   recordingCapabilities: BrowserRecordingCapabilities;
   captureSourceAvailable?: boolean;
+  outputMimeType?: 'video/mp4' | 'video/webm';
 }>;
 
 export type BrowserRecordingCleanupOptions = Readonly<{
@@ -42,6 +43,7 @@ export function createBrowserRecordingRoutes(input: Readonly<{
       const startContext = await input.resolveStartContext(startInput);
       const result = await input.service.startRecording({
         ...startInput,
+        ...(startContext.outputMimeType ? { mimeType: startContext.outputMimeType } : {}),
         browserRecordingEnabled: startContext.browserRecordingEnabled,
         recordingCapabilities: startContext.recordingCapabilities,
         ...(startContext.captureSourceAvailable === true ? { captureSourceAvailable: true } : {}),

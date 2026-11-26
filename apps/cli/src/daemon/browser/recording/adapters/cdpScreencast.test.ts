@@ -207,13 +207,13 @@ describe('browser recording cdpScreencast adapter', () => {
     }
   });
 
-  it('only supports video/webm output', async () => {
+  it('rejects unsupported video output', async () => {
     const fake = createFakeTransport();
     const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({
       transport: fake.transport,
       encoderFactory: async () => createFakeEncoder(),
     });
-    const result = await adapter.start({ recording: createRecording({ mimeType: 'video/mp4' }) });
+    const result = await adapter.start({ recording: createRecording({ mimeType: 'video/ogg' }) });
     expect(result.status).toBe('unavailable');
     if (result.status === 'unavailable') {
       expect(result.reason.code).toBe('browser_recording_mime_unavailable');

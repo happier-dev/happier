@@ -42,7 +42,7 @@ export type BrowserRecordingStreamFrameEncoder = Readonly<{
   }>): Promise<void>;
 }>;
 
-export type BrowserRecordingStreamFrameEncoderFactory = (
+export type BrowserRecordingStreamFrameEncoderFactory = ((
   input: Readonly<{
     recording: RecordingSession;
     // The PMS capture-source descriptors are only meaningful to the live-stream producer; the
@@ -51,9 +51,11 @@ export type BrowserRecordingStreamFrameEncoderFactory = (
     // producer feeds JPEG frames straight from Chromium).
     captureSource?: BrowserRecordingMachineLiveStreamCaptureSourceV1;
     registeredSource?: MachineLiveStreamRegisteredCaptureSource;
-    outputMimeType: 'video/webm';
+    outputMimeType: 'video/webm' | 'video/mp4';
   }>,
-) => Promise<BrowserRecordingStreamFrameEncoder>;
+) => Promise<BrowserRecordingStreamFrameEncoder>) & Readonly<{
+  resolveOutputMimeType?: () => Promise<'video/mp4' | 'video/webm' | null>;
+}>;
 
 export type BrowserRecordingStreamFrameCaptureAdapterOptions<R extends RecordingSession = RecordingSession> = Readonly<{
   captureRegistry: MachineLiveStreamCaptureRegistry;
@@ -135,12 +137,12 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           ),
         };
       }
-      if (input.recording.mimeType !== 'video/webm') {
+      if (input.recording.mimeType !== 'video/webm' && input.recording.mimeType !== 'video/mp4') {
         return {
           status: 'unavailable',
           reason: unavailable(
             'browser_recording_mime_unavailable',
-            'Machine live-stream recording only supports video/webm output.',
+            'Machine live-stream recording requires a video output type.',
           ),
         };
       }
@@ -193,7 +195,7 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           recording: input.recording,
           captureSource,
           registeredSource: resolved.source,
-          outputMimeType: 'video/webm',
+          outputMimeType: input.recording.mimeType,
         });
       } catch (error) {
         return {
@@ -320,7 +322,7 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           byteSize: output.byteSize,
           frameCount: active.frameCount(),
           fps: Math.min(active.recording.fps, calculateFps(active.frameCount(), durationMs)),
-          mimeType: 'video/webm',
+          mimeType: output.source.mimeType ?? active.recording.mimeType,
           source: output.source,
           cleanup: output.cleanup,
         };

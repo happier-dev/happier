@@ -47,7 +47,6 @@ function buildSessionMediaSource(artifact: BrowserRecordingCapturedArtifact): Ex
   return {
     ...artifact.source,
     mimeType: artifact.source.mimeType ?? artifact.mimeType,
-    fileNameHint: artifact.source.fileNameHint ?? 'browser-recording.webm',
   };
 }
 
@@ -141,7 +140,7 @@ export function createBrowserRecordingSessionMediaWriter<R extends RecordingSess
               source: 'tool-output',
               toolCallId: recording.recordingId,
             },
-            suggestedName: artifact.source.fileNameHint ?? 'browser-recording.webm',
+            suggestedName: artifact.source.fileNameHint,
             createdAtMs: recording.stoppedAtMs ?? recording.startedAtMs,
           },
         }).catch(error => { throw notWritten(error); });

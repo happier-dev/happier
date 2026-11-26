@@ -43,11 +43,12 @@ export function createComputerRecording(input: Readonly<{
     commitAttachment: input.options?.commitAttachment,
     resolveInputControl: controlFor,
   });
+  const encoderFactory = input.options?.encoderFactory ?? createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory });
   const service = createRecordingDaemonService<ComputerRecordingSessionV1, StartInput, { sourceId: string }>({
     mediaWriter: writer, resolveInputControl: controlFor,
     captureAdapters: [createBrowserRecordingStreamFrameCaptureAdapter<ComputerRecordingSessionV1>({
       captureRegistry: input.registry, sourceMachineId: input.machineId, resolveInputControl: controlFor,
-      encoderFactory: input.options?.encoderFactory ?? createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory }),
+      encoderFactory,
     })],
     model: {
       parseSession: value => ComputerRecordingSessionV1Schema.parse(projectNativeJsonValueForTransport(value)),
@@ -82,10 +83,11 @@ export function createComputerRecording(input: Readonly<{
       // Use the producer's advertised cadence, or the shared output target when unspecified.
       const maxFps = (resolved.ok ? resolved.source.capabilities.maxFramesPerSecond : undefined)
         ?? DEFAULT_BROWSER_RECORDING_CAPABILITIES.maxFps;
+      const outputMimeType = await encoderFactory.resolveOutputMimeType?.();
       return service.startRecording({ machineId: input.machineId, sourceId: source.sourceId,
         sourceIdentity: source.sourceIdentity, desktopKey: source.desktopKey, target: source.target, mediaTarget: request.mediaTarget,
         captureKind: 'streamFrameCapture', captureSource: { kind: 'machineLiveStream', streamFamily: 'screen', sourceId: source.sourceId },
-        recordingCapabilities: { maxFps }, mimeType: 'video/webm', retentionClass: request.retentionClass }, context);
+        recordingCapabilities: { maxFps }, mimeType: outputMimeType ?? 'video/webm', retentionClass: request.retentionClass }, context);
     },
     async dispatch(actionId: ComputerRecordingActionIdV1, request: ComputerRecordingActionInput, sourceIdentity: ComputerSourceIdentityV1, desktopKey?: string) {
       const sourceId = request.sourceId;

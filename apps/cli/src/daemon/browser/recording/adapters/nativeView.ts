@@ -126,7 +126,7 @@ export function createBrowserRecordingNativeViewCaptureAdapter(
         byteSize: active.result.byteSize,
         frameCount: 1,
         fps: 1,
-        mimeType: active.recording.mimeType,
+        mimeType: active.result.source.mimeType ?? 'image/png',
         source: active.result.source,
         ...(active.result.cleanup ? { cleanup: active.result.cleanup } : {}),
       } satisfies BrowserRecordingCapturedArtifact;

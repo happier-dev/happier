@@ -24,8 +24,8 @@ only for an `UNSURFACE` cell that makes no product promise.
 
 | Capture kind          | Disposition | Daemon producer | Engine surface | Notes |
 |-----------------------|-------------|-----------------|----------------|-------|
-| `streamFrameCapture`  | BUILD-NOW   | PMS live-stream capture registry → `createBrowserRecordingStreamFrameCaptureAdapter` → ffmpeg | streamed browser surface / simulator preview | `video/webm`. Requires a `liveStreamCaptureRegistry` + a `machineLiveStream` capture source. Simulator preview targets must carry or derive the producer `sourceId` from `resource.capture.sourceId`; that same id is the stream family registered by the simulator capture reconciler. Local-service preview iframes do not own a live-stream producer, so they stay unavailable instead of borrowing simulator/browser stream evidence. |
-| `cdpScreencast`       | BUILD-NOW   | Managed-Chromium sidecar `Page.startScreencast({jpeg})` → `createBrowserRecordingCdpScreencastCaptureAdapter` → ffmpeg | streamed surface (chromium sidecar) | `video/webm`. The shared capture profile accepts the daemon's `chromiumSidecar` adapter and the UI's `streamedBrowserSurface` adapter; both record the same managed view through CDP. JPEG frames kept addressable for per-frame multimodal evidence. Bound via the `cdpScreencast.transport` seam. |
+| `streamFrameCapture`  | BUILD-NOW   | PMS live-stream capture registry → `createBrowserRecordingStreamFrameCaptureAdapter` → ffmpeg | streamed browser surface / simulator preview | `video/mp4` (H.264) when the managed encoder reports support, otherwise `video/webm`. Requires a `liveStreamCaptureRegistry` + a `machineLiveStream` capture source. Simulator preview targets must carry or derive the producer `sourceId` from `resource.capture.sourceId`; that same id is the stream family registered by the simulator capture reconciler. Local-service preview iframes do not own a live-stream producer, so they stay unavailable instead of borrowing simulator/browser stream evidence. |
+| `cdpScreencast`       | BUILD-NOW   | Managed-Chromium sidecar `Page.startScreencast({jpeg})` → `createBrowserRecordingCdpScreencastCaptureAdapter` → ffmpeg | streamed surface (chromium sidecar) | `video/mp4` (H.264) when supported by the managed encoder, otherwise `video/webm`. The shared capture profile accepts the daemon's `chromiumSidecar` adapter and the UI's `streamedBrowserSurface` adapter; both record the same managed view through CDP. JPEG frames kept addressable for per-frame multimodal evidence. Bound via the `cdpScreencast.transport` seam. |
 | `nativeViewCapture`   | BUILD-NOW   | Desktop Wry `desktop_browser_capture_recording_frame` Tauri command → `createBrowserRecordingNativeViewCaptureCommand` → `createBrowserRecordingNativeViewCaptureAdapter` | desktop WebView (external URL) | `image/png`, single still frame, **reference-only** (PNG written to disk, never inline bytes). Bound via the `nativeViewCapture` seam; advertised only where the platform reports `capture:true`. |
 | `webContentsCapture`  | UNSURFACE   | — | Electron `webContentsView` | No Electron `webContents` host in the Tauri/Wry desktop → structurally unsupported. Makes no product promise. |
 | `mediaRecorder`       | UNSURFACE (daemon) | — | client-rendered surfaces | A client-side (in-page) capture path; the daemon surfaces no producer for it. |
@@ -256,7 +256,7 @@ does not depend on recorder availability.
 
 In unreleased 0.3 development, managed-Chromium `cdpScreencast` recordings paint a
 cursor, pressed-pointer state and the latest keystroke/shortcut label into the
-existing page JPEG source before the shared WebM encoder. No second screencast or
+existing page JPEG source before the shared managed encoder. No second screencast or
 recorder is allocated. The recording transport installs a document script in an
 isolated world for the page's frames and subsequent navigations, and removes it
 and the current frame overlays when recording stops. Live viewers of the same
@@ -327,3 +327,31 @@ Session media ingestion keeps its own configured file budget. Producers persist 
 by **reference** (`local-file` / `local-uri`), never inline bytes. No producer accumulates unbounded
 frames in memory. The PMS `streamFrameCapture` producer proves streamed/simulator recording ONLY —
 it is never cited as proof for a desktop WebView recording, and vice-versa.
+
+## Managed output format (unreleased 0.3)
+
+The shared daemon encoder owns format selection for Browser stream/CDP and Computer
+recordings. It queries the existing managed executable, preferring software H.264
+(`libx264`, then `libopenh264`) over listed hardware encoders. Hardware candidates
+must also successfully encode one generated frame; a compiled-in encoder without
+its device or driver does not establish support. With no usable H.264 candidate,
+the existing libvpx/WebM arguments remain unchanged. No encoder or system-tool
+dependency is added. The result is shared per executable filesystem identity
+(path, device, inode, size, modification and change timestamps); replacement
+invalidates it without a timer or polling.
+
+Start capabilities and recording results carry the selected MIME. Stream adapters
+pass the produced MIME to the existing Session-media writer, so stored references
+and previews use the actual type. MP4 uses
+`frag_keyframe+empty_moov+default_base_moof`, placing initialization metadata before
+media fragments rather than depending on final-file metadata. The encoder owner
+still rejects nonzero or signaled process exits and removes their partial output;
+it does not publish a truncated successful recording. See the
+[FFmpeg fragmentation contract](https://ffmpeg.org/ffmpeg-formats.html#Fragmentation).
+
+Desktop-native Browser capture remains one PNG still, with an `image/png` artifact
+and media reference even if the request names video. Simulator has no Record
+control or recording operation in its current toolbar and device-operation catalog;
+the shared adapter's ability to consume a simulator stream is not a recording entry.
+Existing saved WebM recordings are unchanged. Playback support is decided by the
+existing preview owner on the viewing device.

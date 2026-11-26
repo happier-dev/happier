@@ -99,12 +99,12 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
           ),
         };
       }
-      if (input.recording.mimeType !== 'video/webm') {
+      if (input.recording.mimeType !== 'video/webm' && input.recording.mimeType !== 'video/mp4') {
         return {
           status: 'unavailable',
           reason: unavailable(
             'browser_recording_mime_unavailable',
-            'CDP screencast recording only supports video/webm output.',
+            'CDP screencast recording requires a video output type.',
           ),
         };
       }
@@ -113,7 +113,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
       try {
         encoder = await options.encoderFactory({
           recording: input.recording,
-          outputMimeType: 'video/webm',
+          outputMimeType: input.recording.mimeType,
         });
       } catch (error) {
         return {
@@ -213,7 +213,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
           byteSize: output.byteSize,
           frameCount: active.frames.frameCount,
           fps: Math.min(active.recording.fps, calculateFps(active.frames.frameCount, durationMs)),
-          mimeType: 'video/webm',
+          mimeType: output.source.mimeType ?? active.recording.mimeType,
           source: output.source,
           ...(output.cleanup ? { cleanup: output.cleanup } : {}),
         } satisfies BrowserRecordingCapturedArtifact;

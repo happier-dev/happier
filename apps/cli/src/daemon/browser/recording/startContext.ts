@@ -23,6 +23,7 @@ export type BrowserRecordingStartContextOptions = Readonly<{
   hasNativeViewCapture: boolean;
   /** A managed-Chromium CDP screencast transport is bound → `cdpScreencast` exists. */
   hasCdpScreencast?: boolean;
+  frameMimeType?: 'video/mp4' | 'video/webm';
   /** The shared runtime resolver found the executable WebM encoder; native PNG does not need it. */
   hasFrameEncoder: boolean;
 }>;
@@ -80,11 +81,14 @@ export function resolveBrowserRecordingStartContext(
         available: sources.length > 0,
         cursorOverlaySupported: startInput.captureKind === 'cdpScreencast' && sources.some(source => source.captureKind === 'cdpScreencast'),
         supportedCaptureKinds: sources.map((entry) => entry.captureKind),
-        supportedMimeTypes: mergeUnique(...sources.map((entry) => entry.mimeTypes)),
+        supportedMimeTypes: mergeUnique(...sources.map((entry) => entry.captureKind === 'nativeViewCapture'
+          ? entry.mimeTypes : [options.frameMimeType ?? 'video/webm'])),
         supportedAdapterKinds: mergeUnique(...sources.map((entry) => entry.adapterKinds)),
         supportedRetentionClasses: sources.length > 0 ? ['preSend', 'attached', 'clearOnClose', 'clearOnSend'] : [],
         disabledReasons: sources.length > 0 ? [] : ['Browser recording WebM encoder is unavailable.'],
       },
+      ...(startInput.captureKind !== 'nativeViewCapture' && options.frameMimeType
+        ? { outputMimeType: options.frameMimeType } : {}),
       ...(startInput.captureKind === 'nativeViewCapture' && options.hasNativeViewCapture
         ? { captureSourceAvailable: true }
         : {}),

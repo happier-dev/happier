@@ -20,10 +20,25 @@ import { createCliBrowserRuntimeActionExecutor } from '../actions/controlTranspo
 import { createBrowserCdpScreencastProducer } from '../capture/cdpScreencast';
 import type { BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter';
 import { createBrowserRecordingCdpScreencastTransport } from './adapters/cdpScreencastTransport';
-import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../../recording/ffmpegStreamEncoder';
+import { createFfmpegBrowserRecordingStreamFrameEncoderFactory, resolveRecordingOutputFormat } from '../../recording/ffmpegStreamEncoder';
 import { createBrowserRecordingDaemonRuntime } from './runtime';
 import { resolveBrowserRecordingStartContext } from './startContext';
 import { resolveFfmpegStaticBinaryPath } from '../../runtime/ffmpegStatic';
+
+const capabilityProbe = vi.hoisted(() => ({ binary: '' }));
+// Only the executable capability process is replaced for the named fixture binary.
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, execFile: ((...args: unknown[]) => {
+        if (args[0] === capabilityProbe.binary) {
+            const callback = args.at(-1);
+            if (typeof callback !== 'function') throw new Error('Expected encoder capability callback');
+            callback(null, ' V..... libx264 H.264 encoder\n', '');
+            return new actual.ChildProcess();
+        }
+        return Reflect.apply(actual.execFile, undefined, args);
+    }) as typeof actual.execFile };
+});
 
 const runFfmpeg = promisify(execFile);
 
@@ -35,12 +50,12 @@ const { parseSessionMediaMessageMeta } = await import(new URL(
     '../../../../../ui/sources/sync/domains/session/media/sessionMediaMessageMeta.ts', import.meta.url,
 ).href);
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { capabilityProbe.binary = ''; vi.restoreAllMocks(); });
 
 // Only process creation and the CDP/network transports are replaced. The real Writable
 // applies backpressure; the real recording owners persist and read the resulting file.
-async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean; encoderFails?: boolean;
-    encoderAvailable?: () => Promise<boolean>; realEncoder?: boolean; encodedBytes?: number;
+async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean; encoderFails?: boolean; encoderAbrupt?: boolean;
+    encoderAvailable?: () => Promise<boolean>; realEncoder?: boolean; capableEncoder?: string; encodedBytes?: number;
     nativeViewCapture?: boolean; beforeCaptureStop?: () => Promise<void>; beforeCommitAttachment?: () => Promise<void> } = {}) {
     const directory = await mkdtemp(join(tmpdir(), 'happier-managed-recording-'));
     const attachments: Record<string, unknown>[] = [];
@@ -84,7 +99,7 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
         } } : {}),
         streamFrameEncoderFactory: createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory: directory,
             ...(options.realEncoder ? {} : {
-            resolveFfmpegBinaryPath: async () => options.missingEncoder ? null : '/fixture/ffmpeg',
+            resolveFfmpegBinaryPath: async () => options.missingEncoder ? null : options.capableEncoder ?? '/fixture/ffmpeg',
             spawnFfmpeg: (_binary: string, args: readonly string[]) => {
                 const child = new EventEmitter();
                 const chunks: Buffer[] = [];
@@ -94,12 +109,12 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
                     write: (chunk, _encoding, callback) => { chunks.push(Buffer.from(chunk.subarray(0, 4))); setImmediate(callback); },
                     final: callback => { void (async () => {
                         const bytes = options.encodedBytes === undefined
-                            ? Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), ...chunks])
+                            ? Buffer.concat([options.capableEncoder ? Buffer.from('000000186674797069736f6d0000020069736f6d6d703432', 'hex') : Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), ...chunks])
                             : Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(options.encodedBytes - 4, 1)]);
                         encoded.push(bytes);
                         await writeFile(args.at(-1)!, bytes);
                         callback();
-                        child.emit('close', options.encoderFails ? 1 : 0, null);
+                        child.emit('close', options.encoderAbrupt ? null : options.encoderFails ? 1 : 0, options.encoderAbrupt ? 'SIGKILL' : null);
                     })().catch(callback); },
                 });
                 queueMicrotask(() => child.emit('spawn'));
@@ -110,6 +125,7 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
         resolveStartContext: async input => {
             const context = resolveBrowserRecordingStartContext({ hasLiveStreamCaptureRegistry: false,
                 hasNativeViewCapture: options.nativeViewCapture === true, hasCdpScreencast: true,
+                frameMimeType: options.capableEncoder ? (await resolveRecordingOutputFormat(options.capableEncoder)).mimeType : undefined,
                 hasFrameEncoder: await (options.encoderAvailable?.() ?? Promise.resolve(true)) })(input);
             return context;
         },
@@ -157,6 +173,38 @@ async function startRecording(runtime: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('managed recording Action → private daemon IPC → capture → Session media', () => {
+    it.each([false, true])('carries MP4 through Agent Start and settles abrupt=%s before Session-media success', async encoderAbrupt => {
+        const binaryDirectory = await mkdtemp(join(tmpdir(), 'happier-h264-capability-'));
+        const binary = join(binaryDirectory, 'managed-encoder');
+        await writeFile(binary, 'encoder identity');
+        capabilityProbe.binary = binary;
+        const format = await resolveRecordingOutputFormat(binary);
+        expect(resolveBrowserRecordingStartContext({ hasLiveStreamCaptureRegistry: false, hasNativeViewCapture: false,
+            hasCdpScreencast: true, hasFrameEncoder: true, frameMimeType: format.mimeType })(start).recordingCapabilities.supportedMimeTypes)
+            .toEqual(['video/mp4']);
+        const runtime = await setup({ capableEncoder: binary, encoderAbrupt });
+        try {
+            expect(await runtime.execute('browser.recording.start', start)).toMatchObject({ ok: true,
+                result: { status: 'started', recording: { mimeType: 'video/mp4' } } });
+            runtime.frame();
+            runtime.setNow(2_000);
+            if (encoderAbrupt) {
+                expect(await runtime.execute('browser.recording.stop', { recordingId: start.recordingId, navigationGenerationEnd: 0 }))
+                    .toMatchObject({ ok: true, result: { status: 'failed', reason: 'capture_failed' } });
+                expect(runtime.attachments).toEqual([]);
+                expect(await runtime.execute('browser.recording.status', { recordingId: start.recordingId }))
+                    .toMatchObject({ ok: true, result: { status: 'failed', outcomeReason: 'capture_failed' } });
+                return;
+            }
+            expect(await runtime.execute('browser.recording.stop', { recordingId: start.recordingId, navigationGenerationEnd: 0 }))
+                .toMatchObject({ ok: true, result: { status: 'finalized', recording: {
+                    mimeType: 'video/mp4', mediaRef: { mimeType: 'video/mp4', mediaKind: 'video' },
+                } } });
+            expect(runtime.attachments.flatMap(meta => parseSessionMediaMessageMeta(meta.happier)?.inlineMedia ?? []))
+                .toEqual(expect.arrayContaining([expect.objectContaining({ mimeType: 'video/mp4', mediaKind: 'video' })]));
+        } finally { await runtime.dispose(); await rm(binaryDirectory, { recursive: true, force: true }); }
+    });
+
     it('accepts returned recording operands in their Session and explains another Session’s refusal', async () => {
         const runtime = await setup();
         try {

@@ -1,4 +1,4 @@
-import { spawn as spawnProcess, type SpawnOptions } from 'node:child_process';
+import { execFile, spawn as spawnProcess, type SpawnOptions } from 'node:child_process';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { withProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { randomUUID } from 'node:crypto';
@@ -50,10 +50,58 @@ function defaultSpawnFfmpeg(
   return child as BrowserRecordingFfmpegProcess;
 }
 
+export type RecordingOutputFormat = Readonly<{
+  encoder: string;
+  mimeType: 'video/mp4' | 'video/webm';
+  container: 'mp4' | 'webm';
+}>;
+
+const WEBM_FORMAT: RecordingOutputFormat = { encoder: 'libvpx', mimeType: 'video/webm', container: 'webm' };
+// These encoders accept software yuv420p frames without a separate device/filter graph.
+// Hardware availability is established by the executable, never by the host OS name.
+const H264_ENCODERS = ['libx264', 'libopenh264', 'h264_videotoolbox', 'h264_mf', 'h264_nvenc', 'h264_amf'] as const;
+const formatsByExecutable = new Map<string, { identity: string; format: Promise<RecordingOutputFormat> }>();
+
+/** The resolver revalidates the managed path; replacement changes its filesystem identity. */
+export async function resolveRecordingOutputFormat(binaryPath: string): Promise<RecordingOutputFormat> {
+  let identity: string;
+  try {
+    const info = await stat(binaryPath, { bigint: true });
+    identity = [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(':');
+  } catch {
+    // The real managed resolver rejects a missing executable. This also preserves
+    // WebM for external process adapters that do not expose a filesystem binary.
+    return WEBM_FORMAT;
+  }
+  const cached = formatsByExecutable.get(binaryPath);
+  if (cached?.identity === identity) return cached.format;
+  const format = (async (): Promise<RecordingOutputFormat> => {
+    const listing = await new Promise<string>(resolve => {
+      execFile(binaryPath, ['-hide_banner', '-encoders'], { windowsHide: true }, (error, stdout) => resolve(error ? '' : stdout));
+    });
+    const encoders = new Set([...listing.matchAll(/^\s*V[.A-Z]{5}\s+(\S+)\s/gmu)].map(match => match[1]));
+    for (const encoder of H264_ENCODERS) {
+      if (!encoders.has(encoder)) continue;
+      // A compiled hardware wrapper may exist without its GPU/driver. Probe one
+      // ordinary frame once with this identity, never per recording or frame.
+      const usable = encoder === 'libx264' || encoder === 'libopenh264' || await new Promise<boolean>(resolve => {
+        execFile(binaryPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=s=1280x720',
+          '-frames:v', '1', '-an', '-c:v', encoder, '-pix_fmt', 'yuv420p', '-f', 'null', '-'],
+        { windowsHide: true }, error => resolve(!error));
+      });
+      if (usable) return { encoder, mimeType: 'video/mp4', container: 'mp4' };
+    }
+    return WEBM_FORMAT;
+  })();
+  formatsByExecutable.set(binaryPath, { identity, format });
+  return format;
+}
+
 function buildFfmpegArgs(input: Readonly<{
   fps: number;
   outputPath: string;
   inputFormat: 'mjpeg' | 'image2pipe';
+  format: RecordingOutputFormat;
 }>): readonly string[] {
   return [
     '-y',
@@ -68,15 +116,16 @@ function buildFfmpegArgs(input: Readonly<{
     'pipe:0',
     '-an',
     '-c:v',
-    'libvpx',
+    input.format.encoder,
     '-pix_fmt',
     'yuv420p',
-    '-deadline',
-    'realtime',
-    '-cpu-used',
-    '8',
+    ...(input.format.container === 'mp4'
+      // Fragmented MP4 writes initialization metadata before media, rather than
+      // depending on a final moov. Nonzero/signaled exits still fail and unlink.
+      ? ['-movflags', 'frag_keyframe+empty_moov+default_base_moof']
+      : ['-deadline', 'realtime', '-cpu-used', '8']),
     '-f',
-    'webm',
+    input.format.container,
     input.outputPath,
   ];
 }
@@ -119,6 +168,7 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     private readonly fileNameHint: string,
     private readonly startedAtMs: number,
     private readonly fps: number,
+    private readonly format: RecordingOutputFormat,
   ) {
     this.ready = new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);
@@ -202,7 +252,7 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
         source: {
           kind: 'local-file',
           path: this.outputPath,
-          mimeType: 'video/webm',
+          mimeType: this.format.mimeType,
           fileNameHint: this.fileNameHint,
         },
         byteSize: outputStat.size,
@@ -280,22 +330,24 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
   const outputDirectory = options.outputDirectory
     ?? join(options.workingDirectory, '.happier', 'tmp', 'browser-recordings');
 
-  return async ({ recording, outputMimeType, registeredSource }) => {
-    if (outputMimeType !== 'video/webm') {
-      throw new Error('Browser recording ffmpeg encoder only supports video/webm output.');
+  const factory: BrowserRecordingStreamFrameEncoderFactory = async ({ recording, outputMimeType, registeredSource }) => {
+    if (outputMimeType !== 'video/webm' && outputMimeType !== 'video/mp4') {
+      throw new Error('Browser recording ffmpeg encoder requires a video output type.');
     }
     const ffmpegBinaryPath = await resolveFfmpegBinaryPath();
     if (!ffmpegBinaryPath) {
       throw new RecordingEncoderUnavailableError();
     }
+    const format = await resolveRecordingOutputFormat(ffmpegBinaryPath);
     await mkdir(outputDirectory, { recursive: true });
     // The existing opaque UUID is a portable filename; recording IDs need no filename cutoff.
-    const fileNameHint = `browser-recording-${randomId()}.webm`;
+    const fileNameHint = `browser-recording-${randomId()}.${format.container}`;
     const outputPath = join(outputDirectory, fileNameHint);
     const fps = Math.max(1, Math.floor(recording.fps));
     const args = buildFfmpegArgs({
       inputFormat: registeredSource?.capabilities.supportedCodecs.includes('image.frame.v1') ? 'image2pipe' : 'mjpeg',
       fps,
+      format,
       outputPath,
     });
     const child = spawnFfmpeg(ffmpegBinaryPath, args, {
@@ -309,6 +361,7 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
       fileNameHint,
       recording.startedAtMs,
       fps,
+      format,
     );
     try {
       await encoder.ready;
@@ -318,4 +371,10 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
     }
     return encoder;
   };
+  return Object.assign(factory, {
+    async resolveOutputMimeType() {
+      const binary = await resolveFfmpegBinaryPath();
+      return binary ? (await resolveRecordingOutputFormat(binary)).mimeType : null;
+    },
+  });
 }

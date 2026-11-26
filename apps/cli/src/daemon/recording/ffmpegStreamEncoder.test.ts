@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -6,7 +7,7 @@ import { basename, dirname, join } from 'node:path';
 import { Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from './ffmpegStreamEncoder';
+import { createFfmpegBrowserRecordingStreamFrameEncoderFactory, resolveRecordingOutputFormat } from './ffmpegStreamEncoder';
 import type { RecordingSession } from './service';
 
 // Observe unlink at the genuine filesystem boundary, including before its I/O settles.
@@ -14,6 +15,12 @@ vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, rm: vi.fn(actual.rm) };
 });
+
+const probe = vi.hoisted(() => ({ encoders: ' V..... libx264 H.264 encoder\n', calls: 0 }));
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  execFile: vi.fn((_path: string, _args: readonly string[], _options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => { probe.calls++; callback(_args.includes('-encoders') ? null : new Error('hardware unavailable'), probe.encoders, ''); }),
+}));
 
 const recording: RecordingSession = {
   v: 1, recordingId: 'recording', captureKind: 'streamFrameCapture', startedAtMs: 1_000,
@@ -23,6 +30,75 @@ const recording: RecordingSession = {
 };
 
 describe('recording encoder output ownership', () => {
+  it('shares one capability read and refreshes it when the executable identity changes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-encoder-capabilities-'));
+    const binary = join(directory, 'managed-encoder');
+    try {
+      writeFileSync(binary, 'first identity');
+      const before = probe.calls;
+      const formats = await Promise.all([resolveRecordingOutputFormat(binary), resolveRecordingOutputFormat(binary)]);
+      expect(formats.map(format => format.mimeType)).toEqual(['video/mp4', 'video/mp4']);
+      expect(probe.calls - before).toBe(1);
+      probe.encoders = ' V..... libvpx VP8 encoder\n';
+      writeFileSync(binary, 'replacement executable identity');
+      expect(await resolveRecordingOutputFormat(binary)).toMatchObject({ mimeType: 'video/webm', encoder: 'libvpx', container: 'webm' });
+      expect(probe.calls - before).toBe(2);
+    } finally {
+      probe.encoders = ' V..... libx264 H.264 encoder\n';
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps WebM when a listed hardware encoder cannot encode on this machine', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-hardware-encoder-'));
+    const binary = join(directory, 'encoder');
+    try {
+      writeFileSync(binary, 'hardware build');
+      probe.encoders = ' V..... h264_nvenc H.264 encoder\n V..... libvpx VP8 encoder\n';
+      expect(await resolveRecordingOutputFormat(binary)).toMatchObject({ mimeType: 'video/webm', encoder: 'libvpx' });
+    } finally {
+      probe.encoders = ' V..... libx264 H.264 encoder\n';
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the executable encoder capability for MP4 and rejects abrupt partial output', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-h264-'));
+    const binary = join(directory, 'managed-encoder');
+    writeFileSync(binary, 'executable identity');
+    let outputPath = '';
+    let args: readonly string[] = [];
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new Writable({ write(_chunk, _encoding, callback) { callback(); } }),
+      kill: () => true,
+    });
+    try {
+      const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({
+        workingDirectory: directory, resolveFfmpegBinaryPath: async () => binary,
+        spawnFfmpeg: (_binary, invocation) => {
+          args = invocation;
+          outputPath = args.at(-1)!;
+          writeFileSync(outputPath, 'partial');
+          queueMicrotask(() => child.emit('spawn'));
+          return child;
+        },
+      });
+      const encoder = await factory({ recording, outputMimeType: 'video/webm' });
+      expect(execFile).toHaveBeenCalledWith(binary, ['-hide_banner', '-encoders'], expect.anything(), expect.anything());
+      expect(args).toContain('libx264');
+      expect(args).toContain('mp4');
+      expect(args).toContain('frag_keyframe+empty_moov+default_base_moof');
+      expect(outputPath).toMatch(/\.mp4$/);
+      encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: Buffer.from('frame') });
+      child.emit('close', null, 'SIGKILL');
+      await expect(encoder.finish({ recording, frameCount: 1, durationMs: 80 })).rejects.toThrow();
+      await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      child.emit('close', null, 'SIGKILL');
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('waits for close after a spawn error before rejecting admission and deleting partial output', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-encoder-spawn-retirement-'));
     const child = Object.assign(new EventEmitter(), {

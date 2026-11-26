@@ -25,7 +25,7 @@ import { createBrowserAutomationOwnerRegistry } from "@/daemon/browser/automatio
 import { createControlAdapterAutomationTransport } from "@/daemon/browser/automation/adapters/controlBridge";
 import { createBrowserRecordingDaemonRuntime, type BrowserRecordingDaemonRuntime, type BrowserRecordingDaemonRuntimeOptions } from "@/daemon/browser/recording/runtime";
 import { resolveBrowserRecordingStartContext as resolveBrowserRecordingStartContextForProducers } from "@/daemon/browser/recording/startContext";
-import { resolveFfmpegStaticBinaryPath } from "@/daemon/runtime/ffmpegStatic";
+import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '@/daemon/recording/ffmpegStreamEncoder';
 import { createBrowserRecordingNativeViewCaptureCommand } from "@/daemon/browser/recording/adapters/nativeViewCommand";
 import { createBrowserRecordingCdpScreencastTransport } from "@/daemon/browser/recording/adapters/cdpScreencastTransport";
 import { createBrowserCdpScreencastProducer, type BrowserCdpScreencastProducer } from "@/daemon/browser/capture/cdpScreencast";
@@ -647,8 +647,7 @@ setBrowserRecordingRoutesProvider?: (
             mutationCustody: params.daemonSessionMutationCustody, sessionAccounts, title: 'Browser recording',
           }),
           liveStreamCaptureRegistry: params.liveStreamCaptureRegistry,
-          streamFrameEncoderFactory:
-            params.browserRecordingStreamFrameEncoderFactory,
+          streamFrameEncoderFactory: recordingEncoderFactory,
           ...(browserRecordingNativeViewCapture
             ? { nativeViewCapture: browserRecordingNativeViewCapture }
             : {}),
@@ -697,17 +696,21 @@ setBrowserRecordingRoutesProvider?: (
         }),
       }),
     };
+  const recordingEncoderFactory = params.browserRecordingStreamFrameEncoderFactory
+    ?? createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory: configuration.happyHomeDir });
   const resolveBrowserRecordingStartContext =
     params.resolveBrowserRecordingStartContext ??
-    (async (startInput) =>
-      resolveBrowserRecordingStartContextForProducers({
+    (async (startInput) => {
+      const mimeType = recordingEncoderFactory.resolveOutputMimeType
+        ? await recordingEncoderFactory.resolveOutputMimeType() : 'video/webm';
+      return resolveBrowserRecordingStartContextForProducers({
+        frameMimeType: mimeType ?? undefined,
         hasLiveStreamCaptureRegistry: Boolean(params.liveStreamCaptureRegistry),
         hasNativeViewCapture: browserRecordingNativeViewCapture.isPlatformCaptureSupported?.() !== false,
         hasCdpScreencast: browserRecordingCdpScreencastAvailable,
-        hasFrameEncoder: Boolean(params.browserRecordingStreamFrameEncoderFactory)
-          || ((Boolean(params.liveStreamCaptureRegistry) || browserRecordingCdpScreencastAvailable)
-            && Boolean(await resolveFfmpegStaticBinaryPath())),
-      })(startInput));
+        hasFrameEncoder: mimeType !== null,
+      })(startInput);
+    });
   // BRW-6 privacy: daemon-side owner of on-disk browser profile/partition purge. Subscribed
   // to the session-deleted signal (purges session profiles and cleanup-on-close ephemeral profiles) and the
   // logout transition (purges `ephemeral` profiles + partitions). Fail-closed: a failed disk

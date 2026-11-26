@@ -48,14 +48,14 @@ export const BROWSER_RECORDING_CAPTURE_PROFILES = [
   {
     captureKind: 'cdpScreencast',
     adapterKinds: ['chromiumSidecar', 'streamedBrowserSurface'],
-    mimeTypes: ['video/webm'],
+    mimeTypes: ['video/mp4', 'video/webm'],
     fidelity: 'cdp',
   },
   {
     captureKind: 'streamFrameCapture',
     adapterKinds: ['streamedBrowserSurface', 'simulatorPreview'],
     requiresCaptureSource: true,
-    mimeTypes: ['video/webm'],
+    mimeTypes: ['video/mp4', 'video/webm'],
     fidelity: 'streamFrame',
   },
 ] as const satisfies readonly BrowserRecordingCaptureProfile[];

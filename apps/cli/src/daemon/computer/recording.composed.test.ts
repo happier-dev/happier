@@ -14,10 +14,27 @@ import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
 import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../recording/ffmpegStreamEncoder';
 import { combineRecordingStorageOwners } from '../recording/service';
 
-afterEach(() => vi.restoreAllMocks());
+const capabilityProbe = vi.hoisted(() => ({ binary: '' }));
+// Only the executable capability process is replaced for the named fixture binary.
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, execFile: ((...args: unknown[]) => {
+        if (args[0] === capabilityProbe.binary) {
+            const callback = args.at(-1);
+            if (typeof callback !== 'function') throw new Error('Expected encoder capability callback');
+            callback(null, ' V..... libx264 H.264 encoder\n', '');
+            return new actual.ChildProcess();
+        }
+        return Reflect.apply(actual.execFile, undefined, args);
+    }) as typeof actual.execFile };
+});
 
-async function setup(encoder: 'available' | 'unavailable' | 'failed' = 'available') {
+afterEach(() => { capabilityProbe.binary = ''; vi.restoreAllMocks(); });
+
+async function setup(encoder: 'available' | 'unavailable' | 'failed' | 'h264' = 'available') {
   const directory = await mkdtemp(join(tmpdir(), 'happier-computer-recording-'));
+  const binary = join(directory, 'managed-encoder');
+  if (encoder === 'h264') { await writeFile(binary, 'identity'); capabilityProbe.binary = binary; }
   const registry = createMachineLiveStreamCaptureRegistry();
   const source = createComputerCaptureSource({ sessionId: 'session', target, executablePath: '/managed/cua-driver' });
   registry.register({ sourceId: source.sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
@@ -30,12 +47,12 @@ async function setup(encoder: 'available' | 'unavailable' | 'failed' = 'availabl
   let encodedFrames = 0;
   // Only the encoder process is replaced; real stream capture, lifecycle, file persistence and Action dispatch run.
   const encoderFactory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory: directory,
-    resolveFfmpegBinaryPath: async () => encoder === 'unavailable' ? null : '/fixture/ffmpeg',
+    resolveFfmpegBinaryPath: async () => encoder === 'unavailable' ? null : encoder === 'h264' ? binary : '/fixture/ffmpeg',
     spawnFfmpeg: (_binary, args) => {
       expect(args).toContain('image2pipe');
       const child = new EventEmitter();
       const stdin = new Writable({ write(_chunk, _encoding, callback) { encodedFrames++; callback(); },
-        final(callback) { void writeFile(args.at(-1)!, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]))
+        final(callback) { void writeFile(args.at(-1)!, encoder === 'h264' ? Buffer.from('000000186674797069736f6d0000020069736f6d6d703432', 'hex') : Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]))
           .then(() => { callback(); child.emit('close', 0, null); }, callback); } });
       queueMicrotask(() => {
         if (encoder === 'failed') { child.emit('error', new Error('synthetic launch failure')); child.emit('close', -2, null); }
@@ -59,6 +76,22 @@ async function setup(encoder: 'available' | 'unavailable' | 'failed' = 'availabl
 }
 
 describe('Computer recording through the real Action entry', () => {
+  it('reports MP4 on Agent Start and persists the produced MP4 type on Stop', async () => {
+    const fixture = await setup('h264');
+    try {
+      const started = await fixture.invoke('computer.recording.start', {
+        mediaTarget: { sessionId: 'session', messageLocalId: 'h264' },
+      });
+      expect(started).toMatchObject({ ok: true, result: { status: 'started', recording: { mimeType: 'video/mp4' } } });
+      if (!started.ok) throw new Error('Start failed');
+      const result = started.result as { recording: { recordingId: string } };
+      expect(await fixture.invoke('computer.recording.stop', { recordingId: result.recording.recordingId }))
+        .toMatchObject({ ok: true, result: { status: 'finalized', recording: {
+          mimeType: 'video/mp4', mediaRef: { mimeType: 'video/mp4', mediaKind: 'video' },
+        } } });
+    } finally { await fixture.close(); }
+  });
+
   it.each(['unavailable', 'failed'] as const)('preserves the encoder %s cause through Computer start', async encoder => {
     const fixture = await setup(encoder);
     try {
