@@ -218,9 +218,67 @@ const externalSessions = {
 } satisfies AgentExternalSessionsContribution;
 ```
 
+## Optional Usage accounting reader
+
+In **0.3 development**, an Agent can contribute `readAccounting` for a
+native source that records token or cost observations. Add the method to
+the Agent's `externalSessions` contribution and return `accountingSource`
+from `resolveSource` for the source you can read. Happier calls the reader
+when collection is enabled for that source.
+
+This synthetic reader emits one observation totalling 12 tokens. The host
+passes the last accepted cursor back on the next read. The reader first
+checks the host's invocation controls so it can return a typed failure
+when the call is cancelled or its deadline has passed.
+
+```ts
+import {
+  getAgentExternalSessionsInvocationFailure,
+  type AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+const accountingReader = {
+  readAccounting(request) {
+    const stopped = getAgentExternalSessionsInvocationFailure(request);
+    if (stopped) return stopped;
+    if (request.source.kind !== 'usage-author-fixture') return { ok: true, value: { outcome: 'source_replaced' } };
+    if (request.cursor === 'fixture-v1') return { ok: true, value: { outcome: 'unchanged' } };
+    if (request.cursor) return { ok: true, value: { outcome: 'gap_or_cursor_expired' } };
+    return { ok: true, value: {
+      outcome: 'advanced',
+      nextCursor: 'fixture-v1',
+      coverage: { complete: true },
+      observations: [{
+        nativeSessionId: 'author-fixture-session',
+        observedAt: Date.UTC(2026, 10, 25),
+        inferenceId: 'fixture-reading',
+        accounting: { inputIncludesCache: false, outputIncludesReasoning: false },
+        observation: {
+          provider: 'usage-author-fixture',
+          source: 'usage-author-fixture',
+          scope: 'turn_delta',
+          key: 'fixture-reading',
+          modelId: 'fixture',
+          tokens: { input: 7, output: 5, reasoning: null, cacheRead: null, cacheWrite: null, total: 12 },
+          cost: null,
+          contextUsedTokens: null,
+          contextWindowTokens: null,
+        },
+      }],
+    } };
+  },
+} satisfies Pick<AgentExternalSessionsContribution, 'readAccounting'>;
+```
+
+Spread `accountingReader` into your existing contribution. In a real adapter,
+read the native source from the supplied cursor and return `advanced` with
+a new cursor and observations when there are new records. Return `unchanged`
+when there is nothing new, `gap_or_cursor_expired` when you cannot resume
+from that cursor, or `source_replaced` when the source itself has changed.
+
 ## Callback invocation services
 
-Each of the six callbacks receives caller-owned invocation controls: required
+Each of the six required callbacks receives caller-owned invocation controls: required
 `signal`, optional `deadlineAtMs`, and `maxSerializedBytes` (required for paged
 candidate/transcript reads, optional for source and identity resolution), plus host-provided
 services: `managedEndpointRead`, the required existing `exec`
@@ -242,15 +300,14 @@ existing exact-file media allowance/adoption path. Roots are never copied into
 directory-enumeration or write authority.
 
 Bundled and externally loaded plugins use the same contribution, invocation,
-and host-access contract. The six callback methods remain exactly six; the
-`exec` service is an invocation input, not a seventh callback or host-service
-operation. The contextual `services.sessions.external` surface described below
-also remains exactly six operations.
+and host-access contract. The `exec` service is an invocation input. The
+contextual `services.sessions.external` surface described below exposes six
+operations.
 
 ### Optional managed-endpoint resolution
 
 A source served by a local server the contribution owns declares that server
-through the optional seventh member, `resolveManagedEndpointService`. It is a
+through the optional `resolveManagedEndpointService` member. It is a
 declaration, not a capability:
 
 ```ts
