@@ -1,0 +1,4 @@
+{
+  "plugins.railway.picker.duplicateProject": "已存在同名專案。",
+  "plugins.railway.picker.duplicateEnvironment": "已存在同名環境。"
+}

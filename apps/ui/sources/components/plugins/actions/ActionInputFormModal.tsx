@@ -61,9 +61,14 @@ function isSuccessfulSubmit(
 
 export type ReadSubmittedActionOption = (fieldPath: string) => Readonly<{ value: string; label: string }> | undefined;
 
+export type ValidateActionInput = (
+    input: Readonly<Record<string, unknown>>,
+) => Readonly<{ message?: string }> | undefined;
+
 export type ActionInputFormModalProps = Readonly<{
     onSubmitOptions?: (readOption: ReadSubmittedActionOption) => void;
     form: AnyActionInputForm;
+    validateInput?: ValidateActionInput;
     pickerContext?: InputTypePickerHostContext;
     actionId?: string;
     anchor?: PopoverAnchor;
@@ -92,6 +97,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
 
     const input = props.form.getInput();
     const fields = props.form.getFields();
+    const validation = props.validateInput?.(input);
     const fieldOptions = useInputFieldOptions({
         ...props.pickerContext,
         requests: fields.map((field) => ({ field, actionId: props.actionId, draftInput: input })),
@@ -115,7 +121,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     }, [props.form, props.onClose]);
 
     const submit = React.useCallback(() => {
-        if (props.form.isSubmitting()) return;
+        if (props.form.isSubmitting() || props.validateInput?.(props.form.getInput())) return;
         props.onSubmitOptions?.(path => {
             const field = fields.find(candidate => candidate.path === path);
             const value = readInputPath(props.form.getInput(), path);
@@ -156,7 +162,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 setError(presentActionExecutionFailure({ ok: false, ...normalizeActionExecutorThrownError(error) }, t('pluginRuntime.unavailableGeneric')));
             }
         })();
-    }, [fieldOptions.resolveOptions, fields, props.form, props.onClose, props.onSubmitOptions]);
+    }, [fieldOptions.resolveOptions, fields, props.form, props.onClose, props.onSubmitOptions, props.validateInput]);
 
     const repairConnectedAccounts = React.useCallback(() => {
         // A fresh open after repair re-resolves the form's options on its admitted target.
@@ -187,12 +193,12 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 testID="plugin-contributed-action-form-submit"
                 accessibilityLabel={props.form.presentation.inputHints.submitLabel ?? props.form.presentation.title}
                 title={props.form.presentation.inputHints.submitLabel ?? props.form.presentation.title}
-                disabled={pending}
+                disabled={pending || validation !== undefined}
                 loading={pending}
                 onPress={submit}
             />
         </ModalCardFooterActions>
-    ), [close, offersConnectedAccounts, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, submit]);
+    ), [close, offersConnectedAccounts, pending, props.form.presentation.inputHints.submitLabel, props.form.presentation.title, repairConnectedAccounts, submit, validation]);
 
     const chrome = React.useMemo(() => ({
         ...createAnchoredSheetChrome({ title, subtitle: description ?? undefined, anchor: props.anchor }),
@@ -213,6 +219,15 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                     props.form.replaceInput({ ...props.form.getInput(), ...patch });
                 }}
             />
+            {validation?.message ? (
+                <View style={styles.error}>
+                    <HappierValidationMessage
+                        message={validation.message}
+                        theme={pluginUiTheme}
+                        accessibilityLiveRegion="polite"
+                    />
+                </View>
+            ) : null}
             {hasResolvedEmptyConnectedAccountOptions ? (
                 <View style={styles.error}>
                     <HappierValidationMessage

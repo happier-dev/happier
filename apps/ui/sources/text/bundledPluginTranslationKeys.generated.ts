@@ -3256,6 +3256,8 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.posthog.ui.write.unsuppress",
   "plugins.posthog.ui.write.unsuppressed",
   "plugins.posthog.watch.sourceDescription",
+  "plugins.railway.picker.duplicateEnvironment",
+  "plugins.railway.picker.duplicateProject",
   "plugins.sentry.account.description",
   "plugins.sentry.account.title",
   "plugins.sentry.auth.cloud.title",

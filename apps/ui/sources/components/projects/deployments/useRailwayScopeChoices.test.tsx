@@ -1,18 +1,22 @@
 import * as React from 'react';
-import { expect, it, vi } from 'vitest';
+import { afterAll, expect, it, vi } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { HappierValidationMessage } from '@happier-dev/plugin-ui/presentation';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { buildDeferredDaemonProjectionSections, PluginProjectedActionV2Schema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { PluginProjectedActionV2Schema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { EffectiveInputField } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { socketRpcCodec } from '@happier-dev/sync-client';
 import * as railway from '../../../../../../packages/plugins/deploy-railway/src/index.js';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { act, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
@@ -31,6 +35,9 @@ vi.mock('@/components/ui/popover/Popover', async (importOriginal) =>
 const homes = createHomeGovernanceHarness();
 const network = await installSessionOpsNetworkBoundary();
 installHomeGovernanceBoundaries(homes);
+afterAll(() => network.dispose());
+const { EncryptionCache } = await import('@/sync/encryption/encryptionCache');
+const { MachineEncryption } = await import('@/sync/encryption/machineEncryption');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -47,23 +54,34 @@ const fields = [
 const credential = { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'railway-connection' };
 const published = [{ manifest: railway.manifest }];
 
-it('reviews a Railway project from the picker and selects the new project and its default environment after approval', async () => {
+it.each(['blank', 'duplicate', 'duplicate environment', 'available'] as const)('opens project creation with a %s name', async (scenario) => {
+  network.resetRequests();
+  installHomeGovernanceBoundaries(homes);
+  const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }),
+    secret: encodeBase64(new Uint8Array(32).fill(17), 'base64url') };
   const serverId = await homes.addHome({ name: 'Railway picker', serverUrl: 'https://railway-picker.test',
-    serverIdentityId: 'srv_railway_picker', accountId: 'owner', currentAccount: true });
+    serverIdentityId: 'srv_railway_picker', accountId: 'owner', currentAccount: true, accountEncryptionMode: 'e2ee', credentials });
+  homes.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
   const account = await captureLazyActionAccountContext(serverId);
+  const machineId = 'controller';
+  const { encryption } = await account.resolveAccountEncryption();
+  if (!encryption) throw new Error('Expected encrypted Account test credentials');
+  const encryptor = await encryption.openEncryption(null);
+  const cipher = new MachineEncryption(machineId, encryptor, new EncryptionCache());
+  const content = { mode: 'e2ee' as const, cipher };
   const installed = await installPortableAccountPluginReleaseForTest({ manifest: railway.manifest,
     activate: api => railway.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activateAccount' }),
     accountLifetime: account.accountLifetime, publishProjection: true });
   const actionsById = Object.fromEntries(Object.entries(installed.projection.actionsById).map(([id, action]) => [id,
     Object.fromEntries(Object.entries(action).filter(([field]) => Object.hasOwn(PluginProjectedActionV2Schema.shape, field))),
   ]));
-  const snapshot = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection:
-    PluginProjectionV2Schema.parse({ v: 2, generation: 1, actionsById,
-      installedPackagesById: {}, agentsById: {}, settingsById: {}, diagnostics: [] }) });
-  network.setRpcResponder(async request => {
+  const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, actionsById,
+    installedPackagesById: {}, agentsById: {}, settingsById: {}, diagnostics: [] });
+  network.setRpcAckResponder(async request => {
     expect(request.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
-    const read = (request.payload as { sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } })?.sectionRead;
-    return read ? snapshot.read(read.digest, read.offset, read.includeDigests) : snapshot.manifest;
+    const decoded = await socketRpcCodec.decodeRequestParams(content, request.payload, `${request.targetId}:${request.method}`);
+    const result = { protocolVersion: 1, projection };
+    return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
   });
   storage.setState({ profileScope: account.accountLifetime.scope, profile: { ...storage.getState().profile,
     connectedAccountsV4: [QualifiedConnectedAccountProfileV4Schema.parse({ ref: credential, status: 'connected',
@@ -74,53 +92,100 @@ it('reviews a Railway project from the picker and selects the new project and it
     createPluginHttpFixture({ async request(request) {
       expect(request.url).toBe('https://backboard.railway.com/graphql/v2');
       const payload = JSON.parse(new TextDecoder().decode(request.body));
+      if (payload.query.includes('workspaces')) return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: {
+        me: { workspaces: [{ id: 'workshop', name: 'Workshop' }] }, externalWorkspaces: [],
+      } })) };
       expect(payload.query).toContain('projectCreate');
       writes.push(payload.variables);
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: { projectCreate: {
         id: 'orders-project', name: 'Order processing', workspaceId: 'workshop',
-        baseEnvironment: { id: 'default-environment', name: 'Production' },
+        baseEnvironment: null, environments: { edges: [{ node: { id: 'default-environment', name: 'production' } }] },
       } } })) };
     } }),
   } });
-  const machineId = 'controller';
   const installationId = 'controller-installation';
-  await publishMachineInventoryForTest(account, [createMachineFixture({ id: machineId, installationId, activeAt: Date.now(), access: {
-    custodian: { accountId: account.accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
-  } })]);
   let handlerInvocations = 0;
-  await answerExternalActionAccountForHome(homes, serverId, { actionId: ACTION_INVOKE_ACTION_ID_V1, machineId, installationId,
+  const boundary = await answerExternalActionAccountForHome(homes, serverId, { actionId: ACTION_INVOKE_ACTION_ID_V1, machineId, installationId,
     tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
       handlerInvocations++;
       const input = getActionSpec(ACTION_INVOKE_ACTION_ID_V1).inputSchema.parse(raw);
       expect(input.action.pluginId).toBe(railway.manifest.id);
       return kit.invokeAction(input.action.localId, input.input);
     } });
+  const installationPublicKey = boundary.machine.installationPublicKey;
+  if (!installationPublicKey) throw new Error('Expected a published test installation key');
+  const metadata = createMachineMetadataFixture({ installationPublicKey });
+  boundary.machine.metadata = encodeBase64((await encryptor.encrypt([metadata]))[0]!, 'base64');
+  await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: machineId, installationId,
+    installationPublicKey, metadata, activeAt: Date.now(), storageMode: 'e2ee',
+    dataEncryptionKey: boundary.machine.dataEncryptionKey, access: boundary.machine.access })]);
+  const existing = { value: 'existing-orders', label: 'Warehouse orders',
+    source: { kind: 'railway-workspace', locator: 'workshop' } };
+  const staging = { value: 'existing-staging', label: 'Staging' };
+  const neighboring = { value: 'neighboring-orders', label: 'Order processing',
+    source: { kind: 'railway-workspace', locator: 'another-workspace' } };
+  const environmentScenario = scenario === 'duplicate environment';
+  const resolveOptions = (field: { path?: string }) =>
+    field.path === 'projectId' ? [existing, neighboring] : environmentScenario ? [staging] : [];
   function Picker() {
-    const [values, setValues] = React.useState<Record<string, unknown>>({ workspaceId: 'workshop' });
+    const [values, setValues] = React.useState<Record<string, unknown>>(environmentScenario ? { projectId: existing.value } : {});
     const choices = useRailwayScopeChoices({ declarations: published, lifetime: account.accountLifetime, account: credential,
       fields, values, onCreated: created => setValues(current => ({ ...current, ...created })) });
     return <ActionInputFields fields={fields} input={values} editable resolveFieldTestID={field => 'scope.' + field.path}
-      resolveChoiceAction={choices.choiceAction} resolveFieldOptions={choices.withCreatedChoices(() => [])} onPatch={setValues} />;
+      resolveChoiceAction={field => choices.choiceAction(field, choices.withCreatedChoices(resolveOptions))}
+      resolveFieldOptions={choices.withCreatedChoices(resolveOptions)} onPatch={setValues} />;
   }
   const screen = await renderScreen(<ModalProvider><Picker /></ModalProvider>);
   try {
     const picker = () => screen.findAllByType(ActionInputFields).find(node => node.props.fields === fields)!;
     const trigger = screen.findAllByType('Pressable').find(node =>
-      String(node.props.accessibilityLabel ?? '').startsWith('Railway project:'));
+      String(node.props.accessibilityLabel ?? '').startsWith(environmentScenario ? 'Railway environment:' : 'Railway project:'));
     expect(trigger).toBeDefined();
     await pressTestInstanceAsync(trigger);
     const create = screen.findAllByType('Pressable').find(node =>
-      String(node.props.accessibilityLabel ?? '').startsWith('Create Railway project'));
+      String(node.props.accessibilityLabel ?? '').startsWith(environmentScenario ? 'Create Railway environment' : 'Create Railway project'));
     expect(create).toBeDefined();
     await pressTestInstanceAsync(create);
     const form = () => screen.findAllByType(ActionInputFields).find(node => node.props.fields.some(
       (field: EffectiveInputField) => field.path === 'name'))!;
     expect(form()).toBeDefined();
+    if (!environmentScenario) {
+      expect(form().props.input.workspaceId).toBeUndefined();
+      await act(async () => form().props.onPatch({ workspaceId: 'workshop' }));
+    }
+    const submitDisabled = () => {
+      const submit = screen.findByTestId('plugin-contributed-action-form-submit');
+      return submit.props.disabled ?? submit.props.accessibilityState?.disabled;
+    };
+    if (scenario !== 'available') {
+      if (scenario === 'duplicate') {
+        await act(async () => form().props.onPatch({ name: '  WAREHOUSE orders  ' }));
+        const validation = screen.findAllByType(HappierValidationMessage)
+          .filter(node => node.props.message === 'A project with that name already exists.');
+        expect(validation).toHaveLength(1);
+      } else if (environmentScenario) {
+        await act(async () => form().props.onPatch({ name: '  STAGING  ' }));
+        expect(screen.findAllByType(HappierValidationMessage)
+          .filter(node => node.props.message === 'An environment with that name already exists.')).toHaveLength(1);
+      } else {
+        expect(submitDisabled()).toBe(true);
+        await act(async () => form().props.onPatch({ name: '  ' }));
+      }
+      expect(submitDisabled()).toBe(true);
+      expect(handlerInvocations).toBe(0);
+      expect(writes).toEqual([]);
+      await act(async () => form().props.onPatch({ name: 'Order processing' }));
+      expect(submitDisabled()).not.toBe(true);
+      expect(screen.findAllByType(HappierValidationMessage)).toHaveLength(0);
+      return;
+    }
     await act(async () => form().props.onPatch({ name: 'Order processing' }));
     await screen.pressByTestIdAsync('plugin-contributed-action-form-submit');
     const approval = () => screen.findByTestId('app-shell-confirmation-confirm');
     const issue = () => JSON.stringify({
       error: screen.findAllByType(HappierValidationMessage).find(node => node.props.testID === 'plugin-contributed-action-form-error')?.props.message,
+      code: screen.findAllByType(TechnicalDetailsDisclosure).find(node => node.props.testID === 'plugin-contributed-action-form-error-details')
+        ?.props.lines.find((line: { key: string }) => line.key === 'code')?.value,
       rpc: network.requests.map(request => request.method),
       routes: [...new Set(homes.requests.map(request => request.path.split('?')[0]))],
       handlerInvocations, writes: writes.length,
@@ -133,8 +198,9 @@ it('reviews a Railway project from the picker and selects the new project and it
       expect(writes, issue()).toHaveLength(1);
       expect(picker().props.input, issue()).toMatchObject({ projectId: 'orders-project', environmentId: 'default-environment' });
     });
-    expect(picker().props.resolveFieldOptions(fields[0])).toEqual([{ value: 'orders-project', label: 'Order processing' }]);
-    expect(picker().props.resolveFieldOptions(fields[1])).toEqual([{ value: 'default-environment', label: 'Production' }]);
+    expect(picker().props.resolveFieldOptions(fields[0])).toEqual([existing, neighboring, { value: 'orders-project', label: 'Order processing',
+      source: { kind: 'railway-workspace', locator: 'workshop' } }]);
+    expect(picker().props.resolveFieldOptions(fields[1])).toEqual([{ value: 'default-environment', label: 'production' }]);
     expect(writes).toEqual([{ input: { name: 'Order processing', workspaceId: 'workshop' } }]);
   } finally {
     await screen.unmount();
@@ -142,7 +208,6 @@ it('reviews a Railway project from the picker and selects the new project and it
     await installed.dispose();
     account.dispose();
     await homes.reset();
-    await network.dispose();
     standardCleanup();
   }
 });

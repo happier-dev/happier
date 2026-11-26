@@ -7,6 +7,7 @@ import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plug
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { createActionInputForm } from '@/components/plugins/actions/actionInputForm';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
+import { t } from '@/text';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { StrictJsonValueSchema, isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
@@ -58,7 +59,7 @@ export function useRailwayScopeChoices(params: Readonly<{
     environment: ActionInputOption;
   }> | null>(null);
 
-  function choiceAction(field: EffectiveInputField) {
+  function choiceAction(field: EffectiveInputField, resolveOptions?: ResolveSessionActionFieldOptions) {
     if (!manifest || !project || !params.account) return undefined;
     const account = params.account;
     const scope = scopeOf(field);
@@ -74,6 +75,7 @@ export function useRailwayScopeChoices(params: Readonly<{
         const identity = { pluginId: railway, localId: action.id };
         const selectedProject = params.values[project.path];
         const workspaceId = params.values.workspaceId;
+        const existing = resolveOptions?.(field) ?? [];
         const form = createActionInputForm({
           presentation: {
             title: label,
@@ -105,7 +107,10 @@ export function useRailwayScopeChoices(params: Readonly<{
             const environmentValue = environment?.inputType?.localId === 'railway-create-environment'
               ? { kind: 'native', selection: { projectId, environmentId: createdEnvironment.id } }
               : createdEnvironment.id;
-            const projectOption = createdProject ? { value: projectId, label: createdProject.name } : undefined;
+            const projectOption = createdProject ? { value: projectId, label: createdProject.name,
+              ...(typeof candidate.workspaceId === 'string'
+                ? { source: { kind: 'railway-workspace', locator: candidate.workspaceId } } : {}),
+            } : undefined;
             setSelection(current => ({
               account, projectId, project: projectOption ?? (current?.projectId === projectId ? current.project : undefined),
               environment: { value: environmentValue, label: createdEnvironment.name },
@@ -119,6 +124,20 @@ export function useRailwayScopeChoices(params: Readonly<{
         });
         presentActionInputForm({
           form,
+          validateInput: (input) => {
+            const name = typeof input.name === 'string' ? input.name.trim().toLowerCase() : '';
+            if (!name) return {};
+            const duplicate = existing.some(option => {
+              if (option.label.trim().toLowerCase() !== name) return false;
+              if (scope === 'environment') return true;
+              if (option.source?.kind === 'railway-workspace') return option.source.locator === input.workspaceId;
+              return typeof workspaceId === 'string' && workspaceId === input.workspaceId;
+            });
+            if (!duplicate) return undefined;
+            return { message: scope === 'project'
+              ? t('plugins.railway.picker.duplicateProject')
+              : t('plugins.railway.picker.duplicateEnvironment') };
+          },
           actionId: formatQualifiedPluginActionId(identity),
           pickerContext: { serverId: params.lifetime.scope.serverId, accountLifetime: params.lifetime },
         });

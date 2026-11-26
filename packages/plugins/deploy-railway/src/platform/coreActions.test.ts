@@ -186,7 +186,7 @@ it('creates the Git-connected service in one mutation using the selected branch'
 
 it('creates a reviewed project and returns the project and default environment as picker choices', () =>
   withVendor(() => ({ data: { projectCreate: { id: 'orders', name: 'Orders', workspaceId: 'team',
-    baseEnvironment: { id: 'production', name: 'production' } } } }), async (kit, requests) => {
+    baseEnvironment: null, environments: { edges: [{ node: { id: 'production', name: 'production' } }] } } } }), async (kit, requests) => {
     const { credentialRef, credentialPrincipal } = base;
     await expect(kit.invokeAction('project-create', { credentialRef, credentialPrincipal, name: 'Orders', workspaceId: 'team' }))
       .resolves.toEqual({ project: { id: 'orders', name: 'Orders' }, environment: { id: 'production', name: 'production' } });

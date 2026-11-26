@@ -23,8 +23,9 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
   const matches = (option: InputOption) => !input.query || option.label.toLowerCase().includes(input.query.toLowerCase());
   const after = input.cursor ?? null;
   const projectPage = (page: { choices: { id: string; name: string }[]; nextCursor: string | null },
+    source?: InputOption['source'],
     toValue: (id: string) => InputOption['value'] = id => id) => ({
-    options: page.choices.map(choice => ({ value: toValue(choice.id), label: choice.name })).filter(matches),
+    options: page.choices.map(choice => ({ value: toValue(choice.id), label: choice.name, ...(source ? { source } : {}) })).filter(matches),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
   });
   const choices = () => createRailwayProjectOperations(railwayRequest(context), context.signal);
@@ -37,7 +38,10 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
         { kind: 'environment', keys: [RAILWAY_PROJECT_KEY] }, { signal: context.signal });
       if (material.kind !== 'environment') throw new PluginError({ code: 'credential_unavailable' });
       const savedProject = material.env[RAILWAY_PROJECT_KEY];
-      if (!savedProject) return projectPage(await choices().readAccountProjectsPage(after));
+      if (!savedProject) {
+        const page = await choices().readAccountProjectsPage(after);
+        return projectPage(page, page.workspaceId ? { kind: 'railway-workspace', locator: page.workspaceId } : undefined);
+      }
       const binding = await context.services.connectedAccounts.getBinding(ACCOUNT_PURPOSE, { signal: context.signal });
       if (!binding) throw new PluginError({ code: 'credential_unavailable' });
       return { options: [{ value: savedProject, label: binding.target.displayName }].filter(matches) };
@@ -47,11 +51,11 @@ async function options(input: OptionsInput, context: PluginAccountActionContext)
       return projectPage(await choices().readEnvironmentsPage(projectId, after));
     }
     if (input.creating) {
-      return projectPage(await choices().readEnvironmentsPage(projectId, after),
+      return projectPage(await choices().readEnvironmentsPage(projectId, after), undefined,
         environmentId => ({ kind: 'native', selection: { projectId, environmentId } }));
     }
     const environmentId = input.railwayEnvironmentId ?? missing(paths[1]);
-    return projectPage(await choices().readEnvironmentServicesPage(projectId, environmentId, after),
+    return projectPage(await choices().readEnvironmentServicesPage(projectId, environmentId, after), undefined,
       serviceId => ({ kind: 'native', selection: { projectId, environmentId, serviceId } }));
   } catch (error) {
     return projectRailwayFailure(error, context, 'options');
@@ -65,7 +69,9 @@ export const optionsAction: PluginActionDefinition<Extract<PluginActionDeclarati
     providerAccountId: id, railwayEnvironmentId: id, creating: { type: 'boolean', const: true }, query: { type: 'string' }, cursor: id },
   required: ['credentialRef', 'credentialPrincipal', 'fieldPath'] },
   resultSchema: { type: 'object', additionalProperties: false, properties: { options: { type: 'array', items: {
-    type: 'object', properties: { value: { oneOf: [id, base.providerEnvironment!] }, label: id },
+    type: 'object', properties: { value: { oneOf: [id, base.providerEnvironment!] }, label: id,
+      source: { type: 'object', additionalProperties: false, properties: { kind: id, locator: id }, required: ['kind', 'locator'] },
+    },
     required: ['value', 'label'], additionalProperties: false,
   } }, nextCursor: id }, required: ['options'] },
   run: (input: JsonValue, context: PluginAccountActionContext) => options(input as unknown as OptionsInput, context),

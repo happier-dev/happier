@@ -915,7 +915,7 @@ export function DeploymentPlatformTargetEditor(
                               busy={busy !== null}
                               frame="none"
                               resolveFieldOptions={resolveOptions}
-                              resolveChoiceAction={scopeChoices.choiceAction}
+                              resolveChoiceAction={field => scopeChoices.choiceAction(field, resolveOptions)}
                               resolveFieldTestID={(entry) =>
                                 `project-deployments.platform.field:${entry.path}`
                               }

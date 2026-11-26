@@ -2,7 +2,7 @@ import { Modal } from '@/modal';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
 import type { PopoverAnchor } from '@/components/ui/popover';
 
-import { ActionInputFormModal, type ReadSubmittedActionOption } from './ActionInputFormModal';
+import { ActionInputFormModal, type ReadSubmittedActionOption, type ValidateActionInput } from './ActionInputFormModal';
 import type { ActionInputForm, ActionInputFormSubmissionResult } from './actionInputForm';
 import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 
@@ -15,6 +15,7 @@ type AnyActionInputForm = ActionInputForm<
 /** Presents one transient normalized form; dispatch and persistence stay with its submit owner. */
 export function presentActionInputForm(params: Readonly<{
     form: AnyActionInputForm;
+    validateInput?: ValidateActionInput;
     signal?: AbortSignal;
     pickerContext?: InputTypePickerHostContext;
     actionId?: string;
@@ -49,6 +50,7 @@ export function presentActionInputForm(params: Readonly<{
         component: ActionInputFormModal,
         props: {
             form: params.form,
+            validateInput: params.validateInput,
             pickerContext: params.pickerContext,
             actionId: params.actionId,
             anchor: params.anchor,

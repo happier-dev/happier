@@ -1,0 +1,4 @@
+{
+  "plugins.railway.picker.duplicateProject": "Ya existe un proyecto con ese nombre.",
+  "plugins.railway.picker.duplicateEnvironment": "Ya existe un entorno con ese nombre."
+}

@@ -19,7 +19,8 @@ const choices = defineProtocolArray(choice);
 const optionalText = defineProtocolUnion([text, defineProtocolLiteral(null)]);
 const pageInfo = defineProtocolObject({ endCursor: optionalText, hasNextPage: boolean }, open);
 const createdProject = defineProtocolObject({
-  id: text, name: text, workspaceId: text, baseEnvironment: choice,
+  id: text, name: text, workspaceId: text,
+  environments: defineProtocolObject({ edges: defineProtocolArray(defineProtocolObject({ node: choice }, open)) }, open),
 }, open);
 const createdEnvironment = defineProtocolObject({ id: text, name: text, projectId: text }, open);
 const connection = defineProtocolObject({
@@ -115,12 +116,14 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
 
   async function createProject(input: Readonly<{ name: string; workspaceId: string }>) {
     const data = await graphql(`mutation($input: ProjectCreateInput!) {
-      projectCreate(input: $input) { id name workspaceId baseEnvironment { id name } }
+      projectCreate(input: $input) { id name workspaceId environments { edges { node { id name } } } }
     }`, { input });
     const parsed = createdProject.safeParse(data.projectCreate);
     if (!parsed.success || parsed.data.workspaceId !== input.workspaceId) throw new NativeError('railway_invalid_response');
-    const { id, name, baseEnvironment } = parsed.data;
-    return { project: { id, name }, environment: baseEnvironment };
+    const { id, name, environments } = parsed.data;
+    const environment = environments.edges.find(({ node }) => node.name === 'production')?.node;
+    if (!environment) throw new NativeError('railway_invalid_response');
+    return { project: { id, name }, environment };
   }
 
   async function createEnvironment(input: Readonly<{ name: string; projectId: string }>) {
@@ -168,7 +171,7 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
   }
 
   /** Railway's project cursor belongs to a workspace. Keep the workspace with it when listing across an Account. */
-  async function readAccountProjectsPage(cursor: string | null): Promise<Page> {
+  async function readAccountProjectsPage(cursor: string | null): Promise<Page & Readonly<{ workspaceId: string | null }>> {
     const position = cursor === null ? null : readAccountProjectsCursor(cursor);
     const workspaces = await readWorkspaceChoices();
     const start = position === null ? 0 : workspaces.findIndex(workspace => workspace.id === position.workspaceId);
@@ -179,14 +182,14 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
       const page = await readProjectsPage(after, workspace.id);
       const nextWorkspace = workspaces[index + 1];
       if (page.nextCursor !== null) {
-        return { choices: page.choices, nextCursor: JSON.stringify({ workspaceId: workspace.id, after: page.nextCursor }) };
+        return { ...page, workspaceId: workspace.id, nextCursor: JSON.stringify({ workspaceId: workspace.id, after: page.nextCursor }) };
       }
       if (page.choices.length > 0) {
-        return { choices: page.choices,
+        return { choices: page.choices, workspaceId: workspace.id,
           nextCursor: nextWorkspace ? JSON.stringify({ workspaceId: nextWorkspace.id, after: null }) : null };
       }
     }
-    return { choices: [], nextCursor: null };
+    return { choices: [], workspaceId: null, nextCursor: null };
   }
 
   async function listGrantedProjectWorkspaces() {

@@ -3257,6 +3257,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.posthog.ui.write.unsuppress": "Annulla soppressione",
   "plugins.posthog.ui.write.unsuppressed": "Di nuovo attivo in PostHog",
   "plugins.posthog.watch.sourceDescription": "Se non vedi nessuna fonte, collegane una in PRs & Issues → Collega.",
+  "plugins.railway.picker.duplicateEnvironment": "Esiste già un ambiente con questo nome.",
+  "plugins.railway.picker.duplicateProject": "Esiste già un progetto con questo nome.",
   "plugins.sentry.account.description": "Distribuzione Sentry e token di autenticazione usati per leggere organizzazioni e problemi.",
   "plugins.sentry.account.title": "Account Sentry",
   "plugins.sentry.auth.cloud.title": "Token Sentry Cloud",

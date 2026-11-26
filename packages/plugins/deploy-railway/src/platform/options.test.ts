@@ -112,12 +112,12 @@ it('lists token projects across workspaces and resumes the selected workspace pa
   }, async (read, requests) => {
     type ProjectOptions = { options: { value: string; label: string }[]; nextCursor?: string };
     const firstPage = await read('providerAccountId', draft) as ProjectOptions;
-    expect(firstPage).toEqual({ options: [{ value: 'shared-project', label: 'shared-project' }], nextCursor: expect.any(String) });
+    expect(firstPage).toEqual({ options: [{ value: 'shared-project', label: 'shared-project', source: { kind: 'railway-workspace', locator: third } }], nextCursor: expect.any(String) });
     expect(requests.map(({ variables }) => variables)).toEqual([{}, { workspaceId: third, after: null }]);
     const nextPage = await read('providerAccountId', draft, firstPage.nextCursor) as ProjectOptions;
-    expect(nextPage).toEqual({ options: [{ value: projectId, label: projectId }], nextCursor: expect.any(String) });
+    expect(nextPage).toEqual({ options: [{ value: projectId, label: projectId, source: { kind: 'railway-workspace', locator: second } }], nextCursor: expect.any(String) });
     await expect(read('providerAccountId', draft, nextPage.nextCursor)).resolves.toEqual({
-      options: [{ value: 'second-project', label: 'second-project' }] });
+      options: [{ value: 'second-project', label: 'second-project', source: { kind: 'railway-workspace', locator: second } }] });
     expect(requests.map(({ variables }) => variables).filter(variables => variables.workspaceId)).toEqual([
       { workspaceId: third, after: null }, { workspaceId: first, after: null }, { workspaceId: second, after: null },
       { workspaceId: second, after: 'railway-cursor' },

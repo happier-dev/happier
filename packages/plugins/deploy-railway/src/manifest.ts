@@ -10,13 +10,21 @@ import { variableActions } from './platform/variables.js';
 
 const pricing = { url: 'https://docs.railway.com/pricing/plans', checkedAt: '2026-11-20' };
 
+const locales = ['ca', 'de', 'en', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant'] as const;
+
 export const plugin = definePlugin({
   ...railwayIdentity,
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   activation: { events: [] },
   hostAccess: railwayHostAccess,
   brand: { iconResourceId: 'brand-icon', monochrome: true },
-  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...optionsResources },
+  resources: {
+    'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    ...optionsResources,
+    ...Object.fromEntries(locales.map(locale => [`i18n-${locale.toLowerCase()}`,
+      { kind: 'asset' as const, path: `assets/i18n/${locale}.json`, contentType: 'application/json' }])),
+  },
+  ui: { translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
   inputTypes: optionsInputTypes,
   actions: { ...coreActions, ...railwayScopeCreateActions, ...domainActions, ...variableActions, 'target-options-read': optionsAction,
     'build-logs-read': buildLogsAction, 'runtime-logs-read': runtimeLogsAction },

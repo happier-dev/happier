@@ -330,7 +330,7 @@ function ManagedDataActionFields(props: Readonly<{
   return <>{props.fields.map(field => <React.Fragment key={field.path}>
     <Item title={field.title ?? field.path} showChevron={false} accessoryLayout={field.widget === 'json' ? 'stacked' : 'adaptive'}
       rightElement={<ActionInputFields fields={[field]} input={props.input} editable={props.editable} busy={props.busy} frame="none"
-        resolveFieldOptions={resolveOptions} resolveChoiceAction={scopeChoices.choiceAction}
+        resolveFieldOptions={resolveOptions} resolveChoiceAction={field => scopeChoices.choiceAction(field, resolveOptions)}
         onPatch={props.onPatch} resolveFieldTestID={entry => `managed-data.field:${entry.path}`} />} />
     {props.cursors[field.path]?.length ? <Item title={t('projects.deployments.pagePrevious')} disabled={props.busy}
       onPress={() => props.setCursors(current => ({ ...current, [field.path]: (current[field.path] ?? []).slice(0, -1) }))} /> : null}

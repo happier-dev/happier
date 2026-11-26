@@ -42,7 +42,7 @@ it('checks paged scoped inventory before settling removal', async () => {
 
 it('creates a project in the selected workspace and returns its default environment', async () => {
   const { project, requests } = vendor(() => ({ projectCreate: { id: 'project', name: 'Orders', workspaceId: 'workspace',
-    baseEnvironment: { id: 'production', name: 'production' } } }));
+    environments: { edges: [{ node: { id: 'production', name: 'production' } }] } } }));
   await expect(project.createProject({ name: 'Orders', workspaceId: 'workspace' })).resolves.toEqual({
     project: { id: 'project', name: 'Orders' }, environment: { id: 'production', name: 'production' },
   });
