@@ -127,6 +127,30 @@ describe('machine inventory reference stability through the real store', () => {
         }
     });
 
+    it('applies a secondary Home activity update without visiting its Machine inventory', () => {
+        const store = createTestStore();
+        const sourceServerId = 'indexed-secondary';
+        const options = { sourceServerId };
+        const now = Date.now();
+        const rows = Array.from({ length: 128 }, (_, index) => machine(`indexed-${index}`, { activeAt: now }));
+        store.getState().applyMachines(rows, true, options);
+        const state = store.getState();
+        const inventory = state.machineListByServerId[sourceServerId]!;
+        const target = inventory.at(-1)!;
+        let visitedRows = 0;
+        store.setState({ machineListByServerId: { ...state.machineListByServerId, [sourceServerId]: new Proxy(inventory, {
+            get(rows, property, receiver) {
+                if (typeof property === 'string' && /^\d+$/.test(property)) visitedRows++;
+                return Reflect.get(rows, property, receiver);
+            },
+        }) } });
+
+        store.getState().applyMachineActivityUpdates([{ id: target.id, active: false, activeAt: now }], options);
+
+        expect(readMachineActivity(target)).toEqual({ active: false, activeAt: now });
+        expect(visitedRows).toBe(0);
+    });
+
     it('reconciles repeated Machine ids sequentially within an activity arrival burst', () => {
         const store = createTestStore();
         const now = Date.now();

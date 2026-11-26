@@ -238,7 +238,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
         for (const update of updates) {
             const state = get();
             const activeMachine = updatesActiveProjection ? state.machines[update.id] : undefined;
-            const machine = activeMachine ?? state.machineListByServerId[sourceServerId]?.find(machine => machine.id === update.id);
+            const scopedMachines = state.machineRecordsByServerId[sourceServerId];
+            const machine = activeMachine ?? (scopedMachines && Object.hasOwn(scopedMachines, update.id)
+                ? scopedMachines[update.id] : undefined);
             if (!machine) { changedRows.push(buildMachineActivityPlaceholder(update)); continue; }
             const presence = state.machinePresenceByServerId[sourceServerId]?.[update.id];
             const activePresence = updatesActiveProjection ? state.machinePresenceById[update.id] : undefined;
