@@ -37,6 +37,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -1171,8 +1172,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 primary: { label: t('common.save'), testID: 'managed-config.create', loading: busy, disabled: !maySaveSetupOnly,
                     onPress: () => { if (setupOnlyDraft && maySaveSetupOnly) void submitDraft(setupOnlyDraft); } },
                 secondary: continuationCancel }}>
-            {approval.approvalId ? <AttentionBanner testID="managed-config.approval" title={t('approvals.title')} description={t('approvals.status.open')}
-                action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
+            {approval.approvalId ? <ManagedConfigurationApprovalNotice approvalId={approval.approvalId} serverId={props.serverId} /> : null}
             {errorNotice}
             {setupOnlyDraft ? <MachineSetupSection testID="managed-config.setup" setup={setupOnlyDraft.setup} name={setupOnlyDraft.name}
                 editable={!busy && teamWritable} scope={activeBinding?.scope ?? null}
@@ -1337,8 +1337,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         compact={compact} testID="managed-config" receipt={receipt} sheetFooter={props.sheetFooter} summary={{ value: summaryValue,
             unit: summaryCost?.unit ?? '',
             spec: (props.presetOnly ? saveUnavailableReason : creationUnavailableReason) ?? summarySpec }}>
-        {approval.approvalId ? <AttentionBanner testID="managed-config.approval" title={t('approvals.title')} description={t('approvals.status.open')}
-            action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
+        {approval.approvalId ? <ManagedConfigurationApprovalNotice approvalId={approval.approvalId} serverId={props.serverId} /> : null}
         {creationDisabledNotice}
         {!setupInputsValid ? <SurfaceStateCard testID="managed-config.recipe-inputs" kind="warning" size="line"
             title={t('machinePresets.setup.recipeInputsInvalid')} reason={t('managedMachines.creationReview.inputsHelp')}
@@ -1560,6 +1559,14 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
         {networks.length > 1 ? <ManagedNetworkGroup networks={networks} value={selected.network ?? null} title={t('managedMachines.config.network')}
             description={t('managedMachines.config.networkDescription')} onChange={id => props.onChange('network', id)} testID="managed-config.networks" /> : null}
     </>;
+}
+
+function ManagedConfigurationApprovalNotice(props: Readonly<{ approvalId: string; serverId: string }>) {
+    const router = useRouter();
+    const openApproval = () => router.push(`/inbox/approvals/${encodeURIComponent(props.approvalId)}?serverId=${encodeURIComponent(props.serverId)}` as never);
+    useCurrentUiContextLocalCommands([{ key: 'managed-config.approval', title: t('approvals.details'), invoke: openApproval }]);
+    return <AttentionBanner testID="managed-config.approval" title={t('approvals.title')} description={t('approvals.status.open')}
+        action={{ label: t('approvals.details'), onPress: openApproval }} />;
 }
 
 /** A required field is blank when its value is absent or empty text. The launch schema validates supplied values. */

@@ -59,8 +59,23 @@ import type { MachinePresetEditContinuation, MachinePresetEditDraft } from './ma
 import { type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { defineProtocolObject, defineProtocolNumber, defineProtocolString, defineProtocolUnion, defineProtocolLiteral } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { t } from '@/text';
+
+function ApprovalCommandPublication() {
+  const commands = useCurrentUiContextComposedCommands();
+  const enrichment = React.useMemo(() => ({ commands }), [commands]);
+  usePublishCurrentUiContext(enrichment);
+  return null;
+}
+function ApprovalCommandPage({ children }: React.PropsWithChildren) {
+  return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+    <ApprovalCommandPublication />{children}
+  </CurrentUiContextCommandsProvider>;
+}
 
 const route = vi.hoisted(() => ({
+  push: vi.fn(),
   replace: vi.fn(),
   dispatch: vi.fn(),
   getState: vi.fn(),
@@ -116,6 +131,13 @@ installApprovalCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Install configurable platform boundaries before these modules capture them.
+const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
 
 function readProvisionerRequest(value: unknown) {
     const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(value);
@@ -185,6 +207,7 @@ beforeEach(async () => {
   await harness.reset();
   resetScopedHomeActionExecutorsForTests();
   route.replace.mockReset();
+  route.push.mockReset();
   route.dispatch.mockReset();
   route.getState.mockReset();
   route.params = {};
@@ -294,6 +317,52 @@ async function publishPresetEditorDeclaration(serverId: string, manifest: Plugin
   }, snapshot: { availabilityCursor: 1,
     intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }], materializations: [], snapshots: [] } });
 }
+
+  it('publishes the setup-only editor approval opener through the same Save continuation', async () => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'owner', session: 'terminal-test' })).toString('base64url')}.test`;
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://setup-approval.example',
+      serverIdentityId: 'srv_setup_approval', accountId: 'owner', credentials: { token } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    storage.setState({ profileScope: { serverId, accountId: 'owner' }, settingsScope: { serverId, accountId: 'owner' } });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const preset = { id: 'setup-preset', homeId: 'srv_setup_approval', revision: 4, name: 'Setup',
+      owner: { kind: 'account', accountId: 'owner' }, setup: { scripts: [{ body: 'echo one', affects: 'none' }] } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(preset) } });
+    await harness.requireUiApproval(serverId, 'machines.presets.update');
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderMountedCurrentUiContext(<ApprovalCommandPage><ManagedMachineConfigurationView serverId={serverId}
+      provisioner="" presetId={preset.id} presetOnly /></ApprovalCommandPage>);
+    const { MachineSetupSection } = await import('./MachineSetupSection');
+    await waitForHomeGovernance(() => expect(screen.tree.findAllByType(MachineSetupSection)[0]?.props.setup).toEqual(preset.setup));
+    await act(async () => screen.tree.findAllByType(MachineSetupSection)[0]!.props.onChange({ scripts: [{ body: 'echo two', affects: 'none' }] }));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('managed-config.create');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.approval')).not.toBeNull());
+    const executor = createDefaultActionExecutor();
+    const readCommands = async () => {
+      const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+      if (!read.ok) throw new Error('Expected setup approval context');
+      return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+    };
+    const inventory = await readCommands();
+    expect(inventory.map(command => command.title)).toEqual([t('approvals.details')]);
+    const [approval] = harness.artifacts(serverId).list();
+    if (!approval) throw new Error('Expected the saved setup Ask');
+    const expectedRoute = `/inbox/approvals/${encodeURIComponent(approval.id)}?serverId=${encodeURIComponent(serverId)}`;
+    await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+      { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+    expect(route.push).toHaveBeenLastCalledWith(expectedRoute);
+    await act(async () => screen.tree.findAllByType(AttentionBanner)
+      .find(node => node.props.testID === 'managed-config.approval')!.props.action.onPress());
+    expect(route.push).toHaveBeenLastCalledWith(expectedRoute);
+    await screen.update(<ApprovalCommandPage />);
+    expect(await readCommands()).toEqual([]);
+    expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+      .toMatchObject({ ok: false });
+    await screen.unmount();
+  });
 
 describe('mounted managed configurator', () => {
   it('projects the pool owner answer before Use without deciding availability again', async () => {

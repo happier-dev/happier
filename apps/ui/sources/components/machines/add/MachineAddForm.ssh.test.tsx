@@ -8,6 +8,19 @@ import {
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+
+function ApprovalCommandPublication() {
+  const commands = useCurrentUiContextComposedCommands();
+  const enrichment = React.useMemo(() => ({ commands }), [commands]);
+  usePublishCurrentUiContext(enrichment);
+  return null;
+}
+function ApprovalCommandPage({ children }: React.PropsWithChildren) {
+  return <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+    <ApprovalCommandPublication />{children}
+  </CurrentUiContextCommandsProvider>;
+}
 
 // The desktop shell is a platform boundary: it decides whether this client can open SSH itself.
 const host = vi.hoisted(() => ({ desktop: false }));
@@ -27,6 +40,13 @@ installApprovalCommonModuleMocks({
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Install configurable platform boundaries before these modules capture them.
+const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
+const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
 await import('./MachineAddForm');
 beforeEach(async () => {
   await harness.reset();
@@ -82,6 +102,52 @@ async function typeHost(name: string) {
 }
 
 describe('Over SSH', () => {
+  it('publishes the existing SSH approval opener only while the SSH pane shows it', async () => {
+    host.desktop = true;
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'owner', session: 'terminal-test' })).toString('base64url')}.test`;
+    const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://ssh-approval.example',
+      serverIdentityId: 'srv_ssh_approval', accountId: 'owner', credentials: { token } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+    storage.setState({ profileScope: { serverId: scopeServerId, accountId: 'owner' }, settingsScope: { serverId: scopeServerId, accountId: 'owner' } });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    await harness.requireUiApproval(serverId, 'machines.add.ssh.start');
+    const { MachineAddForm, MachineAddFormWithFlow } = await import('./MachineAddForm');
+    const { t } = await import('@/text');
+    const screen = await renderMountedCurrentUiContext(<ApprovalCommandPage><MachineAddForm layout="page" initialPath="ssh"
+      testID="form" onClose={() => {}} onStartSession={() => {}} /></ApprovalCommandPage>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${PANE}.facts`)).not.toBeNull());
+    await typeHost('build-box');
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${PANE}.start`)?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync(`${PANE}.start`);
+    await waitForHomeGovernance(() => expect(screen.findByTestId(`${PANE}.approval`)).not.toBeNull());
+    const executor = createDefaultActionExecutor();
+    const readCommands = async () => {
+      const read = await executor.execute('ui.current_context.read', {}, { surface: 'agent' });
+      if (!read.ok) throw new Error('Expected SSH approval context');
+      return CurrentUiContextSnapshotV1Schema.parse(read.result).commands;
+    };
+    const inventory = await readCommands();
+    expect(inventory.map(command => command.title)).toEqual([t('approvals.details')]);
+    await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+      { commandId: inventory[0]!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+    const [approval] = harness.artifacts(serverId).list();
+    if (!approval) throw new Error('Expected the SSH start Ask');
+    const expectedRoute = `/inbox/approvals/${encodeURIComponent(approval.id)}?serverId=${encodeURIComponent(scopeServerId)}`;
+    expect(routerPush).toHaveBeenLastCalledWith(expectedRoute);
+    await act(async () => screen.tree.findAllByType(AttentionBanner)
+      .find(node => node.props.testID === `${PANE}.approval`)!.props.action.onPress());
+    expect(routerPush).toHaveBeenLastCalledWith(expectedRoute);
+    await act(async () => screen.findByType(MachineAddFormWithFlow).props.flow.choosePath('anotherComputer'));
+    expect(screen.findByTestId(`${PANE}.approval`)).toBeNull();
+    expect(await readCommands()).toEqual([]);
+    expect(await executor.execute('ui.current_context.command.invoke', { commandId: inventory[0]!.id }, { surface: 'agent' }))
+      .toMatchObject({ ok: false });
+    await screen.unmount();
+  });
   it.each(['thisComputer', 'ssh', 'anotherComputer'] as const)('names the Home payload refusal in Details for browser %s', async initialPath => {
     const serverId = await harness.addHome({ name: 'Source Home', serverUrl: 'https://source-home.example.test',
       serverIdentityId: 'srv_source_home', accountId: 'owner' });

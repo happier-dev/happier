@@ -12,6 +12,7 @@ import { OsCommandBlock } from '@/components/ui/code/blocks/OsCommandBlock';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { homeAdministrationReachPath } from '@/components/settings/home/governance/homeAdministrationRoutes';
 import { ThisComputerServiceNotice } from '@/components/settings/machines/localControl/ThisComputerServiceNotice';
 import { Item } from '@/components/ui/lists/Item';
@@ -460,8 +461,8 @@ function MachineAddPane(props: Readonly<{
         case 'ssh': {
             const host = flow.ssh.draft.host.trim();
             const username = flow.ssh.draft.username.trim();
-            const approvalNotice = flow.approval.approvalId ? <AttentionBanner testID={`${testID}.approval`} title={t('approvals.title')} description={t('approvals.status.open')}
-                action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(flow.approval.approvalId!)}?serverId=${encodeURIComponent(flow.serverId)}` as never) }} /> : null;
+            const approvalNotice = flow.approval.approvalId ? <MachineAddApprovalNotice testID={`${testID}.approval`}
+                approvalId={flow.approval.approvalId} serverId={flow.serverId} /> : null;
             if (run) {
                 const onPhone = readMachineAddDevice() === 'phone';
                 return (
@@ -718,6 +719,14 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
 }));
+
+function MachineAddApprovalNotice(props: Readonly<{ testID: string; approvalId: string; serverId: string }>) {
+    const router = useRouter();
+    const openApproval = () => router.push(`/inbox/approvals/${encodeURIComponent(props.approvalId)}?serverId=${encodeURIComponent(props.serverId)}` as never);
+    useCurrentUiContextLocalCommands([{ key: props.testID, title: t('approvals.details'), invoke: openApproval }]);
+    return <AttentionBanner testID={props.testID} title={t('approvals.title')} description={t('approvals.status.open')}
+        action={{ label: t('approvals.details'), onPress: openApproval }} />;
+}
 
 /** One part of a pane. On a page it owns the page edge, as a page section does; in a panel it is the pane's own column. */
 function PaneSection(props: Readonly<{ onPage: boolean; children?: React.ReactNode }>) {
