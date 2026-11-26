@@ -2449,6 +2449,45 @@ describe('BrowserSurfaceHost', () => {
         await screen.unmount();
     });
 
+    it('keeps the Browser region for restart recovery after the live view closes and on re-entry', async () => {
+        const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
+        const { BrowserShell } = await import('../BrowserShell');
+        const { readRegisteredBrowserRuntimeControlAdapter } = await import('@/sync/domains/browser/actions/runtimeControlRegistry');
+        const onCloseTab = vi.fn();
+        const initialBrowserState = openBrowserTarget(createBrowserViewState(), {
+            kind: 'streamedBrowser', targetId: 'restart-source', streamId: 'restart-source',
+        }, { browserSessionId: 'session_1', viewId: 'agent-view', platform: 'web' });
+        const command = { kind: 'openView', commandId: 'kept-open', browserSessionId: 'session_1',
+            viewId: 'agent-view', platform: 'web', target: externalTarget, profileId: 'saved-work', focus: true };
+        const closed = { kind: 'viewClosed' as const, eventId: 'restart-closed', browserSessionId: 'session_1',
+            viewId: 'agent-view', occurredAt: 1000, reasonCode: 'daemon_restarted' };
+        const host = (seeded: boolean) => <BrowserSurfaceHost browserSessionId="session_1" platform="web"
+            initialBrowserState={seeded ? initialBrowserState : createBrowserViewState()} onCloseTab={onCloseTab}
+            pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: 'srv_browser_client_action' }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+            browserFeatureDecision={enabledBrowserDecision} testID="restart-browser" />;
+        const screen = await renderScreen(host(true));
+        try {
+            // Restart inventory has a terminal recovery record, with no live capture source.
+            browserStreamBoundary.views = [{ browserSessionId: 'session_1', viewId: 'agent-view',
+                sourceId: 'restarted:agent-view', target: externalTarget, platform: 'web',
+                adapterKind: 'chromiumSidecar', closedAfterRestart: command, events: [closed] }];
+            const control = readRegisteredBrowserRuntimeControlAdapter('session_1', 'agent-view');
+            await act(async () => control?.applyDaemonEvents?.([closed]));
+            expect(onCloseTab).not.toHaveBeenCalled();
+            expect(screen.findByType(BrowserShell).props.state.viewsById['agent-view']).toBeUndefined();
+            await screen.unmount();
+            const reentered = await renderScreen(host(false));
+            try {
+                await flushHookEffects();
+                const { BrowserLaunchpad } = await import('../launchpad/BrowserLaunchpad');
+                expect(reentered.findByType(BrowserLaunchpad).props.agentBrowser).toMatchObject({
+                    reasonCode: 'daemon_restarted', onRetry: expect.any(Function),
+                });
+            } finally { await reentered.unmount(); }
+        } finally { browserStreamBoundary.views = []; await screen.unmount(); }
+    });
+
     it.each(['machine', 'local'] as const)('releases the closed frozen source through the %s Action ingress while focus changes retain it', async (ingress) => {
         const { BrowserSurfaceHost } = await import('./BrowserSurfaceHost');
         const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');

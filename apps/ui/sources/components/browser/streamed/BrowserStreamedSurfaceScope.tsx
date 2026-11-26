@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
 
 type BrowserStreamedChrome = Pick<BrowserStreamedSurfaceRuntime,
-    'machineName' | 'firstUse' | 'firstUseTargetUrl' | 'unavailableReason' | 'onRetry'> & Readonly<{
+    'machineName' | 'firstUse' | 'firstUseTargetUrl' | 'unavailableReason' | 'onRetry' | 'closedAfterRestart' | 'onReopen'> & Readonly<{
     /** This viewer is the person in control (the daemon's per-stream projection); null until it says. */
     viewerControlling: boolean | null;
     viewport: NonNullable<BrowserStreamedSurfaceRuntime['input']>['viewport'];
@@ -28,11 +28,13 @@ export function BrowserStreamedSurfaceScope(props: Readonly<{
     const firstUseTargetUrl = runtime?.firstUseTargetUrl;
     const unavailableReason = runtime?.unavailableReason;
     const onRetry = runtime?.onRetry;
+    const closedAfterRestart = runtime?.closedAfterRestart;
+    const onReopen = runtime?.onReopen;
     const viewerControlling = viewerControllingOf(runtime);
     const viewport = runtime?.input?.viewport;
     const chrome = React.useMemo<BrowserStreamedChrome | null>(() => present
-        ? { machineName, firstUse, firstUseTargetUrl, unavailableReason, onRetry, viewerControlling, viewport } : null,
-    [present, machineName, firstUse, firstUseTargetUrl, unavailableReason, onRetry, viewerControlling, viewport]);
+        ? { machineName, firstUse, firstUseTargetUrl, unavailableReason, onRetry, closedAfterRestart, onReopen, viewerControlling, viewport } : null,
+    [present, machineName, firstUse, firstUseTargetUrl, unavailableReason, onRetry, closedAfterRestart, onReopen, viewerControlling, viewport]);
     return <ChromeContext.Provider value={chrome}>
         <PictureContext.Provider value={runtime}>{props.children}</PictureContext.Provider>
     </ChromeContext.Provider>;

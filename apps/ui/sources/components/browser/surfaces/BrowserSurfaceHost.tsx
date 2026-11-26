@@ -463,17 +463,18 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     }, [focusedView?.browserSessionId, focusedView?.viewId, props.onCloseTab]);
     const applyDaemonEvents = React.useCallback((events: readonly BrowserEventV1[], profileMetadata?: BrowserProfileV1) => {
         const current = surfaceStateRef.current;
-        const closedViews: Array<Readonly<{ browserSessionId: string; viewId: string }>> = [];
+        const closedViews: Array<Readonly<{ view: Readonly<{ browserSessionId: string; viewId: string }>; closeTab: boolean }>> = [];
         const browserState = events.reduce((state, event) => {
             const next = applyBrowserControlEvent(state, event);
             if (event.kind === 'viewClosed' && state.viewsById[event.viewId] && !next.viewsById[event.viewId]) {
-                closedViews.push(state.viewsById[event.viewId]!);
+                closedViews.push({ view: state.viewsById[event.viewId]!, closeTab: event.reasonCode !== 'daemon_restarted' });
             }
             return next;
         }, current.browserState);
         // Profile selection replaces the engine behind the same logical view in one receipt.
         // Release its old annotation source, while the final projection owns workspace closure.
-        for (const view of closedViews) releaseClosedView(view, !browserState.viewsById[view.viewId]);
+        // A daemon restart retires the picture but leaves the region for the owner's Reopen state.
+        for (const { view, closeTab } of closedViews) releaseClosedView(view, closeTab && !browserState.viewsById[view.viewId]);
         if (browserState === current.browserState && !profileMetadata) return;
         const next = { ...current, browserState, ...(profileMetadata ? { profileMetadata } : {}) };
         surfaceStateRef.current = next;
