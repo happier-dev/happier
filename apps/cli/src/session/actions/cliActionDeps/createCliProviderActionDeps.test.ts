@@ -1,4 +1,5 @@
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import axios from 'axios';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -28,6 +29,8 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -55,6 +58,9 @@ describe('Provider default preference Action at its Account Settings boundary', 
     });
     const previews: unknown[] = [];
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      actionAutomations: createActionAutomationPortV1({ accountId: 'owner',
+        seed: async () => ({ v: 1, rows: [] }), settle: async () => {},
+      }),
       presentUserActionConfirmation: async input => { previews.push(input.preview); return false; },
       providerActionExecute: createCliProviderActionExecuteV1({ credentials: { token: 'owner', encryption: null },
         serverId: 'home', serverHttpBaseUrl: 'https://home.test',
@@ -71,15 +77,16 @@ describe('Provider default preference Action at its Account Settings boundary', 
             diagnosticsTruncated: false, diagnostics: [], availableTruncated: false };
         } }),
     });
-    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
       externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target } as const;
     // Control: an ordinary standalone describe still reaches the same network boundary.
     expect(await executor.execute('providers.connections.describe', { machineId: 'machine', connectionId: connection.connectionId },
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' }))
       .toMatchObject({ ok: true, result: { connections: [{ connectionId: connection.connectionId }] } });
-    expect(await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride',
+    const canceled = await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride',
       machineId: 'machine', connectionId: connection.connectionId, expectedRevision: 0, scope: 'machine',
-      endpointTemplateId: 'openai-responses', baseUrl: 'http://127.0.0.1:49997/v1' }, context))
+      endpointTemplateId: 'openai-responses', baseUrl: 'http://127.0.0.1:49997/v1' }, context);
+    expect(canceled, JSON.stringify(canceled))
       .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
     expect(previews).toMatchObject([{ providerEndpointPolicyReview: { scope: 'machine', machineId: 'machine',
       before: { baseUrl: 'http://127.0.0.1:1/v1' }, after: { baseUrl: 'http://127.0.0.1:49997/v1' } } }]);
@@ -186,6 +193,7 @@ describe('Provider default preference Action at its Account Settings boundary', 
       .map(scenario => ({ scenario, surface: 'cli' as const })),
     { scenario: 'present' as const, surface: 'mcp' as const },
   ])('executes standalone source visibility through the public frontend: $scenario / $surface', async ({ scenario, surface }) => {
+    installAxiosRequestMethodAdapter();
     directory = await mkdtemp(join(tmpdir(), 'happier-provider-action-'));
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
     Object.assign(configuration, { clientEncryptionRequirement: 'follow_account', activeServerDir: directory });
@@ -224,6 +232,7 @@ describe('Provider default preference Action at its Account Settings boundary', 
       expect(new URL(String(url)).origin).toBe(serverUrl);
       expect(options?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
       const path = new URL(String(url)).pathname;
+      if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: { v: 1, rows: [] } };
       if (path === ACCOUNT_SECURITY_PATH_V1) return { status: 404, data: {} };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
         mode: 'plain', version: 1, settingsVersion: 4, signingKeyFingerprint: null,
@@ -258,28 +267,29 @@ describe('Provider default preference Action at its Account Settings boundary', 
       serverId: 'provider-home', serverApiUrl: serverUrl, serverIdentityId: 'provider-home-identity',
       readCredentials: async () => currentCredentials,
     });
+    const requestId = `provider-visibility-${scenario}-${surface}`;
     const result = await executor.execute('providers.models.source_visibility.set',
       { action: 'setConnectionVisibility', connectionId: 'pc_a', shown: false },
-      { surface, serverId: 'provider-home', actionCaller: { kind: 'host' } });
+      { surface, serverId: 'provider-home', actionCaller: { kind: 'host' }, actionRequestId: requestId });
     expect(source).toEqual(originalSource);
     if (scenario === 'ack-after-retirement') expect(getActiveAccountSettingsSnapshot()).toEqual(replacementSnapshot);
     if (scenario === 'absent') {
       expect(result).toEqual({ ok: false, errorCode: 'provider_catalog_unavailable', error: 'provider_catalog_unavailable',
-        details: { status: 'unavailable', reason: 'authority-not-confirmed' } });
+        details: { status: 'unavailable', reason: 'authority-not-confirmed' }, requestId });
       expect(post).not.toHaveBeenCalled();
       return;
     }
     if (scenario === 'retired') {
-      expect(result).toEqual({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' });
-      expect(post).not.toHaveBeenCalled();
-      return;
+      // This finite invocation was admitted with its original credential. A
+      // later ambient credential change does not replace that captured caller.
+      expect(currentCredentials).toBe(replacementCredentials);
     }
     expect(result).toEqual(scenario === 'conflict'
-      ? { ok: false, errorCode: 'provider_catalog_conflict', error: 'provider_catalog_conflict',
-        details: { status: 'conflict', revision: 8 } }
+      ? { ok: false, errorCode: 'provider_connection_changed', error: 'provider_connection_changed',
+        details: createProviderErrorV1('provider_connection_changed', { connectionId: 'pc_a' }), requestId }
       : scenario === 'unknown' || scenario === 'invalid-ack'
       ? { ok: false, errorCode: 'provider_catalog_outcome_unknown', error: 'provider_catalog_outcome_unknown',
-        details: { status: 'outcome_unknown' } }
+        details: { status: 'outcome_unknown' }, requestId }
       : { ok: true, result: { status: 'updated' } });
     expect(submitted).toEqual([{ expectedRevision: 7,
       content: { t: 'plain', v: { ...catalog, modelPickerVisibilityByConnectionId: { pc_b: true, pc_a: false } } },
