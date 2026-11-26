@@ -783,6 +783,63 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     expect(effects).toEqual([{ input, authority: 'present_user' }]);
   });
 
+  it.each(['account', 'session'] as const)(
+    'keeps the person\'s Ask for an Agent sign-in widening despite a standing %s Allow', async (consent) => {
+    const effects: Array<Readonly<{ input: unknown; authority: unknown }>> = [];
+    const approvals = new Map<string, ApprovalRequest>();
+    const executor = createActionExecutor({
+      homeDomainAction: async ({ input, context }) => {
+        effects.push({ input, authority: context.authority });
+        return { error: 'unused' };
+      },
+      readActionsSettings: () => ActionsSettingsV1Schema.parse(consent === 'account'
+        ? { v: 1, approvalWaivedSurfaces: { 'home.policy.set': ['agent'] } } : { v: 1 }),
+      readSessionApprovalConsents: async (context) => consent === 'session' && context.actionCaller?.kind === 'session'
+        ? { sessionId: context.actionCaller.sessionId, rows: [{ actionId: 'home.policy.set', audience: 'agent', mode: 'allowed' }] }
+        : null,
+      approvalsCreate: async ({ request }) => {
+        const artifactId = `policy-approval-${approvals.size + 1}`;
+        approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { artifactId };
+      },
+      approvalsGet: async ({ artifactId }) => approvals.get(artifactId) ?? null,
+      approvalsUpdate: async ({ artifactId, request }) => {
+        const transition = transitionStoredApproval(approvals.get(artifactId), request);
+        if (!transition.ok) return transition;
+        approvals.set(artifactId, ApprovalRequestV2Schema.parse(request));
+        return { ok: true as const };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const widening = { expectedRevision: 1, confirmWidening: true, authenticationPolicy: { v: 1, admission: 'self_service' } } as const;
+    const narrowing = { expectedRevision: 1, authenticationPolicy: { v: 1, admission: 'invitation_only' } } as const;
+    const agent = (actionRequestId: string) => ({ surface: 'agent', authority: 'account_automation', serverId: 'home-1',
+      runtimeAccountId: 'account-1', serverIdentityId: 'home-identity-1', actionRequestId, defaultSessionId: 'agent-session',
+      actionCaller: { kind: 'session', sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 } }) as const;
+    const person = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home-1', serverIdentityId: 'home-identity-1', runtimeAccountId: 'account-1' } as const;
+
+    // The standing Allow still covers a change that claims no widening confirmation.
+    await executor.execute('home.policy.set', narrowing, agent('request-narrow'));
+    expect(effects).toEqual([{ input: narrowing, authority: 'account_automation' }]);
+
+    const requested = await executor.execute('home.policy.set', widening, agent('request-widen'));
+    expect({ requested, effects }).toMatchObject({
+      requested: { ok: true, result: { kind: 'approval_request_created' } },
+      effects: [{ input: narrowing, authority: 'account_automation' }],
+    });
+    const artifactId = (requested as { result: { artifactId: string } }).result.artifactId;
+    expect(approvals.get(artifactId)).toMatchObject({ status: 'open', deciderRequirement: 'person' });
+    expect(effects).toHaveLength(1);
+
+    // The Agent cannot decide it; the person's Allow applies it once, as the person.
+    expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, agent('request-decide')))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, person);
+    await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, person);
+    expect(effects).toEqual([{ input: narrowing, authority: 'account_automation' }, { input: widening, authority: 'present_user' }]);
+  });
+
   it('routes a validated governance mutation to the one Home family dependency', async () => {
     const controller = new AbortController();
     const homeDomainAction = vi.fn(async () => homeAccountRow());

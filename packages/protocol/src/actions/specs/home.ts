@@ -332,6 +332,11 @@ function createHomeGovernanceActionSpecs() {
       uiConfirmation: 'direct',
       // Governance edits are reversible; sign-in widening retains its inline review.
       uiConfirmationForInput: (input) => !HomeGovernancePolicySetInputV1Schema.safeParse(input).success,
+      // An Agent's sign-in widening is the person's decision (TH owner 2026-11-20): a request that
+      // carries the widening confirmation always asks a person, whatever standing consent says.
+      // Whether the change widens stays with the Home policy owner, which refuses an unconfirmed one.
+      deciderRequirementForInput: (input) => typeof input === 'object' && input !== null
+        && 'confirmWidening' in input && input.confirmWidening === true ? 'person' as const : undefined,
     },
     title: 'Set Home policy',
     description: 'Update this Home\'s governance policy against the revision the caller last read.',
