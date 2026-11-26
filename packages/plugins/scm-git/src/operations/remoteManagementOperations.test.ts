@@ -60,4 +60,29 @@ describe('git remote management operations', () => {
         expect(result.error).toContain('Remote fetch URL');
         expect(gitInvocations).toBe(0);
     });
+
+    // As clone refuses them: a credential in a remote URL is stored in plain repository config and is
+    // echoed in every remote listing; credentials come from the person's Git helper or connected account.
+    it('rejects remote URLs with embedded credentials before invoking git, as clone does', async () => {
+        let gitInvocations = 0;
+        const run = <T>(operation: () => Promise<T>) => runWithScmBackendRuntimeServices({
+            async runCommand() {
+                gitInvocations += 1;
+                return { success: true, stdout: '', stderr: '', exitCode: 0 };
+            },
+        }, operation);
+        for (const url of ['https://person:secret@forge.example/team/repo.git', 'https://secret@forge.example/team/repo.git',
+            'ssh://git:secret@forge.example/team/repo.git']) {
+            const added = await run(() => gitRemoteAdd({ context, request: { name: 'origin', fetchUrl: url } }));
+            expect(added, url).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                error: expect.stringContaining('embedded credentials') });
+            const pushed = await run(() => gitRemoteSetUrl({ context, request: { name: 'origin', pushUrl: url } }));
+            expect(pushed, url).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
+                error: expect.stringContaining('Remote push URL') });
+        }
+        expect(gitInvocations).toBe(0);
+        // An SSH user name is an address, not a credential.
+        await run(() => gitRemoteAdd({ context, request: { name: 'origin', fetchUrl: 'ssh://git@forge.example/team/repo.git' } }));
+        expect(gitInvocations).toBeGreaterThan(0);
+    });
 });

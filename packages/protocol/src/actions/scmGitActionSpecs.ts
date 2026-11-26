@@ -118,9 +118,11 @@ export type ScmActionSpecDefinition<
   localRepository?: 'read' | 'write';
   /**
    * A `localRepository: 'write'` whose whole effect stays in the repository at the input's folder (index, working
-   * tree, branches, stash): no remote, no network, no other folder. A Can use person runs it as their member user
-   * in their own member folder, as their own Agent already can there (owner, 2026-11-23: "On Machines with
-   * isolation on, Use works inside isolation").
+   * tree, branches, merges and rebases, stash, worktree records, local remote configuration): no network, no
+   * credential, no other folder, no host Project lifecycle. A Can use person runs it as their member user in their
+   * own member folder, with their own Git identity and hooks, as their own Agent already can there (owner,
+   * 2026-11-23: "On Machines with isolation on, Use works inside isolation"; 2026-11-26: all Git options work for
+   * a guest with their own identity).
    */
   memberFolderWrite?: true;
   /**
@@ -233,7 +235,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     safety: 'danger',
     approval: { result: 'required' },
     approvalPolicy: { uiConfirmation: 'direct' },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     placements: [],
     bindings: { rpcMethod: 'scm.suggestion.apply' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
@@ -507,7 +509,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.commit.undoLast' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmCommitUndoLastRequestSchema,
     outputSchema: scm.ScmCommitUndoLastResponseSchema,
     inputHints: {
@@ -529,7 +531,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.commit.backout' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmCommitBackoutRequestSchema,
     outputSchema: scm.ScmCommitBackoutResponseSchema,
     inputHints: {
@@ -658,7 +660,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.merge' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     approvalPresentation: { summary: describeScmBranchMergeApprovalSummary },
     inputSchema: scm.ScmBranchIntegrationRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
@@ -680,7 +682,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.rebase' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     approvalPresentation: { summary: describeScmBranchRebaseApprovalSummary },
     inputSchema: scm.ScmBranchIntegrationRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
@@ -703,7 +705,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.operation.continue' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmBranchOperationControlRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
     inputHints: {
@@ -724,7 +726,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.operation.skip' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     approvalPresentation: { summary: describeScmBranchOperationSkipApprovalSummary },
     inputSchema: scm.ScmBranchOperationControlRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
@@ -747,7 +749,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.operation.abort' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmBranchOperationControlRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
     inputHints: {
@@ -768,7 +770,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.conflict.acceptSide' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmConflictAcceptSideRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
     inputHints: {
@@ -790,7 +792,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.conflict.markResolved' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmConflictMarkResolvedRequestSchema,
     outputSchema: scm.ScmBranchIntegrationResponseSchema,
     inputHints: {
@@ -859,7 +861,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.worktree.prune' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'danger', localRepository: 'write',
+    sideEffectClass: 'danger', localRepository: 'write', memberFolderWrite: true,
     approvalPresentation: { summary: describeScmWorktreePruneApprovalSummary },
     inputSchema: worktrees.ScmWorktreePruneRequestSchema,
     outputSchema: worktrees.ScmWorktreePruneResponseSchema,
@@ -880,7 +882,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.add' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmRemoteAddRequestSchema,
     outputSchema: scm.ScmRemoteManagementResponseSchema,
     inputHints: {
@@ -903,7 +905,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.setUrl' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmRemoteSetUrlRequestSchema,
     outputSchema: scm.ScmRemoteManagementResponseSchema,
     inputHints: {
@@ -926,7 +928,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.remove' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmRemoteRemoveRequestSchema,
     outputSchema: scm.ScmRemoteManagementResponseSchema,
     inputHints: {
@@ -1583,7 +1585,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     outputSchema: ScmRepositoryInitResponseSchema,
     inputSchema: ScmRepositoryInitRequestSchema,
     inputHints: {
@@ -1614,7 +1616,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'danger', localRepository: 'write',
+    sideEffectClass: 'danger', localRepository: 'write', memberFolderWrite: true,
     outputSchema: ScmRepositoryRemoveIndexLockResponseSchema,
     inputSchema: ScmRepositoryRemoveIndexLockRequestSchema,
     inputHints: {

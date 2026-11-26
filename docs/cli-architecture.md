@@ -3176,12 +3176,22 @@ Other hosting work runs as it does elsewhere:
 methods on an existing repository are refused by the daemon Git's ownership
 check before any hosting call, and address resolution reads no folder.
 A person with Can use (or their own Account automation) gets local repository
-reads only. The SCM Action specs mark each Git-only repository method
-`localRepository: 'read'` (status, log, history, branches, stashes, commit and
-file diffs, file content, blame, worktree enrichment, backend describe) or `'write'`;
-`isScmLocalRepositoryReadRpcMethod` projects the reads for ingress and the
-handler, and `isScmLocalRepositoryRpcMethod` both kinds for the member-folder
-placement. In the child, Action-spec repository methods (blame, commit outcome)
+reads and the own-folder local writes, in their own member folder, as their
+member user (owner rulings 2026-11-23 and 2026-11-26). The SCM Action specs mark
+each Git-only repository method `localRepository: 'read'` (status, log, history,
+branches, stashes, commit and file diffs, file content, blame, worktree
+enrichment, backend describe) or `'write'`, and mark `memberFolderWrite` on a
+write whose whole effect stays in that repository with no network and no
+credential: stage, unstage, discard, commit, undo and back out a commit, branch
+create and switch, merge, rebase and their continue/skip/abort, conflict
+resolution, stash, worktree prune, remote add/set-URL/remove (local
+configuration; a URL with embedded credentials is refused as clone refuses it),
+repository init, stale index-lock removal and applying review suggestions (whose
+Machine RPC has no route row, so Home still keeps it to the custodian). Hooks those operations run are
+the member's own and run as the member. `isScmMemberFolderRpcMethod` (every read
+plus those writes) is the one projection ingress and the handler's member
+routing consume, and `isScmLocalRepositoryRpcMethod` both kinds for the
+member-folder placement. In the child, Action-spec repository methods (blame, commit outcome)
 run directly, because the daemon already admitted them and the child holds no
 Account credentials. The handler runs the whole read (Git and every
 repository metadata read, such as rebase/merge state files and `shallow`) in
@@ -3201,9 +3211,11 @@ even when the Project root is an ancestor of the member folder. The child has no
 daemon credentials. Captured comparisons and commit-plan repository effects use
 the same member worker through a host-bound comparison port; the host retains
 the requester's saved-result authority and supplies only the selected comparison
-or result operation. Every other `scm.*` method (forge, hosting, saved results, Agent
-runs, writes) is refused at ingress with `machine_manage_required` for a
-requester without Manage; Agent and Session sources keep
+or result operation. Every other `scm.*` method (fetch, pull, push, publish,
+forge, hosting, clone, saved results and comparisons, Agent runs, worktree
+create and remove, which run through the host Project lifecycle) is refused at
+ingress with `machine_manage_required` for a requester without Manage, until the
+guest's own hosting and model credentials reach those owners; Agent and Session sources keep
 `agent_isolation_unavailable`. The daemon-level isolation port carries no
 launch material. Without a selected requester, a Project read inside a
 Workspace root on an isolation-enabled Machine is refused before Git starts.

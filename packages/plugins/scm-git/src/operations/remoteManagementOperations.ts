@@ -105,6 +105,14 @@ function validateAllowedGitRemoteUrl(
     if (TRANSPORT_HELPER_URL_PATTERN.test(trimmed)) {
         return { ok: false, error: `${label} uses an unsupported Git transport helper` };
     }
+    // The clone rule: a password, or a user name outside SSH, is a credential stored in plain
+    // repository config and echoed in every remote listing. Credentials come from Git's helper
+    // or a connected account.
+    let embedded: URL | undefined;
+    try { embedded = trimmed.includes('://') ? new URL(trimmed) : undefined; } catch { embedded = undefined; }
+    if (embedded && (embedded.password || (embedded.protocol !== 'ssh:' && embedded.username))) {
+        return { ok: false, error: `${label} must not contain embedded credentials` };
+    }
     if (SCP_LIKE_REMOTE_PATTERN.test(trimmed) && !WINDOWS_ABSOLUTE_PATH_PATTERN.test(trimmed)) {
         return { ok: true };
     }

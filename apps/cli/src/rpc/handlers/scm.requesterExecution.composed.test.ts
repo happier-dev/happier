@@ -5,8 +5,8 @@ import { createStorageCategoryCatalog } from '@/storage/categoryCatalog';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
 import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { constants as fsConstants } from 'node:fs';
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { constants as fsConstants, existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
@@ -34,6 +34,7 @@ import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffec
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
+import { REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN } from '@happier-dev/protocol/scm/repositoryProvisioning';
 import axios from 'axios';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -160,6 +161,9 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   const ownerRepository = await repository(directory, 'owner-project');
   const memberRoot = join(directory, 'member-folder');
   const memberRepository = await repository(memberRoot, 'member-project');
+  // A second Can use member of this Machine, with their own member folder.
+  const otherMemberRoot = join(directory, 'other-member-folder');
+  const otherMemberRepository = await repository(otherMemberRoot, 'other-project');
   const memberHome = join(directory, 'member-home');
   const machineId = 'separate-users-machine';
   const installationId = 'separate-users-installation';
@@ -179,12 +183,15 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     if (request.requesterIdentity.kind !== 'isolated') throw Object.assign(new Error('not a member'), { code: 'agent_isolation_unavailable' });
     if (options.memberIdentityUnavailable) return { requesterIdentity: request.requesterIdentity, workingDirectory: memberRoot,
       agentIsolation: { requesterIdentity: request.requesterIdentity, read: () => daemonIsolation }, dispose: async () => {} };
+    const other = request.requesterIdentity.requester.accountId === 'other-account';
+    const workspaceRoot = other ? otherMemberRoot : memberRoot;
+    const agentUid = other ? 2402 : 2401;
     const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...request.requesterIdentity, homeServerIdentityId: home }),
-      workspaceRoot: memberRoot, home: memberHome, agentUid: 2401, agentGid: 2401 };
-    const snapshot = { ...daemonIsolation, workspaceRoots: [memberRoot], memberIdentity, localTransport: { agentUid: 2401, agentGid: 2401 },
+      workspaceRoot, home: memberHome, agentUid, agentGid: agentUid };
+    const snapshot = { ...daemonIsolation, workspaceRoots: [workspaceRoot], memberIdentity, localTransport: { agentUid, agentGid: agentUid },
       launch: { managedHappierBinaryPath: '/opt/happier/cli/current/happier', runtimeHome: join(memberHome, 'runtime'),
         environment: {}, selectedEnvironmentKeys: [], selectedMaterials: [] } };
-    return { requesterIdentity: request.requesterIdentity, memberIdentity, workingDirectory: memberRoot,
+    return { requesterIdentity: request.requesterIdentity, memberIdentity, workingDirectory: workspaceRoot,
       agentIsolation: { requesterIdentity: request.requesterIdentity, read: () => snapshot },
       materialTarget: { runtimeHome: snapshot.launch.runtimeHome, memberIdentity }, dispose: async () => {} };
   }) as unknown as ApiMachineClient['prepareNativeOperation'];
@@ -224,9 +231,12 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     ...(options.projectCleanupUnavailable ? { resolveProjectRuntime: async () => null } : {}),
     ...(options.resolveProjectRuntime ? { resolveProjectRuntime: options.resolveProjectRuntime } : {}),
     // The member binding store (native OS state) names the member who owns a member folder.
-    nativeOperationRuntime: { prepareNativeOperation, readMemberFolderOwner: async (path: string) =>
-      path === memberRoot || path.startsWith(`${memberRoot}/`) ? { kind: 'isolated' as const, separationRequired: true,
-        requester: { serverId: home, accountId: 'member-account', machineId, installationId } } : null },
+    nativeOperationRuntime: { prepareNativeOperation, readMemberFolderOwner: async (path: string) => {
+      const owner = [[memberRoot, 'member-account'], [otherMemberRoot, 'other-account']]
+        .find(([root]) => path === root || path.startsWith(`${root}/`))?.[1];
+      return owner ? { kind: 'isolated' as const, separationRequired: true,
+        requester: { serverId: home, accountId: owner, machineId, installationId } } : null;
+    } },
   });
   const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal,
     localActionContext?: RpcHandlerContext['localActionContext'], sessionActionOrigin?: RpcHandlerContext['sessionActionOrigin']) =>
@@ -238,7 +248,7 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
         role, encryptionMode: 'plain' },
     } });
   os.repository = memberRepository;
-  return { directory, ownerRepository, memberRoot, memberRepository, invoke, manager, plugins,
+  return { directory, ownerRepository, memberRoot, memberRepository, otherMemberRoot, otherMemberRepository, invoke, manager, plugins,
     prepareNativeOperation, home, machineId, installationId };
 }
 
@@ -314,6 +324,32 @@ async function memberProjectRuntime(f: Awaited<ReturnType<typeof fixture>>, work
 
 const gitLaunches = () => os.direct.filter(launch => launch.command.endsWith('git'));
 const daemonGit = () => gitLaunches().filter(launch => !launch.member);
+const head = (cwd: string) => git(cwd, 'rev-parse', 'HEAD').trim();
+const commitFile = async (cwd: string, path: string, content: string, message: string) => {
+  await writeFile(join(cwd, path), content);
+  git(cwd, 'add', path);
+  git(cwd, 'commit', '-q', '-m', message);
+};
+
+// Every own-folder local Git family this lane opens to a Can use member, one request each,
+// for the refusal cases (another person's repository, another member's folder, a withdrawn grant).
+const ownFolderGitRequests = (cwd: string) => [
+  [RPC_METHODS.SCM_COMMIT_UNDO_LAST, { cwd, expectedHeadOid: 'a'.repeat(40) }],
+  [RPC_METHODS.SCM_COMMIT_BACKOUT, { cwd, commit: 'HEAD' }],
+  [RPC_METHODS.SCM_BRANCH_MERGE, { cwd, sourceRef: 'main' }],
+  [RPC_METHODS.SCM_BRANCH_REBASE, { cwd, sourceRef: 'main' }],
+  [RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE, { cwd, operation: 'merge' }],
+  [RPC_METHODS.SCM_BRANCH_OPERATION_SKIP, { cwd, operation: 'rebase' }],
+  [RPC_METHODS.SCM_BRANCH_OPERATION_ABORT, { cwd, operation: 'merge' }],
+  [RPC_METHODS.SCM_CONFLICT_ACCEPT_SIDE, { cwd, path: 'notes.txt', side: 'ours' }],
+  [RPC_METHODS.SCM_CONFLICT_MARK_RESOLVED, { cwd, paths: ['notes.txt'] }],
+  [RPC_METHODS.SCM_WORKTREE_PRUNE, { cwd }],
+  [RPC_METHODS.SCM_REMOTE_ADD, { cwd, name: 'mine', fetchUrl: 'https://example.invalid/repo.git' }],
+  [RPC_METHODS.SCM_REMOTE_SET_URL, { cwd, name: 'origin', fetchUrl: 'https://example.invalid/other.git' }],
+  [RPC_METHODS.SCM_REMOTE_REMOVE, { cwd, name: 'origin' }],
+  [RPC_METHODS.SCM_REPOSITORY_INIT, { cwd }],
+  [RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK, { cwd, confirmed: true, confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN }],
+] as const;
 
 // R126S3 / ISOLATION-REPAIR-1114 / MEMBER-SCM-READ-1114 / SEC-FORKC-1115F on a separate-users Machine.
 describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placement', () => {
@@ -907,22 +943,291 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     }
   });
 
-  // Network, remote configuration, saved-result and Agent-starting methods are not local repository writes of the
-  // member folder: they keep the Manage refusal pending the owner.
-  it('keeps Can use remote, network and comparison methods on the Manage refusal, before any Git', async () => {
+  // Owner ruling 2026-11-26 ("all of the Git options should work" for a guest, with their own identity): the
+  // remaining own-folder local Git operations run whole in the Can use member's child, as that member. Real:
+  // ingress admission, requester selection, SCM handlers, Workspace effect bridge and Git; replaced: RunAs (OS boundary).
+  const expectRanAsMember = (count: number) => {
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(count).fill(['workspace-effect', 2401]));
+    expect(gitLaunches().length).toBeGreaterThan(0);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  };
+  const memberRepositoryWithIdentity = async () => {
+    const f = await fixture();
+    git(f.memberRepository, 'config', 'user.name', 'Member test');
+    git(f.memberRepository, 'config', 'user.email', 'member@example.invalid');
+    return f;
+  };
+
+  it('backs out and undoes a Can use member’s own commit in their member child', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    await commitFile(cwd, 'a.txt', 'one\n', 'first');
+    const first = head(cwd);
+    expect(await f.invoke(RPC_METHODS.SCM_COMMIT_BACKOUT, { cwd, commit: first }, 'member-account', 'use'))
+      .toMatchObject({ success: true });
+    expect(existsSync(join(cwd, 'a.txt'))).toBe(false);
+    expect(git(cwd, 'log', '-1', '--format=%an')).toBe('Member test\n');
+    const undone = await f.invoke(RPC_METHODS.SCM_COMMIT_UNDO_LAST, { cwd, expectedHeadOid: head(cwd) }, 'member-account', 'use');
+    expect(undone, JSON.stringify(undone)).toMatchObject({ success: true });
+    expect(head(cwd)).toBe(first);
+    expectRanAsMember(2);
+  });
+
+  // The member's own repository hooks are what a merge or rebase executes; they run under the member's Git.
+  it('merges and rebases for a Can use member, running the repository hooks in their member child', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    for (const hook of ['post-merge', 'post-rewrite']) {
+      await writeFile(join(cwd, '.git', 'hooks', hook), `#!/bin/sh\necho ${hook} >> .git/hook.log\n`, { mode: 0o755 });
+    }
+    git(cwd, 'checkout', '-q', '-b', 'topic');
+    await commitFile(cwd, 'topic.txt', 'topic\n', 'topic');
+    git(cwd, 'checkout', '-q', 'main');
+    await commitFile(cwd, 'main.txt', 'main\n', 'main');
+    const merged = await f.invoke(RPC_METHODS.SCM_BRANCH_MERGE, { cwd, sourceRef: 'topic' }, 'member-account', 'use');
+    expect(merged, JSON.stringify(merged)).toMatchObject({ success: true });
+    expect(git(cwd, 'log', '-1', '--format=%P').trim().split(' ')).toHaveLength(2);
+    git(cwd, 'checkout', '-q', '-b', 'later');
+    await commitFile(cwd, 'later.txt', 'later\n', 'later');
+    git(cwd, 'checkout', '-q', 'main');
+    await commitFile(cwd, 'main-two.txt', 'main two\n', 'main two');
+    git(cwd, 'checkout', '-q', 'later');
+    const rebased = await f.invoke(RPC_METHODS.SCM_BRANCH_REBASE, { cwd, sourceRef: 'main' }, 'member-account', 'use');
+    expect(rebased, JSON.stringify(rebased)).toMatchObject({ success: true });
+    expect(git(cwd, 'rev-parse', 'later~1').trim()).toBe(git(cwd, 'rev-parse', 'main').trim());
+    expect(readFileSync(join(cwd, '.git', 'hook.log'), 'utf8')).toBe('post-merge\npost-rewrite\n');
+    // Stand-in: the hooks' Git is the member's framed child (RunAs simulated, UID 2401); no daemon Git ran.
+    expectRanAsMember(2);
+  });
+
+  it('resolves, continues, aborts and skips a Can use member’s conflicted operations in their member child', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    const use = (method: string, params: unknown) => f.invoke(method, params, 'member-account', 'use');
+    const commitBoth = async (content: string, message: string) => {
+      await writeFile(join(cwd, 'c.txt'), content);
+      await writeFile(join(cwd, 'd.txt'), content);
+      git(cwd, 'add', 'c.txt', 'd.txt');
+      git(cwd, 'commit', '-q', '-m', message);
+    };
+    git(cwd, 'checkout', '-q', '-b', 'clash');
+    await commitBoth('theirs\n', 'clash');
+    git(cwd, 'checkout', '-q', 'main');
+    await commitBoth('ours\n', 'ours');
+    expect(await use(RPC_METHODS.SCM_BRANCH_MERGE, { cwd, sourceRef: 'clash' }))
+      .toMatchObject({ success: false, errorCode: 'CONFLICTING_WORKTREE' });
+    expect(await use(RPC_METHODS.SCM_CONFLICT_ACCEPT_SIDE, { cwd, path: 'c.txt', side: 'theirs' })).toMatchObject({ success: true });
+    await writeFile(join(cwd, 'd.txt'), 'both\n');
+    expect(await use(RPC_METHODS.SCM_CONFLICT_MARK_RESOLVED, { cwd, paths: ['d.txt'] })).toMatchObject({ success: true });
+    const continued = await use(RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE, { cwd, operation: 'merge' });
+    expect(continued, JSON.stringify(continued)).toMatchObject({ success: true });
+    expect(readFileSync(join(cwd, 'c.txt'), 'utf8')).toBe('theirs\n');
+    expect(git(cwd, 'log', '-1', '--format=%P').trim().split(' ')).toHaveLength(2);
+    // Abort: a second conflicting merge is thrown away.
+    git(cwd, 'checkout', '-q', '-b', 'clash-two', 'clash');
+    await commitFile(cwd, 'e.txt', 'theirs\n', 'clash two');
+    git(cwd, 'checkout', '-q', 'main');
+    await commitFile(cwd, 'e.txt', 'ours\n', 'ours two');
+    const beforeAbort = head(cwd);
+    expect(await use(RPC_METHODS.SCM_BRANCH_MERGE, { cwd, sourceRef: 'clash-two' })).toMatchObject({ success: false });
+    expect(await use(RPC_METHODS.SCM_BRANCH_OPERATION_ABORT, { cwd, operation: 'merge' })).toMatchObject({ success: true });
+    expect(head(cwd)).toBe(beforeAbort);
+    expect(git(cwd, 'status', '--porcelain')).toBe('');
+    // Skip: a rebase whose only commit conflicts leaves the branch at its new base.
+    git(cwd, 'checkout', '-q', '-b', 'stale', 'clash-two');
+    git(cwd, 'reset', '-q', '--hard', 'clash-two~1');
+    await commitFile(cwd, 'e.txt', 'stale\n', 'stale');
+    expect(await use(RPC_METHODS.SCM_BRANCH_REBASE, { cwd, sourceRef: 'main' })).toMatchObject({ success: false });
+    const skipped = await use(RPC_METHODS.SCM_BRANCH_OPERATION_SKIP, { cwd, operation: 'rebase' });
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({ success: true });
+    expect(head(cwd)).toBe(git(cwd, 'rev-parse', 'main').trim());
+    expectRanAsMember(8);
+  });
+
+  // Review suggestions change files of the member's own checkout only; each file path is confined to it. This
+  // receiver places them; Home's route table (no Machine row: custodian only) still decides who reaches it.
+  it('applies review suggestions to a Can use member’s own checkout in their member child, and refuses one outside it', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    await commitFile(cwd, 's.txt', 'one\ntwo\n', 'suggested');
+    const suggestion = (path: string) => ({ path, commitOid: head(cwd), startLine: 2, endLine: 2, originalLines: ['two'],
+      replacement: 'TWO', outdated: false });
+    const applied = await f.invoke('scm.suggestion.apply', { sessionId: 'session-1', cwd, suggestions: [suggestion('s.txt')] },
+      'member-account', 'use');
+    expect(applied, JSON.stringify(applied)).toMatchObject({ success: true });
+    expect(readFileSync(join(cwd, 's.txt'), 'utf8')).toBe('one\nTWO\n');
+    await writeFile(join(f.ownerRepository, 's.txt'), 'one\ntwo\n');
+    for (const [requestCwd, path, accountId] of [
+      [cwd, '../../owner-project/s.txt', 'member-account'],
+      [f.ownerRepository, 's.txt', 'member-account'],
+      [cwd, 's.txt', 'other-account'],
+    ] as const) {
+      const refused = await f.invoke('scm.suggestion.apply', { sessionId: 'session-1', cwd: requestCwd,
+        suggestions: [suggestion(path)] }, accountId, 'use');
+      expect(refused, `${requestCwd} ${path} ${accountId} ${JSON.stringify(refused)}`)
+        .toMatchObject({ success: false, files: [{ errorCode: 'invalid_path' }] });
+    }
+    expect(readFileSync(join(f.ownerRepository, 's.txt'), 'utf8')).toBe('one\ntwo\n');
+    expect(readFileSync(join(cwd, 's.txt'), 'utf8')).toBe('one\nTWO\n');
+    expect(os.runAs.map(run => run.uid)).toEqual([2401, 2401, 2401, 2402]);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  it('prunes a Can use member’s stale worktree records in their member child', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    const gone = join(f.memberRoot, 'gone-checkout');
+    git(cwd, 'worktree', 'add', '-q', '--detach', gone);
+    await rm(gone, { recursive: true, force: true });
+    expect(git(cwd, 'worktree', 'list', '--porcelain')).toContain(gone);
+    const pruned = await f.invoke(RPC_METHODS.SCM_WORKTREE_PRUNE, { cwd }, 'member-account', 'use');
+    expect(pruned, JSON.stringify(pruned)).toMatchObject({ success: true });
+    expect(git(cwd, 'worktree', 'list', '--porcelain')).not.toContain(gone);
+    expectRanAsMember(1);
+  });
+
+  it('adds, repoints and removes a Can use member’s remotes as local configuration, in their member child', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    const first = join(f.memberRoot, 'first.git');
+    const second = join(f.memberRoot, 'second.git');
+    expect(await f.invoke(RPC_METHODS.SCM_REMOTE_ADD, { cwd, name: 'mine', fetchUrl: first }, 'member-account', 'use'))
+      .toMatchObject({ success: true });
+    expect(await f.invoke(RPC_METHODS.SCM_REMOTE_SET_URL, { cwd, name: 'mine', fetchUrl: second }, 'member-account', 'use'))
+      .toMatchObject({ success: true });
+    expect(git(cwd, 'config', 'remote.mine.url')).toBe(`${second}\n`);
+    expect(await f.invoke(RPC_METHODS.SCM_REMOTE_REMOVE, { cwd, name: 'mine' }, 'member-account', 'use'))
+      .toMatchObject({ success: true });
+    expect(git(cwd, 'remote')).toBe('');
+    expectRanAsMember(3);
+  });
+
+  it('initializes a repository and clears a stale index lock in a Can use member’s own folder, in their member child', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const fresh = join(f.memberRoot, 'fresh');
+    await mkdir(fresh);
+    const initialized = await f.invoke(RPC_METHODS.SCM_REPOSITORY_INIT, { cwd: fresh }, 'member-account', 'use');
+    expect(initialized, JSON.stringify(initialized)).toMatchObject({ success: true });
+    expect(existsSync(join(fresh, '.git'))).toBe(true);
+    await writeFile(join(f.memberRepository, '.git', 'index.lock'), '');
+    const cleared = await f.invoke(RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK, { cwd: f.memberRepository, confirmed: true,
+      confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN }, 'member-account', 'use');
+    expect(cleared, JSON.stringify(cleared)).toMatchObject({ success: true });
+    expect(existsSync(join(f.memberRepository, '.git', 'index.lock'))).toBe(false);
+    expectRanAsMember(2);
+  });
+
+  it('refuses every newly opened family on another person’s repository and in another member’s folder, before any Git', async () => {
+    const f = await fixture();
+    const ownerHead = head(f.ownerRepository);
+    const otherHead = head(f.memberRepository);
+    for (const [method, params] of ownFolderGitRequests(f.ownerRepository)) {
+      const response = await f.invoke(method, params, 'member-account', 'use');
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    }
+    // Another member's folder: their request runs in THEIR child (UID 2402), which cannot reach this folder.
+    for (const [method, params] of ownFolderGitRequests(f.memberRepository)) {
+      const response = await f.invoke(method, params, 'other-account', 'use');
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    }
+    expect(new Set(os.runAs.map(run => run.uid))).toEqual(new Set([2401, 2402]));
+    expect(gitLaunches()).toEqual([]);
+    expect(head(f.ownerRepository)).toBe(ownerHead);
+    expect(head(f.memberRepository)).toBe(otherHead);
+    expect(git(f.ownerRepository, 'remote')).toBe('');
+  });
+
+  it('contains paths that leave a Can use member’s folder and refuses an embedded-credential remote URL, before any Git effect', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    const link = join(f.memberRoot, 'outside-link');
+    await symlink(f.ownerRepository, link);
+    // A symlink out of the folder, and a raw parent path the member child resolves against its folder.
+    for (const escape of [link, '../owner-project']) {
+      for (const [method, params] of ownFolderGitRequests(escape)) {
+        const response = await f.invoke(method, params, 'member-account', 'use');
+        expect(response, `${method} ${escape} ${JSON.stringify(response)}`).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+      }
+    }
+    expect(gitLaunches()).toEqual([]);
+    // A remote URL is not a path; one carrying a credential is refused as clone refuses it.
+    git(cwd, 'remote', 'add', 'origin', join(f.memberRoot, 'origin.git'));
+    expect(await f.invoke(RPC_METHODS.SCM_REMOTE_SET_URL, { cwd, name: 'origin',
+      fetchUrl: 'https://person:secret@forge.example/team/repo.git' }, 'member-account', 'use'))
+      .toMatchObject({ success: false, errorCode: 'INVALID_REQUEST', error: expect.stringContaining('embedded credentials') });
+    expect(git(cwd, 'config', 'remote.origin.url')).toBe(`${join(f.memberRoot, 'origin.git')}\n`);
+    expect(daemonGit()).toEqual([]);
+  });
+
+  it('refuses every newly opened family at the next request once the grant is withdrawn, before any member child', async () => {
+    const f = await fixture({ admissionCurrent: false });
+    // Suggestion apply has no Machine route row (Home keeps it to the custodian), so this receiver never sees a guest's.
+    for (const [method, params] of ownFolderGitRequests(f.memberRepository)) {
+      expect(await f.invoke(method, params, 'member-account', 'use'), method).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    expect(os.runAs).toEqual([]);
+    expect(gitLaunches()).toEqual([]);
+  });
+
+  // Network and hosting work runs on credentials; until a credential lane gives a guest their own, each family keeps
+  // the Manage refusal (one request per family, so opening the local families cannot widen these). Worktree create
+  // and remove run through the host Project lifecycle on this Machine's Account, so they stay refused too.
+  it('keeps Can use network, hosting, clone, comparison and Project worktree families on the Manage refusal, before any Git', async () => {
     const f = await fixture();
     const cwd = f.memberRepository;
     for (const [method, params] of [
-      [RPC_METHODS.SCM_REMOTE_ADD, { cwd, name: 'origin', fetchUrl: 'https://example.invalid/repo.git' }],
       [RPC_METHODS.SCM_REMOTE_FETCH, { cwd, remote: 'origin' }],
+      [RPC_METHODS.SCM_REMOTE_PULL, { cwd, remote: 'origin' }],
       [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'main' }],
+      [RPC_METHODS.SCM_REMOTE_PUBLISH, { cwd, remote: 'origin', branch: 'main' }],
+      [RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd }],
+      [RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd, base: 'main', title: 'x' }],
+      [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH, { cwd }],
+      [RPC_METHODS.SCM_REPOSITORY_CLONE, { destinationParentPath: f.memberRoot, destinationDirectoryName: 'clone' }],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, { cwd, source: { kind: 'workingTree' } }],
       [RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, { cwd, source: { kind: 'workingTree' } }],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ, { cwd, resultId: 'result' }],
+      [RPC_METHODS.SCM_WORKTREE_CREATE, { cwd, displayName: 'side' }],
+      [RPC_METHODS.SCM_WORKTREE_REMOVE, { cwd, worktreePath: join(cwd, 'side'), confirmed: true,
+        authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN }],
     ] as const) {
       expect(await f.invoke(method, params, 'member-account', 'use'), method)
         .toMatchObject({ errorCode: 'machine_manage_required' });
     }
     expect(gitLaunches()).toEqual([]);
     expect(os.runAs).toEqual([]);
+  });
+
+  // Parity: where the owner turned isolation off, and for Manage, the same requests keep their outcomes.
+  it('keeps the newly opened families’ outcomes for an isolation-off Use guest and for Manage', async () => {
+    const direct = await fixture({ sourceRuntimeIsolation: 'disabled' });
+    const guestRepository = await repository(direct.directory, 'guest-project');
+    git(guestRepository, 'config', 'user.name', 'Guest test');
+    git(guestRepository, 'config', 'user.email', 'guest@example.invalid');
+    const f = await memberRepositoryWithIdentity();
+    for (const [invoke, cwd, accountId, role] of [
+      [direct.invoke, guestRepository, 'member-account', 'use'],
+      [f.invoke, f.memberRepository, 'manager-account', 'manage'],
+      [f.invoke, f.ownerRepository, 'manager-account', 'manage'],
+    ] as const) {
+      git(cwd, 'config', 'user.name', 'Parity test');
+      git(cwd, 'config', 'user.email', 'parity@example.invalid');
+      await commitFile(cwd, 'parity.txt', 'parity\n', 'parity');
+      for (const [method, params] of [
+        [RPC_METHODS.SCM_COMMIT_BACKOUT, { cwd, commit: head(cwd) }],
+        [RPC_METHODS.SCM_REMOTE_ADD, { cwd, name: 'parity', fetchUrl: join(direct.directory, 'parity.git') }],
+        [RPC_METHODS.SCM_REMOTE_REMOVE, { cwd, name: 'parity' }],
+        [RPC_METHODS.SCM_WORKTREE_PRUNE, { cwd }],
+        [RPC_METHODS.SCM_BRANCH_MERGE, { cwd, sourceRef: 'main' }],
+      ] as const) {
+        const response = await invoke(method, params, accountId, role);
+        expect(response, `${role} ${cwd} ${method} ${JSON.stringify(response)}`).toMatchObject({ success: true });
+      }
+    }
+    // Isolation off runs on the daemon; Manage in a member folder runs in that member's child.
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(5).fill(['workspace-effect', 2401]));
   });
 
   it('refuses Can use reads of another folder and forge methods before any daemon Git or state read', async () => {
