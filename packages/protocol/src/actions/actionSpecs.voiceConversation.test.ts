@@ -5,6 +5,12 @@ import { getActionSpec, PublicActionIdSchema } from './actionSpecs.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 describe('local Voice Action contract', () => {
+  it('selects the alternate recovery while retaining the primary default', () => {
+    const schema = getActionSpec('ui.voice_global.recover').inputSchema;
+    expect(schema.safeParse({ expectedAttempt: 'attempt', choice: 'alternate' }).success).toBe(true);
+    expect(schema.safeParse({ expectedAttempt: 'attempt' }).success).toBe(true);
+    expect(schema.safeParse({ expectedAttempt: 'attempt', choice: 'unknown' }).success).toBe(false);
+  });
   it('exposes Say and Stop on the answering client with ordinary automation approval defaults', () => {
     for (const operation of ['say.start', 'say.stop'] as const) {
       const actionId = ActionIdSchema.parse(`ui.voice_global.${operation}`);

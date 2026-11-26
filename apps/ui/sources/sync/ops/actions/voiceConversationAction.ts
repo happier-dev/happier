@@ -306,7 +306,9 @@ export async function executeVoiceConversationAction(
                 else return unavailable('voice_dismiss_unavailable');
                 break;
             case 'ui.voice_global.recover':
-                if (!await executeVoiceAttemptRecovery({ ...current, expectedAttempt: value.expectedAttempt, isCurrent: deps.isCurrent, navigate: deps.navigate })) return unavailable('voice_recovery_unavailable');
+                if (!await executeVoiceAttemptRecovery({ ...current, expectedAttempt: value.expectedAttempt,
+                    ...('choice' in value ? { choice: value.choice } : {}),
+                    isCurrent: deps.isCurrent, navigate: deps.navigate })) return unavailable('voice_recovery_unavailable');
                 break;
             case 'ui.voice_global.turn_control':
                 if (!sessionId || !('control' in value)) return unavailable('voice_turn_control_unavailable');

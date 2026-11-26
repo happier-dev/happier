@@ -103,6 +103,7 @@ export type VoiceControlsActionInputById = {
     };
     readonly "ui.voice_global.recover": {
         expectedAttempt: string;
+        choice?: 'alternate' | 'primary' | undefined;
     } & {
         clientId?: string | undefined;
     };

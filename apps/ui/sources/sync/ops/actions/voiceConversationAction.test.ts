@@ -373,6 +373,27 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         } finally { await lifecycle.dispose(); }
     });
 
+    it('opens the alternate Machine remedy through the public recovery Action', async () => {
+        const { lifecycle, invoke } = await createHarness(false);
+        const { VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET } = await import('@/voice/settings/voiceSettingsRouteFocus');
+        try {
+            setVoiceSessionLifecycleController(null);
+            setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'session-original',
+                status: 'error', mode: 'idle', canStop: false, errorCode: 'execution_machine_unavailable',
+                errorMessage: 'voice_agent_target_machine_offline', errorRecoveryAction: 'select_execution_machine' });
+            const current = await invoke('ui.voice_global.get', {});
+            const navigate = vi.fn();
+            const input = { expectedAttempt: current.voice.attemptId, choice: 'alternate' };
+            expect(await executeVoiceConversationAction('ui.voice_global.recover', input, { navigate }))
+                .toMatchObject({ status: 'completed' });
+            expect(navigate).toHaveBeenCalledWith(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
+            navigate.mockClear();
+            expect(await executeVoiceConversationAction('ui.voice_global.recover', { ...input, expectedAttempt: 'old' }, { navigate }))
+                .toMatchObject({ status: 'unavailable', code: 'stale_voice_attempt' });
+            expect(navigate).not.toHaveBeenCalled();
+        } finally { await lifecycle.dispose(); }
+    });
+
     it('presents a safe Session launch cause in the public Voice Action', async () => {
         const { lifecycle, invoke } = await createHarness(false);
         const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
@@ -397,7 +418,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
     });
 
     it.each([
-        { reason: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.', recovery: null },
+        { reason: 'usage_limit', message: 'Codex usage limit reached. Try another connected account or try again after your limit resets.', recovery: 'review_credentials' },
         { reason: 'acp_turn_failed', message: 'Cannot connect to API. token=PRIVATE_TOKEN /home/alice/private/model', recovery: 'retry' },
     ])('keeps the sanitized $reason cause in public Voice status', async ({ reason, message, recovery }) => {
         const { lifecycle, invoke } = await createHarness(false);

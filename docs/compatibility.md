@@ -1,5 +1,16 @@
 # Compatibility and version skew
 
+## Voice alternate recovery (unreleased 0.3)
+
+The closed `ui.voice_global.recover` input accepts optional `choice: primary |
+alternate`. Omission retains the primary remedy. The answering client routes
+the alternate to its existing recovery owner; stale attempts remain refused.
+Matching Protocol, SDK declarations and clients reload together under the
+unpublished direct cut. Earlier strict development readers reject the selector
+rather than silently executing the primary remedy. No persisted format, wire
+epoch, package version, capability gate or compatibility adapter changes.
+
+
 ## Person Git identity (unreleased 0.3)
 
 The nullable Account preference `scmGitIdentity` stores a deliberate non-secret

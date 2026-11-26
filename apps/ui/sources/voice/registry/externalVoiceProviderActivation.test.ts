@@ -600,6 +600,7 @@ describe('external Voice provider activation', () => {
   it('rejects broad host-controller registration from an external plugin at commit', async () => {
     const hostLease = createBundledConversationRuntimeHostLease();
     onTestFinished(() => hostLease.revoke());
+    const registrationsBeforeCommit = listExternalVoiceProviderRegistrations();
     const scope = createExternalVoiceProviderActivationScope({
       pluginId: identity.pluginId, occurrenceId: 'acme-synthetic-voice-activation-occurrence', declarations: [declaration], hostPlatform: 'web',
     });
@@ -610,7 +611,8 @@ describe('external Voice provider activation', () => {
         adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false,
       }),
     }]);
-    await expect(scope.commit()).rejects.toThrow('invalid_external_voice_provider_leaf_registration');
+    await expect(scope.commit()).rejects.toBeInstanceOf(Error);
+    expect(listExternalVoiceProviderRegistrations()).toEqual(registrationsBeforeCommit);
     await scope.unwind();
   });
 

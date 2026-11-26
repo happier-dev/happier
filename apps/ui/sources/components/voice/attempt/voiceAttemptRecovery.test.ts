@@ -208,7 +208,7 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(lifecycle.getSnapshot().status).toBe('disconnected');
   });
 
-  it.each(['web', 'ios'] as const)('keeps the usage-limit wait free of setup recovery on %s', async platform => {
+  it.each(['web', 'ios'] as const)('offers the Voice service picker without retrying after a usage-limit failure on %s', async platform => {
     state.platform = platform;
     const navigate = vi.fn();
     const failure = createVoiceMachineError({ kind: 'provider_error', reason: 'usage_limit' });
@@ -216,9 +216,10 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(await executeVoiceAttemptRecovery({
       recoveryAction: failure.recoveryAction, errorReason: failure.reason,
       setupIncomplete: false, context: context(), navigate,
-    })).toBe(false);
-    expect(navigate).not.toHaveBeenCalled();
+    })).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.provider' } });
     expect(state.openSettings).not.toHaveBeenCalled();
+    expect(state.startSession).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -3409,6 +3409,12 @@ describe('useVoiceAttemptControl idle targeting', () => {
                 ...session,
                 pendingUserActionRequestCount: 1,
                 pendingRequestObservedAt: Date.now(),
+                agentState: {
+                  requests: {
+                    question: { tool: 'AskUserQuestion', kind: 'user_action' as const,
+                      arguments: {}, createdAt: Date.now() },
+                  },
+                },
               },
             },
           })),
@@ -3718,6 +3724,7 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
           expect.objectContaining({ text: t('common.retry'), onPress: expect.any(Function) }),
           expect.objectContaining({ text: expect.any(String), style: 'cancel' }),
         ]),
+        { commandBridge: expect.any(Function) },
       );
       const dismissLabel = notice.mock.lastCall?.[2]?.find(button => button.style === 'cancel')?.text;
       expect(dismissLabel).not.toMatch(/^[\w-]+(?:\.[\w-]+)+$/);

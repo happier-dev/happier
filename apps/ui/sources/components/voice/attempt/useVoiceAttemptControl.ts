@@ -66,6 +66,7 @@ import { Modal } from '@/modal';
 import { HappyError } from '@/utils/errors/errors';
 import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isVoiceAttemptHomeUnreachable, projectVoiceAttemptPresentation } from './projectVoiceAttemptPresentation';
@@ -254,6 +255,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         scope: hasCredentialSlot ? currentAccountScope : null, includeMaterial: false,
     });
     const { executeValue, isCurrent } = useMountedActionExecution(currentAccountScope);
+    const commandBridge = useCurrentUiContextCommandBridge();
     const executeControl = React.useCallback(async function executeVoiceControl(
         actionId: VoiceConversationActionId, input: unknown, tag: string, operation?: UiActionOperation,
     ): Promise<boolean> {
@@ -273,14 +275,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
                     Modal.alert(t('voiceAssistant.connectionError'), t('settingsPlugins.targetSelection.unreachableThisHome'), [
                         { text: t('common.close'), style: 'cancel' },
                         { text: t('common.retry'), onPress: () => executeVoiceControl(actionId, input, tag, operation) },
-                    ]);
+                    ], { commandBridge });
                 }
             } else {
                 fireAndForget(Promise.reject(error), { tag });
             }
             return false;
         }
-    }, [executeValue, isCurrent, navigateWithFocusReturn, router]);
+    }, [commandBridge, executeValue, isCurrent, navigateWithFocusReturn, router]);
     const surfaceState = resolveVoiceSurfaceState({
         status: snap.status,
         mode: snap.mode,
@@ -761,14 +763,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         context: recoveryContext,
         navigate: (href: unknown) => navigateWithFocusReturn(() => router.push(href as never)),
     }), [expectedAttempt, navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete, snap.errorMessage]);
-    const onAlternateRecovery = React.useMemo(() => createVoiceAttemptRecoveryDispatch({
-        expectedAttempt,
-        recoveryAction,
-        choice: 'alternate',
-        setupIncomplete,
-        context: recoveryContext,
-        navigate: (href: unknown) => navigateWithFocusReturn(() => router.push(href as never)),
-    }), [expectedAttempt, navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete]);
+    const onAlternateRecovery = React.useCallback(() =>
+        executeControl('ui.voice_global.recover', { expectedAttempt, choice: 'alternate' }, 'VoiceAttemptControl.alternateRecovery'),
+    [executeControl, expectedAttempt]);
     const onRecover = React.useCallback(() => expectedAttempt
         ? executeControl('ui.voice_global.recover', { expectedAttempt }, 'VoiceAttemptControl.recover')
         : recoverBeforeAttempt(), [executeControl, expectedAttempt, recoverBeforeAttempt]);
