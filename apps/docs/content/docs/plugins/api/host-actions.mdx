@@ -5719,7 +5719,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.history`
 
-**Read backup history** — No additional description is published.
+**Read backup history** — Read the retained capture, verification and cleanup history for the Environment’s backup policy.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -5740,7 +5740,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.inventory`
 
-**List deployment backups** — No additional description is published.
+**List deployment backups** — List restorable snapshots at the selected Environment backup destination.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -5761,7 +5761,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.prune`
 
-**Apply backup retention** — No additional description is published.
+**Apply backup retention** — Apply the saved backup retention policy to eligible snapshots in the Environment’s configured repository.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -5783,7 +5783,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.restore`
 
-**Restore deployment backup** — No additional description is published.
+**Restore deployment backup** — Review or apply restoration of a selected backup snapshot into the specified destination. Review includes destination placement and effects on existing data.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -5811,7 +5811,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.run`
 
-**Back up deployment** — No additional description is published.
+**Back up deployment** — Capture an on-demand backup using the saved destination and source policy for this Environment.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -5832,7 +5832,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.test`
 
-**Test backup destination** — No additional description is published.
+**Test backup destination** — Test the configured backup repository with a probe that writes, reads and removes its own test snapshot.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -5853,7 +5853,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.backups.verify`
 
-**Verify deployment backup** — No additional description is published.
+**Verify deployment backup** — Verify a retained backup snapshot through its configured repository and return the verification result.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -5877,7 +5877,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.bindings.set`
 
-**Set environment bindings** — No additional description is published.
+**Set environment bindings** — Set or remove selected Environment bindings at an expected revision. Bind Saved Secrets by reference and revision; delivery stays with the reviewed target.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -5899,7 +5899,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.cancel`
 
-**Cancel deployment** — No additional description is published.
+**Cancel deployment** — Ask the owner of the specified in-progress deployment to stop it and retain the cancellation result.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -5916,7 +5916,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.data.page`
 
-**List accessible data services** — No additional description is published.
+**List accessible data services** — Page through data services visible to the caller on the selected Home, including linked managed services.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -5933,7 +5933,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.data.size`
 
-**Read deployment database size** — No additional description is published.
+**Read deployment database size** — Read the size of the selected Environment database through its linked target.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -5984,7 +5984,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.add`
 
-**Add or update deployment domain** — No additional description is published.
+**Add or update deployment domain** — Add or update the route for an Environment hostname. Choose the intended service and ingress; the reviewed operation can configure provider routing and own-server ingress.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6014,7 +6014,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.dns.create`
 
-**Create required DNS records** — No additional description is published.
+**Create required DNS records** — Create the missing DNS records required by a retained Domain in the selected account and zone. Preserve existing records and report conflicts.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6034,7 +6034,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.dns.verify`
 
-**Verify required DNS record configuration** — No additional description is published.
+**Verify required DNS record configuration** — Compare the retained Domain’s required records with the selected DNS zone. This read does not prove propagation or application health.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6054,7 +6054,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.get`
 
-**Read deployment domain** — No additional description is published.
+**Read deployment domain** — Read one saved Domain record by Environment and Domain id, including its routing state and revision.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6070,7 +6070,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.list`
 
-**List deployment domains** — No additional description is published.
+**List deployment domains** — List saved Domain records for one Environment. Follow the returned cursor to continue.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6087,7 +6087,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.page`
 
-**List accessible domains** — No additional description is published.
+**List accessible domains** — Page through Domains visible to the caller across Environments on the selected Home.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6104,7 +6104,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.remove`
 
-**Remove deployment domain** — No additional description is published.
+**Remove deployment domain** — Remove a retained Domain using its Environment and Domain revisions. Review the ingress and provider resources affected before applying.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6123,7 +6123,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.domains.verify`
 
-**Verify deployment domain** — No additional description is published.
+**Verify deployment domain** — Check the selected Environment Domain against its configured routing and return the observed state.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6147,7 +6147,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.drift.read`
 
-**Read deployed service drift** — No additional description is published.
+**Read deployed service drift** — Compare the retained expected deployment with the observed runtime for the selected Environment and report drift.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6168,7 +6168,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.controller.set`
 
-**Change environment controller** — No additional description is published.
+**Change environment controller** — Move coordination of Environment jobs and checks to the selected controller Machine. The running workload stays on its existing target.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6185,7 +6185,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.create`
 
-**Create deployment environment** — No additional description is published.
+**Create deployment environment** — Review or save a new Environment. Supply its Project and definition, use copyFrom to duplicate a saved Environment, or select an enrolled Preview template and branch.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6226,7 +6226,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.delete`
 
-**Delete deployment environment** — No additional description is published.
+**Delete deployment environment** — Remove the saved Environment record after its dependencies permit deletion. Use teardown when deployed resources also need to be removed.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6245,7 +6245,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.get`
 
-**Read deployment environment** — No additional description is published.
+**Read deployment environment** — Read one accessible Environment by id, including its current revision and linked targets.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6262,7 +6262,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.list`
 
-**List deployment environments** — No additional description is published.
+**List deployment environments** — Find Environments visible on the selected Home. Filter by Project or Machine and pass the returned cursor to continue.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6290,7 +6290,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.moveToRepository`
 
-**Move Environment to a repository** — No additional description is published.
+**Move Environment to a repository** — Export the captured stored Compose definition through a repository pull request. Preview the existing-file diff first. Stored Compose remains active while the pull request is open. Continue with the original returned references after merge; changed merged or stored content requires explicit useMergedVersion review.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6319,7 +6319,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.telemetry.set`
 
-**Configure Environment telemetry** — No additional description is published.
+**Configure Environment telemetry** — Configure the Environment collector. Changes apply on redeploy. Moving or turning off deletes telemetry stored on the previous collector; confirmDelete acknowledges that deletion. Omit collector to use the Project default or runtime Machine.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6340,7 +6340,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.environments.update`
 
-**Update deployment environment** — No additional description is published.
+**Update deployment environment** — Update the saved Environment at its expected revision. Preview mode reviews selected configuration changes or defaults without saving them.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6376,7 +6376,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.health.current`
 
-**Read current Environment edge health** — No additional description is published.
+**Read current Environment edge health** — Read the current edge health for the selected Environment. This read does not run or configure a saved Check.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6394,7 +6394,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.health.read`
 
-**Read deployed service health** — No additional description is published.
+**Read deployed service health** — Read health evidence for the selected deployed service under the recorded runtime target.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6414,7 +6414,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.logs.read`
 
-**Read deployment logs** — No additional description is published.
+**Read deployment logs** — Read the retained deployment log. Platform targets need serverId, environmentId, deploymentId and kind; the receipt supplies routing. Native Machine logs also need targetLinkId, machineId and installationId, plus service for runtime logs.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6438,7 +6438,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.observation.get`
 
-**Read recorded deployment observation** — No additional description is published.
+**Read recorded deployment observation** — Read a recorded deployment observation, using the saved Receipt and observation reference.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6456,7 +6456,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.prepare`
 
-**Ask an agent to prepare deployment** — No additional description is published.
+**Ask an agent to prepare deployment** — Ask an agent in the chosen Project checkout to prepare a deployment definition for the person to review.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6479,7 +6479,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.promote`
 
-**Promote deployment** — No additional description is published.
+**Promote deployment** — Take a successful Preview receipt to the selected destination Environment after reviewing target and binding differences.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6505,7 +6505,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.publish.prepare`
 
-**Prepare catalog app publishing** — No additional description is published.
+**Prepare catalog app publishing** — Prepare the captured Environment as a catalog App and return the material needed for the separate publication step.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6528,7 +6528,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.receipts.get`
 
-**Read deployment receipt** — No additional description is published.
+**Read deployment receipt** — Read a deployment Receipt by id for the requested Home.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6545,7 +6545,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.receipts.list`
 
-**List deployment receipts** — No additional description is published.
+**List deployment receipts** — Page through retained deployment history for one Environment, including ids used to select a rollback or promotion source.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6569,7 +6569,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.receipts.observe`
 
-**Observe provider deployment receipt** — No additional description is published.
+**Observe provider deployment receipt** — Ask the assigned provider observer to refresh status for a retained deployment Receipt.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6585,7 +6585,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.restart`
 
-**Restart deployed service** — No additional description is published.
+**Restart deployed service** — Restart the deployed service through its current runtime target and record the outcome for the Environment.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6679,7 +6679,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.targets.link`
 
-**Link deployment target** — No additional description is published.
+**Link deployment target** — Link a reviewed runtime or data target to an Environment at its expected revision. Use the target catalog to obtain the target’s supported placement and operands.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6711,7 +6711,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.targets.unlink`
 
-**Unlink deployment target** — No additional description is published.
+**Unlink deployment target** — Remove the specified target association from the Environment. Deleting provider resources is a separate reviewed operation.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -6755,7 +6755,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.templates.instantiate`
 
-**Install Store app** — No additional description is published.
+**Install Store app** — Preview the pinned deployment template before installing it. To add another service or database to an existing Environment, use intent: "add" and destination: &#123; kind: "stored" &#125;; the Action reads its saved definition and preserves existing services. Discover the Environment revision and target with deployments.environments.get; no internal Artifact read or caller-computed digest is needed. For each template generatedSecrets key, select bindings: [&#123; purpose: "variable", name: key, phase: "runtime", source: &#123; kind: "generated", key &#125; &#125;]. Omitted generatedSecretAudience keeps new credentials private to their creator; explicit grants are reviewed. A new Environment with domainBindings deploys automatically even when deploy is omitted. If review.deploy is present, apply starts the app as well as saving its definition, bindings and routes; do not describe that preview as definition-only. An existing Environment deploys only when deploy is supplied.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
