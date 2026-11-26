@@ -4,6 +4,8 @@ import { View } from 'react-native';
 import { PageAsideColumns } from '@/components/ui/layout/PageAsideColumns';
 import {
   PageHeader,
+  PageHeaderPlaceholder,
+  type PageHeaderMetaFact,
   type PageHeaderProps,
 } from '@/components/ui/layout/PageHeader';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -61,7 +63,11 @@ export const ManagedReceiptColumns = React.memo(function ManagedReceiptColumns(
 export const ManagedReceiptPageLayout = React.memo(
   function ManagedReceiptPageLayout(
     props: Readonly<{
-      header: PageHeaderProps;
+      /**
+       * The page's header, or what is already known of one still arriving (its facts): the header owner's
+       * placeholder then holds the title's line, so the arriving header lands where it stood.
+       */
+      header: PageHeaderProps | Readonly<{ held: true; meta?: readonly PageHeaderMetaFact[] }>;
       /** The page's state notices (archived, unavailable): above both columns, where a phone also reads them before the receipt. */
       notice?: React.ReactNode;
       children: React.ReactNode;
@@ -74,7 +80,9 @@ export const ManagedReceiptPageLayout = React.memo(
   ) {
     return (
       <ItemList testID={props.testID} pageColumn="wide">
-        <PageHeader {...props.header} />
+        {'held' in props.header
+          ? <PageHeaderPlaceholder testID={`${props.testID}.header-held`} meta={props.header.meta} />
+          : <PageHeader {...props.header} />}
         {props.notice}
         <ManagedReceiptColumns
           receipt={props.receipt}

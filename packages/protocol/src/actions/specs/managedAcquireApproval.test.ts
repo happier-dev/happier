@@ -68,6 +68,9 @@ describe('managed acquire review', () => {
         expect(reading).not.toContain(raw);
       }
       expect(projection.rows.find(row => row.path === 'nativeFacts')).not.toHaveProperty('entries');
+      // The fact line names the kind; the provider id stays in Details, never as its own field row.
+      expect(projection.rows.find(row => row.path === 'provider')).toEqual(expect.objectContaining({
+        value: 'happier.machine.lima', technical: true }));
     }
     expect(spec.approvalPresentation?.summary(input)).toContain('No bill');
     expect(spec.approvalPresentation?.summary(input)).toContain('1 h');

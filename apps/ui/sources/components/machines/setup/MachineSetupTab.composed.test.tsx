@@ -1761,6 +1761,40 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.unmount();
   });
 
+  it('holds the presets and recipes sections in place while the first check runs', async () => {
+    const home = await harness.addHome({
+      name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
+    });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+    let answerPlan: () => void = () => {};
+    const planAnswered = new Promise<void>(resolve => { answerPlan = resolve; });
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      await planAnswered;
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
+        result: MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, exclusions: [], support: [],
+          sources: [{ kind: 'direct', setup: {} }] }) } } };
+    } });
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-loading')).not.toBeNull());
+    // The sections the checked setup shows are already standing, each holding one row.
+    expect(screen.findByTestId('machine-setup-loading-preset')).not.toBeNull();
+    expect(screen.findByTestId('machine-setup-recipes')).not.toBeNull();
+    expect(screen.findByTestId('machine-setup-loading-recipes')).not.toBeNull();
+    answerPlan();
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-recipes-none')).not.toBeNull());
+    expect(screen.findByTestId('machine-setup-preset-none')).not.toBeNull();
+    for (const held of ['machine-setup-loading', 'machine-setup-loading-preset', 'machine-setup-loading-recipes']) {
+      expect(screen.findByTestId(held), held).toBeNull();
+    }
+    await screen.unmount();
+  });
+
   it('saves this Machine as an inert preset: one create, no plan or apply, then the editor', async () => {
     const home = await harness.addHome({
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,

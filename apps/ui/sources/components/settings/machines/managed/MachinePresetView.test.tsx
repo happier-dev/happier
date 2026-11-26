@@ -985,6 +985,32 @@ describe('reachable preset detail', () => {
     } finally { await screen.unmount(); }
   });
 
+  it('holds the preset page itself while its first read runs, then lands the preset in place', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId);
+    const setupOnly = createPlainManagedMachinePresetFixture({
+      id: preset.id, homeId: preset.homeId, revision: 4,
+      name: 'Retained build setup', owner: preset.owner,
+      setup: { scripts: [{ body: 'echo held\n', affects: 'none' }] },
+    });
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
+    const read = createDeferred<void>();
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: setupOnly }, respondAfter: read.promise });
+    harness.answer(serverId, '/v1/machines/managed/actions/list', { body: { machines: [] } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={setupOnly.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.loading')).not.toBeNull());
+      // The preset's own header holds its place, not a generic "Machine presets" page that the preset then replaces.
+      expect(screen.findByTestId('machine-preset.detail.header-held')).not.toBeNull();
+      expect(screen.findByTestId('machine-preset.read-state')).toBeNull();
+      read.resolve();
+      await waitForHomeGovernance(() => expect(screen.tree.findByType(MachinePresetDetail).props.model.name)
+        .toBe(setupOnly.opened.name));
+      expect(screen.findByTestId('machine-preset.loading')).toBeNull();
+      expect(screen.findByTestId('machine-preset.detail.header-held')).toBeNull();
+    } finally { read.resolve(); await screen.unmount(); }
+  });
+
   it('opens a setup-only Preset editor without making controller readiness a dependency of its Preset read', async () => {
     const serverId = await seed();
     await seedConfiguration(serverId);

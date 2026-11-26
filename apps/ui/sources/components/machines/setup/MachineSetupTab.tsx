@@ -15,6 +15,7 @@ import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead'
 import { describeMachineToolsSummary } from '@/components/machines/page/machineThisMachineSummaries';
 import {
   MachineSetupPlanReview,
+  MachineSetupPlanReviewHeld,
   MachineSetupReviewFooter,
 } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
@@ -33,10 +34,10 @@ import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
+import { SkeletonItem, SkeletonSectionTitle } from '@/components/ui/lists/SkeletonRows';
 import { MachineOfflineNotice } from '@/components/machines/page/MachineOfflineNotice';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -209,6 +210,24 @@ function MachineSetupRoot(
     && setup.sourcePresentations.every((source) => source.kind === 'opened');
   const capturable = allSourcesOpened
     && openedSources.some(({ source }) => describeMachineSetup(source.setup).length > 0);
+  const recipesSection = (rows: React.ReactNode) => (
+    <ItemGroup
+      title={t('machinePresets.setup.tab.recipes')}
+      testID="machine-setup-recipes"
+      description={t('machinePresets.setup.tab.recipesHelp')}
+      action={
+        editable ? (
+          <AddRecipeMenu
+            serverId={props.serverId}
+            machineId={props.machineId}
+            active={presented}
+          />
+        ) : undefined
+      }
+    >
+      {rows}
+    </ItemGroup>
+  );
   const toolsSection = (
     <ItemGroup
       title={t('machinePresets.setup.tab.tools')}
@@ -290,7 +309,14 @@ function MachineSetupRoot(
         editable={editable}
       />
       {firstLoad ? (
-        <PageLoadingRows testID="machine-setup-loading" />
+        // The two sections a checked setup always shows, held in place: the presets one is titled by what is attached,
+        // so its title waits too; each holds one row until it knows how many it has.
+        <>
+          <ItemGroup testID="machine-setup-loading" title={<SkeletonSectionTitle />}>
+            <SkeletonItem testID="machine-setup-loading-preset" />
+          </ItemGroup>
+          {recipesSection(<SkeletonItem testID="machine-setup-loading-recipes" />)}
+        </>
       ) : (
         <>
           {attached.length > 0 || presetList.length === 0 ? (
@@ -392,29 +418,14 @@ function MachineSetupRoot(
               ))}
             </ItemGroup>
           )}
-          <ItemGroup
-            title={t('machinePresets.setup.tab.recipes')}
-            testID="machine-setup-recipes"
-            description={t('machinePresets.setup.tab.recipesHelp')}
-            action={
-              editable ? (
-                <AddRecipeMenu
-                  serverId={props.serverId}
-                  machineId={props.machineId}
-                  active={presented}
-                />
-              ) : undefined
-            }
-          >
-            {recipes.length === 0 ? (
-              <Item
-                testID="machine-setup-recipes-none"
-                title={t('machinePresets.setup.tab.noRecipes')}
-                subtitle={t('machinePresets.setup.tab.noRecipesHelp')}
-                showChevron={false}
-              />
-            ) : null}
-          </ItemGroup>
+          {recipesSection(recipes.length === 0 ? (
+            <Item
+              testID="machine-setup-recipes-none"
+              title={t('machinePresets.setup.tab.noRecipes')}
+              subtitle={t('machinePresets.setup.tab.noRecipesHelp')}
+              showChevron={false}
+            />
+          ) : null)}
           {RECIPE_KIND_GROUPS.map(({ kind, title }) => {
             const ofKind = recipes.filter((recipe) => recipe.item.kind === kind);
             return ofKind.length === 0 ? null : (
@@ -693,7 +704,7 @@ function MachineSetupReviewInPlace(
           }}
         />
       ) : (
-        <PageLoadingRows testID="machine-setup-review-loading" />
+        <MachineSetupPlanReviewHeld testID="machine-setup-review-loading" />
       )}
       {setup.approvalId ? (
         <AttentionBanner

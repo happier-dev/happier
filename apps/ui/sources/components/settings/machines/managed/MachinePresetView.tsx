@@ -13,6 +13,7 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SkeletonItem } from '@/components/ui/lists/SkeletonRows';
 import { Switch } from '@/components/ui/forms/Switch';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { machinePresetEditDraftUpdatePatch } from '@/sync/domains/machines/presets/machinePresetEditDraft';
@@ -30,6 +31,7 @@ import { t } from '@/text';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
+import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
 import { MachinePresetProjectFilesSection } from './MachinePresetProjectFilesSection';
 import { describePreparedImageBuilt, describePresetImage, projectPresetPreparationSteps } from './presetPreparationPresentation';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -290,6 +292,12 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const keyPending = describeManagedPresetKeyPending(detail.state.error);
     const readFailure = !visiblePreset && !detail.state.loading && !keyPending
         ? describeManagedPresetReadFailure(detail.state.error, teamDenied) : null;
+    // A first read holds the preset page itself: its header (Home fact known, name still arriving) on the same
+    // column, and one section row, so the preset lands without the page swapping from a generic one.
+    if (!visiblePreset && !teamDenied && detail.state.loading && !keyPending) return <ManagedReceiptPageLayout testID="machine-preset.detail"
+        compact={layout?.mode !== 'split'} header={{ held: true, meta: [{ key: 'home', text: homeName }] }} notice={approvalNotice} receipt={null}>
+        <ItemGroup testID="machine-preset.loading"><SkeletonItem /></ItemGroup>
+    </ManagedReceiptPageLayout>;
     if (!visiblePreset) return <ItemList><PageHeader title={t('machinePresets.title')} description={t('machinePresets.futureOnly')} />
         {approvalNotice}
         <SurfaceStateCard testID="machine-preset.read-state" kind={detail.state.loading ? 'loading' : teamDenied ? 'denied' : 'unavailable'}

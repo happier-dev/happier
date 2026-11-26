@@ -18,8 +18,7 @@ import { ConnectedServiceMark } from '@/components/settings/connectedServices/Co
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
-import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
+import { SkeletonItem } from '@/components/ui/lists/SkeletonRows';
 import { useMachineField, useSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
 
@@ -187,19 +186,6 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} onUseConnected={useConnected} />;
 });
 
-/** One sign-in row's shape (its name and status lines) while the Machine's report is still arriving. */
-function MachineSignInsHeldRow() {
-  const rowMetrics = usePageRowMetrics();
-  return (
-    <Item
-      testID="machine-setup-sign-ins-loading"
-      title={<SkeletonTitle lineHeight={rowMetrics.title.lineHeight} />}
-      subtitle={<SkeletonTitle lineHeight={rowMetrics.subtitle.lineHeight} />}
-      showChevron={false}
-    />
-  );
-}
-
 /** The rows themselves, drawn from the owner's reported rows; the section and its `/dev` specimen both mount it. */
 export const MachineSignInsList = React.memo(function MachineSignInsList(
   props: Readonly<{
@@ -222,7 +208,8 @@ export const MachineSignInsList = React.memo(function MachineSignInsList(
         machine: props.machineName,
       })}
     >
-      {props.rows.length === 0 ? <MachineSignInsHeldRow /> : null}
+      {/* One sign-in row's shape while the Machine's report is still arriving. */}
+      {props.rows.length === 0 ? <SkeletonItem testID="machine-setup-sign-ins-loading" /> : null}
       {props.rows.map((row) => (
         <Item
           key={row.id}

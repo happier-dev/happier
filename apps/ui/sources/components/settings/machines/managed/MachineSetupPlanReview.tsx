@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SkeletonItem } from '@/components/ui/lists/SkeletonRows';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { resolveHomeDisplayLabelForServerIdentity, resolveHomeDisplayNameForServerIdentity } from '@/components/settings/server/homeDisplayName';
 import { t } from '@/text';
@@ -41,6 +42,18 @@ export type MachineSetupPreparedReview = Extract<
   MachineSetupPreparedApply,
   { ok: true }
 >;
+
+/**
+ * The review's place while its plan is prepared: the Machines section it always leads with, its one row held, so the
+ * prepared review lands without moving the footer below it.
+ */
+export function MachineSetupPlanReviewHeld(props: Readonly<{ testID: string }>) {
+  return (
+    <ItemGroup testID={props.testID} title={t('machinePresets.setup.review.machines')}>
+      <SkeletonItem testID={`${props.testID}.target`} />
+    </ItemGroup>
+  );
+}
 
 /**
  * The one review of a prepared Machine setup (lab `setup/review`, Store `w:review`): which Machines it sets up,
