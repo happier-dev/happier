@@ -10,11 +10,10 @@ import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRollout
 import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
 import { collectCodexDirectTranscriptRolloutStreams } from './collectCodexDirectTranscriptRolloutStreams';
 import {
-  decodeCodexDirectBackwardCursor,
+  type CodexDirectBackwardCursor,
   encodeCodexDirectBackwardCursor,
 } from './codexDirectTranscriptBackwardCursor';
 import {
-  decodeCodexDirectForwardCursor,
   encodeCodexDirectForwardCursor,
   type CodexDurableStreamForwardProgress,
   type CodexDirectForwardCursor,
@@ -297,7 +296,7 @@ async function collectReadAfterRecords(params: Readonly<{
 export async function readAfterCodexRolloutStreams(params: Readonly<{
   codexHome: string;
   remoteSessionId: string;
-  cursor: string;
+  cursor: CodexDirectForwardCursor | 'tail' | null;
   maxBytes: number;
   maxItems: number;
   initialRolloutFiles?: readonly CodexRolloutFile[];
@@ -316,8 +315,7 @@ export async function readAfterCodexRolloutStreams(params: Readonly<{
     };
   }
 
-  const decoded = decodeCodexDirectForwardCursor(params.cursor);
-  const cursorProgressByStreamId = decodeDurableStreamVectorCursor(decoded);
+  const cursorProgressByStreamId = decodeDurableStreamVectorCursor(params.cursor);
   if (!cursorProgressByStreamId) {
     return {
       items: [],
@@ -417,7 +415,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   codexHome: string;
   remoteSessionId: string;
   direction: 'older' | 'newer';
-  cursor?: string;
+  cursor?: CodexDirectBackwardCursor | 'unrecognized';
   maxBytes: number;
   maxItems: number;
   initialRolloutFiles?: readonly CodexRolloutFile[];
@@ -440,7 +438,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
     return { items: [], nextCursor: null, tailCursor, hasMore: false };
   }
 
-  const decoded = decodeCodexDirectBackwardCursor(params.cursor);
+  const decoded = params.cursor === 'unrecognized' ? null : params.cursor;
   const knownStreamIds = new Set(streams.map((stream) => stream.fileRelPath));
   const discoveredThreadIds = new Set(streams.map((stream) => stream.threadId));
   const discoveryByStreamId = new Map<string, CodexStreamDiscovery>();
@@ -625,7 +623,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
     nextCursor,
     tailCursor,
     hasMore,
-    ...(decoded === null && typeof params.cursor === 'string' && params.cursor.trim().length > 0
+    ...(params.cursor === 'unrecognized'
       ? { truncated: true, truncationReason: 'source_discontinuity' as const }
       : {}),
   };

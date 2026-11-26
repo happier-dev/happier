@@ -3,6 +3,7 @@ import {
     normalizeCodexRolloutToolInput,
 } from './rolloutToolNameMapping';
 import { readCodexMessageContentText } from '../utils/readCodexMessageContentText';
+import { readCodexRolloutUserMessageContent } from '../utils/readCodexUserMessageContent';
 import { readCodexReasoningText } from '../utils/readCodexReasoningText';
 import type { LocalTurnLifecycleEvent } from '@/agent/localControl/turnLifecycle';
 
@@ -268,19 +269,20 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
     }
 
     if (payloadType === 'message') {
-        const role = typeof (payload as any).role === 'string' ? String((payload as any).role) : '';
-        const content = readCodexMessageContentText((payload as any).content);
-        if (!content) return [];
-
-        if (role === 'developer') {
-            return opts.debug ? [{ type: 'debug', message: 'developer message', value: payload }] : [];
+        const role = payload.role;
+        if (role === 'user') {
+            const content = readCodexRolloutUserMessageContent(payload.content);
+            if (!content) return [];
+            const notification = parseSubagentNotification(content.text);
+            if (notification) return [notification];
+            if (shouldFilterHarnessBlob(content.text)) return [];
+            return [{ type: 'user-text', ...content }];
         }
 
-        if (role === 'user') {
-            const notification = parseSubagentNotification(content);
-            if (notification) return [notification];
-            if (shouldFilterHarnessBlob(content)) return [];
-            return [{ type: 'user-text', text: content }];
+        const content = readCodexMessageContentText(payload.content);
+        if (!content) return [];
+        if (role === 'developer') {
+            return opts.debug ? [{ type: 'debug', message: 'developer message', value: payload }] : [];
         }
 
         // Default: assistant/agent output.

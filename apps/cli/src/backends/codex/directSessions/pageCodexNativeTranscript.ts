@@ -52,7 +52,7 @@ export async function pageCodexNativeTranscript(params: Readonly<{
   maxItems: number;
   maxBytes: number;
   tailOnly?: boolean;
-  hasPaginatedRollout?: boolean;
+  hasLocalRollout?: boolean;
 }>) {
   try {
     const decoded = decodeCodexNativeTranscriptCursor(params.cursor);
@@ -66,10 +66,10 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       threadId: params.remoteSessionId, sortDirection: params.tailOnly || params.direction === 'older' ? 'desc' : 'asc',
       limit: state.limit, ...(state.position ? { cursor: state.position } : {}),
     }));
-    // Codex can recreate an empty SQL projection from a surviving paginated
-    // rollout. That successful empty head does not establish complete history.
+    // Codex can recreate an empty SQL projection from a surviving rollout.
+    // That successful empty head does not establish complete history.
     // An exclusive forward frontier may legitimately be empty when caught up.
-    if (page.data.length === 0 && ((params.hasPaginatedRollout && (!decoded || params.tailOnly))
+    if (page.data.length === 0 && ((params.hasLocalRollout && (!decoded || params.tailOnly))
       || (params.direction === 'older' && state.tail.anchor !== null))) {
       throw new Error('Codex native history is empty but its source history cannot be confirmed');
     }
