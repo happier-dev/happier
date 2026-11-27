@@ -524,6 +524,21 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
     expect(state.inputBoxInteractive).toBe(true);
   });
+
+  it('keeps a numbered draft interactive when the terminal host only supplies the screen text', () => {
+    const screen = [
+      '────────────────────',
+      '❯ 1. check the build',
+      '  2. review the output',
+      '────────────────────',
+    ].join('\n');
+    const state = parseClaudeScreenState(screen);
+    expect(state.composerContent).toBe('1. check the build\n2. review the output');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.visibleDialogSelection).toBeNull();
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
 });
 
 // Live runner capture 2026-06-12 (Claude Code 2.1.174, zellij, fresh-dir spawn pid-45964): the
