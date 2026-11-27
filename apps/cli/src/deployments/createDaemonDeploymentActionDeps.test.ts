@@ -1596,7 +1596,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown with reviewed assigned Domain', 'provider teardown with assigned Domain attached after review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt Home unavailable', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown Home refusal', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown with reviewed assigned Domain', 'provider teardown with assigned Domain attached after review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt Home unavailable', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -2350,6 +2350,7 @@ describe('installed deployment storage and target composition', () => {
                 const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
                 const states: string[] = [];
                 const dispatchReads: string[] = [];
+                const homeRefusedTeardown = scenario === 'provider teardown Home refusal';
                 let receiptAdmitted = false;
                 vi.mocked(axios.request).mockImplementation(async request => {
                     const path = new URL(request.url!).pathname;
@@ -2358,6 +2359,7 @@ describe('installed deployment storage and target composition', () => {
                         environmentId: intent.environmentId, revision: environment.environment.revision, domains: [], nextCursor: null } };
                     if (path.endsWith(`/receipts/${receipt.id}`)) return { status: 200, data: { ok: true, deployment: receipt } };
                     if (path.endsWith('/teardown')) {
+                        if (homeRefusedTeardown) return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
                         if (reviewedDomainDelete) {
                             expect(request.data).toMatchObject({ contentArtifactId: expect.any(String) });
                             receipt = { ...receipt, contentArtifactId: z.object({ contentArtifactId: z.string() }).parse(request.data).contentArtifactId };
@@ -2479,6 +2481,15 @@ describe('installed deployment storage and target composition', () => {
                         serverId: intent.serverId, environmentId: intent.environmentId, deploymentId: receipt.id,
                     }, context)
                     : await executor.execute('deployments.teardown', input, context);
+                if (homeRefusedTeardown) {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+                    expect(await operations.handlers.getV2({ operationId: receipt.actionOperationId })).toMatchObject({
+                        kind: 'found', operation: { state: 'failed', error: { errorCode: 'deployment_conflict' },
+                            title: `${getActionSpec('deployments.teardown').title}: ${environment.content.name}` },
+                    });
+                    expect(states).toEqual([]);
+                    return;
+                }
                 if (mismatchedReceipt) {
                     expect(result).toMatchObject({ ok: false, errorCode: 'target_mismatch' });
                     expect(states).toEqual([]);
@@ -2497,6 +2508,19 @@ describe('installed deployment storage and target composition', () => {
                         ? { ok: false, errorCode: 'outcome_unknown', details: { reason: 'provider_absence_unconfirmed' },
                             failureCause: { errorCode: 'provider_absence_unconfirmed', phase: 'deployment.teardown.observe' } } : { ok: true, result: { state: 'succeeded' } });
                     expect(states.at(-1)).toBe(scenario.startsWith('provider teardown ambiguous') ? 'outcome_unknown' : 'succeeded');
+                    if (scenario === 'provider teardown ambiguous') {
+                        const retained = await operations.handlers.getV2({ operationId: receipt.actionOperationId });
+                        expect(retained).toMatchObject({
+                            kind: 'found', operation: { state: 'failed',
+                                title: `${getActionSpec('deployments.teardown').title}: ${environment.content.name}`,
+                                domainRef: { kind: 'deployment', serverId: 'home', environmentId: intent.environmentId, deploymentId: receipt.id },
+                                error: { errorCode: 'outcome_unknown',
+                                    failureCause: { errorCode: 'provider_absence_unconfirmed', phase: 'deployment.teardown.observe' } } },
+                        });
+                        if (retained.kind !== 'found' || !retained.operation.error) throw new Error('Expected a retained failure');
+                        expect(readDeploymentRefusalRecoveryV1(retained.operation.error.errorCode, retained.operation.error.details))
+                            .toMatchObject({ nextAction: { destination: 'history' } });
+                    }
                 }
                 const module = runtime.modulesByPluginId.get(pluginId);
                 if (typeof module?.readObservationCount !== 'function') throw new Error('Expected provider invocation probe');

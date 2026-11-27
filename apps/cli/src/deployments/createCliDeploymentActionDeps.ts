@@ -42,6 +42,10 @@ import { acquireRequesterAccountEncryptionCurrentness, type RequesterEnvironment
 type DeploymentStoragePreparation = DeploymentEnvironmentCreationReviewV1 & Readonly<{
   templateBindingCaptures?: readonly DeploymentBindingSavedSecretRevisionV1[];
 }>;
+type DeploymentRequestObservers = Readonly<{
+  onStopAccepted?: () => void;
+  onTeardownSubject?: (subjectLabel: string) => void;
+}>;
 type ReceiptSuccess = Extract<DeploymentReceiptResultV1, { ok: true; deploymentId: string }>;
 type ReceiptAction = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
 export type DeploymentReceiptDispatchV1 = { [TAction in ReceiptAction]: Readonly<{
@@ -119,7 +123,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     request: Readonly<{ method: string; path: string; body?: unknown }>): Readonly<Record<string, string>> | null
       | Promise<Readonly<Record<string, string>> | null>;
   dispatchReceipt(request: DeploymentReceiptDispatchV1): Promise<DeploymentReceiptResultV1 | ActionExecuteFailure>;
-  admitTeardown?(input: DeploymentTeardownInputV1, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
+  admitTeardown?(input: DeploymentTeardownInputV1, context: ActionExecutorContext,
+    onSubjectLabel?: (subjectLabel: string) => void): Promise<ActionExecuteFailure | null>;
   prepareEnvironment?(request: DeploymentEnvironmentContentPreparation): Promise<DeploymentEnvironmentContentPreparationResult>;
   prepareBindings?(request: DeploymentBindingPreparationRequestV1):
     Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure>;
@@ -222,13 +227,13 @@ export function createCliDeploymentActionDeps(params: Readonly<{
   };
   function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId?: DeploymentTransportActionIdV1,
-    creationReview?: DeploymentStoragePreparation, approvalMetadata?: false, onStopAccepted?: () => void): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
+    creationReview?: DeploymentStoragePreparation, approvalMetadata?: false, observers?: DeploymentRequestObservers): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
   function request(actionId: 'deployments.environments.get', input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1,
     creationReview: undefined, approvalMetadata: true): Promise<DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure>;
   async function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1 = actionId,
-    creationReview?: DeploymentStoragePreparation, approvalMetadata = false, onStopAccepted?: () => void): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
+    creationReview?: DeploymentStoragePreparation, approvalMetadata = false, observers?: DeploymentRequestObservers): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
     let issued = false;
     let method = 'POST';
     let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
@@ -257,7 +262,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       context.signal?.throwIfAborted();
       if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && !('detachKeepRunning' in input) && !('nothingDeployed' in input)) {
         if (!params.admitTeardown) return failure('unsupported_action');
-        const unsupported = await params.admitTeardown(DeploymentTeardownInputV1Schema.parse(input), context);
+        const unsupported = await params.admitTeardown(DeploymentTeardownInputV1Schema.parse(input), context, observers?.onTeardownSubject);
         if (unsupported) return unsupported;
       }
       let authoredEnvironmentInputDigest: string | undefined;
@@ -423,7 +428,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         if (changed) return changed;
       }
       if (actionId === 'deployments.cancel' && 'ok' in parsed.data && parsed.data.ok
-        && response.headers[DEPLOYMENT_STOP_ACCEPTED_HEADER_V1] === '1') onStopAccepted?.();
+        && response.headers[DEPLOYMENT_STOP_ACCEPTED_HEADER_V1] === '1') observers?.onStopAccepted?.();
       if (providerVariables && 'ok' in parsed.data && !parsed.data.ok && 'error' in parsed.data)
         return withProviderEffect(failure(parsed.data.error));
       if (actionId === 'deployments.environments.update' && 'ok' in parsed.data && parsed.data.ok && preparedUpdateArtifact)
@@ -495,7 +500,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
   return { readEnvironmentAccess, observeEnvironmentAccessChanges,
     async requestStop(input: DeploymentCancelInputV1, context: ActionExecutorContext) {
       let accepted = false;
-      const result = await request('deployments.cancel', input, context, undefined, undefined, false, () => { accepted = true; });
+      const result = await request('deployments.cancel', input, context, undefined, undefined, false,
+        { onStopAccepted: () => { accepted = true; } });
       if ('errorCode' in result) return { result, accepted: false };
       return { result: DeploymentActionOutputSchemasV1['deployments.cancel'].parse(result), accepted };
     },
@@ -513,13 +519,24 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           { ...context, onTransportIssued: undefined }, metadataRoot, undefined, true) : undefined)(args);
   },
     deploymentAction: async (actionId, input, context, creationReview) => {
-    const result = await request(actionId, input, context, actionId, creationReview);
+    const operation = context.operationOwnerUpdate;
+    let subjectLabel: string | undefined;
+    const observers = actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && operation ? {
+      onTeardownSubject(label: string) {
+        subjectLabel = label;
+        operation.update({ subjectLabel: label });
+      },
+    } : undefined;
+    const result = await request(actionId, input, context, actionId, creationReview, false, observers);
     if ('errorCode' in result || !('ok' in result) || !result.ok
       || (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback' && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown')) return result;
     if (!('deploymentRevision' in result)) return result;
     const receipt = result;
-    context.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: input.serverId,
-      environmentId: receipt.environmentId, deploymentId: receipt.deploymentId } });
+    operation?.update({
+      ...(subjectLabel === undefined ? {} : { subjectLabel }),
+      domainRef: { kind: 'deployment', serverId: input.serverId,
+        environmentId: receipt.environmentId, deploymentId: receipt.deploymentId },
+    });
     if (receipt.state === 'succeeded' || receipt.state === 'running_unverified') return receipt;
     const receiptFailureCode = readDeploymentReceiptFailureCodeV1(receipt.state);
     if (receiptFailureCode && (actionId !== 'deployments.teardown' || receipt.state === 'cancelled')) {
