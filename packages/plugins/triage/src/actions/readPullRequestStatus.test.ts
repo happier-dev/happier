@@ -36,7 +36,7 @@ function nativeOperation(occurrenceId = 'selected-source-a') {
 async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boolean; unsupported?: boolean; foreignCaller?: boolean; hostAgent?: boolean;
     unrelatedSources?: number; unavailableSourceCode?: string;
     replaceDuringRead?: boolean; removeDuringRead?: boolean; invalidateDuringRead?: boolean; unrelatedSourceChurnDuringRead?: boolean;
-    removeSelectedDuringRead?: boolean; relabelDuringRead?: boolean; replaceBeforeWatch?: boolean; disposeNative?: () => Promise<void> }> = {}) {
+    removeSelectedDuringRead?: boolean; relabelDuringRead?: boolean; replaceBeforeWatch?: boolean; beforeObservedRowRead?: () => Promise<void>; disposeNative?: () => Promise<void> }> = {}) {
     const { collections, control, watchableCollections } = createTestkitCorpusCollections();
     const configured = fixture.configuredInstance;
     for (let index = 0; index < (options.unrelatedSources ?? 0); index++) {
@@ -55,7 +55,12 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
     const seeded = control.sourceInstances.seed(stored);
     const controller = new AbortController();
     let inventoryPages = 0;
+    let rowWatchAttached = false;
     const sourceRows = { ...watchableCollections.sourceInstances,
+        get: (async (rowId, cancellation) => {
+            if (rowWatchAttached) await options.beforeObservedRowRead?.();
+            return await watchableCollections.sourceInstances.get(rowId, cancellation);
+        }) satisfies typeof watchableCollections.sourceInstances.get,
         query: (async (query, cancellation) => {
             inventoryPages++;
             return await watchableCollections.sourceInstances.query({ ...query, limit: 1 }, cancellation);
@@ -64,6 +69,7 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
             if (options.replaceBeforeWatch) control.sourceInstances.seed(toCorpusStoredValue({ ...stored,
                 configured: { ...configured, configuration: { ...configured.configuration, token: `${configured.configuration.token}-updated` } },
             }));
+            rowWatchAttached = true;
             return watchableCollections.sourceInstances.watch(selection, listener);
         }) satisfies typeof watchableCollections.sourceInstances.watch,
     };
@@ -122,6 +128,10 @@ async function boundary(options: Readonly<{ retired?: boolean; otherSource?: boo
     }, context));
     return { result, requests, disposed, context, observed, operationDisposed: () => operationDisposed,
         sourceInstances: watchableCollections.sourceInstances, sourceInstanceRow: stored, sourceInstanceRowId: seeded.rowId,
+        notifySourceCatalogChanged(nextOperation = selectedOperation) {
+            selectedOperation = nextOperation;
+            invalidate?.();
+        },
         sourceGetCount: control.sourceInstances.getCallCount, inventoryPages: () => inventoryPages, abort: () => controller.abort() };
 }
 
@@ -298,6 +308,33 @@ describe('the mounted PR-status action', () => {
             expect(invalidate).not.toHaveBeenCalled();
             expect(invalidate.retire).not.toHaveBeenCalled();
             expect(actual.requests).toEqual([]);
+        } finally { await observation.dispose(); }
+    });
+    it('admits a configured PR observer when the source catalog publishes during its first row read', async () => {
+        let rowReadStarted!: () => void;
+        const started = new Promise<void>(resolve => { rowReadStarted = resolve; });
+        let finishRowRead!: () => void;
+        const pendingRow = new Promise<void>(resolve => { finishRowRead = resolve; });
+        const actual = await boundary({ beforeObservedRowRead() { rowReadStarted(); return pendingRow; } });
+        const invalidate = Object.assign(vi.fn(), { retire: vi.fn(() => actual.abort()) });
+        const pending = createTriageReadPullRequestStatusObserver()({ v: 1,
+            entryRef: fixture.detailInput.observation.entryRef,
+            sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+            sourceInstanceRowId: actual.sourceInstanceRowId,
+            lastKnownLocator: fixture.getInput.lastKnownLocator,
+        }, invalidate, actual.context);
+        void pending.catch(() => {});
+        await started;
+        actual.notifySourceCatalogChanged();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        finishRowRead();
+
+        const observation = await pending;
+        try {
+            expect(invalidate.retire).not.toHaveBeenCalled();
+            expect(actual.observed).toEqual([{ operation: nativeOperation(), input: fixture.getInput }]);
+            actual.notifySourceCatalogChanged(nativeOperation('selected-source-b'));
+            await vi.waitFor(() => expect(invalidate.retire).toHaveBeenCalledOnce());
         } finally { await observation.dispose(); }
     });
     it('admits the latest configuration when it changes before exact row-watch attachment', async () => {

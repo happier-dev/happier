@@ -80,19 +80,22 @@ export function createTriageReadPullRequestStatusObserver(): PluginActionReadObs
         let native: Disposable | undefined;
         let configuredRow: Disposable | undefined;
         let cleanup: Promise<void> | undefined;
-        let selectedIdentity: unknown;
         const notify = () => { if (!disposed && !context.signal.aborted) invalidate(); };
         const retire = () => { if (!disposed && !context.signal.aborted) invalidate.retire(); };
         const admitted = context.services.targetedContributions.observeForSelf(TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1, {
             onInvalidated: () => {
-                void admitted.readCurrent({ signal: context.signal }).then(snapshot => {
-                    if (disposed || context.signal.aborted) return;
+                void resolving.then(async selected => {
+                    if (selected?.kind !== 'available' || disposed || context.signal.aborted) return;
+                    const snapshot = await admitted.readCurrent({ signal: context.signal });
                     const source = indexTriageAdmittedSourcesV1(snapshot.contributions).get(renderSourceQualifiedId(input.entryRef.source));
                     const current = source?.operations.readPullRequestStatus?.identity;
-                    if (!pluginJsonValuesEqual(selectedIdentity, current)) retire();
+                    if (!pluginJsonValuesEqual(selected.operation.identity, current)) retire();
                 }).catch(notify);
             },
         });
+        // Source publication can arrive during the exact row read. Compare
+        // against the operation this observation actually admits.
+        const resolving = Promise.resolve().then(() => resolveConfiguredStatusSource(input, context, admitted));
         const dispose = (): Promise<void> => {
             disposed = true;
             context.signal.removeEventListener('abort', onAbort);
@@ -111,7 +114,6 @@ export function createTriageReadPullRequestStatusObserver(): PluginActionReadObs
             const rows = requireTriageAccountStorage(context).collection(CORPUS_SOURCE_INSTANCES_COLLECTION);
             // Subscribe before admission starts its one exact read. Changes
             // after admission use the same fresh authority comparison as before.
-            const resolving = Promise.resolve().then(() => resolveConfiguredStatusSource(input, context, admitted));
             const recheck = async () => {
                 const source = await resolving;
                 if (source === null || source.kind === 'unavailable') return;
@@ -129,7 +131,6 @@ export function createTriageReadPullRequestStatusObserver(): PluginActionReadObs
                 ...(source.failure.detail === undefined ? {} : { message: source.failure.detail }),
                 ...(source.failure.requestId === undefined ? {} : { details: { requestId: source.failure.requestId } }),
             });
-            selectedIdentity = source.operation.identity;
             throwIfAborted(context.signal);
             const attached = await context.services.actions.observeAdmittedTargetedOperation(source.operation, source.input, notify, { signal: context.signal });
             if (disposed || context.signal.aborted) await attached.dispose();
