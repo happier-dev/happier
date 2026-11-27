@@ -41,6 +41,57 @@ describe('createStreamedTranscriptWriter locally accepted live delivery', () => 
     vi.restoreAllMocks();
   });
 
+  it('coalesces provider ticks that land inside the shipped default live interval into one delta', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(100));
+    delete process.env.HAPPIER_STREAM_LIVE_INTERVAL_MS;
+
+    const fullSnapshots: string[] = [];
+    const deltas: Array<{ text: string; baseLength: number }> = [];
+    const session: StreamedTranscriptWriterSession = {
+      getEphemeralStreamConnectionEpoch: () => 1,
+      sendAgentMessageEphemeral: (_provider, body) => {
+        fullSnapshots.push(body.type === 'message' ? body.message : '');
+        return { accepted: true, epoch: 1 };
+      },
+      sendAgentMessageEphemeralDelta: (_provider, body, opts) => {
+        deltas.push({
+          text: body.type === 'message' ? body.message : '',
+          baseLength: opts.baseLength,
+        });
+        return { accepted: true, epoch: 1 };
+      },
+      sendAgentMessageCommitted: async () => {},
+    };
+    const writer = createStreamedTranscriptWriter({
+      provider: 'codex',
+      session,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 10_000,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+      // liveSnapshotIntervalMs deliberately omitted: this test pins the shipped default.
+      liveSnapshotMinChars: 1,
+      liveCheckpointIntervalMs: 1_000,
+    });
+
+    // First append establishes the accepted base with an immediate full snapshot.
+    writer.appendAssistantDelta('Hel');
+    await settleLivePublication();
+
+    // Provider streaming ticks arrive well inside one default window (25 Hz-class cadence).
+    await vi.advanceTimersByTimeAsync(30);
+    writer.appendAssistantDelta('lo ');
+    await vi.advanceTimersByTimeAsync(30);
+    writer.appendAssistantDelta('world');
+
+    await vi.advanceTimersByTimeAsync(300);
+    await settleLivePublication();
+
+    expect(fullSnapshots).toEqual(['Hel']);
+    expect(deltas).toEqual([{ text: 'lo world', baseLength: 3 }]);
+  });
+
   it('does not chain a delta from a synchronously failed snapshot', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(100));
