@@ -19,6 +19,7 @@ export type FilesPaneTranslations = Readonly<{
         emptyFolder: string;
         mediaEmptyTitle: string;
         mediaEmptyReason: string;
+        attachPicture: string;
         mediaFailed: string;
         capturesUnreadable: string;
         showInChat: string;
@@ -496,8 +497,9 @@ export const filesPaneTranslationsEnglish = { en: {
             truncated: ({ count }) => "Showing " + count + " · more weren’t loaded",
             loadTheRest: "Load the rest",
             emptyFolder: "No pictures or videos here",
-            mediaEmptyTitle: "No pictures in this Session yet",
-            mediaEmptyReason: "Pictures you attach, images the agent makes and screen captures collect here.",
+            mediaEmptyTitle: "Pictures and videos from this session collect here",
+            mediaEmptyReason: "Screenshots and recordings the agent makes, and images you attach, appear here newest first.",
+            attachPicture: "Attach a picture",
             mediaFailed: "Couldn’t list this Session’s media",
             capturesUnreadable: "Screen captures aren’t readable on this Machine",
             showInChat: "Show in chat",

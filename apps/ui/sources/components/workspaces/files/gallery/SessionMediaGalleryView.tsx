@@ -17,6 +17,7 @@ import { useSessionMediaModel } from '@/hooks/workspaces/files/gallery/useSessio
 import { useShowGalleryItemInChat } from '@/hooks/workspaces/files/gallery/useShowGalleryItemInChat';
 import type { GalleryMediaItem } from '@/hooks/workspaces/files/gallery/galleryModel';
 import { Modal } from '@/modal';
+import { requestRegisteredComposerAttachmentPicker } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { t } from '@/text';
@@ -114,6 +115,11 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
     },
     [address, items, jumpToChat, onOpenFile, stage],
   );
+  // A real zero teaches the feature: its one next step is this Session's own composer picker (lab SM1z).
+  const attachPicture = React.useCallback(() => {
+    if (!lifetime?.isCurrent()) return;
+    requestRegisteredComposerAttachmentPicker({ ref: { kind: 'session', sessionId: props.sessionId }, scope: lifetime.scope });
+  }, [lifetime, props.sessionId]);
   const loadRest = React.useCallback(async () => {
     if (loadMore) await loadMore();
     else for (const folder of pendingFolders) await loadFolder(folder.id);
@@ -219,6 +225,7 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
               iconName="image"
               title={t('files.pane.gallery.mediaEmptyTitle')}
               reason={t('files.pane.gallery.mediaEmptyReason')}
+              action={{ label: t('files.pane.gallery.attachPicture'), onPress: attachPicture }}
               testID="media-empty"
             />
           }
