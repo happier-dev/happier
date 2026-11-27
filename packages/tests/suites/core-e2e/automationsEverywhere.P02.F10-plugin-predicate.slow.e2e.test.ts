@@ -195,19 +195,36 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
     await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: pluginId, version: '1.0.0', type: 'module' }));
     await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(authored.manifest));
     const effectAuditPath = join(testDir, 'private-plugin-effect-audit.jsonl');
-    // Installed readOnly predicates are closed manifest JSON, so a fixture
-    // counter closure cannot reach their host evaluator. This in-process
-    // diagnostic Session opens no debug server and changes no production owner.
+    // The installed predicate is manifest JSON, so observe the real host classifier.
+    // Scope the breakpoint to this Action: Reviews also classifies in this daemon.
     await writeFile(join(pluginRoot, 'daemon.mjs'), [
       "import { Session } from 'node:inspector'; import { appendFile } from 'node:fs/promises';",
       'export async function activate(api) {',
       ' const inspector = new Session(); inspector.connect();',
       ' const post = (method, params = {}) => new Promise((resolve, reject) => inspector.post(method, params, (error, result) => error ? reject(error) : resolve(result)));',
-      " await post('Profiler.enable'); await post('Profiler.startPreciseCoverage', { callCount: true, detailed: true });",
-      ' for (const id of ["apply", "live"]) api.actions.register(id, async () => {',
-      "  const coverage = await post('Profiler.takePreciseCoverage');",
-      "  const readOnlyEvaluations = coverage.result.flatMap(script => script.functions).filter(fn => fn.functionName === 'pluginActionDeclarationIsReadOnlyForInput').reduce((total, fn) => total + (fn.ranges[0]?.count ?? 0), 0);",
-      `  await appendFile(${JSON.stringify(effectAuditPath)}, JSON.stringify({ id, readOnlyEvaluations }) + '\\n');`,
+      ` const id = ${JSON.stringify(localId)};`,
+      ' let readOnlyEvaluations = 0;',
+      ' const classifierScripts = [];',
+      ` inspector.on('Debugger.scriptParsed', ({ params }) => {
+          if (params.url.includes('/plugins/actions/readOnly.')) classifierScripts.push(params.scriptId);
+        });`,
+      ` inspector.on('Debugger.paused', () => {
+          readOnlyEvaluations += 1;
+          inspector.post('Debugger.resume');
+        });`,
+      ` await post('Debugger.enable');
+        for (const scriptId of classifierScripts) {
+          const { scriptSource } = await post('Debugger.getScriptSource', { scriptId });
+          const match = /return\\s+declaration\\.readOnly\\s*===\\s*true/u.exec(scriptSource);
+          if (!match) continue;
+          const lines = scriptSource.slice(0, match.index).split('\\n');
+          await post('Debugger.setBreakpoint', {
+            location: { scriptId, lineNumber: lines.length - 1, columnNumber: lines.at(-1).length },
+            condition: 'declaration.id === ' + JSON.stringify(id),
+          });
+        }`,
+      ' for (const actionId of ["apply", "live"]) api.actions.register(actionId, async () => {',
+      `  await appendFile(${JSON.stringify(effectAuditPath)}, JSON.stringify({ id: actionId, readOnlyEvaluations }) + '\\n');`,
       '  return { applied: true }; });',
       '}',
     ].join('\n'));
