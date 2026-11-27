@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTime, formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Typography } from '@/constants/Typography';
@@ -127,6 +127,11 @@ const styles = StyleSheet.create((theme) => ({
         columnGap: theme.space.s12,
         paddingVertical: theme.space.s4,
     },
+    // A renamed part: its name, then yours and the saved value beneath, each on one line.
+    renamed: {
+        gap: theme.space.s2,
+        paddingVertical: theme.space.s4,
+    },
     differenceLabel: {
         ...Typography.variant('body'),
         color: theme.colors.text.primary,
@@ -151,6 +156,8 @@ type WorkflowSaveComparisonProps = Readonly<{
     testID: string;
 } & Pick<WorkflowSaveConflict, 'currentRevision' | 'savedBy' | 'savedAt'>>;
 
+type ComparisonRow = Readonly<{ key: string; label: string; word: string; values?: Readonly<{ yours: string; saved: string }> }>;
+
 const DIFFERENCE_WORD = {
     changed: 'workflows.page.saveStatus.compareChanged',
     onlyLocal: 'workflows.page.saveStatus.compareOnlyYours',
@@ -173,14 +180,21 @@ function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowS
     const presented = useLayoutPresentationActive();
     const nowMs = useMinuteClock(presented && name !== null && savedAt !== undefined, props.nowMs);
     const attribution = name !== null && savedAt !== undefined
-        ? t('workflows.page.saveStatus.compareSavedBy', { name, age: formatRelativeTimeShort(savedAt, nowMs) })
+        ? t('workflows.page.saveStatus.compareSavedBy', { name, age: formatRelativeTime(savedAt, nowMs) })
         : null;
-    const rows = React.useMemo(() => {
+    const rows = React.useMemo((): readonly ComparisonRow[] => {
         const differences = listWorkflowDraftDifferences(localDraft, currentDraft);
         const changed = t(DIFFERENCE_WORD.changed);
         return [
-            ...(differences.name ? [{ key: 'name', label: t('workflows.page.saveStatus.compareName'), word: changed }] : []),
-            ...differences.blocks.map(block => ({ key: `block:${block.blockId}`, label: block.label, word: t(DIFFERENCE_WORD[block.kind]) })),
+            ...(differences.name ? [{ key: 'name', label: t('workflows.page.saveStatus.compareName'), word: changed,
+                values: { yours: localDraft.name, saved: currentDraft.name } }] : []),
+            ...differences.blocks.map(block => ({ key: `block:${block.blockId}`, word: t(DIFFERENCE_WORD[block.kind]),
+                ...(block.field ? {
+                    label: t('workflows.page.saveStatus.compareFieldOf', { part: block.label, field: block.field.target.kind === 'name'
+                        ? t('workflows.page.saveStatus.compareName')
+                        : t('workflows.page.saveStatus.compareLaneName', { position: block.field.target.position }) }),
+                    values: { yours: block.field.local, saved: block.field.current },
+                } : { label: block.label }) })),
             ...(differences.settings ? [{ key: 'settings', label: t('workflows.page.saveStatus.compareSettings'), word: changed }] : []),
         ];
     }, [localDraft, currentDraft]);
@@ -200,7 +214,18 @@ function WorkflowSaveComparisonSheet(props: CustomModalInjectedProps & WorkflowS
             </Text>
             {rows.length === 0 ? null : (
                 <View accessibilityRole="list">
-                    {rows.map(row => (
+                    {rows.map(row => row.values ? (
+                        // A renamed part says what it was renamed from and to; each value keeps one line, whole in its name.
+                        <View key={row.key} testID={`${props.testID}-${row.key}`} style={styles.renamed}>
+                            <Text style={styles.differenceLabel}>{row.label}</Text>
+                            {(['yours', 'saved'] as const).map(side => {
+                                const value = t(side === 'yours' ? 'workflows.page.saveStatus.compareYours' : 'workflows.page.saveStatus.compareSaved',
+                                    { value: row.values[side] });
+                                return <Text key={side} testID={`${props.testID}-${row.key}-${side}`} style={styles.status}
+                                    numberOfLines={1} ellipsizeMode="tail" accessibilityLabel={value}>{value}</Text>;
+                            })}
+                        </View>
+                    ) : (
                         <View key={row.key} testID={`${props.testID}-${row.key}`} accessibilityRole="text" style={styles.difference}>
                             <Text style={styles.differenceLabel}>{row.label}</Text>
                             <Text style={styles.status}>{row.word}</Text>

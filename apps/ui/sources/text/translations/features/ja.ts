@@ -19895,6 +19895,10 @@ const ja: WorkflowEditorPageTranslations = {
         compareOnlyYours: 'あなたの編集のみ',
         compareOnlyNewer: '新しいバージョンのみ',
         compareRevision: 'バージョン',
+        compareFieldOf: ({ part, field }: { part: string; field: string }) => `${part} · ${field}`,
+        compareLaneName: ({ position }: { position: number }) => `レーン ${position} の名前`,
+        compareYours: ({ value }: { value: string }) => `あなた: ${value}`,
+        compareSaved: ({ value }: { value: string }) => `保存済み: ${value}`,
     },
     where: {
         label: '実行場所',

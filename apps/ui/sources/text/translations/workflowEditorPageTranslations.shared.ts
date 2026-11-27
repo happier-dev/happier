@@ -117,6 +117,10 @@ export const en = {
         compareOnlyYours: 'Only in your edits',
         compareOnlyNewer: 'Only in the newer version',
         compareRevision: 'Version',
+        compareFieldOf: ({ part, field }: { part: string; field: string }) => `${part} · ${field}`,
+        compareLaneName: ({ position }: { position: number }) => `Lane ${position} name`,
+        compareYours: ({ value }: { value: string }) => `Yours: ${value}`,
+        compareSaved: ({ value }: { value: string }) => `Saved: ${value}`,
     },
     where: {
         label: 'Where it runs',

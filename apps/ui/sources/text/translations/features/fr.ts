@@ -20018,6 +20018,10 @@ const fr: WorkflowEditorPageTranslations = {
         compareOnlyYours: 'Seulement dans tes modifications',
         compareOnlyNewer: 'Seulement dans la version plus récente',
         compareRevision: 'Version',
+        compareFieldOf: ({ part, field }: { part: string; field: string }) => `${part} · ${field}`,
+        compareLaneName: ({ position }: { position: number }) => `Nom de la voie ${position}`,
+        compareYours: ({ value }: { value: string }) => `Le vôtre : ${value}`,
+        compareSaved: ({ value }: { value: string }) => `Enregistré : ${value}`,
     },
     where: {
         label: 'Où il s’exécute',

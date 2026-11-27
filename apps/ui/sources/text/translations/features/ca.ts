@@ -19975,6 +19975,10 @@ const ca: WorkflowEditorPageTranslations = {
         compareOnlyYours: 'Només als teus canvis',
         compareOnlyNewer: 'Només a la versió més recent',
         compareRevision: 'Versió',
+        compareFieldOf: ({ part, field }: { part: string; field: string }) => `${part} · ${field}`,
+        compareLaneName: ({ position }: { position: number }) => `Nom del carril ${position}`,
+        compareYours: ({ value }: { value: string }) => `El teu: ${value}`,
+        compareSaved: ({ value }: { value: string }) => `Desat: ${value}`,
     },
     where: {
         label: 'On s’executa',

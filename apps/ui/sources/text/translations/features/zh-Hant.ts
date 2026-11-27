@@ -19835,6 +19835,10 @@ const zhHant: WorkflowEditorPageTranslations = {
         compareOnlyYours: '僅在你的修改中',
         compareOnlyNewer: '僅在較新的版本中',
         compareRevision: '版本',
+        compareFieldOf: ({ part, field }: { part: string; field: string }) => `${part} · ${field}`,
+        compareLaneName: ({ position }: { position: number }) => `泳道 ${position} 名稱`,
+        compareYours: ({ value }: { value: string }) => `你的：${value}`,
+        compareSaved: ({ value }: { value: string }) => `已儲存：${value}`,
     },
     where: {
         label: '執行位置',

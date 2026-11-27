@@ -19987,6 +19987,10 @@ const pl: WorkflowEditorPageTranslations = {
         compareOnlyYours: 'Tylko w Twoich zmianach',
         compareOnlyNewer: 'Tylko w nowszej wersji',
         compareRevision: 'Wersja',
+        compareFieldOf: ({ part, field }: { part: string; field: string }) => `${part} · ${field}`,
+        compareLaneName: ({ position }: { position: number }) => `Nazwa ścieżki ${position}`,
+        compareYours: ({ value }: { value: string }) => `Twoje: ${value}`,
+        compareSaved: ({ value }: { value: string }) => `Zapisane: ${value}`,
     },
     where: {
         label: 'Gdzie działa',

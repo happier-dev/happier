@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTime, formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { applyWorkflowDefinitionEditsV1, WorkflowDefinitionEditOpV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
@@ -217,7 +217,7 @@ describe('WorkflowSaveStatus', () => {
         const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
         const { ModalProvider } = await import('@/modal/ModalProvider');
         const now = Date.UTC(2026, 8, 30, 12);
-        const savedAt = now - 120_000;
+        const savedAt = now - 20_000;
         const person = UserProfileSchema.parse({ id: 'compare-saver', name: 'Mara Novak', firstName: 'Mara', lastName: 'Novak',
             avatar: null, username: 'mara', bio: null, status: 'friend', publicKey: null });
         storage.getState().applyUsers({ [person.id]: person });
@@ -230,7 +230,9 @@ describe('WorkflowSaveStatus', () => {
                 currentRevision: { headerVersion: 2, bodyVersion: 1 } } }}
             localDraft={draft} onSaveAsCopy={() => {}} nowMs={now} testIDPrefix="compare-author" /></ModalProvider>);
         await screen.pressByTestIdAsync('compare-author-compare');
-        const label = `workflows.page.saveStatus.compareSavedBy:${JSON.stringify({ name: 'Mara Novak', age: formatRelativeTimeShort(savedAt, now) })}`;
+        // The shared relative-time phrase: a save seconds ago reads "just now", not the compact "now".
+        expect(formatRelativeTime(savedAt, now)).toBe('time.justNow');
+        const label = `workflows.page.saveStatus.compareSavedBy:${JSON.stringify({ name: 'Mara Novak', age: formatRelativeTime(savedAt, now) })}`;
         if (facts === 'both facts') {
             expect(screen.getTextContent()).toContain(label);
         } else {
@@ -267,6 +269,35 @@ describe('WorkflowSaveStatus', () => {
         await screen.pressByTestIdAsync('diff-comparison-sheet-technical');
         expect(screen.getTextContent()).toContain('"kind"');
         expect(screen.getTextContent()).toContain('h7 · b9');
+    });
+
+    it('names a renamed lane and shows yours against saved (R15 SHOULD 3)', async () => {
+        const { WorkflowSaveStatus } = await import('./WorkflowSaveStatus');
+        const step = (id: string) => ({ kind: 'step' as const, id, name: id,
+            document: { text: id, references: [], attachments: [] }, input: [], result: { kind: 'text' as const } });
+        const group = (laneName?: string) => ({ kind: 'parallel' as const, id: 'group', failurePolicy: 'fail_stop' as const,
+            branches: [{ id: 'lane-1', ...(laneName ? { name: laneName } : {}), blocks: [step('draft')] },
+                { id: 'lane-2', blocks: [step('wait')] }] });
+        const longName = 'R15 kept local Compare draft';
+        const localDraft = { ...draft, blocks: [group(longName)] };
+        const currentDraft = { ...draft, draftId: 'current-draft', blocks: [group()] };
+        const { ModalProvider } = await import('@/modal/ModalProvider');
+        const screen = await renderScreen(<ModalProvider><WorkflowSaveStatus
+            state={{ kind: 'conflict', conflict: { currentDraft, currentRevision: { headerVersion: 2, bodyVersion: 3 } } }}
+            localDraft={localDraft} onSaveAsCopy={() => {}} testIDPrefix="lane" /></ModalProvider>);
+        await screen.pressByTestIdAsync('lane-compare');
+        const text = screen.getTextContent();
+        expect(text).toContain(`workflows.page.saveStatus.compareFieldOf:${JSON.stringify({ part: 'workflows.editor.addParallel',
+            field: 'workflows.page.saveStatus.compareLaneName:{"position":1}' })}`);
+        expect(text).toContain(`workflows.page.saveStatus.compareYours:${JSON.stringify({ value: longName })}`);
+        expect(text).toContain(`workflows.page.saveStatus.compareSaved:${JSON.stringify({ value: 'workflows.page.inspector.lane:{"position":1}' })}`);
+        // The values say the difference, so the bare "Different" does not repeat it.
+        expect(text).not.toContain('workflows.page.saveStatus.compareChanged');
+        // A long value stays on its line, with the whole value in its accessible name.
+        const yours = screen.findAllByTestId('lane-comparison-sheet-block:group-yours').find(node => node.props.numberOfLines !== undefined);
+        expect(yours?.props.numberOfLines).toBe(1);
+        expect(yours?.props.accessibilityLabel).toContain(longName);
+        await screen.unmount();
     });
 
     it('omits Compare when the current Artifact cannot be read while keeping save-as-copy available', async () => {
