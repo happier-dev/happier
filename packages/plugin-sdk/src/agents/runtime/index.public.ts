@@ -478,3 +478,6 @@ export { OPENAI_GPT56_PROMPT_CACHE_QUALIFICATION, PROMPT_CACHE_DURATIONS } from 
 
 export type { AgentSessionIdleCompactionPreferenceV1 } from '../../agentRuntime/session.js';
 export type { UsagePromptCache } from '../../usage.js';
+
+export { extractShellCommand } from '../../agentRuntime/projections.js';
+export type { ResolvedMcpToolIdentityV1 } from '../../agentRuntime/projections.js';

@@ -935,3 +935,6 @@ export type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 /** Canonical terminal paste framing; Agent runtimes must not copy escape sequences. */
 export const TERMINAL_BRACKETED_PASTE_START: string = canonicalTerminalBracketedPasteStart;
 export const TERMINAL_BRACKETED_PASTE_END: string = canonicalTerminalBracketedPasteEnd;
+
+export { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
+export type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';

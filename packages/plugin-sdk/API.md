@@ -1325,6 +1325,7 @@
 | `./agents/runtime` | `RecoverableTurnFailureSecondFailureDecision` | type | daemon |
 | `./agents/runtime` | `ReplayForkChildLaunchRequestV1` | type | daemon |
 | `./agents/runtime` | `ResolveCheckpointRestoreTargetRequestV1` | type | daemon |
+| `./agents/runtime` | `ResolvedMcpToolIdentityV1` | type | daemon |
 | `./agents/runtime` | `ResolvedUsageModelPrice` | type | daemon |
 | `./agents/runtime` | `RestoreCheckpointByAnchorRequestV1` | type | daemon |
 | `./agents/runtime` | `RestoreCheckpointByTargetRequestV1` | type | daemon |
@@ -1397,6 +1398,7 @@
 | `./agents/runtime` | `createExecutionRunHostBackendFromConversationRuntime` | value | daemon |
 | `./agents/runtime` | `createFiniteExecutionRunHostRuntime` | value | daemon |
 | `./agents/runtime` | `estimateUsageModelCost` | value | daemon |
+| `./agents/runtime` | `extractShellCommand` | value | daemon |
 | `./agents/runtime` | `formatMcpToolWireNameV1` | value | daemon |
 | `./agents/runtime` | `isRuntimeConfigUpdateOutcomeApplied` | value | daemon |
 | `./agents/runtime` | `isRuntimeConfigUpdateOutcomeDeferred` | value | daemon |

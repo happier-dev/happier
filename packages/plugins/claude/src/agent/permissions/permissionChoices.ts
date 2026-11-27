@@ -1,7 +1,7 @@
 import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
-import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
-import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import { extractShellCommand } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { NativePermissionChoicesV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 /** Claude's existing external MCP tool category. */
 export function isClaudeExternalMcpTool(toolName: string): boolean {
