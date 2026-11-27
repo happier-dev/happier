@@ -39,7 +39,9 @@ describe('Data Move source Machine', () => {
         inputs: { dataMove: { backupTarget: target('source-machine', 'source-installation'), restoreTarget } },
         resolveResult: async ({ blockId }) => {
             if (blockId !== 'copyRestoreSeal' || sealed === undefined) throw new Error('Only the copy seal result is read');
-            return sealed ? { ok: true, environmentId: 'environment', revision: 1 } : { ok: false, error: 'deployment_access_denied' };
+            const result: Record<string, string | number | boolean> = sealed
+                ? { ok: true, environmentId: 'environment', revision: 1 } : { ok: false, error: 'deployment_access_denied' };
+            return result;
         },
         resolveWorkspace: async () => { throw new Error('The source Machine check does not read a workspace'); },
     });
