@@ -95,6 +95,7 @@ function fixture({ missingRolling = false } = {}) {
   const deleteConfirmFailureMarker = join(root, 'delete-confirm-failure-marker');
   const assetDownloadFailureMarker = join(root, 'asset-download-failure-marker');
   const downloadFailureCounter = join(root, 'download-failure-counter');
+  const immutableChangeMarker = join(root, 'immutable-change-marker');
   writeFileSync(log, '');
   writeFileSync(uploadCounter, '0');
   writeFileSync(downloadFailureCounter, '0');
@@ -220,6 +221,18 @@ if [ "$1" = "api" ]; then
     *git/ref/tags/happier-rolling-staging-*) if [ -f ${JSON.stringify(stagingRef)} ]; then cat ${JSON.stringify(stagingRef)}; else not_found; fi ;;
     *git/ref/tags/happier-rolling-backup-*) if [ -f ${JSON.stringify(backupRef)} ]; then cat ${JSON.stringify(backupRef)}; else not_found; fi ;;
     *git/ref/tags/cli-preview*) if [ -f ${JSON.stringify(channelRef)} ]; then cat ${JSON.stringify(channelRef)}; else not_found; fi ;;
+    *releases/tags/cli-v1.2.3-preview.4*)
+      printf '{"id":5,"tag_name":"cli-v1.2.3-preview.4","name":"Happier CLI v1.2.3-preview.4","body":"","prerelease":true,"draft":false}\\n'
+      ;;
+    *releases/5*)
+      case "$*" in
+        *"@tsv"*)
+          for file in ${JSON.stringify(source)}/*; do [ -e "$file" ] || continue; name="$(basename "$file")"; printf '5-%s\\t%s\\n' "$name" "$name"; done
+          if [ -f ${JSON.stringify(immutableChangeMarker)} ]; then printf '5-late.bin\\tlate.bin\\n'; fi
+          ;;
+        *) printf '{"id":5,"tag_name":"cli-v1.2.3-preview.4","name":"Happier CLI v1.2.3-preview.4","body":"","prerelease":true,"draft":false}\\n' ;;
+      esac
+      ;;
     *releases/tags/happier-rolling-backup-cli-preview*)
       if [ -f ${JSON.stringify(release1Tag)} ] && [ "$(cat ${JSON.stringify(release1Tag)})" = "happier-rolling-backup-cli-preview" ]; then
         printf '{"id":1,"tag_name":"happier-rolling-backup-cli-preview","name":"%s","body":"previous notes","prerelease":true,"draft":false}\\n' "$(cat ${JSON.stringify(release1Name)})"
@@ -267,7 +280,10 @@ if [ "$1" = "api" ]; then
       ;;
     *"repos/test/test/releases/assets/"*)
       asset="\${2##*/}"
-      if [ "$asset" = ${JSON.stringify(`77-${aliasName}`)} ]; then fail_download_if_requested staged; fi
+      if [ "$asset" = ${JSON.stringify(`77-${aliasName}`)} ]; then
+        if [ -f ${JSON.stringify(draftState)} ]; then fail_download_if_requested staged; else fail_download_if_requested published; fi
+      fi
+      if [ "$asset" = ${JSON.stringify(`5-${archiveName}`)} ]; then fail_download_if_requested immutable; fi
       if [ "\${HAPPIER_TEST_RESET_FIRST_ASSET_DOWNLOAD:-0}" = "1" ] && [ ! -f ${JSON.stringify(assetDownloadFailureMarker)} ]; then
         : > ${JSON.stringify(assetDownloadFailureMarker)}
         printf 'partial-bytes'
@@ -277,6 +293,10 @@ if [ "$1" = "api" ]; then
       case "$asset" in
         77-*) cat ${JSON.stringify(staging)}/"\${asset#77-}" ;;
         1-*) cat ${JSON.stringify(rolling)}/"\${asset#1-}" ;;
+        5-*)
+          if [ "\${HAPPIER_TEST_IMMUTABLE_ASSETS_CHANGE:-0}" = "1" ]; then : > ${JSON.stringify(immutableChangeMarker)}; fi
+          cat ${JSON.stringify(source)}/"\${asset#5-}"
+          ;;
       esac
       ;;
     *releases/77*)
@@ -397,6 +417,7 @@ exit 2
     release1Tag,
     release77Tag,
     publicKey,
+    source,
   };
 }
 
@@ -605,10 +626,10 @@ test('existing rolling replacement stages privately, restores after publish fail
     });
 
     const successLog = readFileSync(testFixture.log, 'utf8');
-    const stagedAudit = successLog.lastIndexOf('Accept: application/octet-stream');
+    const stagedAudit = successLog.indexOf('repos/test/test/releases/assets/77-');
     const moveTag = successLog.lastIndexOf('gh api -X PATCH repos/test/test/git/refs/tags/cli-preview');
     const publishReplacement = successLog.lastIndexOf('PATCH repos/test/test/releases/77');
-    const visibleAudit = successLog.lastIndexOf('gh release download cli-preview');
+    const visibleAudit = successLog.lastIndexOf('repos/test/test/releases/assets/77-');
     const deleteBackup = successLog.lastIndexOf('DELETE repos/test/test/releases/1');
     assert.ok(stagedAudit >= 0);
     assert.ok(moveTag > stagedAudit, 'moving tag must follow the private draft byte/signature audit');
@@ -640,12 +661,36 @@ test('existing rolling replacement stages privately, restores after publish fail
       encoding: 'utf8',
     });
     const idempotentLog = readFileSync(testFixture.log, 'utf8');
-    assert.match(idempotentLog, /release download cli-preview/);
-    assert.doesNotMatch(idempotentLog, /-X PATCH repos\/test\/test\/releases|releases\/assets/);
+    assert.match(idempotentLog, /repos\/test\/test\/releases\/assets\/77-/);
+    assert.doesNotMatch(idempotentLog, /-X PATCH repos\/test\/test\/releases|-X (?:POST|DELETE)[^\n]*releases\/assets|uploads\.github\.com/);
   } finally {
     rmSync(testFixture.root, { recursive: true, force: true });
   }
 });
+
+for (const [label, prepare, expected] of [
+  ['an unsigned asset', (testFixture) => writeFileSync(join(testFixture.source, 'unbound.json'), '{}'), /unsigned assets: unbound\.json/],
+  ['assets that change while they are downloaded', () => ({ HAPPIER_TEST_IMMUTABLE_ASSETS_CHANGE: '1' }), /changed while its assets were being audited/],
+]) {
+  test(`rolling promotion refuses an immutable release with ${label} before touching the channel`, () => {
+    const testFixture = fixture();
+    try {
+      const extraEnv = prepare(testFixture) ?? {};
+      const result = spawnSync(process.execPath, args(testFixture.publicKey), {
+        cwd: repoRoot,
+        env: { ...process.env, PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`, ...extraEnv },
+        encoding: 'utf8',
+      });
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, expected);
+      assert.equal(readFileSync(testFixture.release1Tag, 'utf8'), 'cli-preview');
+      assert.equal(readFileSync(testFixture.channelRef, 'utf8'), oldSha);
+      assert.doesNotMatch(readFileSync(testFixture.log, 'utf8'), /uploads\.github\.com/);
+    } finally {
+      rmSync(testFixture.root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('rolling promotion rejects an immutable tag whose SHA differs from the authorized SHA', () => {
   const testFixture = fixture();
@@ -668,7 +713,7 @@ test('rolling promotion rejects an immutable tag whose SHA differs from the auth
     assert.match(String(result.stderr), /does not resolve to authorized SHA/i);
     assert.doesNotMatch(
       readFileSync(testFixture.log, 'utf8'),
-      /release download/,
+      /releases\/assets\//,
       'mismatched immutable identity must fail before release assets are consumed',
     );
   } finally {
@@ -791,7 +836,7 @@ test('an initially missing rolling release retries one private draft before publ
     });
     const successLog = readFileSync(testFixture.log, 'utf8');
     const findExistingDraft = successLog.indexOf('releases?per_page=100');
-    const stagedAssetDownload = successLog.lastIndexOf('Accept: application/octet-stream');
+    const stagedAssetDownload = successLog.indexOf('repos/test/test/releases/assets/77-');
     const publishDraft = successLog.lastIndexOf('PATCH repos/test/test/releases/77');
     assert.ok(findExistingDraft >= 0, 'same-version retry must find the private draft by staging tag');
     assert.ok(stagedAssetDownload > findExistingDraft);

@@ -3,12 +3,13 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { closeSync, createReadStream, openSync } from 'node:fs';
-import { copyFile, mkdtemp, readdir, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildRollingAssetPlan } from './rolling-release-asset-plan.mjs';
 import { downloadReleaseAssetWithRetry } from './lib/release-asset-transfer.mjs';
+import { inspectImmutableReleaseCandidate } from '../release/lib/immutable-release-candidate.mjs';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
 const DEFAULT_ASSET_READ_ATTEMPTS = 4;
@@ -117,37 +118,6 @@ async function fileSha256(filePath) {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(filePath)) hash.update(chunk);
   return hash.digest('hex');
-}
-
-async function assertSignedBundle(directory) {
-  const names = (await readdir(directory)).sort();
-  const checksumNames = names.filter((name) => /^checksums-.+\.txt$/.test(name));
-  if (checksumNames.length !== 1) {
-    fail(`Release bundle must contain exactly one checksums file (found ${checksumNames.length}).`);
-  }
-  const checksumsName = checksumNames[0];
-  const signatureName = `${checksumsName}.minisig`;
-  const checksums = await readFile(join(directory, checksumsName), 'utf8');
-  const archiveNames = checksums
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const match = /^[a-f0-9]{64}\s{2}(.+)$/.exec(line);
-      if (!match) fail(`Invalid checksum line in ${checksumsName}: ${line}`);
-      return match[1];
-    });
-  const required = new Set([...archiveNames, checksumsName, signatureName]);
-  const missing = [...required].filter((name) => !names.includes(name));
-  const unsupportedExtras = names.filter((name) => !required.has(name) && !name.endsWith('.json'));
-  if (missing.length > 0 || unsupportedExtras.length > 0) {
-    fail(
-      `Release bundle file set does not match its signed checksums`
-      + `${missing.length > 0 ? `; missing ${missing.join(', ')}` : ''}`
-      + `${unsupportedExtras.length > 0 ? `; unsupported extras ${unsupportedExtras.join(', ')}` : ''}`,
-    );
-  }
-  return { names, checksumsName, payloadNames: archiveNames };
 }
 
 async function assertAssetPlanEqual(leftDir, rightDir, assetPlan) {
@@ -275,8 +245,42 @@ function readReleaseAssetRows({ repo, releaseId, env, dryRun }) {
   return raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
     const separator = line.indexOf('\t');
     if (separator <= 0) fail(`Invalid release asset row: ${line}`);
-    return { id: line.slice(0, separator), name: line.slice(separator + 1) };
+    const id = line.slice(0, separator);
+    const name = line.slice(separator + 1);
+    if (!/^[A-Za-z0-9._-]+$/u.test(id) || !name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+      fail(`Invalid release asset row: ${line}`);
+    }
+    return { id, name };
   });
+}
+
+function readReleaseSnapshotById({ repo, releaseId, env }) {
+  const release = readReleaseById({ repo, releaseId, env, dryRun: false });
+  if (!release) return null;
+  return { release, assets: readReleaseAssetRows({ repo, releaseId, env, dryRun: false }) };
+}
+
+/**
+ * Read a release by ID and require that it still carries the expected tag and draft state, so
+ * the audited object is the one later published (a tag name can move to another release object).
+ */
+function readExpectedReleaseSnapshot({ repo, releaseId, expectedTag, expectedDraft, env }) {
+  const snapshot = readReleaseSnapshotById({ repo, releaseId, env });
+  if (!snapshot || snapshot.release.tagName !== expectedTag || snapshot.release.draft !== expectedDraft) {
+    fail(`GitHub release ${releaseId} no longer identifies ${expectedDraft ? 'draft ' : ''}${expectedTag}.`);
+  }
+  return snapshot;
+}
+
+/** The asset set audited must be the asset set that existed before and after its download. */
+function assertReleaseSnapshotCurrent({ repo, snapshot, expectedTag, expectedDraft, env }) {
+  const current = readReleaseSnapshotById({ repo, releaseId: snapshot.release.id, env });
+  const same = current
+    && current.release.tagName === expectedTag
+    && current.release.draft === expectedDraft
+    && current.assets.length === snapshot.assets.length
+    && current.assets.every((entry, index) => entry.id === snapshot.assets[index]?.id && entry.name === snapshot.assets[index]?.name);
+  if (!same) fail(`GitHub release ${snapshot.release.id} changed while its assets were being audited.`);
 }
 
 function runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage }) {
@@ -341,19 +345,9 @@ function deleteReleaseIfPresent({ repo, releaseId, env, dryRun }) {
   });
 }
 
-/** @param {{ repo: string; releaseId: string; destination: string; env: Record<string, string>; dryRun: boolean }} input */
-async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dryRun }) {
-  const assets = run('gh', [
-    'api',
-    `repos/${repo}/releases/${releaseId}`,
-    '--jq',
-    '.assets[] | [.id, .name] | @tsv',
-  ], { env, dryRun }).trim();
-  for (const line of assets.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean)) {
-    const separator = line.indexOf('\t');
-    if (separator <= 0) fail(`Invalid release asset row: ${line}`);
-    const assetId = line.slice(0, separator);
-    const name = line.slice(separator + 1);
+/** @param {{ repo: string; assets: readonly { id: string; name: string }[]; destination: string; env: Record<string, string>; dryRun: boolean }} input */
+async function downloadReleaseAssetsById({ repo, assets, destination, env, dryRun }) {
+  for (const { id: assetId, name } of assets) {
     const destinationPath = join(destination, name);
     const attemptPath = `${destinationPath}.attempt`;
     await downloadReleaseAssetWithRetry({
@@ -377,13 +371,13 @@ async function downloadReleaseAssetsById({ repo, releaseId, destination, env, dr
   }
 }
 
-async function auditDownloadedAssetDirectory({ directory, expectedDir, assetPlan, publicKey }) {
+async function auditDownloadedAssetDirectory({ directory, expectedDir, assetPlan, sourceTag, publicKey }) {
   const signedDestination = await mkdtemp(join(tmpdir(), 'happier-visible-release-signed-audit-'));
   try {
     for (const { name, sourceName } of assetPlan) {
       await copyFile(join(directory, name), join(signedDestination, sourceName));
     }
-    const { checksumsName } = await assertSignedBundle(signedDestination);
+    const { checksumsName } = await inspectImmutableReleaseCandidate({ directory: signedDestination, sourceTag });
     run(process.execPath, [
       'scripts/pipeline/release/verify-artifacts.mjs',
       '--artifacts-dir', signedDestination,
@@ -397,18 +391,17 @@ async function auditDownloadedAssetDirectory({ directory, expectedDir, assetPlan
   }
 }
 
-/** @param {{ repo: string; tag: string; expectedDir: string; assetPlan: ReturnType<typeof buildRollingAssetPlan>; publicKey: string; env: Record<string, string> }} input */
-async function auditReleaseByTag({ repo, tag, expectedDir, assetPlan, publicKey, env }) {
+/**
+ * @param {{ repo: string; releaseId: string; expectedTag: string; expectedDraft: boolean; expectedDir: string;
+ *   assetPlan: ReturnType<typeof buildRollingAssetPlan>; sourceTag: string; publicKey: string; env: Record<string, string> }} input
+ */
+async function auditReleaseById({ repo, releaseId, expectedTag, expectedDraft, expectedDir, assetPlan, sourceTag, publicKey, env }) {
   const destination = await mkdtemp(join(tmpdir(), 'happier-visible-release-audit-'));
   try {
-    await downloadReleaseAssetWithRetry({
-      name: tag,
-      policy: resolveRollingAssetReadPolicy(),
-      download: (timeoutMs) => {
-        run('gh', ['release', 'download', tag, '--repo', repo, '--dir', destination, '--clobber'], { env, timeoutMs });
-      },
-    });
-    await auditDownloadedAssetDirectory({ directory: destination, expectedDir, assetPlan, publicKey });
+    const snapshot = readExpectedReleaseSnapshot({ repo, releaseId, expectedTag, expectedDraft, env });
+    await downloadReleaseAssetsById({ repo, assets: snapshot.assets, destination, env, dryRun: false });
+    assertReleaseSnapshotCurrent({ repo, snapshot, expectedTag, expectedDraft, env });
+    await auditDownloadedAssetDirectory({ directory: destination, expectedDir, assetPlan, sourceTag, publicKey });
   } finally {
     await rm(destination, { recursive: true, force: true });
   }
@@ -461,15 +454,20 @@ async function main() {
     if (!dryRun && immutableSha !== targetSha) {
       fail(`Immutable source tag ${sourceTag} does not resolve to authorized SHA ${targetSha}.`);
     }
-    await downloadReleaseAssetWithRetry({
-      name: sourceTag,
-      policy: resolveRollingAssetReadPolicy(),
-      download: (timeoutMs) => {
-        run('gh', ['release', 'download', sourceTag, '--repo', repo, '--dir', sourceDir, '--clobber'], { env: ghEnv, dryRun, timeoutMs });
-      },
-    });
     if (!dryRun) {
-      const { names, checksumsName, payloadNames } = await assertSignedBundle(sourceDir);
+      // Download the immutable release by its observed release and asset IDs, then require the same
+      // asset set and tag commit afterwards, so the bytes audited are the bytes the tag publishes.
+      const immutableRelease = readReleaseByTag({ repo, tag: sourceTag, env: ghEnv, dryRun: false });
+      if (!immutableRelease) fail(`Immutable source release ${sourceTag} does not exist.`);
+      const immutableSnapshot = readExpectedReleaseSnapshot({
+        repo, releaseId: immutableRelease.id, expectedTag: sourceTag, expectedDraft: false, env: ghEnv,
+      });
+      await downloadReleaseAssetsById({ repo, assets: immutableSnapshot.assets, destination: sourceDir, env: ghEnv, dryRun: false });
+      assertReleaseSnapshotCurrent({ repo, snapshot: immutableSnapshot, expectedTag: sourceTag, expectedDraft: false, env: ghEnv });
+      if (readTagSha({ repo, tag: sourceTag, env: ghEnv, dryRun: false }) !== targetSha) {
+        fail(`Immutable source tag ${sourceTag} changed while release ${immutableRelease.id} was audited.`);
+      }
+      const { assetNames, checksumsName, signatureName } = await inspectImmutableReleaseCandidate({ directory: sourceDir, sourceTag });
       run(process.execPath, [
         'scripts/pipeline/release/verify-artifacts.mjs',
         '--artifacts-dir', sourceDir,
@@ -478,8 +476,8 @@ async function main() {
         '--skip-smoke',
       ]);
       assetPlan = buildRollingAssetPlan({
-        immutableNames: names,
-        payloadNames,
+        immutableNames: [...assetNames, checksumsName, signatureName].sort(),
+        payloadNames: assetNames,
         version: sourceVersionFromTag(sourceTag),
         rollingTag,
       });
@@ -532,7 +530,10 @@ async function main() {
     if (!dryRun && rollingRelease && rollingSha === targetSha) {
       let alreadyExact = false;
       try {
-        await auditReleaseByTag({ repo, tag: rollingTag, expectedDir: sourceDir, assetPlan, publicKey, env: ghEnv });
+        await auditReleaseById({
+          repo, releaseId: rollingRelease.id, expectedTag: rollingTag, expectedDraft: false,
+          expectedDir: sourceDir, assetPlan, sourceTag, publicKey, env: ghEnv,
+        });
         alreadyExact = true;
       } catch {
         // The ref alone is not admission; replace a stale or incomplete release object below.
@@ -613,14 +614,15 @@ async function main() {
       console.log(`[dry-run] upload every verified asset from ${sourceTag} to staging release ${stagingTag}`);
     }
 
-    await downloadReleaseAssetsById({ repo, releaseId: draftReleaseId, destination: auditDir, env: ghEnv, dryRun });
     if (!dryRun) {
-      await auditDownloadedAssetDirectory({
-        directory: auditDir,
-        expectedDir: sourceDir,
-        assetPlan,
-        publicKey,
+      const draftSnapshot = readExpectedReleaseSnapshot({
+        repo, releaseId: draftReleaseId, expectedTag: stagingTag, expectedDraft: true, env: ghEnv,
       });
+      await downloadReleaseAssetsById({ repo, assets: draftSnapshot.assets, destination: auditDir, env: ghEnv, dryRun: false });
+      assertReleaseSnapshotCurrent({ repo, snapshot: draftSnapshot, expectedTag: stagingTag, expectedDraft: true, env: ghEnv });
+      await auditDownloadedAssetDirectory({ directory: auditDir, expectedDir: sourceDir, assetPlan, sourceTag, publicKey });
+    } else {
+      console.log(`[dry-run] audit staging release ${stagingTag} by its observed asset IDs`);
     }
 
     const predecessor = rollingRelease;
@@ -630,6 +632,13 @@ async function main() {
     try {
       if (predecessor) {
         if (!predecessorSha) fail(`Published rolling release ${rollingTag} has no tag ref.`);
+        if (!dryRun && (
+          readReleaseById({ repo, releaseId: predecessor.id, env: ghEnv, dryRun: false })?.tagName !== rollingTag
+          || readReleaseByTag({ repo, tag: rollingTag, env: ghEnv, dryRun: false })?.id !== predecessor.id
+          || readTagSha({ repo, tag: rollingTag, env: ghEnv, dryRun: false }) !== predecessorSha
+        )) {
+          fail(`Published rolling release ${rollingTag} changed before replacement.`);
+        }
         ensureRefAtSha({ repo, tag: backupTag, sha: predecessorSha, env: ghEnv, dryRun });
         patchReleaseAndConfirm({
           repo,
@@ -669,7 +678,10 @@ async function main() {
         fail(`Published rolling tag ${rollingTag} did not resolve to audited target ${targetSha}.`);
       }
       if (!dryRun) {
-        await auditReleaseByTag({ repo, tag: rollingTag, expectedDir: sourceDir, assetPlan, publicKey, env: ghEnv });
+        await auditReleaseById({
+          repo, releaseId: draftReleaseId, expectedTag: rollingTag, expectedDraft: false,
+          expectedDir: sourceDir, assetPlan, sourceTag, publicKey, env: ghEnv,
+        });
       }
     } catch (switchError) {
       if (!dryRun) {

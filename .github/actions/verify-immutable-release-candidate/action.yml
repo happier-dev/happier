@@ -34,34 +34,16 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        case "$CANDIDATE_PRODUCT" in
-          cli)
-            tag_prefix='cli-v'
-            checksum_stem='happier'
-            ;;
-          hstack)
-            tag_prefix='stack-v'
-            checksum_stem='hstack'
-            ;;
-          server)
-            tag_prefix='server-v'
-            checksum_stem='happier-server'
-            ;;
-          runner)
-            tag_prefix='runner-v'
-            checksum_stem='happier-runner'
-            ;;
-          ui-web)
-            tag_prefix='ui-web-v'
-            checksum_stem='happier-ui-web'
-            ;;
-          *)
-            echo "Unsupported immutable candidate product: $CANDIDATE_PRODUCT" >&2
-            exit 1
-            ;;
-        esac
-
         control_dir="$GITHUB_WORKSPACE/.release-control"
+        # The candidate inspector owns each product's immutable tag and signed checksum envelope.
+        identity_output="$(mktemp "$RUNNER_TEMP/happier-candidate-identity-XXXXXX")"
+        node "$control_dir/scripts/pipeline/release/lib/immutable-release-candidate.mjs" \
+          --describe \
+          --product "$CANDIDATE_PRODUCT" \
+          --version "$CANDIDATE_VERSION" \
+          --github-output "$identity_output"
+        candidate_tag="$(sed -n 's/^candidate_tag=//p' "$identity_output")"
+        test -n "$candidate_tag"
         node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
           --repository "$REPOSITORY" \
           --channel "$RELEASE_CHANNEL" \
@@ -81,7 +63,7 @@ runs:
         for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
           attempt_dir="$candidate_root/attempt-${attempt}"
           rm -rf "$attempt_dir"
-          if gh release download "${tag_prefix}${CANDIDATE_VERSION}" \
+          if gh release download "$candidate_tag" \
             --repo "$REPOSITORY" \
             --dir "$attempt_dir"; then
             mv "$attempt_dir" "$candidate_dir"
@@ -97,22 +79,27 @@ runs:
         if [ "$downloaded" != true ]; then
           exit 1
         fi
-        checksums="$candidate_dir/checksums-${checksum_stem}-v${CANDIDATE_VERSION}.txt"
-        test -f "$checksums"
-        test -f "${checksums}.minisig"
         echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
-        echo "checksums=$checksums" >> "$GITHUB_OUTPUT"
+        echo "candidate_tag=$candidate_tag" >> "$GITHUB_OUTPUT"
     - name: Verify downloaded signed artifacts without repository token
       id: verify
       shell: bash
       env:
         CANDIDATE_DIR: ${{ steps.download.outputs.candidate_dir }}
-        CHECKSUMS: ${{ steps.download.outputs.checksums }}
+        CANDIDATE_TAG: ${{ steps.download.outputs.candidate_tag }}
       run: |
         set -euo pipefail
         control_dir="$GITHUB_WORKSPACE/.release-control"
+        # Bind the downloaded files to the tag's own signed envelope; no unsigned asset may ride along.
+        inspection_output="$(mktemp "$RUNNER_TEMP/happier-candidate-inspection-XXXXXX")"
+        node "$control_dir/scripts/pipeline/release/lib/immutable-release-candidate.mjs" \
+          --directory "$CANDIDATE_DIR" \
+          --source-tag "$CANDIDATE_TAG" \
+          --github-output "$inspection_output"
+        checksums="$(sed -n 's/^checksums=//p' "$inspection_output")"
+        test -n "$checksums"
         node "$control_dir/scripts/pipeline/release/verify-artifacts.mjs" \
           --artifacts-dir "$CANDIDATE_DIR" \
-          --checksums "$CHECKSUMS" \
+          --checksums "$checksums" \
           --public-key "$control_dir/scripts/release/installers/happier-release.pub" \
           --skip-smoke
