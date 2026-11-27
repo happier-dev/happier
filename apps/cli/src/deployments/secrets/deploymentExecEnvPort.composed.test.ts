@@ -8,6 +8,7 @@ import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contra
 import { createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { authorizePluginExecLaunchForHost, createProjectNativeToolchainIoForHost, createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createPluginExecSystemToolResolver } from '@/plugins/runtime/exec/system/tools/resolveGrant';
+import { captureNativeComposeDefinition } from '@/daemon/local/services/launch/nativeComposeImport';
 import { createNativeRuntimeProjectionForHost } from '@/daemon/local/services/launch/candidateRuntimeProjection';
 import { readNativeComposeLogsForHost } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { admitNativeServiceCommandForHost, executeAdmittedServiceCommand } from '@/daemon/local/services/launch/serviceCommand';
@@ -30,6 +31,7 @@ const directSentinel = 'direct-database-sentinel-fc82';
 const buildSentinel = 'finite-build-only-sentinel-190d';
 const sharedSentinel = 'shared-build-runtime-sentinel-e155';
 const nativeComposeVersion = process.env.HAPPIER_NATIVE_COMPOSE_CONFIG_VERSION ?? '2.39.4';
+const adoptedComposeValues = { web_K: 'reviewed-web-fixture', worker_K: 'reviewed-worker-fixture' } as const;
 const nativeInterpolationValues = {
     AM9_DOLLAR: 'prefix$sentinel $literal ${DO_NOT_EXPAND} $$ $(untouched) ${AM9_RESOURCE_LITERAL:?must-remain-literal}',
     AM9_BACKSLASH: 'C:\\one\\two\\\\tail\\',
@@ -52,7 +54,7 @@ async function withInvocation(run: (input: Readonly<{
     readMaterial(): Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>> | undefined;
     buildPort?: ReturnType<typeof createDeploymentExecEnvPortForHost>;
     outside: string;
-}>) => Promise<void>, connections?: 'both' | 'pooledOnly' | 'revokedDirect' | 'retainedBuilder' | 'nativeInterpolation' | 'nativeRepository' | 'nativeActivation' | 'telemetry' | 'telemetryOffline',
+}>) => Promise<void>, connections?: 'both' | 'pooledOnly' | 'revokedDirect' | 'retainedBuilder' | 'nativeInterpolation' | 'nativeRepository' | 'nativeActivation' | 'nativeAdoption' | 'telemetry' | 'telemetryOffline',
     envFileForm: 'literal' | 'bare' | 'required' = 'literal', finiteReferences = false, runtimeSecret = sentinel) {
     await withTempDir('deployment-exec-port-', async root => {
         const controller = new AbortController();
@@ -113,7 +115,7 @@ async function withInvocation(run: (input: Readonly<{
                 source: connections === 'telemetryOffline' ? { kind: 'deploymentFact', fact: 'telemetryEndpoint' }
                     : { kind: 'value', value: 'http://collector:4318' } }), managedBy: 'telemetry' });
         }
-        if (connections && connections !== 'retainedBuilder' && connections !== 'nativeInterpolation' && connections !== 'nativeRepository' && connections !== 'telemetry' && connections !== 'telemetryOffline') {
+        if (connections && connections !== 'retainedBuilder' && connections !== 'nativeInterpolation' && connections !== 'nativeRepository' && connections !== 'nativeAdoption' && connections !== 'telemetry' && connections !== 'telemetryOffline') {
             for (const [name, resourceId, value] of [
                 ['DATABASE_URL', 'pooled-connection', pooledSentinel],
                 ...(connections === 'pooledOnly' ? [] : [['DIRECT_URL', 'direct-connection', directSentinel]]),
@@ -149,6 +151,9 @@ async function withInvocation(run: (input: Readonly<{
             ['DOCKER_HOST', 'tcp://application-only.invalid:2375'],
             ['COMPOSE_PARALLEL_LIMIT', 'application-not-an-integer'],
         ]) bindings.push(createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value } }));
+        if (connections === 'nativeAdoption') for (const [name, value] of Object.entries(adoptedComposeValues)) {
+            bindings.push(createDeploymentVariableBindingV1({ phase: 'runtime', name, source: { kind: 'value', value } }));
+        }
         const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
             resources, resourceCatalogState: 'ready', isCurrent: () => true });
         const installation = { machineId: source.machineId, installationId: source.installationId,
@@ -161,13 +166,19 @@ async function withInvocation(run: (input: Readonly<{
             ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'PATHEXT', 'DOCKER_CONFIG'].flatMap(name => {
                 const value = process.env[name]; return value === undefined ? [] : [[name, value]];
             }));
-        const native = connections === 'nativeInterpolation' || connections === 'nativeRepository' || connections === 'nativeActivation';
+        const native = connections === 'nativeInterpolation' || connections === 'nativeRepository' || connections === 'nativeActivation' || connections === 'nativeAdoption';
+        const nativeDocker = process.env.HAPPIER_NATIVE_COMPOSE_DOCKER;
         const service = createStablePluginExecService({
             ...(native ? { environment: nativeEnvironment,
                 systemTools: createPluginExecSystemToolResolver({ baseEnv: nativeEnvironment,
-                    definitions: [{ toolId: 'docker', displayName: 'Docker', lookupNames: ['docker'] }], registerGrant() {} }) } : {}),
+                    definitions: [{ toolId: 'docker', displayName: 'Docker', lookupNames: ['docker'],
+                        // The test harness isolates host PATH. Opt in to just this native executable.
+                        executablePath: nativeDocker }], registerGrant() {} }) } : {}),
             signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
-            resolveExecutable: async () => {
+            resolveExecutable: async executable => {
+                if (connections === 'nativeAdoption' && executable.kind === 'systemTool' && executable.id === 'docker' && nativeDocker) {
+                    return { command: nativeDocker };
+                }
                 if (native) throw new Error('Expected canonical native Docker tool resolution');
                 return { command: process.execPath };
             }, resolvePath: async () => source.rootPath });
@@ -510,6 +521,43 @@ describe('deployment opaque environment through source, installation grants and 
             } finally { await launch.release(); }
         }, 'nativeInterpolation');
     });
+    it.runIf(process.env.HAPPIER_NATIVE_COMPOSE_CONFIG_TEST === '1')(
+        "projects each adopted service's reviewed K into its own native container configuration", async () => {
+            await withInvocation(async ({ service, source, port, outside }) => {
+                const configFile = join(outside, 'compose.json');
+                await writeFile(configFile, JSON.stringify({ services: {
+                    web: { image: 'app:1', environment: { K: 'native-web-fixture' } },
+                    worker: { image: 'app:1', env_file: ['worker.env'] },
+                } }));
+                await writeFile(join(outside, 'worker.env'), 'K=native-worker-fixture\n');
+                const { executable: docker } = await service.systemTools.resolve({ toolId: 'docker',
+                    purpose: 'deployment-native-compose', cwd: outside });
+                const version = await service.run({ executable: docker, cwd: outside, args: ['compose', 'version', '--short'] });
+                expect(version.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+                expect(Buffer.from(version.stdout).toString('utf8').trim()).toBe(nativeComposeVersion);
+                const captured = await captureNativeComposeDefinition({ exec: service, profiles: [], source: {
+                    projectName: 'adopted', engineId: 'fixture', workingDirectory: outside,
+                    configFiles: [configFile], containerIds: ['a'.repeat(64)],
+                } });
+                const io = createProjectNativeToolchainIoForHost({ async resolveTool() { return null; } });
+                const projection = createNativeRuntimeProjectionForHost({
+                    kind: 'configuration', bindRuntimeEnvironment: true, source,
+                    model: JSON.parse(captured.document), services: captured.services,
+                    composeArguments: ['compose', '--project-name', 'adopted', '--project-directory', source.rootPath],
+                    assertCurrent: () => source.assertCurrent(), io,
+                });
+                const launch = await authorizePluginExecLaunchForHost(service, { executable: docker, cwd: source.rootPath,
+                    args: ['compose', 'config'], deploymentEnv: await port.prepare({ source, phase: 'runtime' }) },
+                { agentIsolation: null, deploymentRuntimeProjection: projection });
+                try {
+                    const output = await io.run({ command: launch.command, args: launch.args, cwd: source.rootPath, env: launch.env });
+                    expect(output.exitCode).toBe(0);
+                    const resolved = JSON.parse(output.stdout);
+                    expect(resolved.services.web.environment).toEqual({ K: adoptedComposeValues.web_K });
+                    expect(resolved.services.worker.environment).toEqual({ K: adoptedComposeValues.worker_K });
+                } finally { await launch.release(); }
+            }, 'nativeAdoption');
+        });
     it.runIf(process.env.HAPPIER_NATIVE_COMPOSE_CONFIG_TEST === '1').each([
         ...(['configuration', 'runtime'] as const).flatMap(kind =>
             (['literal', 'bare', 'required'] as const).map(envFileForm => ({ scope: 'ordinary' as const, kind, envFileForm }))),

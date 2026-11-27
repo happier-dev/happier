@@ -69,7 +69,8 @@ export async function captureNativeComposeDefinition(input: Readonly<{
     })) };
     const inventory = await run([...prefix, '--file', '-', 'config', '--format', 'json', '--no-consistency'],
         Buffer.from(JSON.stringify(keyProjection)));
-    if (!record(inventory.services)) unavailable();
+    const inventoryServices = inventory.services;
+    if (!record(inventoryServices)) unavailable();
     const placeholder = (name: string, required: boolean) => `\${${name}${required ? ':?required' : ''}}`;
     // This erases expression operands, not a second variable/default decision.
     // The native --variables result above is the authority for each identity/fact.
@@ -122,23 +123,19 @@ export async function captureNativeComposeDefinition(input: Readonly<{
         valueFree(original);
     }
     const availableProfiles = new Set<string>();
-    for (const [serviceName, service] of Object.entries(model.services)) {
-        const keys = inventory.services[serviceName];
+    const environmentNameCounts = new Map<string, number>();
+    const serviceEnvironments = Object.entries(model.services).map(([serviceName, service]) => {
+        const keys = inventoryServices[serviceName];
         if (!record(service) || !record(keys) || keys.environment !== undefined && !record(keys.environment)) unavailable();
         if (Array.isArray(service.profiles)) for (const profile of service.profiles) if (typeof profile === 'string') availableProfiles.add(profile);
         const originalEnvironment = record(service.environment) ? service.environment : {};
-        const names = new Set([...Object.keys(originalEnvironment), ...Object.keys(keys.environment ?? {})]);
-        service.environment = Object.fromEntries([...names].map(name => {
-            if (!/^[a-z_][a-z0-9_]*$/iu.test(name)) unavailable();
-            const required = Object.hasOwn(originalEnvironment, name) ? originalEnvironment[name] !== null
-                : record(keys.environment) && keys.environment[name] !== null;
-            const existing = rows.get(name);
-            rows.set(name, { name, phase: 'runtime', required: required || (existing?.required ?? false),
-                hasDefault: existing?.hasDefault === true || originalEnvironment[name] != null || record(keys.environment) && keys.environment[name] != null });
-            return [name, placeholder(name, required)];
-        }));
-        delete service.env_file;
-    }
+        const fileEnvironment = keys.environment ?? {};
+        const names = new Set([...Object.keys(originalEnvironment), ...Object.keys(fileEnvironment)]);
+        for (const name of names) environmentNameCounts.set(name, (environmentNameCounts.get(name) ?? 0) + 1);
+        return { serviceName, service, originalEnvironment, fileEnvironment, names };
+    });
+    // Environment-backed resources retain their original names and reserve
+    // them before assigning aliases to service environment bindings.
     for (const kind of ['configs', 'secrets'] as const) {
         const resources = model[kind];
         if (!record(resources)) continue;
@@ -153,6 +150,29 @@ export async function captureNativeComposeDefinition(input: Readonly<{
             delete resource.content;
             delete resource['x-#value'];
         }
+    }
+    const bound = new Set(rows.keys());
+    for (const { serviceName, service, originalEnvironment, fileEnvironment, names } of serviceEnvironments) {
+        service.environment = Object.fromEntries([...names].map(name => {
+            if (!/^[a-z_][a-z0-9_]*$/iu.test(name)) unavailable();
+            let bindingName = name;
+            if ((environmentNameCounts.get(name) ?? 0) > 1 && !bound.has(name)) {
+                const servicePrefix = serviceName.replace(/[^a-z0-9_]/giu, '_').replace(/^[0-9]/u, digit => `_${digit}`);
+                const alias = `${servicePrefix}_${name}`;
+                // Keep the original container key and allocate an unoccupied
+                // runtime name for this service's independently reviewed value.
+                bindingName = alias;
+                for (let suffix = 2; rows.has(bindingName) || environmentNameCounts.has(bindingName); suffix++) {
+                    bindingName = `${alias}_${suffix}`;
+                }
+            }
+            const required = Object.hasOwn(originalEnvironment, name) ? originalEnvironment[name] !== null : fileEnvironment[name] !== null;
+            const existing = rows.get(bindingName);
+            rows.set(bindingName, { name: bindingName, phase: 'runtime', required: required || (existing?.required ?? false),
+                hasDefault: existing?.hasDefault === true || originalEnvironment[name] != null || fileEnvironment[name] != null });
+            return [name, placeholder(bindingName, required)];
+        }));
+        delete service.env_file;
     }
     model.name = source.projectName;
     const document = JSON.stringify(valueFree(model));

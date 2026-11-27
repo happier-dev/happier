@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import { logger } from '@/ui/logger';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { captureNativeComposeDefinition } from './nativeComposeImport';
@@ -61,6 +62,57 @@ describe('native Compose adoption source', () => {
                 await expect(captureNativeComposeDefinition({ exec, source, profiles: [] })).rejects.toMatchObject({ code: 'needs_repository' });
             }
         } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it.each([
+        {
+            description: 'shared interpolation in two service environments',
+            web: { environment: { PG: '${PG}' } },
+            worker: { environment: { PG: '${PG}' } },
+            variables: { PG: { Name: 'PG', Required: false, DefaultValue: '' } },
+            workerInventory: {},
+            rows: ['PG'],
+            environment: { web: { PG: '${PG:?required}' }, worker: { PG: '${PG:?required}' } },
+        },
+        {
+            description: 'interpolation and two distinct values with the same key',
+            web: { command: 'use ${K}', environment: { K: 'web-fixture' } },
+            worker: { environment: { K: 'worker-fixture' } },
+            variables: { K: { Name: 'K', Required: false, DefaultValue: '' } },
+            workerInventory: {},
+            rows: ['K'],
+            environment: { web: { K: '${K:?required}' }, worker: { K: '${K:?required}' } },
+        },
+        {
+            description: 'a literal and an env-file value with the same key (C23)',
+            web: { environment: { K: 'web-fixture' } },
+            worker: { env_file: ['worker.env'] },
+            variables: {},
+            workerInventory: { K: 'worker-fixture' },
+            rows: ['web_K', 'worker_K'],
+            environment: { web: { K: '${web_K:?required}' }, worker: { K: '${worker_K:?required}' } },
+        },
+    ])('captures binding names for $description', async ({ web, worker, variables, workerInventory, rows, environment }) => {
+        await withTempDir('happier-compose-bindings-', async root => {
+            const source = { projectName: 'existing', engineId: 'engine', workingDirectory: root,
+                configFiles: [join(root, 'compose.json')], containerIds: ['a'.repeat(64)] };
+            const model = { services: { web: { image: 'app:1', ...web }, worker: { image: 'app:1', ...worker } } };
+            const inventory = { services: { web: {}, worker: { environment: workerInventory } } };
+            const boundary = join(root, 'docker.cjs');
+            await writeFile(source.configFiles[0]!, JSON.stringify(model));
+            await writeFile(boundary, `const args=process.argv.slice(2);
+process.stdout.write(JSON.stringify(args.includes('--variables') ? ${JSON.stringify(variables)}
+    : args.includes('--no-env-resolution') ? ${JSON.stringify(model)} : ${JSON.stringify(inventory)}));`);
+            const exec = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => ({ command: process.execPath, args: [boundary] }), resolvePath: async () => root });
+
+            const captured = await captureNativeComposeDefinition({ exec, source, profiles: [] });
+
+            expect(captured.variables.map(row => row.name)).toEqual(rows);
+            expect(JSON.parse(captured.document).services).toMatchObject({
+                web: { environment: environment.web }, worker: { environment: environment.worker },
+            });
+        });
     });
 
     it('records only the class and phase when native output that may carry secrets is not JSON', async () => {

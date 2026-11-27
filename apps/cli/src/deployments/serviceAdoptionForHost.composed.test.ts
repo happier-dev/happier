@@ -9,6 +9,8 @@ import { ActionsSettingsV1Schema, MachineInstallationIdentityV1Schema,
     MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema, accountSettingsParse,
     type MachineMetadataFieldReadV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
+import type { MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -27,6 +29,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
+import { prepareEnvironmentSecretBindingsForLaunch } from './secrets/prepareEnvironmentSecretBindingsForLaunch';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
@@ -38,6 +41,10 @@ describe('watched Compose adoption through the Action host', () => {
         { mode: 'plain', bindingFailure: 'bindings' }, { mode: 'e2ee', bindingFailure: 'bindings' },
         { mode: 'plain', bindingFailure: 'read' }, { mode: 'e2ee', bindingFailure: 'read' },
     ] as const)('reviews value-free input and settles $mode adoption failure $bindingFailure without changing native custody', async ({ mode, bindingFailure }) => {
+        const distinctBindings = [
+            { purpose: 'variable', name: 'web_K', phase: 'runtime', source: { kind: 'value', value: 'approved-web-value' } },
+            { purpose: 'variable', name: 'worker_K', phase: 'runtime', source: { kind: 'value', value: 'approved-worker-value' } },
+        ];
         let phase = 'fixture';
         const requests: string[] = [];
         onTestFailed(() => { console.error(`Compose adoption failed during ${phase}; HTTP ${requests.join(', ')}`); });
@@ -48,10 +55,11 @@ describe('watched Compose adoption through the Action host', () => {
         const ids = ['a'.repeat(64), 'b'.repeat(64)];
         const model = { name: 'existing-production', services: { web: { image: 'example/web:1',
             command: 'connect https://${PASSWORD:-default-private}@example',
-            environment: { ODD: 'literal-private', INHERITED: null }, env_file: ['private.env'],
+            environment: { ODD: 'literal-private', INHERITED: null, K: 'native-web-private' }, env_file: ['private.env'],
             volumes: [{ type: 'bind', source: join(root, 'data'), target: '/data' }] },
-            worker: { image: 'example/worker:1', profiles: ['jobs'] } }, volumes: { state: { name: 'existing-production_state' } } };
+            worker: { image: 'example/worker:1', profiles: ['jobs'], env_file: ['worker.env'] } }, volumes: { state: { name: 'existing-production_state' } } };
         await writeFile(composePath, JSON.stringify(model));
+        await writeFile(join(root, 'worker.env'), 'K=native-worker-private\n');
         // Only the external Docker process is replaced. Installed plugin admission,
         // capture, Compose normalization, Action policy/children and P42 stay real.
         await writeFile(dockerPath, `#!${process.execPath}
@@ -60,7 +68,7 @@ fs.appendFileSync(${JSON.stringify(callsPath)},JSON.stringify({args,profiles:pro
 if(args.includes('info'))process.stdout.write(args.includes('{{.ID}}')?'engine-a':JSON.stringify({ID:'engine-a',OSType:'linux',Architecture:'x86_64'}));
 else if(args[0]==='ps')process.stdout.write(ids.join('\\n'));
 else if(args[0]==='inspect')process.stdout.write(JSON.stringify(ids.map((Id,i)=>({Id,Image:'sha256:'+'c'.repeat(64),Config:{Labels:{'com.docker.compose.project':'existing-production','com.docker.compose.service':i?'worker':'web','com.docker.compose.oneoff':'False','com.docker.compose.project.working_dir':${JSON.stringify(root)},'com.docker.compose.project.config_files':${JSON.stringify(composePath)}}},State:{Status:'running'},Mounts:[],NetworkSettings:{Ports:{}}}))));
-else if(args.includes('config')){if(process.env.COMPOSE_PROFILES!=='')process.exit(22);process.stdout.write(JSON.stringify(args.includes('--variables')?{PASSWORD:{Name:'PASSWORD',Required:false,DefaultValue:'default-private'}}:args.includes('--no-env-resolution')?${JSON.stringify(model)}:{services:{web:{environment:{ODD:'literal-private',INHERITED:null,UNUSUAL:'envfile-private'}},worker:{}}}));}
+else if(args.includes('config')){if(process.env.COMPOSE_PROFILES!=='')process.exit(22);process.stdout.write(JSON.stringify(args.includes('--variables')?{PASSWORD:{Name:'PASSWORD',Required:false,DefaultValue:'default-private'}}:args.includes('--no-env-resolution')?${JSON.stringify(model)}:{services:{web:{environment:{ODD:'literal-private',INHERITED:null,UNUSUAL:'envfile-private'}},worker:{environment:{K:'native-worker-private'}}}}));}
 else process.exit(23);
 `, { mode: 0o700 });
         vi.stubEnv('PATH', `${root}${delimiter}${process.env.PATH ?? ''}`);
@@ -121,6 +129,7 @@ else process.exit(23);
             let loseBindingResponse = true;
             let refuseNativeLookup = false;
             const writes: string[] = [];
+            let grants: readonly MachineSecretGrantV1[] = [];
             vi.spyOn(axios, 'get').mockImplementation(async url => {
                 const path = new URL(String(url)).pathname;
                 if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 0 } };
@@ -170,7 +179,7 @@ else process.exit(23);
                 if (request.method === 'POST' && path.endsWith('/secret-launch-admission')) {
                     const installation = { machineId: 'machine-a', installationId: 'installation-a',
                         publicKey: Buffer.from(keyPair.publicKey).toString('base64url') };
-                    return { status: 200, data: { ok: true, grants: [],
+                    return { status: 200, data: { ok: true, grants,
                         bindingPreparation: { runtimeInstallations: [installation], buildInstallation: installation } } };
                 }
                 if (request.method === 'POST' && path === '/v1/deployments/environments/adopted-environment/bindings') {
@@ -181,7 +190,8 @@ else process.exit(23);
                         throw new Error('Binding transport failed before application');
                     }
                     writes.push(path);
-                    const input = request.data as { contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number };
+                    const input = DeploymentBindingsSetStorageInputV1Schema.parse(request.data);
+                    grants = input.grants;
                     environment.environment.contentArtifactId = input.contentArtifactId;
                     environment.environment.contentHeaderVersion = input.contentHeaderVersion;
                     environment.environment.contentBodyVersion = input.contentBodyVersion;
@@ -214,14 +224,18 @@ else process.exit(23);
             if (!reviewedResult.ok) throw new Error('Expected adoption review');
             const review = MachineServiceAdoptResultV1Schema.parse(reviewedResult.result);
             if (review.kind !== 'review') throw new Error('Expected review');
-            expect(review.variables.map(row => row.name)).toEqual(['INHERITED', 'ODD', 'PASSWORD', 'UNUSUAL']);
-            expect(JSON.stringify(review)).not.toMatch(/default-private|literal-private|envfile-private/);
+            const containsNativeValues = (output: unknown) => /default-private|literal-private|envfile-private|native-(?:web|worker)-private/u.test(JSON.stringify(output));
+            expect(containsNativeValues(review)).toBe(false);
             expect(review.document).not.toContain('env_file');
             expect(documents.size).toBe(0);
             const apply = { ...base, mode: 'apply', reviewedDigest: review.reviewedDigest, bindingsConfirmed: true,
                 destination: { projectSourceId: 'source', name: 'Adopted', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' },
-                bindings: review.variables.map(row => ({ purpose: 'variable', name: row.name, phase: row.phase,
-                    source: { kind: 'value', value: 'confirmed-public' } })) };
+                bindings: [
+                    ...review.variables.filter(row => !['K', 'web_K', 'worker_K'].includes(row.name)).map(row => ({
+                        purpose: 'variable', name: row.name, phase: row.phase, source: { kind: 'value', value: 'confirmed-public' },
+                    })),
+                    ...distinctBindings,
+                ] };
             phase = 'protected adoption approval';
             const approvals: unknown[] = [];
             const reviewExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
@@ -232,8 +246,22 @@ else process.exit(23);
                 actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
             });
             expect(queued, JSON.stringify(queued)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            phase = 'distinct service binding admission';
+            const collapsed = await executor.execute('machines.services.adopt', { ...apply, requestKey: 'collapsed-binding',
+                bindings: [
+                    ...apply.bindings.filter(binding => !distinctBindings.includes(binding)),
+                    { ...distinctBindings[0], name: 'K' },
+                ],
+            }, { ...context, surface: 'agent', authority: 'account_automation', interactivePresentation: undefined,
+                actionRequestId: 'collapsed-binding-request', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) });
+            expect(collapsed).toMatchObject({ ok: false, errorCode: 'secret_binding_required' });
+            expect(review.variables.map(row => row.name)).toEqual(['INHERITED', 'ODD', 'PASSWORD', 'UNUSUAL', 'web_K', 'worker_K']);
+            expect(JSON.parse(review.document).services).toMatchObject({
+                web: { environment: { K: '${web_K:?required}' } },
+                worker: { environment: { K: '${worker_K:?required}' } },
+            });
             expect(approvals).toMatchObject([{ preview: { hostReviewedContent: review } }]);
-            expect(JSON.stringify(approvals)).not.toMatch(/default-private|literal-private|envfile-private/);
+            expect(containsNativeValues(approvals)).toBe(false);
             expect(creates).toBe(0);
             phase = 'binding refusal';
             expect(await executor.execute('machines.services.adopt', { ...apply, bindings: [] }, context))
@@ -281,9 +309,23 @@ else process.exit(23);
             if (!environmentArtifact || typeof environmentArtifact.body !== 'string') throw new Error('Expected opened Environment content');
             const content = DeploymentEnvironmentContentV1Schema.parse(JSON.parse(environmentArtifact.body));
             expect(content.definition).toMatchObject({ kind: 'stored', contentRevision: 1, profiles: [] });
+            if (content.definition.kind !== 'stored') throw new Error('Expected stored Compose definition');
+            expect(JSON.parse(content.definition.document).services).toMatchObject({
+                web: { environment: { K: '${web_K:?required}' } },
+                worker: { environment: { K: '${worker_K:?required}' } },
+            });
             // The bindings writer owns persisted addresses; the reviewed values
             // survive unchanged, and the strict content schema requires each UUID.
             expect(content.bindings).toEqual(apply.bindings.map(binding => ({ ...binding, grantRef: expect.any(String) })));
+            const launch = await prepareEnvironmentSecretBindingsForLaunch({
+                environmentId: environment.environment.id, machineId: target.machineId, installationId: 'installation-a',
+                installationPrivateSeed: keyPair.secretKey.subarray(0, 32), phase: 'runtime',
+                bindings: content.bindings, grants, assertCurrent: async () => {},
+            });
+            try {
+                expect(launch.env).toMatchObject({ web_K: 'approved-web-value', worker_K: 'approved-worker-value' });
+                expect(launch.env).not.toHaveProperty('K');
+            } finally { launch.dispose(); }
             const originId = environment.targetLinks[0]!.targetLink.contentArtifactId;
             const originArtifact = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.read(originId,
                 { prepareRecipients: false, includeSharedAudience: false }));

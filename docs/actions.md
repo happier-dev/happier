@@ -3907,8 +3907,11 @@ Capture uses the native Compose owner with
 `config --format json --no-interpolate --no-env-resolution`. Review returns a
 value-free document with variable placeholders plus required/default facts. Default values,
 literal environment values and resolved env-file values stay out of the review
-and stored definition. Every interpolation variable and service environment key,
-including env-file keys, becomes a runtime binding row. Apply requires
+and stored definition. Interpolation variables and environment-backed resources
+retain their binding names. When multiple services declare the same environment
+key, including through an env file, capture gives each service its own binding
+name unless that key already names an interpolation or resource binding. Each
+container keeps its original environment key. Apply requires
 `bindingsConfirmed: true` and an explicit source for every row through the
 existing Environment variable-binding schema. Key names, inherited values and
 defaults never select or confirm a secret. `deployments.bindings.set` remains
