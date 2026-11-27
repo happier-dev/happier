@@ -2039,7 +2039,8 @@ function PluginSurfaceHostMount(props: Readonly<(
     // Account custody belongs to the admitted executable, not its page's
     // subject. A portable Project page has the same Account owner as an app page.
     const accountUnionMount = !hasEmbeddedRendererMount && (accountExecutionOrigin !== null
-        || (selectedSurfaceBinding?.targetKind === 'app' && Array.isArray(descriptor?.hostSupplies)));
+        || ((selectedSurfaceBinding?.targetKind === 'app' || selectedSurfaceBinding?.targetKind === 'deploymentEnvironment')
+            && Array.isArray(descriptor?.hostSupplies)));
     // An app union may first present a Machine declaration, then publish this
     // same destination under Account custody. Loading ending elsewhere cannot
     // admit reads from that interim requester. Availability publishes bundled
@@ -3799,9 +3800,10 @@ function PluginSurfaceHostMount(props: Readonly<(
     ) => {
         const contribution = resolveBundledPluginUiRendererArtifact(projectedContribution,
             accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null);
-        if (contribution?.artifactSelectionOwner !== 'daemonProjection' || !descriptor
-            || !needsMachineExecution || selectedSurfaceBinding?.container !== 'appPage'
-            || props.contextualExecutionTarget?.installationId === undefined) {
+        const selectsMachineRenderer = (selectedSurfaceBinding?.targetKind === 'deploymentEnvironment' && accountExecutionOrigin === null)
+            || (contribution?.artifactSelectionOwner === 'daemonProjection'
+                && props.contextualExecutionTarget?.installationId !== undefined);
+        if (!selectsMachineRenderer || !descriptor || !needsMachineExecution || selectedSurfaceBinding?.container !== 'appPage') {
             return { contribution, exactSelectionMissing: false };
         }
         const exactContribution = resolveQualifiedPluginPageArtifact({

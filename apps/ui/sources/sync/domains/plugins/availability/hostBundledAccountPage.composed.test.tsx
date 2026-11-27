@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import * as canonicalDigest from '@happier-dev/protocol/crypto/canonicalDigest';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -67,15 +67,20 @@ module.exports.renderSurface = defineUiSurface(function() {
 });
 function EnvironmentPage({ target }) {
     const host = usePluginHostApi();
+    const { useLivePluginResource } = require("@happier-dev/plugin-ui");
+    const reference = { hostRead: "deployments.environments.list", input: {
+        serverId: target.serverId, projectSourceId: target.projectSourceId, environmentIds: [target.environmentId]
+    } };
+    const { resource } = useLivePluginResource(reference);
     const [result, setResult] = React.useState(null);
     return React.createElement("Text", { testID: "test-deployment-plugin-page" },
         JSON.stringify(target),
+        React.createElement("Text", { testID: "test-deployment-resource-state" }, resource.subscription),
         React.createElement("Text", { testID: "test-deployment-plugin-action", onPress: async () => {
             try {
                 const action = await host.executeAction("read", {});
-                const input = { serverId: target.serverId, projectSourceId: target.projectSourceId, environmentIds: [target.environmentId] };
-                const resource = await host.readResource({ hostRead: "deployments.environments.list", input });
-                const data = JSON.parse(new TextDecoder().decode(resource.bytes));
+                const response = await host.readResource(reference);
+                const data = JSON.parse(new TextDecoder().decode(response.bytes));
                 setResult({ action, environmentIds: data.items.map(item => item.environment.id) });
             }
             catch (error) { setResult({ code: error.code }); }
@@ -152,7 +157,7 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
                 execution: { target: 'daemon' }, run: async () => null } },
         ui: { renderers: [{ id: 'account', kind: 'reactNative', artifact: 'account', requiredHostMethods: ['readStoredImage', 'executeAction'] },
             { id: 'account-detail', kind: 'reactNative', artifact: 'account', requiredHostMethods: ['executeAction'] },
-            { id: 'environment', kind: 'reactNative', artifact: 'account', requiredHostMethods: ['executeAction', 'readResource'] }],
+            { id: 'environment', kind: 'reactNative', artifact: 'account', requiredHostMethods: ['executeAction', 'readResource', 'watchResource'] }],
             views: [
                 { id: 'account-page', container: 'appPage', target: { kind: 'app' }, renderer: 'account', title: 'Account page' },
                 { id: 'environment-page', container: 'appPage', target: { kind: 'deploymentEnvironment' }, renderer: 'environment', title: 'Environment details' },
@@ -253,33 +258,138 @@ const enabledPluginFeatures = createRootLayoutFeaturesResponse({ features: { plu
     enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } },
 } } });
 
-it('mounts a bundled Environment page only for the exact admitted read and retires it on withdrawal', async () => {
-    const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
-    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
-    const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
-    const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol/v1');
-    const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
-    const { DeploymentEnvironmentDetail } = await import('@/components/projects/deployments/DeploymentEnvironmentDetail');
-    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-    const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
-    const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
-    // The bundle's Metro requires share the real, platform-adapted Vitest modules.
+beforeAll(async () => {
+    // Each bundle's Metro requires share the real, platform-adapted Vitest modules.
     const require = createRequire(import.meta.url);
     const ui = await loadVitestModuleForNodeRequire(pathToFileURL(require.resolve('@happier-dev/plugin-ui')),
         () => import('@happier-dev/plugin-ui'));
-    onTestFinished(ui.dispose);
-    const hostApi = await loadVitestModuleForNodeRequire(pathToFileURL(require.resolve('@happier-dev/plugin-ui/hostApi')),
-        () => import('@happier-dev/plugin-ui/hostApi'));
-    onTestFinished(hostApi.dispose);
-    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
+    try {
+        const hostApi = await loadVitestModuleForNodeRequire(pathToFileURL(require.resolve('@happier-dev/plugin-ui/hostApi')),
+            () => import('@happier-dev/plugin-ui/hostApi'));
+        return () => { hostApi.dispose(); ui.dispose(); };
+    } catch (error) {
+        ui.dispose();
+        throw error;
+    }
+});
+
+async function serveInstalledEnvironmentPlugin(pluginId: string, serverId: string, machineId: string) {
+    const { manifest: deployManifest } = await import('@happier-dev/plugins-deploy-vercel/manifest');
+    const { PluginProjectionV2Schema, DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema } =
+        await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } =
+        await import('@happier-dev/protocol/plugins/ui');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc/methods');
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const installId = 'environment-plugin-install';
+    const sourceCustody = { kind: 'development' as const, registeredRootId: 'environment-plugin-source' };
+    const origin = { serverIdentityId: serverId, sourceRef: { machineId, pluginId, sourceCustody } };
+    const bundle = new TextEncoder().encode(new TextDecoder().decode(packaged.bytes)
+        .replace('test-deployment-plugin-page', 'installed-deployment-plugin-page'));
+    const relativePath = 'react-native/deploy-details/entry.cjs.bundle';
+    const graph = PluginUiArtifactsManifestEntryV2Schema.parse({
+        artifactId: 'deploy-details', tier: 'reactNative', entry: relativePath,
+        digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath, bytes: bundle }]),
+        files: [{ relativePath, digest: computePluginUiArtifactSha256DigestV1(bundle), byteSize: bundle.byteLength }],
+        builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.0.0',
+    });
+    // Keep the deploy-target role schemas from the public authoring manifest. Supply the installed
+    // author's own package identity, view and renderer instead of constructing a host placement.
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ ...deployManifest, id: pluginId,
+        contributes: { ...deployManifest.contributes, ui: {
+            views: [{ id: 'environment-page', title: 'Installed deployment details', container: 'appPage',
+                target: { kind: 'deploymentEnvironment' }, renderer: 'deploy-details-native' }],
+            renderers: [{ id: 'deploy-details-native', kind: 'reactNative', artifact: 'deploy-details',
+                requiredHostMethods: ['readResource', 'watchResource'] }],
+        } },
+    });
+    const declaredUiEntries = projectPluginPortableUiDeclarationsV1(manifest, [graph]);
+    const materialization = PluginMachineMaterializationV1Schema.parse({
+        pluginId, version: manifest.version, machineId, serverIdentityId: serverId, materializationId: installId,
+        sourceClass: 'localPath', portableRelease: false, enabled: true, trustState: 'trusted', observedAt: 1,
+        uiArtifacts: [], declaredManifest: manifest, declaredUiEntries,
+    });
+    const wire = PluginProjectionV2Schema.parse({
+        v: 2, generation: 1,
+        installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Installed deployment fixture',
+            version: manifest.version, enabled: true, source: { kind: 'localPath', locator: sourceCustody.registeredRootId },
+            occurrenceId: installId, executionOrigin: origin, sourceCustody, declaresContributionPoints: false } },
+        familiesById: { pluginUi: { family: 'pluginUi', entriesById: Object.fromEntries(
+            Object.entries(declaredUiEntries).map(([id, entry]) => [id, {
+                ...entry, occurrenceId: installId, executionOrigin: origin,
+                ...(entry.contributionKind === 'reactNativeBundle' ? { artifactSelectionOwner: 'daemonProjection' } : {}),
+            }]),
+        ) } },
+    });
+    const withdrawn = PluginProjectionV2Schema.parse({ v: 2, generation: 2, familiesById: {} });
+    let installed = true;
+    packaged.machineRpc.mockImplementation(request => {
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            return { protocolVersion: 1, projection: installed ? wire : withdrawn };
+        }
+        if (request.method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE) {
+            const query = DaemonPluginUiArtifactBytesReadRequestSchema.parse(request.payload);
+            expect(query).toMatchObject({ machineId, cacheIdentity: { artifactDigest: graph.digest } });
+            return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
+                ok: true, artifactFamily: 'reactNative', cacheIdentity: { artifactDigest: graph.digest },
+                artifact: { artifactKind: 'reactNativeBundle', digest: graph.digest, format: 'plainJs', byteSize: bundle.byteLength },
+                files: graph.files.map(file => ({ ...file, bytesBase64: encodeBase64(bundle) })),
+            });
+        }
+    });
+    return { materialization, withdraw: () => { installed = false; } };
+}
+
+it.each(['platform', 'machine-context', 'machine'] as const)('mounts an admitted %s Environment page and retires demand on close or withdrawal', async placement => {
+    const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
+    const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } =
+        await import('@happier-dev/deployment-protocol/v1');
+    const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
+    const { DeploymentEnvironmentDetail } = await import('@/components/projects/deployments/DeploymentEnvironmentDetail');
+    const { PluginReactNativeSurface } = await import('@/components/plugins/reactNative/PluginReactNativeSurface');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
+    const { DestinationInstanceContext } = await import('@/components/appShell/workspace/destinationInstanceContext');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+    const pluginId = placement === 'machine' ? 'acme.machine-deploy' : 'happier.deploy.vercel';
+    const machineId = 'target-machine';
+    const serverId = 'srv_bundled_account_page';
+    const features = (nativeRendererEnabled: boolean) => createRootLayoutFeaturesResponse({ features: {
+        plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true },
+            reactNativeBundles: { enabled: nativeRendererEnabled } } },
+        machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } },
+    } });
+    await account.restore({ machines: placement === 'platform' ? [] : [
+        createMachineFixture({ id: machineId, active: true, activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState }),
+    ], features: features(true), serverIdentityId: serverId });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected the fixture Account to own this read');
     const scope = lifetime.scope;
-    replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
-    } });
+    const installed = placement === 'machine' ? await serveInstalledEnvironmentPlugin(pluginId, serverId, machineId) : null;
+    const disabledIntent = (availabilityCursor: number) => ({ pluginId: 'happier.fixture',
+        response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
+            hostingCapability: { enabled: false }, intent: { pluginId: 'happier.fixture', desiredVersion: null,
+                enabled: false, offlineUiHosting: 'enabled', writableCollections: [], revision: 'environment-uninstalled' },
+            release: null, uiArtifacts: [], packageAssets: [] }) });
+    const publishAvailability = (availabilityCursor: number, active: boolean) => {
+        const materializations = installed && active ? [installed.materialization] : [];
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor,
+            intentReads: installed || !active ? [disabledIntent(availabilityCursor)] : [], materializations,
+            snapshots: installed ? [{ serverIdentityId: serverId, machineId, materializations }] : [],
+        } });
+    };
+    publishAvailability(1, true);
+    const runtime = createDeploymentTargetLinkHeaderV1({
+        source: { kind: 'plugin', contribution: { pluginId, localId: 'runtime' } },
+        targetKind: 'vercel',
+        machines: [], members: [], state: 'configured', activeDeploymentId: undefined,
+        ...(placement !== 'platform' ? { machineId, installationId: 'target-installation' } : {}),
+    });
     const detail = createDeploymentEnvironmentDetailV1({
-        environment: createDeploymentEnvironmentHeaderV1({ serverId: scope.serverId, runtimeTargetLinkId: undefined }),
+        environment: createDeploymentEnvironmentHeaderV1({ id: runtime.environmentId, serverId: scope.serverId, runtimeTargetLinkId: runtime.id }),
         targetLinks: [],
     });
     const { id, projectSourceId, controllerMachineId, contentArtifactId } = detail.environment;
@@ -290,10 +400,15 @@ it('mounts a bundled Environment page only for the exact admitted read and retir
             header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name },
             body: JSON.stringify(detail.content),
         });
+        await artifacts.createArtifactDocument({
+            artifactId: runtime.contentArtifactId,
+            header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Configured Vercel target' },
+            body: '{}',
+        });
     } finally { artifacts.dispose(); }
     let admit = true;
     account.home.answer(scope.serverId, `GET /v1/deployments/environments/${id}`, { select: () => ({ body: admit
-        ? { ok: true, environment: detail.environment, targetLinks: [] }
+        ? { ok: true, environment: detail.environment, targetLinks: [runtime] }
         : { ok: false, error: 'deployment_access_denied' } }) });
     account.home.answer(scope.serverId, 'GET /v1/deployments/environments/foreign', {
         body: { ok: true, environment: detail.environment, targetLinks: [] },
@@ -307,8 +422,11 @@ it('mounts a bundled Environment page only for the exact admitted read and retir
         });
     }
     account.home.answer(scope.serverId, 'GET /v1/deployments/environments', {
-        select: (_input, request) => ({ body: { ok: true, nextCursor: null,
-            items: new URL(request.url).searchParams.getAll('environmentIds').includes(id) ? [detail.environment] : [] } }),
+        select: (_input, request) => {
+            const selected = new URL(request.url).searchParams.getAll('environmentIds').includes(id);
+            return { body: { ok: true, nextCursor: null, items: selected ? [detail.environment] : [],
+                runtimeTargetLinks: selected ? [runtime] : [] } };
+        },
     });
     const controller = createDeploymentReadControllerV1({ scope: { ...scope, projectSourceId },
         transport: createDeploymentReadTransport(lifetime) });
@@ -325,50 +443,93 @@ it('mounts a bundled Environment page only for the exact admitted read and retir
         </DestinationInstanceContext.Provider>
     </AccountNoticeInvestigationBoundary></AppShellPluginUiProjectionProvider></AppPaneProvider>;
     const screen = await renderScreen(render(id));
+    const pageTestId = installed ? 'installed-deployment-plugin-page' : 'test-deployment-plugin-page';
+    const pagePluginId = installed ? pluginId : 'happier.fixture';
     try {
-        const target = { kind: 'deploymentEnvironment', serverId: scope.serverId, projectSourceId, environmentId: id, controllerMachineId };
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(JSON.stringify(target)));
-        await screen.pressByTestIdAsync('test-deployment-plugin-action');
-        await waitForHomeGovernance(() => expect(JSON.parse(screen.findByTestId('test-deployment-plugin-result')!.props.children))
-            .toEqual({ action: { surface: 'ui', caller: 'plugin' }, environmentIds: [id] }));
-        const expandButton = 'environment-plugin-page-expand:plugin:happier.fixture:environment-page';
+        const target = { kind: 'deploymentEnvironment', serverId: scope.serverId, projectSourceId, environmentId: id, controllerMachineId,
+            ...(placement !== 'platform' ? { machineId: runtime.machineId } : {}) };
+        await waitForHomeGovernance(() => {
+            const failures = screen.findAll(node => typeof node.props.diagnosticCode === 'string')
+                .map(node => node.props.diagnosticCode);
+            const methods = packaged.machineRpc.mock.calls.map(([request]) => request.method);
+            expect(screen.findByTestId(pageTestId), JSON.stringify({ failures, methods, text: screen.getTextContent() })).toBeTruthy();
+        });
+        expect(screen.getTextContent()).toContain(JSON.stringify(target));
+        if (!installed) {
+            await screen.pressByTestIdAsync('test-deployment-plugin-action');
+            await waitForHomeGovernance(() => expect(JSON.parse(screen.findByTestId('test-deployment-plugin-result')!.props.children))
+                .toEqual({ action: { surface: 'ui', caller: 'plugin' }, environmentIds: [id] }));
+        }
+        const expandButton = `environment-plugin-page-expand:plugin:${pagePluginId}:environment-page`;
         await screen.pressByTestIdAsync(expandButton);
         const expanded = new URL(String(navigation.push.mock.calls[0]?.[0]), 'https://app.example.test');
         expect(expanded.pathname).toBe(pathname);
         expect(Object.fromEntries(expanded.searchParams)).toMatchObject({ serverId: scope.serverId, deploymentEnvironment: id,
-            deploymentPlugin: 'happier.fixture', deploymentPluginPage: 'environment-page' });
+            deploymentPlugin: pagePluginId, deploymentPluginPage: 'environment-page' });
         await screen.update(render(id, true, Object.fromEntries(expanded.searchParams)));
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(JSON.stringify(target)));
         expect(screen.findByTestId(expandButton)).toBeNull();
         const countResourceReads = () => account.home.requests.filter(request =>
             request.path.startsWith('/v1/deployments/environments?') && new URLSearchParams(request.path.split('?')[1]).has('environmentIds')).length;
-        const visibleResourceReads = countResourceReads();
-        expect(visibleResourceReads).toBeGreaterThan(0);
+        await screen.update(render(id));
+        expect(screen.findByTestId(expandButton)).toBeTruthy();
+        await screen.update(render(id, true, Object.fromEntries(expanded.searchParams)));
+        const mountedRead = async () => {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('test-deployment-resource-state')?.props.children).toBe('live'));
+            const store = screen.tree.root.findByType(PluginReactNativeSurface).props.privateHostBindings?.resourceStore;
+            if (!store) throw new Error('Expected the mounted Environment Resource store');
+            const entry = store.getEntry({ hostRead: 'deployments.environments.list', input: {
+                serverId: scope.serverId, projectSourceId, environmentIds: [id],
+            } });
+            expect(entry.getSnapshot().subscription).toBe('live');
+            return entry;
+        };
+        const expandedRead = await mountedRead();
+        const invalidate = () => act(async () => { publishHomeAccountChange(scope.serverId); });
+        const beforeWake = countResourceReads();
+        await invalidate();
+        await waitForHomeGovernance(() => expect(countResourceReads()).toBeGreaterThan(beforeWake));
         await screen.update(render(id, false));
-        expect(screen.findByTestId('test-deployment-plugin-page')).toBeNull();
-        expect(countResourceReads()).toBe(visibleResourceReads);
+        expect(screen.findByTestId(pageTestId)).toBeNull();
+        expect(['ended', 'unsupported']).toContain(expandedRead.getSnapshot().subscription);
+        const assertIdle = async () => {
+            const before = countResourceReads();
+            await invalidate();
+            await flushHookEffects();
+            expect(countResourceReads()).toBe(before);
+        };
+        await assertIdle();
         for (const refused of ['foreign', 'foreign-source', 'foreign-home']) {
-            await screen.update(render(refused));
+            await screen.update(render(refused, true, Object.fromEntries(expanded.searchParams)));
             await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.state')).toBeTruthy());
-            expect(screen.findByTestId('test-deployment-plugin-page')).toBeNull();
+            expect(screen.findByTestId(pageTestId)).toBeNull();
+            await assertIdle();
         }
         await screen.update(render(id));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('test-deployment-plugin-page')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(pageTestId)).toBeTruthy());
+        await act(async () => account.publishFeatures(serverId, features(false)));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(pageTestId)).toBeNull());
+        await assertIdle();
+        await act(async () => account.publishFeatures(serverId, features(true)));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(pageTestId)).toBeTruthy());
         admit = false;
         await act(async () => controller.invalidate({ environmentId: id, projectSourceId }));
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.state')).toBeTruthy());
-        expect(screen.findByTestId('test-deployment-plugin-page')).toBeNull();
+        expect(screen.findByTestId(pageTestId)).toBeNull();
         admit = true;
         await act(async () => controller.invalidate({ environmentId: id, projectSourceId }));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('test-deployment-plugin-page')).toBeTruthy());
-        await act(async () => replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-            availabilityCursor: 2, materializations: [], snapshots: [], intentReads: [{ pluginId: 'happier.fixture',
-                response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 2,
-                    hostingCapability: { enabled: false }, intent: { pluginId: 'happier.fixture', desiredVersion: null,
-                        enabled: false, offlineUiHosting: 'enabled', writableCollections: [], revision: 'environment-uninstalled' },
-                    release: null, uiArtifacts: [], packageAssets: [] }) }],
-        } }));
-        await waitForHomeGovernance(() => expect(screen.findByTestId('test-deployment-plugin-page')).toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(pageTestId)).toBeTruthy());
+        const withdrawnRead = await mountedRead();
+        await act(async () => {
+            if (installed) {
+                installed.withdraw();
+                publishMachineContributionRegistryProjectionInvalidation({ serverId: scope.serverId, machineId }, 'authority');
+            }
+            publishAvailability(2, false);
+        });
+        await waitForHomeGovernance(() => expect(screen.findByTestId(pageTestId)).toBeNull());
+        expect(['ended', 'unsupported']).toContain(withdrawnRead.getSnapshot().subscription);
+        await assertIdle();
     } finally {
         await screen.unmount();
         controller.retire();

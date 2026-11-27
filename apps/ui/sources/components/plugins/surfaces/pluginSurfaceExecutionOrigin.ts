@@ -10,6 +10,7 @@ import { useActivePluginAccountAvailabilityReleaseClassifier } from '@/sync/doma
 import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { createPluginUiProjectedActionResolver, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionSupplies } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { pluginUiSections } from '@/sync/domains/plugins/ui/projectionSections';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPluginExecutionOriginCandidateOrigin, type PluginExecutionOriginContextualTarget } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
@@ -30,6 +31,7 @@ type PluginSurfaceMachineDemandInput = Readonly<{
     contextualTarget?: PluginExecutionOriginContextualTarget | null;
     surface: Readonly<{
         renderer: Readonly<Record<string, unknown>>;
+        binding?: Readonly<{ targetKind: string }>;
         runtime?: unknown;
         headerActions?: unknown;
         /** A widget's declared Resources. */
@@ -61,8 +63,12 @@ export function readPluginSurfaceMachineDemand(params: PluginSurfaceMachineDeman
     const artifactId = family ? resolvePluginUiProjectionContributionId({ family, pluginId: params.pluginId,
         contributionId: renderer.contributionId, entriesById: artifacts ?? {} }) : null;
     const artifact = artifactId ? artifacts?.[artifactId] : null;
-    const rendererDemand = params.contextualTarget?.installationId !== undefined
-        && artifact?.artifactSelectionOwner === 'daemonProjection' ? 'renderer' : 'none';
+    // An Environment can present a Machine installation's declaration before its live renderer is known.
+    const environmentNeedsRenderer = params.surface.binding?.targetKind === 'deploymentEnvironment'
+        && family !== null && !readPluginUiAccountExecutableOrigin(params.surface)
+        && readPluginUiContributionSupplies(params.surface).length > 0;
+    const rendererDemand = (params.contextualTarget?.installationId !== undefined
+        && artifact?.artifactSelectionOwner === 'daemonProjection') || environmentNeedsRenderer ? 'renderer' : 'none';
     const methods = readRequiredPluginSurfaceHostMethods(renderer.requiredHostMethods
         ?? record(renderer.model)?.requiredHostMethods ?? artifact?.requiredHostMethods);
     if (methods === null) return rendererDemand;

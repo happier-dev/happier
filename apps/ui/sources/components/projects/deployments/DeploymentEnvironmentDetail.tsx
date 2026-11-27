@@ -335,7 +335,9 @@ export const DeploymentEnvironmentDetail = React.memo(
     const controllerMachineId = detail?.environment.controllerMachineId ?? null;
     const environmentSourceId = detail?.environment.projectSourceId;
     const environmentServerId = detail?.environment.serverId;
-    const pluginTargetMachineId = runtime?.source.kind === 'host' && machineIds.length === 1 ? machineIds[0] : undefined;
+    const pluginTargetMachineId = runtime?.source.kind === 'plugin'
+        ? runtime.machineId
+        : machineIds.length === 1 ? machineIds[0] : undefined;
     const pluginTarget = React.useMemo<React.ComponentProps<typeof DeploymentEnvironmentPluginPages>['target'] | null>(
       () => environmentServerId && environmentSourceId && detailEnvironmentId && controllerMachineId ? {
         kind: 'deploymentEnvironment', serverId: environmentServerId, projectSourceId: environmentSourceId,
