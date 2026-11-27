@@ -210,7 +210,7 @@ export function createUsageSourcesController(options: Readonly<{
             } else if ('status' in data && data.status === 'unavailable') {
                 publish({ ...snapshot, error: failure('usage_source_dismiss_unavailable') });
             }
-            return { ok: true, result: data };
+            return { ...result, result: data };
         } catch {
             if (!current()) return failure('action_account_scope_changed');
             const error = failure(controller.signal.aborted ? 'cancelled'

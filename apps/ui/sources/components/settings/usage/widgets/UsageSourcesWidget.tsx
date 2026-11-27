@@ -466,11 +466,10 @@ function useSourceFolderPrompt(controller: UsageSourcesController, sourceId: str
     // The confirming person updates the mounted row. The caller receives the root Action's observation.
     const project = getActionSpec('usage.sources.root.set').projectObservationOutput;
     const observed = projectNativeJsonValueForTransport(project?.(settled.result) ?? {});
-    return {
-      ok: true,
+    return projectActionResultForCurrentUiCommand({
+      ...settled,
       result: { ...(isJsonObject(observed) ? observed : {}), status: 'changed' },
-      automationNotices: settled.automationNotices,
-    };
+    });
   }, [controller, sourceId, root, agent, machineName, Bridge]);
 }
 

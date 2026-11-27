@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { USAGE_SOURCE_CONSENT_DISCLOSURE } from '@happier-dev/protocol/usage/usageSources';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -260,7 +261,17 @@ describe('Usage Sources body', () => {
       ...found, root: { kind: 'default', path: null }, status: 'unavailable',
     };
     const boundary = machineBoundary(initial);
-    const screen = await mount(boundary.executor);
+    const notice = { code: 'action_automations_not_checked', reason: 'matching_unavailable' } as const;
+    // The real admitted root Action answers through the app settlement boundary.
+    const screen = await mount({
+      ...boundary.executor,
+      async execute(...args) {
+        const settled = await boundary.executor.execute(...args);
+        return args[0] === 'usage.sources.root.set' && settled.ok
+          ? withActionAutomationNoticesV1(settled, [notice])
+          : settled;
+      },
+    });
     const card = 'sources.machine.mac';
     const initialRow = kind === 'found' ? `${card}.source.claude-default` : `${card}.missing.claude-default`;
     if (kind === 'missing') {
@@ -294,7 +305,7 @@ describe('Usage Sources body', () => {
     expect.soft(cancelled).toMatchObject({ ok: false, errorCode: 'cancelled' });
     expect.soft(unchanged).toMatchObject({ ok: true, result: { value: { status: 'unchanged' } } });
     expect.soft(failed).toMatchObject({ ok: false, errorCode: 'usage_source_unavailable' });
-    expect.soft(changed).toMatchObject({ ok: true, result: { value: { status: 'changed' } } });
+    expect.soft(changed).toMatchObject({ ok: true, result: { value: { status: 'changed' } }, automationNotices: [notice] });
     if (changed.ok) expect.soft(changed.result).toEqual(expect.objectContaining({ value: { status: 'changed' } }));
     expect.soft(JSON.stringify(changed)).not.toContain(newRoot);
     await screen.unmount();
