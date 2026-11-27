@@ -327,6 +327,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     selectedEventRef.current = selectedEvent;
     const [configuredSetup, setConfiguredSetup] = React.useState<PluginEventAutomationCreateDraft | null>(null);
     const [sourceStatus, setSourceStatus] = React.useState<PluginEventAutomationComposerSourceStatus>('idle');
+    // Whether the setup sheet stands over the host: while it does, it says its own state and the host says nothing.
+    const [setupSheetOpen, setSetupSheetOpen] = React.useState(false);
     const [sourceFailure, setSourceFailure] = React.useState<PluginEventAutomationSetupFailure | null>(null);
     const [observationTransport, setObservationTransportState] = React.useState<
         PluginEventAutomationObservationDraft['kind']
@@ -1008,6 +1010,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                     ...(params.savedSourceSetup || params.newSourceSetup ? {
                         onApplying: () => { if (!setupScope.signal.aborted) setSourceStatus('applying'); },
                     } : {}),
+                    onPresenting: () => { if (!setupScope.signal.aborted) setSetupSheetOpen(true); },
                     eligibleEvent: currentEvent,
                     ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
                         ? { initialSource: configuredSetup.draft.source }
@@ -1092,7 +1095,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                     } else setSourceStatus('unavailable');
                 }
             } finally {
-                if (!keepSheet) sheet?.close();
+                if (!keepSheet) {
+                    sheet?.close();
+                    setSetupSheetOpen(false);
+                }
             }
         })();
     });
@@ -1226,6 +1232,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         getEventPresentation,
         sourceStatus: setupAvailabilityFailure ? 'unavailable' : sourceStatus,
         sourceFailure: setupAvailabilityFailure ?? sourceFailure,
+        setupSheetOpen,
         sourceDisplayLabel,
         sourceInstanceId,
         configureSource,
@@ -1259,6 +1266,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     }), [
         addFilterClause,
         availableObservationTransports,
+        setupSheetOpen,
         chooseEvent,
         configureSource,
         createDraft,

@@ -624,9 +624,10 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             value => changeInvestigation({ mode: 'auto_start', configuredActionId: value }), { testID: 'health-setup-investigation-action',
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
-        refusedSave ? h(Text, { tone: 'danger', value: refusedSave, testID: 'health-setup-save-refused' }) : null,
-        primaryStatus ? h(Text, { tone: 'secondary', value: primaryStatus, testID: 'health-setup-primary-status' }) : null,
+        // Beside the primary, never below the fold: its refusal first, else what it waits on (R19-D5).
         h(ModalCardFooterActions, {
+            ...(refusedSave ? { note: refusedSave, noteTone: 'danger' as const, noteTestID: 'health-setup-save-refused' }
+                : primaryStatus ? { note: primaryStatus, noteTestID: 'health-setup-primary-status' } : {}),
             // Keep both incomplete edits and the already settled Environment preview with this one open form.
             captureDraft: addingNew ? () => saving ? undefined : JSON.parse(JSON.stringify({
                 check: editedDraft,

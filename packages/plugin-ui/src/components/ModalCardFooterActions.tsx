@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { View } from 'react-native';
 import { HappierModalCardFooterActions } from '../presentation/interaction/ModalCardFooterActions.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
 import { Button } from './Button.js';
@@ -9,7 +10,9 @@ import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 export type ModalCardFooterActionsProps = Readonly<{
   cancel?: Readonly<{ onPress: () => void; testID?: string; disabled?: boolean }>;
   cancelLabel?: string;
+  /** One line beside the primary: what it waits on, or its refusal (`noteTone: 'danger'`, announced as it appears). */
   note?: string | null;
+  noteTone?: 'secondary' | 'danger';
   noteTestID?: string;
   /** Snapshot the form's unsaved input when its containing setup is moved to another Machine. */
   captureDraft?: () => unknown;
@@ -30,12 +33,19 @@ export function ModalCardFooterActions(props: ModalCardFooterActionsProps) {
   const footerSlot = useFooterSlot();
   // The host card's footer is outside this surface's tree: the surface's own context goes along with the actions.
   const bridge = usePluginUiSurfaceBridge();
-  const footer = <HappierModalCardFooterActions phoneSheet={phoneSheet} gap={theme.spacing.small}
+  const refusal = props.noteTone === 'danger';
+  const note = props.note ? <View testID={props.noteTestID} role={refusal ? 'alert' : undefined}
+    accessibilityLiveRegion={refusal ? 'assertive' : undefined} aria-live={refusal ? 'assertive' : undefined}>
+    <Text variant="meta" tone={refusal ? 'danger' : 'muted'} numberOfLines={2}>{props.note}</Text>
+  </View> : null;
+  const actions = <HappierModalCardFooterActions phoneSheet={phoneSheet} gap={theme.spacing.small}
     cancel={props.cancel ? <Button {...props.cancel} variant="plain"
       title={props.cancelLabel ?? translate('happier.plugin-ui.common.cancel', 'Cancel')} /> : null}
-    note={props.note ? <Text testID={props.noteTestID} variant="meta" tone="muted" numberOfLines={1}>{props.note}</Text> : null}>
+    note={note}>
     {props.children}
   </HappierModalCardFooterActions>;
+  // A phone sheet's actions fill its width, so the note takes its own line above them instead of being dropped.
+  const footer = note && phoneSheet ? <View style={{ gap: theme.spacing.small }}>{note}{actions}</View> : actions;
   // The slot holds the latest footer; it renders apart from this form, so republishing never re-renders the form.
   useEffect(() => { footerSlot?.(bridge(footer), props.captureDraft); });
   useEffect(() => () => footerSlot?.(null), [footerSlot]);

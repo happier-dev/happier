@@ -1160,7 +1160,7 @@ it.each([
     }
 });
 
-it.each(['configured', 'refused'] as const)('settles native Add check after showing setup progress (%s)', async outcome => {
+it.each(['configured', 'refused'] as const)('settles native Add check while its open sheet shows the progress (%s)', async outcome => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { PluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
     const { Modal } = await import('@/modal');
@@ -1252,11 +1252,13 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
         await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(1));
         expect(rpc.hostActions).toEqual([]);
         expect(onSettled).not.toHaveBeenCalled();
+        // The open native sheet says its own state; the host says nothing behind it (R19-D5 stale "Opening…").
+        expect(screen.getTextContent()).not.toContain('Opening this check');
         const settle: unknown = Reflect.get(Object(modal.mock.calls[0]?.[0].props), 'onSettle');
         if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
         await act(async () => { settle({ kind: 'submitted', input: setupInput }); });
         await waitForHomeGovernance(() => expect(rpc.hostActions).toHaveLength(1));
-        expect(screen.getTextContent()).toContain('Saving this check');
+        expect(screen.getTextContent()).not.toContain('Saving this check');
         expect(onSettled).not.toHaveBeenCalled();
         await act(async () => { actionResponse.resolve(); });
         if (outcome === 'refused') {

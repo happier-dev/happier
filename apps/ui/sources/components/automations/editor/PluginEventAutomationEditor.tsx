@@ -306,8 +306,9 @@ export function PluginEventAutomationEditor(props: Readonly<{
         if (waiting) return <>
             {newSetup && model.nativeSetupProjectionTargets &&
                 <PluginPresentedExecutionOriginProjectionDemand targets={model.nativeSetupProjectionTargets} />}
-            <SurfaceStateCard size="line" kind="loading"
-                title={setup.waitingTitle?.(setupMachineName, applying ? 'applying' : 'opening') ?? t('common.loading')} />
+            {/* The open setup sheet says its own opening and saving; a line behind it would only go stale (R19-D5). */}
+            {model.setupSheetOpen ? null : <SurfaceStateCard size="line" kind="loading"
+                title={setup.waitingTitle?.(setupMachineName, applying ? 'applying' : 'opening') ?? t('common.loading')} />}
         </>;
         if (model.sourceStatus === 'configured') return null;
         return setup.renderUnavailable(retrySetup, setupMachineName, model.sourceFailure);

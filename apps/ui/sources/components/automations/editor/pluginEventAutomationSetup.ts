@@ -286,6 +286,8 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     present?: typeof presentActionInputForm;
     presentSetupSurface?: typeof presentPluginEventAutomationSetupSurface;
     onApplying?: () => void;
+    /** The setup sheet is about to stand over the page: it says its own state from here on. */
+    onPresenting?: () => void;
     commandBridge?: Parameters<typeof presentPluginEventAutomationSetupSurface>[0]['commandBridge'];
     dispatch?: PluginContributedActionDispatch;
 }>): Promise<SetupOutcome> {
@@ -397,6 +399,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;
                         }
+                        params.onPresenting?.();
                         const surfaceSettlement = await (
                             params.presentSetupSurface ?? presentPluginEventAutomationSetupSurface
                         )({
@@ -473,6 +476,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                         }
                         if (submission.kind === 'stale') return await selection.result;
                     }
+                    params.onPresenting?.();
                     (params.present ?? presentActionInputForm)({
                         form: selection.form,
                         signal: operationScope.signal,
