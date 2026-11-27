@@ -55,7 +55,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         REDISMS_DISABLE_POSTINSTALL: '1'
         HAPPIER_INSTALL_CROSS_TARGET_OPTIONALS: ${{ inputs.cross-target-optionals }}
         PNPM_INSTALL_ARGS: ${{ inputs.args }}

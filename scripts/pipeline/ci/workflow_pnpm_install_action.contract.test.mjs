@@ -456,17 +456,27 @@ test('the Gate reuses package outputs only inside one build epoch and saves them
   }
 });
 
+test('pnpm-workspace.yaml is the one owner that keeps onnxruntime-node from fetching its CUDA archive', () => {
+  // onnxruntime-node 1.21.0's postinstall only downloads a Linux x64 CUDA archive, which now returns 404
+  // (0.2 releases 2026-11-25.1 and 2026-11-26). pnpm 12 passes no .npmrc keys to lifecycle scripts, so denying
+  // the build in the workspace config is what reaches every install: CI, Docker stages, EAS and local.
+  for (const cwd of [repoRoot, path.join(repoRoot, 'apps', 'ui')]) {
+    const allowBuilds = JSON.parse(execFileSync('pnpm', ['config', 'get', 'allowBuilds', '--json'], { cwd, encoding: 'utf8' }));
+    assert.equal(allowBuilds['onnxruntime-node'], false, `pnpm installs from ${path.relative(repoRoot, cwd) || '.'} must deny the build`);
+  }
+
+  const copies = [installActionPath, path.join(repoRoot, 'Dockerfile'), path.join(repoRoot, 'dagger', 'src', 'index.ts'),
+    ...fs.readdirSync(workflowsDir).filter((entry) => /\.ya?ml$/.test(entry)).map((entry) => path.join(workflowsDir, entry))]
+    .filter((file) => fs.readFileSync(file, 'utf8').includes('ONNXRUNTIME_NODE_INSTALL_CUDA'));
+  assert.deepEqual(copies.map((file) => path.relative(repoRoot, file)), []);
+});
+
 test('GitHub workflows route dependency installs through the shared install-pnpm-dependencies action', () => {
   const actionRaw = fs.readFileSync(installActionPath, 'utf8');
   assert.match(
     actionRaw,
     /scripts\/ci\/setup-pnpm\.mjs/,
     'expected the shared pnpm setup before dependency installation',
-  );
-  assert.match(
-    actionRaw,
-    /ONNXRUNTIME_NODE_INSTALL_CUDA:\s*skip/,
-    'expected install-pnpm-dependencies action to skip optional ONNX Runtime CUDA downloads in CI',
   );
 
   const workflowFiles = fs

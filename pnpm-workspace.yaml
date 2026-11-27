@@ -125,7 +125,7 @@ allowBuilds:
   "@shopify/react-native-skia": true
   cbor-extract: true
   protobufjs: true
-  onnxruntime-node: true
+  onnxruntime-node: false
   core-js: false
   "@sentry/node-cpu-profiler": true
   "@sentry/cli": true

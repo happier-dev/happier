@@ -9,6 +9,19 @@ describe('apps/cli package publish contract', () => {
   const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const repoRoot = resolve(cliRoot, '..', '..');
 
+  it('keeps the local embeddings runtime optional so a failed onnxruntime-node postinstall cannot fail npm install', () => {
+    // onnxruntime-node@1.21.0 (via @huggingface/transformers) downloads a Linux x64 CUDA archive on install that now
+    // returns 404, so a required edge fails `npm install -g @happier-dev/cli` on Linux x64. The daemon already falls
+    // back when the package is missing.
+    const cliPackageJson = JSON.parse(readFileSync(resolve(cliRoot, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+    };
+
+    expect(cliPackageJson.dependencies?.['@huggingface/transformers']).toBeUndefined();
+    expect(cliPackageJson.optionalDependencies?.['@huggingface/transformers']).toBeDefined();
+  });
+
   it('declares npm bin entrypoints for the published CLI', () => {
     const cliPackageJsonPath = resolve(cliRoot, 'package.json');
     const cliPackageJson = JSON.parse(readFileSync(cliPackageJsonPath, 'utf8')) as {

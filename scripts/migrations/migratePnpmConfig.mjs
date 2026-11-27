@@ -72,7 +72,7 @@ workspace.allowBuilds = {
   esbuild: true, '@homebridge/node-pty-prebuilt-multiarch': true, 'node-pty': true,
   sharp: true, '@prisma/engines': true, '@more-tech/react-native-libsodium': true,
   '@shopify/react-native-skia': true, 'cbor-extract': true, protobufjs: true,
-  'onnxruntime-node': true, 'core-js': false, '@sentry/node-cpu-profiler': true,
+  'onnxruntime-node': false, 'core-js': false, '@sentry/node-cpu-profiler': true,
   '@sentry/cli': true, 'ffmpeg-static': true, 'redis-memory-server': true,
   prisma: true, '@google/genai': false, '@prisma/client': true,
   // The root CLI edge is local-only; the registry package must never run its installer.

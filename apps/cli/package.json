@@ -382,7 +382,6 @@
     "@happier-dev/vercel-api": "0.0.0",
     "@happier-dev/voice-modelpacks": "0.0.0",
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
-    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@stablelib/hex": "^2.0.1",
     "@types/cross-spawn": "^6.0.6",
@@ -471,6 +470,9 @@
     "@happier-dev/plugins-review-panels": "0.0.0",
     "@happier-dev/plugins-review-slices": "0.0.0",
     "@happier-dev/plugins-machine-ssh": "0.0.0"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "0.91.1",

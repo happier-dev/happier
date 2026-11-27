@@ -28,11 +28,6 @@ test('Dagger module exposes expo-android-local-build function', () => {
   );
   assert.match(
     src,
-    /ONNXRUNTIME_NODE_INSTALL_CUDA[\s\S]*skip/,
-    'expected expoAndroidLocalBuild to skip optional ONNX Runtime CUDA downloads during in-container installs',
-  );
-  assert.match(
-    src,
     /scripts\/ci\/apt-install-with-retry\.sh/,
     'expected expoAndroidLocalBuild to use the shared apt-install-with-retry helper for transient mirror failures',
   );
