@@ -2211,6 +2211,8 @@ export const ru: TranslationStructure = {
     failureFileOther: 'Не удалось завершить операцию с файлами',
     technicalDetails: "Технические сведения",
   failureTechnicalLabels: {
+    nativeErrorCode: "Код системной ошибки",
+    nativeErrorReason: "Причина системной ошибки",
     step: "Шаг",
     signal: "Сигнал",
     requestId: "ID запроса",

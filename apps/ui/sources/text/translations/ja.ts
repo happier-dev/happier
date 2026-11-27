@@ -2364,6 +2364,8 @@ export const ja: TranslationStructure = {
     failureFileOther: 'ファイル操作を完了できませんでした',
     technicalDetails: "技術的な詳細",
   failureTechnicalLabels: {
+    nativeErrorCode: "ネイティブエラーコード",
+    nativeErrorReason: "ネイティブエラーの理由",
     step: "ステップ",
     signal: "シグナル",
     requestId: "リクエスト ID",

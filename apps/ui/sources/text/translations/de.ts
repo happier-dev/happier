@@ -1991,6 +1991,8 @@ export const de: TranslationStructure = {
         failureFileOther: 'Dateivorgang konnte nicht abgeschlossen werden',
         technicalDetails: 'Technische Details',
   failureTechnicalLabels: {
+    nativeErrorCode: "Nativer Fehlercode",
+    nativeErrorReason: "Nativer Fehlergrund",
     step: "Schritt",
     signal: "Signal",
     requestId: "Anfrage-ID",

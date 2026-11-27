@@ -1705,6 +1705,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     review: '查看',
     technicalDetails: '技術詳細資料',
     failureTechnicalLabels: {
+      nativeErrorCode: "原生錯誤代碼",
+      nativeErrorReason: "原生錯誤原因",
       step: "步驟",
       signal: "訊號",
       requestId: "請求 ID",

@@ -2210,6 +2210,8 @@ export const fr: TranslationStructure = {
     failureFileOther: "Impossible de terminer l'opération sur les fichiers",
     technicalDetails: "Détails techniques",
   failureTechnicalLabels: {
+    nativeErrorCode: "Code d’erreur natif",
+    nativeErrorReason: "Motif de l’erreur native",
     step: "Étape",
     signal: "Signal",
     requestId: "ID de requête",

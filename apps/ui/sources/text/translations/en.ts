@@ -1785,6 +1785,8 @@ const enApprovals = {
   failureFileOther: "Couldn't finish the file operation",
   technicalDetails: 'Technical details',
   failureTechnicalLabels: {
+    nativeErrorCode: "Native error code",
+    nativeErrorReason: "Native error reason",
     step: "Step",
     signal: "Signal",
     requestId: "Request ID",
