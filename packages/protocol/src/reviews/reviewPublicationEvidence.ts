@@ -6,6 +6,7 @@ import { ExecutionRunStructuredRunRefSchema } from '../messages/structured/execu
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
+import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 
 /** The bounded question/assumption projection already shown by Review detail; no findings or transcript. */
 export const ReviewQuestionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
@@ -58,6 +59,11 @@ export const ReviewReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictObject(
   reviewOutcome: z.optional(z.enum(['complete', 'partial', 'failed', 'unavailable'])),
   quality: z.optional(ReviewQualityV1Schema),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
+  error: z.optional(ActionExecuteFailureSchema.shape.error),
+  requestId: ActionExecuteFailureSchema.shape.requestId,
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
+  details: ActionExecuteFailureSchema.shape.details,
+  effectAttempted: ActionExecuteFailureSchema.shape.effectAttempted,
   errorCode: z.optional(z.string().check(z.minLength(1))), materialization: z.optional(ReviewPublicationMaterializationSchema),
   /** This reviewer's own run or Session leaf timing, in epoch ms, when its host observed it. */
   startedAt: z.optional(z.number().check(z.int(), z.nonnegative())),

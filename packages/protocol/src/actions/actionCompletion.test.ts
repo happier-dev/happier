@@ -4,10 +4,34 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { getActionSpec } from './actionSpecs.js';
 import { serializeActionSpec } from './actionCatalog.js';
 import { reviewStartExecutionRunCompletion } from './specs/executionRunCompletion.js';
+import { ActionExecuteFailureSchema } from './actionExecutionResult.js';
+import { withExecutionRunStartFailureDetails } from '../execution/runs/responseSchemas.js';
 import { readActionCompletionRunObservationV1, prepareActionCompletionV1,
   freezeActionCompletionContractV1, resumeActionCompletionV1 } from './actionCompletion.js';
 
 describe('Action completion contract', () => {
+  it('retains a refused reviewer launch through the strict Review terminal output', () => {
+    const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'review_engine_unavailable',
+      error: 'Reconnect the reviewer account.', requestId: 'launch-request',
+      failureCause: { phase: 'review.launch', errorClass: 'HttpStatusError', errorCode: 'account_disconnected', httpStatus: 403 },
+      details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'), effectAttempted: false });
+    const value = reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId: null,
+      results: [{ key: 'reviewer-1', ...refusal }] }, []);
+    const { ok: _ok, ...failure } = refusal;
+    expect(reviewStartExecutionRunCompletion.terminalOutputSchema.parse(value))
+      .toMatchObject({ perEngineOutcome: [{ key: 'reviewer-1', outcome: 'launch_failed', ...failure }] });
+  });
+  it('retains a refused narration launch through the strict Review terminal output', () => {
+    const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'review_narrator_unavailable',
+      error: 'Reconnect the narrator account.', requestId: 'narration-request',
+      failureCause: { phase: 'review.narration', errorClass: 'HttpStatusError', errorCode: 'account_disconnected', httpStatus: 403 },
+      details: { reason: 'account_disconnected' }, effectAttempted: false });
+    const value = reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId: null,
+      results: [], narration: { state: 'failed', ...refusal } }, []);
+    const { ok: _ok, ...failure } = refusal;
+    expect(reviewStartExecutionRunCompletion.terminalOutputSchema.parse(value))
+      .toMatchObject({ narration: { outcome: 'launch_failed', ...failure } });
+  });
   it('retains the admitted Review binding after a clean direct reviewer completes', () => {
     const declaration = reviewStartExecutionRunCompletion;
     const reviewRound = { reviewId: 'review-existing', roundOrdinal: 2 };

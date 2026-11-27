@@ -50,7 +50,7 @@ export async function readReviewStartEngineInventoryV1(deps: ActionExecutorDeps,
     return { ok: false, result: { ok: true,
       result: reviewStartExecutionRunCompletion.terminal({ intent: 'review',
         sessionId: detached ? null : resolveSessionIdFromInput(input, context),
-        results: [{ key: input.reviewReviewerId, ok: false, errorCode: refusal.errorCode }], reviewRound: round }, []),
+        results: [{ key: input.reviewReviewerId, ...refusal }], reviewRound: round }, []),
     } };
   }
 }

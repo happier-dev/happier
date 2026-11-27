@@ -1080,6 +1080,15 @@ mixed-development adapter changes.
 
 ## Review rosters and completion (unreleased 0.3)
 
+Reviewer launch outcomes and settled round reasons retain the original Action's
+optional message, request ID, failure cause, details and effect evidence. These
+fields reuse the canonical Action failure schemas and grant no retry or execution
+authority. Earlier receipts and rounds without them remain readable. The result,
+reason and nested cause remain closed; matching development Protocol, CLI and UI
+readers reload together under the unpublished 0.3 direct cut. The scoped-clean
+`../0.2` frontier at `98dc0c7d3665f2a84fa263d35064e6d915132ce2` has no Review
+Artifact or completion reader. No migration, wire epoch or adapter is introduced.
+
 Session status reads with `includeAcceptedWorkspace` also project the accepted
 Project's `projectContextSource`: the existing personal, source, or unavailable
 result derived from that Account's checkout census. Both CLI and UI publish it;

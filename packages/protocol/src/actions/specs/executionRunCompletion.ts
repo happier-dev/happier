@@ -11,7 +11,7 @@ import { ReviewPublicationEvidenceSchema, ReviewReviewerOutcomeV1Schema } from '
 import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1 } from '../../reviews/reviewArtifactV1.js';
 import { reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
 import { parseWorkflowRunStartActionResultReferenceV1, type WorkflowRunActionResultReferenceV1 } from '../../workflows/actionsV1.js';
-import { ActionExecuteResultSchema } from '../actionExecutionResult.js';
+import { ActionExecuteResultSchema, parseActionExecuteFailure } from '../actionExecutionResult.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 
 import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
@@ -26,7 +26,10 @@ const FanoutOutputSchema = lazyZodSchema(() => z.looseObject({
   reviewRound: z.optional(ReviewRoundBindingV1Schema),
   results: z.array(z.discriminatedUnion('ok', [
     z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(true), result: z.looseObject({ runId: z.string().check(z.minLength(1)) }) }),
-    z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(false), errorCode: z.optional(z.string().check(z.minLength(1))), error: z.optional(z.string().check(z.minLength(1))) }),
+    z.looseObject({ key: z.string().check(z.minLength(1)), ok: z.literal(false), errorCode: z.optional(z.string().check(z.minLength(1))),
+      error: ReviewReviewerOutcomeV1Schema.shape.error, requestId: ReviewReviewerOutcomeV1Schema.shape.requestId,
+      failureCause: ReviewReviewerOutcomeV1Schema.shape.failureCause, details: ReviewReviewerOutcomeV1Schema.shape.details,
+      effectAttempted: ReviewReviewerOutcomeV1Schema.shape.effectAttempted }),
   ])),
 }));
 
@@ -119,13 +122,25 @@ function runTiming(outcome: ExecutionRunTerminalObservationWithTiming) {
 }
 
 function launchFailureOutcomes(output: unknown, intent: 'review' | 'plan') {
-  return readLaunches(output, intent).failed.map(({ key, errorCode }) => ({ key, errorCode, outcome: 'launch_failed' as const }));
+  // Launch identities are scheduling facts; terminal evidence consumes the full
+  // retained producer receipt rather than that deliberately narrow projection.
+  return readFanoutOutput(output, intent).results.flatMap(item => item.ok ? [] : [{
+    key: item.key, errorCode: item.errorCode ?? item.error ?? 'execution_run_failed', outcome: 'launch_failed' as const,
+    ...(item.error === undefined ? {} : { error: item.error }),
+    ...(item.requestId === undefined ? {} : { requestId: item.requestId }),
+    ...(item.failureCause === undefined ? {} : { failureCause: item.failureCause }),
+    ...(item.details === undefined ? {} : { details: item.details }),
+    ...(item.effectAttempted === undefined ? {} : { effectAttempted: item.effectAttempted }),
+  }]);
 }
 
 const NarrationTerminalValueSchema = lazyZodSchema(() => z.strictObject({ runId: z.optional(z.string().check(z.minLength(1))),
   outcome: z.enum(['completed', 'failed', 'cancelled', 'launch_failed']),
   outputState: z.optional(z.enum(['complete', 'partial', 'failed', 'cancelled'])),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
+  error: ReviewReviewerOutcomeV1Schema.shape.error, requestId: ReviewReviewerOutcomeV1Schema.shape.requestId,
+  failureCause: ReviewReviewerOutcomeV1Schema.shape.failureCause, details: ReviewReviewerOutcomeV1Schema.shape.details,
+  effectAttempted: ReviewReviewerOutcomeV1Schema.shape.effectAttempted,
   errorCode: z.optional(z.string().check(z.minLength(1))), result: z.optional(StrictJsonValueSchema),
 }));
 
@@ -144,6 +159,20 @@ function narrationTerminalValue(run: ObservedRun, purpose: 'input' | 'stored') {
     ...(outputState && outputState !== 'pending' && outputState !== 'writing' ? { outputState } : {}),
     ...(run.outcome.kind === 'completed' ? { result: run.outcome.result }
       : run.outcome.code ? { errorCode: run.outcome.code } : {}),
+  };
+}
+
+function narrationLaunchFailure(value: unknown) {
+  const retained = readRecord(value);
+  const failure = parseActionExecuteFailure({ ...retained, ok: false,
+    errorCode: retained.errorCode ?? 'review_narration_failed',
+    error: retained.error ?? retained.errorCode ?? 'review_narration_failed' });
+  return { outcome: 'launch_failed' as const, errorCode: failure?.errorCode ?? 'review_narration_failed',
+    ...(failure?.error === undefined ? {} : { error: failure.error }),
+    ...(failure?.requestId === undefined ? {} : { requestId: failure.requestId }),
+    ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+    ...(failure?.details === undefined ? {} : { details: failure.details }),
+    ...(failure?.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
   };
 }
 
@@ -245,7 +274,7 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
         ...launchFailureOutcomes(output, 'review'),
       ],
       ...(retained.narration ? { narration: narrationRun ? narrationTerminalValue(narrationRun, purpose)
-        : { outcome: 'launch_failed', errorCode: 'review_narration_failed' } } : {}),
+        : narrationLaunchFailure(retained.narration) } : {}),
     };
   },
 };

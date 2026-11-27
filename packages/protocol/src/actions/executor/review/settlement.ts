@@ -5,6 +5,7 @@ import type { ReviewRoundBindingV1 } from '../../../reviews/reviewArtifactV1.js'
 import type { ReviewReviewerOutcomeV1 } from '../../../reviews/reviewPublicationEvidence.js';
 import { ReviewStartTerminalValueV1Schema } from '../../specs/executionRunCompletion.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
+import { parseActionExecuteFailure } from '../../actionExecutionResult.js';
 
 /** Collect only retained Review receipts and ordinary collect_outcomes envelopes. */
 export function collectReviewRoundOutcomes(input: Readonly<{
@@ -47,9 +48,9 @@ export async function dispatchReviewSettlementAction(input: Readonly<{
   // The settled round owns coverage. Zero usable results must stop the Workflow even
   // when a native Run was acknowledged, or when the reviewer provided no typed cause.
   if (round.state === 'failed') {
-    const errorCode = round.reviewerOutcomes?.find(outcome => outcome.reason?.errorCode)?.reason?.errorCode
-      ?? 'review_output_unavailable';
-    return { ok: false, errorCode, error: errorCode };
+    const reason = round.reviewerOutcomes?.find(outcome => outcome.reason?.errorCode)?.reason;
+    const errorCode = reason?.errorCode ?? 'review_output_unavailable';
+    return parseActionExecuteFailure({ ...reason, ok: false, errorCode, error: reason?.error ?? errorCode })!;
   }
   return { ok: true, result: parsed.reviewRound };
 }

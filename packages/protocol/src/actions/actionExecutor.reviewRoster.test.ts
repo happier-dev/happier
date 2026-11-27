@@ -8,6 +8,8 @@ import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 import { dispatchReviewDispatch2 } from './executor/review/dispatch.js';
 import { startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from './actionExecutionResult.js';
+import { ReviewStartTerminalValueV1Schema } from './specs/executionRunCompletion.js';
 
 function observeReviewPersistence(events: string[]) {
   let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
@@ -24,6 +26,34 @@ function observeReviewPersistence(events: string[]) {
 }
 
 describe('Review roster leaves', () => {
+  it('retains the engine inventory refusal through Workflow completion and settled round reads', async () => {
+    const records = createInMemoryReviewRecordPortV1();
+    const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'review_engine_unavailable',
+      error: 'Reconnect the selected reviewer account.', requestId: 'inventory-request',
+      failureCause: { phase: 'review.engine.inventory', errorClass: 'HttpStatusError', errorCode: 'account_disconnected', httpStatus: 403 },
+      details: { reason: 'account_disconnected' }, effectAttempted: false });
+    const reviewRound = await records.start({ reviewId: 'refused-review', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: ['reviewer-1'], startedAt: 1 });
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      reviewEnginesList: async () => { throw createActionExecuteFailureError(refusal); },
+    } satisfies ActionExecutorDeps);
+    const result = await executor.execute('review.start', { sessionId: 'source-session', scope: 'repository',
+      reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review this repository.',
+      reviewRound, reviewReviewerId: 'reviewer-1', reviewRoundSettlement: 'workflow',
+    }, { surface: 'ui', defaultSessionId: 'source-session', defaultSessionMachineId: 'source-machine' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { perEngineOutcome: [{ key: 'reviewer-1', outcome: 'launch_failed',
+      errorCode: refusal.errorCode, error: refusal.error, requestId: refusal.requestId,
+      failureCause: refusal.failureCause, details: refusal.details }] } });
+    if (!result.ok) throw new Error('Expected settled reviewer refusal');
+    const terminal = ReviewStartTerminalValueV1Schema.parse(result.result);
+    const settled = await executor.execute('review.settle_round', { reviewRound, reviewerResults: [terminal] },
+      { surface: 'agent', actionCaller: { kind: 'workflowRun', runId: 'review-workflow',
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } } });
+    expect(settled).toMatchObject(refusal);
+    expect((await records.read(reviewRound.reviewId))?.rounds[0]?.reviewerOutcomes?.[0]?.reason)
+      .toMatchObject({ run: 'launch_failed', errorCode: refusal.errorCode, error: refusal.error,
+        requestId: refusal.requestId, failureCause: refusal.failureCause, details: refusal.details });
+  });
   it.each(['clawpatch', 'roborev', 'deepsec'].flatMap(engineId =>
     ['claude', 'codex'].map(runnerId => ({ engineId, runnerId })),
   ))('routes the Team model through the $runnerId runner of $engineId', async ({ engineId, runnerId }) => {

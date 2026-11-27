@@ -262,7 +262,8 @@ describe('Action completion owner', () => {
       reviewedFingerprint: null, commentIds: ['comment-1'], perEngineOutcome: [
         { key: 'codex', runId: 'run-codex', outcome: 'completed', materialization: { kind: 'complete' } },
         { key: 'claude', runId: 'run-claude', outcome: 'failed', errorCode: 'review_failed' },
-        { key: 'gemini', outcome: 'launch_failed', errorCode: 'engine_busy' },
+        { key: 'gemini', outcome: 'launch_failed', errorCode: 'engine_busy', error: 'engine_busy',
+          details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') },
       ],
     } });
   });
