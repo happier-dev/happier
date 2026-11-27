@@ -698,7 +698,7 @@ describe('Channels configured-Fix migration boundary', () => {
 describe('Account Data Collection candidate preparation', () => {
     it('attributes candidate HTTP spans to the declared Collection and trigger without row content', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
         const candidate = createCandidate({
             migrate: value => ({ ...value, status: 'open' }),
             post: async url => url.endsWith('/source-page')
@@ -780,9 +780,8 @@ describe('Account Data Collection candidate preparation', () => {
         const bind = (id: string) => ({ pluginId: id, occurrenceId: `occurrence-${id}`,
             signal: new AbortController().signal, isOccurrenceCurrent: () => true });
         const accounts = manifests.map(manifest => host.bind(bind(manifest.id)));
-        await vi.waitFor(() => expect(requests.length).toBeGreaterThanOrEqual(48));
         expect(migrations).not.toHaveBeenCalled();
-        expect(requests).toHaveLength(48);
+        expect(requests).toHaveLength(0);
         const definition = { ...targetContribution, migrations: [{ ...targetContribution.migrations[0]!,
             migrate: (value: Readonly<Record<string, JsonValue>>) => ({ ...value, status: 'open' }),
         }] };
@@ -793,7 +792,7 @@ describe('Account Data Collection candidate preparation', () => {
         expect(staged).toEqual(new Set([manifests[0]!.id]));
         expect(requests.filter(url => url.endsWith('/candidate-preparation/source-page'))).toHaveLength(1);
         expect(requests.filter(url => url.endsWith('/candidate-preparation/stage'))).toHaveLength(1);
-        expect(requests.filter(url => url.endsWith('/collection-writers/claim')).length).toBeLessThanOrEqual(51);
+        expect(requests.filter(url => url.endsWith('/collection-writers/claim'))).toHaveLength(3);
         // The readiness owner invokes the existing publication lifecycle in
         // the background. Direct UI reads need its upgrade recovery even when
         // no daemon Collection operation ever demands this second plugin.
@@ -815,7 +814,7 @@ describe('Account Data Collection candidate preparation', () => {
 
     it.each(['transient', 'terminal'] as const)('resumes a transiently failed writer upgrade while retaining terminal cleanup (%s)', async failureKind => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
         try {
         const manifest = PluginManifestV2Schema.parse({
             schemaVersion: 2, id: pluginId, version: '2.0.0', displayName: 'Resumable Collection',
