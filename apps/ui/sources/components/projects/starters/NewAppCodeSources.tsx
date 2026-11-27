@@ -39,14 +39,13 @@ const identityOf = (selector: ProjectSourceRepositorySelectorV1) =>
 /**
  * Deploy an app → Your code (owner ruling 11-14 20:50Z): the Account's Projects that have a repository, a search that
  * narrows them, and a pasted GitHub or GitLab link read by a Machine's hosting owner (`useProjectSourceAddress`). A link
- * to a Project already here picks that Project; any other repository becomes the chosen tile, handed to the host with
- * the Sources' own save so Continue keeps it as this Home's Source and opens its new Environment (O-DEPLOY 11-15
- * 17:33Z). A link is read as it is pasted or typed. A repository-free Project holds stored definitions only, so it is
- * reached through Already built.
+ * to a Project already here picks that Project. A new repository is attached to the opening Project when it has no
+ * repository. When the wizard opened without a Project or its repository differs, the Sources writer creates one.
  */
 export function NewAppCodeSources(
   props: Readonly<{
     scope: ServerAccountScope;
+    projectSourceId?: string | null;
     value: string | null;
     onChange: (project: Pick<ProjectSourceV1, 'id' | 'name'> | null) => void;
     /** A pasted repository that is not a Project here yet; null when a Project or nothing is chosen. */
@@ -77,6 +76,20 @@ export function NewAppCodeSources(
     } else {
       setSaveIssue(null);
       props.onChooseRepository(selector, async () => {
+        if (props.projectSourceId) {
+          await controller.select(props.projectSourceId);
+          const { current, detailStatus, issue } = controller.getSnapshot();
+          if (detailStatus !== 'ready' || current?.id !== props.projectSourceId) {
+            setSaveIssue(issue ?? 'source_unavailable');
+            return undefined;
+          }
+          if (!current.repository) {
+            const updated = await controller.updateSource({ repository: selector }, current);
+            setSaveIssue(updated?.ok ? null : updated?.error ?? controller.getSnapshot().issue ?? 'source_save_failed');
+            return updated?.ok ? updated.source : undefined;
+          }
+          if (sameScmHostingRepositoryIdentity(identityOf(current.repository), identity)) return current;
+        }
         controller.beginCreate({ repository: selector });
         const source = await controller.save();
         setSaveIssue(source ? null : controller.getSnapshot().issue ?? 'source_save_failed');

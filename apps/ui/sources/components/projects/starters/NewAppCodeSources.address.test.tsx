@@ -331,3 +331,43 @@ it('keeps a pasted repository as a Source through the Sources writer when the ho
     await screen.unmount();
   }
 });
+
+it('keeps a pasted repository on the empty Project that opened Deploy an app', async () => {
+  const { serverId } = await homeWithAddressReader('https://deploy-your-code-in-project.test', 'i');
+  await homes.setActionPolicy(serverId, 'projects.sources.update', 'ui', 'allowed');
+  const source = { id: 'existing-project', revision: 4, name: 'Field Notes',
+    audience: [], createdByAccountId: 'account-owner' };
+  homes.answer(serverId, 'GET /v1/projects/sources', {
+    body: { ok: true, sources: [source], coverage: { complete: true, nextCursor: null } },
+  });
+  const reads = vi.fn(() => ({ body: { ok: true as const, canManage: true, source } }));
+  homes.answer(serverId, 'GET /v1/projects/sources/existing-project', { select: reads });
+  const repository = selectorFor('acme/ops-tools');
+  const writes = vi.fn((_input: unknown) => ({ body: { ok: true as const, canManage: true, source: { ...source, revision: 5, repository } } }));
+  homes.answer(serverId, 'PATCH /v1/projects/sources/existing-project', {
+    select: writes,
+  });
+  const onChooseRepository = vi.fn();
+  const screen = await renderAccountScreen(
+    <SearchHost scope={{ serverId, accountId: 'account-owner' }} projectSourceId={source.id}
+      value={source.id} onChange={vi.fn()} onChooseRepository={onChooseRepository}
+      chosenRepository={null} columns={2} />,
+  );
+  try {
+    const field = () => screen.root.findAll(node =>
+      node.props.testID === 'newApp.code.address' && typeof node.props.onChangeText === 'function')[0]!;
+    await waitForHomeGovernance(() => expect(field()).toBeTruthy());
+    await act(async () => { field().props.onChangeText('https://github.com/acme/ops-tools'); });
+    await waitForHomeGovernance(() => expect(onChooseRepository).toHaveBeenCalledOnce());
+    let saved: unknown;
+    await act(async () => { saved = await onChooseRepository.mock.calls[0]![1](); });
+    expect(reads).toHaveBeenCalledOnce();
+    expect(saved, screen.getTextContent()).toMatchObject({ id: source.id, name: source.name, repository });
+    expect(writes.mock.calls.map(([input]) => input)).toEqual([expect.objectContaining({ expectedRevision: source.revision,
+      patch: { repository },
+    })]);
+    expect(homes.requestsFor('/v1/projects/sources').filter(request => request.method === 'POST')).toHaveLength(0);
+  } finally {
+    await screen.unmount();
+  }
+});

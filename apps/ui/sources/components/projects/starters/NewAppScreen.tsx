@@ -611,7 +611,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               setSavingSource(true);
               void pastedRepository.save().then((source) => {
                 setSavingSource(false);
-                if (source) startDeploy({ kind: 'repository', projectSourceId: source.id, createdProjectName: source.name });
+                if (source) startDeploy({ kind: 'repository', projectSourceId: source.id,
+                  ...(source.id === props.projectSourceId ? { projectName: source.name } : { createdProjectName: source.name }) });
               });
               return;
             }
@@ -752,7 +753,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {header(t('newApp.startTitle'), t('newApp.startDescription'))}
         {scope ? (
           <View>
-            <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
+            <NewAppCodeSources scope={scope} projectSourceId={props.projectSourceId}
+              value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
               chosenRepository={pastedRepository?.selector ?? null} onChooseRepository={choosePastedRepository}
               query={query} onQueryChange={setQuery} />
           </View>
