@@ -10438,8 +10438,10 @@ optional latest-transition checkpoint projection follows the unreleased 0.3
 observer/reader reload contract above.
 Deployment Events project the existing terminal receipt, including its recorded
 failure phase, and wake through the existing receipt account-change stream.
-Their configured observation start survives restart; occurrence identity and
-ordinary Event admission retain replay deduplication.
+Their configured observation start survives restart. For failed and successful
+deployment receipts, Event admission skips new occurrences whose settlement time
+predates the trigger's committed creation time, including occurrences discovered
+after reconnect. An already admitted occurrence rejoins its existing Run.
 
 Managed setup retains optional `settledAtMs` on the existing operation result;
 MCP registry origins retain optional `upstreamObservedAt` on changed upstream

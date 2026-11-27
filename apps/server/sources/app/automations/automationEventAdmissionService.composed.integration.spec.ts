@@ -50,7 +50,7 @@ import {
     HealthCheckTransitionV1ProtocolSchema,
 } from "@happier-dev/protocol/deployments/healthCheckSourceV1";
 import { createHealthCheckSourceInstanceIdV1 } from "@happier-dev/protocol/deployments/healthCheckSubjectV1";
-import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSourceConfigV1Schema } from "@happier-dev/protocol/deployments/deploymentReceiptEventsV1";
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentFailedEventV1Schema, DeploymentReceiptEventSourceConfigV1Schema } from "@happier-dev/protocol/deployments/deploymentReceiptEventsV1";
 import type { AutomationSubjectV1, AutomationSubjectContextV1 } from "@happier-dev/protocol/automations/automationSubjectV1";
 
 import { eventRouter } from "@/app/events/eventRouter";
@@ -3683,6 +3683,65 @@ describe("Automation Event admission", () => {
                 eventLocalId: eventRef.localId, subjectKind: "environment" } });
             expect(JSON.parse(retained.definitionEnvelope!)).toMatchObject({ t: "plain", v: { definition: { subject } } });
         } finally { await app.close(); }
+    });
+
+    it("rejoins the post-creation deployment Run and skips the older receipt on reconnect", async () => {
+        await seed({ healthObservation: true });
+        const eventRef = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed;
+        const setupId = `${eventRef.localId}/setup`;
+        const base = releaseFacts({ healthObservation: true });
+        const machineServicesManifest = readStoredPluginManifestV2(JSON.parse(readFileSync(new URL(
+            "../../../../cli/assets/bundled-plugin-manifests/machine-services.json", import.meta.url,
+        ), "utf8")), eventRef.pluginId);
+        if (!machineServicesManifest) throw new Error("Expected the generated Machine services manifest");
+        // Use the same real producer declarations as the CLI composed watcher.
+        const release = normalizePluginReleaseFactsV1({ ...base, normalizedManifest: {
+            ...base.normalizedManifest, contributes: {
+                actions: machineServicesManifest.contributes.actions?.filter(action => action.id === setupId),
+                events: machineServicesManifest.contributes.events?.filter(event => event.id === eventRef.localId),
+            },
+        } });
+        await db.accountPluginRelease.update({
+            where: { accountId_pluginId_version: { accountId: ACCOUNT_ID, pluginId: eventRef.pluginId, version: PLUGIN_VERSION } },
+            data: { normalizedManifest: release.normalizedManifest },
+        });
+        // The reconnect capture retained a failure between source setup and trigger commit.
+        const setupAt = 1_795_778_436_147;
+        const olderFailure = 1_795_778_555_205;
+        const createdAt = 1_795_779_137_934;
+        const newFailure = 1_795_779_223_421;
+        const sourceConfig = DeploymentReceiptEventSourceConfigV1Schema.parse({
+            v: 1, serverId: SERVER_IDENTITY_ID, observingSince: setupAt,
+        });
+        await db.automationTrigger.update({ where: { id: TRIGGER_ID }, data: {
+            eventLocalId: eventRef.localId, createdAt: new Date(createdAt),
+            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: "plain", binding: { v: 1, automationId: AUTOMATION_ID, triggerId: TRIGGER_ID, triggerRevision: 1,
+                    triggerKind: "pluginEvent", eventRef, sourceSelectorId: SOURCE_SELECTOR_ID },
+                definition: { v: 1, sourceInstanceId: "deployment:all-environments", sourceConfig,
+                    displayLabel: "All Environments", filter: null, maximumObservationAgeMs: null },
+            })),
+        } });
+        const deliver = (occurrenceId: string, occurredAt: number, observationReceivedAt: number) => {
+            const payload = DeploymentFailedEventV1Schema.parse({ environmentId: "cloudflare-environment",
+                deploymentId: occurrenceId, targetLinkId: "cloudflare-link", receiptRevision: 3,
+                observedAt: occurredAt, operation: "deploy", state: "failed", phase: "send", failureCode: "deployment_failed" });
+            return admitAutomationEventV1({ accountId: ACCOUNT_ID, caller: { ...caller, pluginId: eventRef.pluginId },
+                input: { ...input({ occurrenceId, occurredAt, payload }), eventRef, observationReceivedAt },
+            });
+        };
+        const first = await deliver("new-failure", newFailure, newFailure);
+        expect(first.results).toEqual([{ kind: "admitted", checkpointSafe: true, runId: expect.any(String) }]);
+        const run = await db.automationRun.findFirstOrThrow({ where: { accountId: ACCOUNT_ID } });
+
+        // A fresh receipt listing on reconnect delivers both receipts at the current time.
+        expect(await deliver("new-failure", newFailure, newFailure + 1)).toEqual({
+            results: [{ kind: "rejoined", checkpointSafe: true, runId: run.id }],
+        });
+        expect(await deliver("older-failure", olderFailure, newFailure + 1)).toEqual({
+            results: [{ kind: "skipped", reason: "beforeObservationStart", checkpointSafe: true }],
+        });
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
     });
 
     it("rejects a payload outside the current Event schema before creating a Run", async () => {

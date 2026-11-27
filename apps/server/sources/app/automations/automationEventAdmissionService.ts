@@ -4,6 +4,7 @@ import { AutomationStoredContentEnvelopeV1Schema } from '@happier-dev/protocol/a
 import { projectPluginAutomationSubjectsV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { automationSubjectMatchesV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { isDeploymentReceiptEventSourceV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { buildAutomationPluginEventOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1, type AutomationOccurrenceKeyV1, type AutomationPluginEventOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -124,6 +125,7 @@ const currentEventAdmissionTriggerSelect = {
     enabled: true,
     deletedAt: true,
     revision: true,
+    createdAt: true,
     kind: true,
     eventPluginId: true,
     eventLocalId: true,
@@ -158,6 +160,18 @@ async function loadCurrentEventAdmissionTriggersTx(params: Readonly<{
         select: currentEventAdmissionTriggerSelect,
     });
     return new Map(rows.map((row) => [row.id, row]));
+}
+
+/** Receipt recovery may replay settlements made after setup but before the trigger was committed. */
+function precedesDeploymentTriggerCreation(
+    trigger: CurrentEventAdmissionTrigger,
+    eventRef: AutomationEventAdmitHttpInputV1["eventRef"],
+    occurredAt: number,
+): boolean {
+    return trigger.observationTransport === "checkpointedPull"
+        && occurredAt < trigger.createdAt.getTime()
+        && trigger.sourceContractVersion !== null
+        && isDeploymentReceiptEventSourceV1({ eventRef, sourceContractVersion: trigger.sourceContractVersion });
 }
 
 type EncryptedDefinition = Extract<
@@ -701,6 +715,10 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 continue;
             }
 
+            if (precedesDeploymentTriggerCreation(trigger, params.hostEvidence.eventRef, definition.occurredAt)) {
+                assignGroupResult(results, group, skipped("beforeObservationStart"));
+                continue;
+            }
             if (definition.outcome.kind === "skipped") {
                 assignGroupResult(results, group, skipped(definition.outcome.reason));
                 continue;
@@ -1106,6 +1124,10 @@ export async function admitAutomationEventV1(params: Readonly<{
                 }
             } else {
                 assignGroupResult(results, group, refresh("observationTargetChanged"));
+                continue;
+            }
+            if (precedesDeploymentTriggerCreation(trigger, input.eventRef, input.occurredAt)) {
+                assignGroupResult(results, group, skipped("beforeObservationStart"));
                 continue;
             }
             if (!payloadValid) {
