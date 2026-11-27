@@ -8,7 +8,7 @@ import {
   installVersionedPayload,
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
+import { extractFirstPartyReleaseArchiveToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 import { resolveReleaseAssetBundle } from '@happier-dev/release-runtime/assets';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 import { DEFAULT_MINISIGN_PUBLIC_KEY } from '@happier-dev/release-runtime/minisign';
@@ -71,7 +71,7 @@ export async function installCompanionCliFromBundle({
     });
     const extractDir = join(tempDir, 'extract');
     await mkdir(extractDir, { recursive: true });
-    await extractArchivePayloadToDirectory({
+    await extractFirstPartyReleaseArchiveToDirectory({
       archiveName: downloaded.archiveName,
       archivePath: downloaded.archivePath,
       extractDir,

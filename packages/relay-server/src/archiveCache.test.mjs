@@ -80,3 +80,22 @@ test('extractReleaseArchiveIntoCache removes partial cache output after extracti
     await rm(rootDir, { recursive: true, force: true });
   }
 });
+
+test('extractReleaseArchiveIntoCache accepts checksum-verified first-party payloads beyond generic file limits', async () => {
+  // Relay payloads carry their bundled runtime dependency trees; the generic 10,000-file ceiling is for provider archives.
+  const root = await mkdtemp(join(tmpdir(), 'relay-archive-cache-scale-'));
+  try {
+    const archivePath = join(root, 'payload.zip');
+    const cacheDir = join(root, 'cache');
+    await writeFile(archivePath, createStoredZip(Array.from(
+      { length: 10_001 },
+      (_, index) => ({ name: `payload/node_modules/f${index}`, contents: 'x' }),
+    )));
+
+    await extractReleaseArchiveIntoCache({ archiveName: 'payload.zip', archivePath, cacheDir });
+
+    assert.equal(await readFile(join(cacheDir, 'payload', 'node_modules', 'f10000'), 'utf8'), 'x');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

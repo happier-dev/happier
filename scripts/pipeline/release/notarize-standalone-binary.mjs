@@ -3,7 +3,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,11 +13,11 @@ import { parseArgs } from 'node:util';
 import cliDistBuildManifest from '../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { createNodeArchive, extractNodeArchive } from './node-archive.mjs';
 
-const THIN_MACH_O_MAGICS = new Set([
-  'feedface',
-  'cefaedfe',
-  'feedfacf',
-  'cffaedfe',
+const THIN_MACH_O_MAGICS = new Map([
+  ['feedface', { littleEndian: false }],
+  ['cefaedfe', { littleEndian: true }],
+  ['feedfacf', { littleEndian: false }],
+  ['cffaedfe', { littleEndian: true }],
 ]);
 const FAT_MACH_O_MAGICS = new Map([
   ['cafebabe', { littleEndian: false, is64Bit: false }],
@@ -43,6 +43,8 @@ const BUN_STANDALONE_ENTITLEMENTS_PATH = fileURLToPath(
 const DEFAULT_GATEKEEPER_ATTEMPTS = 18;
 const DEFAULT_GATEKEEPER_RETRY_DELAY_MS = 15_000;
 const DEFAULT_GATEKEEPER_MAX_RETRY_DELAY_MS = 120_000;
+const DEFAULT_CODESIGN_ATTEMPTS = 4;
+const DEFAULT_CODESIGN_RETRY_DELAY_MS = 15_000;
 
 function isDeveloperIdApplicationSigningSelector(value) {
   const selector = String(value ?? '').trim();
@@ -61,20 +63,33 @@ function fileSha256(filePath) {
   return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-function isMachOFile(filePath) {
+function readThinMachOFileType(descriptor, offset, endExclusive) {
+  if (offset + 16 > endExclusive) return null;
+  const header = Buffer.allocUnsafe(16);
+  if (fs.readSync(descriptor, header, 0, header.length, offset) !== header.length) {
+    return null;
+  }
+  const thinFormat = THIN_MACH_O_MAGICS.get(header.subarray(0, 4).toString('hex'));
+  if (!thinFormat) return null;
+  return thinFormat.littleEndian ? header.readUInt32LE(12) : header.readUInt32BE(12);
+}
+
+function readMachOFileTypes(filePath) {
   const descriptor = fs.openSync(filePath, 'r');
   try {
     const header = Buffer.allocUnsafe(8);
     if (fs.readSync(descriptor, header, 0, header.length, 0) !== header.length) {
-      return false;
+      return null;
     }
     const magic = header.subarray(0, 4).toString('hex');
+    const fileSize = fs.fstatSync(descriptor).size;
     if (THIN_MACH_O_MAGICS.has(magic)) {
-      return true;
+      const fileType = readThinMachOFileType(descriptor, 0, fileSize);
+      return fileType === null ? null : [fileType];
     }
     const fatFormat = FAT_MACH_O_MAGICS.get(magic);
     if (!fatFormat) {
-      return false;
+      return null;
     }
 
     const readUInt32 = fatFormat.littleEndian
@@ -85,18 +100,18 @@ function isMachOFile(filePath) {
       : (buffer, offset) => buffer.readBigUInt64BE(offset);
     const architectureCount = readUInt32(header, 4);
     if (architectureCount < 1 || architectureCount > 32) {
-      return false;
+      return null;
     }
     const architectureSize = fatFormat.is64Bit ? 32 : 20;
     const tableSize = 8 + architectureCount * architectureSize;
-    const fileSize = fs.fstatSync(descriptor).size;
     if (tableSize > fileSize) {
-      return false;
+      return null;
     }
     const table = Buffer.allocUnsafe(architectureCount * architectureSize);
     if (fs.readSync(descriptor, table, 0, table.length, 8) !== table.length) {
-      return false;
+      return null;
     }
+    const fileTypes = [];
     for (let index = 0; index < architectureCount; index += 1) {
       const entryOffset = index * architectureSize;
       const rawOffset = fatFormat.is64Bit
@@ -106,14 +121,21 @@ function isMachOFile(filePath) {
         ? readBigUInt64(table, entryOffset + 16)
         : BigInt(readUInt32(table, entryOffset + 12));
       if (
-        rawSize < 1n
+        rawSize < 16n
         || rawOffset < BigInt(tableSize)
         || rawOffset + rawSize > BigInt(fileSize)
       ) {
-        return false;
+        return null;
       }
+      const fileType = readThinMachOFileType(
+        descriptor,
+        Number(rawOffset),
+        Number(rawOffset + rawSize),
+      );
+      if (fileType === null) return null;
+      fileTypes.push(fileType);
     }
-    return true;
+    return fileTypes;
   } finally {
     fs.closeSync(descriptor);
   }
@@ -156,14 +178,19 @@ export function listDarwinPayloadMachOCode(rawPayloadPath) {
     throw new Error(`[release] Darwin payload does not exist: ${payloadPath}`);
   }
   return walkPayloadEntries(payloadPath)
-    .filter((entry) => entry.type === 'file' && isMachOFile(entry.path))
-    .map((entry) => {
+    .filter((entry) => entry.type === 'file')
+    .map((entry) => ({ entry, fileTypes: readMachOFileTypes(entry.path) }))
+    .filter(({ fileTypes }) => fileTypes !== null)
+    .map(({ entry, fileTypes }) => {
       const executable = (entry.info.mode & 0o111) !== 0;
+      // spctl assesses only main executables (MH_EXECUTE); libraries and addons keep strict codesign checks.
+      const gatekeeperAssessable = executable && fileTypes.every((fileType) => fileType === 2);
       return {
         path: entry.path,
         relativePath: entry.relativePath,
         executable,
-        requiresJitEntitlement: executable && !entry.relativePath.includes('/'),
+        gatekeeperAssessable,
+        requiresJitEntitlement: gatekeeperAssessable && !entry.relativePath.includes('/'),
       };
     })
     .sort((left, right) => {
@@ -294,7 +321,7 @@ export function resolveDarwinPayloadNotarizationCommands({
       ['notarytool', 'log', submissionId, logPath, ...authArgs],
     ],
     assess: machOCode
-      .filter((entry) => entry.executable)
+      .filter((entry) => entry.gatekeeperAssessable)
       .map((entry) => resolveGatekeeperAssessmentCommand(entry.path)),
     ticketDelivery: 'online',
     stapled: false,
@@ -409,12 +436,36 @@ export function resolveDarwinAppBundleNotarizationCommands({
 }
 
 function run([command, args], options = {}) {
+  if (!options.capture) return runEchoingOutput([command, args], options);
   return execFileSync(command, args, {
     encoding: 'utf8',
-    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     timeout: options.timeoutMs ?? 10 * 60_000,
   });
 }
+
+// codesign and notarytool report Apple service failures only on stderr. Keep that output in the
+// job log and on the thrown error, where the retry classifiers read it (an inherited stderr
+// leaves only "Command failed").
+function runEchoingOutput([command, args], options = {}) {
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: options.timeoutMs ?? 10 * 60_000,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const error = new Error(`Command failed: ${[command, ...args].join(' ')}`);
+    error.status = result.status;
+    error.stdout = result.stdout;
+    error.stderr = result.stderr;
+    throw error;
+  }
+  return result.stdout;
+}
+
 
 function commandFailureOutput(error) {
   return [error?.message, error?.stdout, error?.stderr]
@@ -425,6 +476,75 @@ function commandFailureOutput(error) {
 function sleepSync(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return;
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.trunc(ms));
+}
+
+export function runCodesignWithRetry(
+  command,
+  {
+    attempts = DEFAULT_CODESIGN_ATTEMPTS,
+    retryDelayMs = DEFAULT_CODESIGN_RETRY_DELAY_MS,
+    runCommand = run,
+    sleep = sleepSync,
+    logger = console,
+  } = {},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return runCommand(command);
+    } catch (error) {
+      // Both mean Apple's timestamp service did not answer this signing request.
+      const timestampServiceUnavailable = /timestamp service is not available|timestamp was expected but was not found/iu.test(
+        commandFailureOutput(error),
+      );
+      if (!timestampServiceUnavailable || attempt >= attempts) {
+        throw error;
+      }
+      const nextAttempt = attempt + 1;
+      const delayMs = retryDelayMs * (2 ** (attempt - 1));
+      logger.warn?.(
+        `[release] Apple timestamp service is unavailable; retrying codesign (${nextAttempt}/${attempts})`,
+      );
+      sleep(delayMs);
+    }
+  }
+  throw new Error('[release] codesign retry loop exhausted unexpectedly');
+}
+
+const TRANSIENT_NOTARY_REQUEST_PATTERN = /NSURLErrorDomain\s+Code=-1001|HTTPError\(statusCode:\s*nil|request timed out|network connection was lost/iu;
+const NOTARY_SUBMISSION_URL_PATTERN = /\/notary\/v2\/submissions\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/iu;
+
+// `submit --wait` fails when one status poll times out, although Apple already holds the
+// submission (its id is in the failing URL). Resubmitting would notarize the archive twice, so
+// keep waiting on that submission, with the same transient-service budget as codesign.
+export function submitDarwinPayloadForNotarization(
+  submitCommand,
+  {
+    authArgs,
+    attempts = DEFAULT_CODESIGN_ATTEMPTS,
+    retryDelayMs = DEFAULT_CODESIGN_RETRY_DELAY_MS,
+    runCommand = run,
+    sleep = sleepSync,
+    logger = console,
+  },
+) {
+  const options = { capture: true, timeoutMs: 30 * 60_000 };
+  let command = submitCommand;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return runCommand(command, options);
+    } catch (error) {
+      const output = commandFailureOutput(error);
+      const submissionId = NOTARY_SUBMISSION_URL_PATTERN.exec(output)?.[1];
+      if (!submissionId || !TRANSIENT_NOTARY_REQUEST_PATTERN.test(output) || attempt >= attempts) {
+        throw error;
+      }
+      logger.warn?.(
+        `[release] Apple notary status request failed transiently; waiting on submission ${submissionId} (${attempt + 1}/${attempts})`,
+      );
+      sleep(retryDelayMs * (2 ** (attempt - 1)));
+      command = ['xcrun', ['notarytool', 'wait', submissionId, ...authArgs, '--timeout', '15m', '--output-format', 'json']];
+    }
+  }
 }
 
 export function runGatekeeperAssessment(
@@ -443,9 +563,15 @@ export function runGatekeeperAssessment(
       runCommand(command, { capture: true });
       return true;
     } catch (error) {
-      const onlineTicketPending = /source\s*=\s*Unnotarized Developer ID/iu.test(
-        commandFailureOutput(error),
-      );
+      const failureOutput = commandFailureOutput(error);
+      if (/does not seem to be an app/iu.test(failureOutput)) {
+        logger.warn?.(
+          '[release] spctl cannot assess this raw command-line Mach-O as an app; '
+          + 'accepted notarization and strict code-signature verification remain authoritative.',
+        );
+        return false;
+      }
+      const onlineTicketPending = /source\s*=\s*Unnotarized Developer ID/iu.test(failureOutput);
       if (!onlineTicketPending || attempt >= attempts) {
         throw error;
       }
@@ -557,7 +683,7 @@ export function verifyDarwinPayloadNotarizationEvidence({
       throw new Error(`[release] staged Mach-O disappeared during verification: ${entry.path}`);
     }
     verifyCode(entryPath, discoveredEntry);
-    if (discoveredEntry.executable) {
+    if (discoveredEntry.gatekeeperAssessable) {
       assessCode(entryPath);
     }
   }
@@ -781,6 +907,7 @@ export function notarizeDarwinPayload({
   githubOutput,
   environment = process.env,
   runCommand = run,
+  sleep = sleepSync,
   logger = console,
   finalizePayloadBeforeSnapshot = () => {},
 }) {
@@ -815,13 +942,18 @@ export function notarizeDarwinPayload({
       submissionId: 'PENDING',
       logPath,
     });
-    provisional.codesign.forEach((command) => runCommand(command));
+    provisional.codesign.forEach((command) => runCodesignWithRetry(command, { runCommand, sleep, logger }));
     provisional.verify.forEach((command) => runCommand(command));
     finalizePayloadBeforeSnapshot();
     const signedSnapshot = snapshotDarwinPayload(payloadPath);
     runCommand(provisional.archive);
     const archiveSha256 = fileSha256(zipPath);
-    const submitOutput = runCommand(provisional.submit, { capture: true, timeoutMs: 30 * 60_000 });
+    const submitOutput = submitDarwinPayloadForNotarization(provisional.submit, {
+      authArgs: ['--key', keyPath, '--key-id', keyId, '--issuer', issuerId],
+      runCommand,
+      sleep,
+      logger,
+    });
     const submission = JSON.parse(submitOutput);
     const submissionId = requireValue(submission.id, 'notarytool submission id');
     const status = requireValue(submission.status, 'notarytool submission status');
@@ -915,6 +1047,7 @@ export function notarizeDarwinAppBundle({
   githubOutput = '',
   environment = process.env,
   runCommand = run,
+  sleep = sleepSync,
   logger = console,
 }) {
   const bundlePath = path.resolve(requireValue(rawBundlePath, 'app bundle path'));
@@ -949,13 +1082,16 @@ export function notarizeDarwinAppBundle({
       logPath,
     });
     const provisional = plan('PENDING');
-    provisional.codesign.forEach((command) => runCommand(command));
+    provisional.codesign.forEach((command) => runCodesignWithRetry(command, { runCommand, sleep, logger }));
     provisional.verify.forEach((command) => runCommand(command));
     runCommand(provisional.archive);
     const archiveSha256 = fileSha256(zipPath);
-    const submission = JSON.parse(
-      runCommand(provisional.submit, { capture: true, timeoutMs: 30 * 60_000 }),
-    );
+    const submission = JSON.parse(submitDarwinPayloadForNotarization(provisional.submit, {
+      authArgs: ['--key', keyPath, '--key-id', keyId, '--issuer', issuerId],
+      runCommand,
+      sleep,
+      logger,
+    }));
     const submissionId = requireValue(submission.id, 'notarytool submission id');
     const status = requireValue(submission.status, 'notarytool submission status');
     const commands = plan(submissionId);

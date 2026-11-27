@@ -1,12 +1,12 @@
 import { mkdir, rm } from 'node:fs/promises';
 
-import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
+import { extractFirstPartyReleaseArchiveToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 export async function extractReleaseArchiveIntoCache({ archiveName, archivePath, cacheDir }) {
   await rm(cacheDir, { recursive: true, force: true });
   await mkdir(cacheDir, { recursive: true });
   try {
-    await extractArchivePayloadToDirectory({
+    await extractFirstPartyReleaseArchiveToDirectory({
       archiveName,
       archivePath,
       extractDir: cacheDir,

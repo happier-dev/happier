@@ -6,7 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { basename, dirname, resolve } from 'node:path';
 import * as tar from 'tar';
 
-import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
+import { extractFirstPartyReleaseArchiveToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 function parseArgs(argv) {
   const kv = new Map();
@@ -43,7 +43,7 @@ function shouldExcludeArchiveEntry(pathLike) {
 
 export async function extractNodeArchive({ archivePath, extractDir }) {
   const resolvedArchivePath = resolve(archivePath);
-  await extractArchivePayloadToDirectory({
+  await extractFirstPartyReleaseArchiveToDirectory({
     archivePath: resolvedArchivePath,
     archiveName: basename(resolvedArchivePath),
     extractDir: resolve(extractDir),

@@ -2852,8 +2852,13 @@ function Ensure-Minisign {
   }
 
   $extractDir = Join-Path $TempRoot "minisign-extract"
-  New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
-  Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+  # The archive cmdlet can bind a three-argument ExtractToDirectory overload that
+  # .NET Framework lacks; replace any previous extraction and use the two-argument API.
+  if (Test-Path -LiteralPath $extractDir) {
+    Remove-Item -LiteralPath $extractDir -Recurse -Force
+  }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractDir)
   # Windows PowerShell 5.1 can return $null for RuntimeInformation::OSArchitecture,
   # so fall back to the OS-reported architecture (W6432 is set for 32-bit hosts on 64-bit Windows).
   $osArchitecture = [string][System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
