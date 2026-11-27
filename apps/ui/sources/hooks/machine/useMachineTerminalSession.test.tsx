@@ -580,9 +580,11 @@ describe('useMachineTerminalSession', () => {
         { exitCode: 0, signal: 0, outcome: 'Exit code: 0', remoteSettlement: 'succeeded' as const },
         { exitCode: 0, signal: 0, outcome: 'Stopped', stopping: true, remoteSettlement: 'cancelled' as const, phone: true },
         { exitCode: 0, signal: 0, outcome: 'Completed', stopping: true, remoteSettlement: 'succeeded' as const, phone: true },
-    ])('renders a finished worker Script with native outcome $exitCode / $signal / $cancelled / $stopping / $remoteSettlement / phone $phone through the real output pane', async ({ exitCode, signal, outcome, cancelled, stopping, remoteSettlement, phone }) => {
+        { exitCode: 0, signal: null, outcome: 'Completed', phone: true, emptyOutput: true },
+    ])('renders a finished worker Script with native outcome $exitCode / $signal / $cancelled / $stopping / $remoteSettlement / phone $phone / empty $emptyOutput through the real output pane', async ({ exitCode, signal, outcome, cancelled, stopping, remoteSettlement, phone, emptyOutput }) => {
         vi.useRealTimers();
-        const terminalId = `finished-worker-${exitCode}-${signal}-${cancelled ?? false}-${stopping ?? false}-${remoteSettlement ?? false}`;
+        const terminalId = `finished-worker-${exitCode}-${signal}-${cancelled ?? false}-${stopping ?? false}-${remoteSettlement ?? false}-${emptyOutput ?? false}`;
+        const command = emptyOutput ? 'true' : 'printf QA_FAIL';
         const { storage } = await import('@/sync/domains/state/storage');
         storage.getState().applyMachines([createMachineFixture({ id: 'machine', activeAt: Date.now() })]);
         await publishMachineInventoryForTest({ serverId: homeIds.primary, accountId: 'terminal-account' }, [
@@ -605,14 +607,17 @@ describe('useMachineTerminalSession', () => {
             domainRef: { kind: 'projectCommand', purpose: 'script', serverId: homeIds.primary,
                 machineId: 'machine', workspaceRefId: 'worker-checkout', cwd: '/worker/repo', terminalId,
                 sourceWorkspace: { serverId: homeIds.primary, machineId: 'source-machine', workspaceId: 'source-checkout', rootPath: '/source/repo' },
-                script: { name: 'fail', source: { kind: 'command', command: 'printf QA_FAIL' } },
+                script: { name: 'Script', source: { kind: 'command', command } },
                 ...(exitCode === null ? {} : { exitCode }) },
         });
         const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
         actionOperationStore.mergeSnapshots({ serverId: homeIds.primary, snapshots: [snapshot] });
         const settlement = createDeferred<unknown>();
         terminalOps.operationGet.mockImplementation(() => settlement.promise);
-        terminalOps.streamReadBytes.mockResolvedValue(TerminalStreamReadResponseSchema.parse({ ok: true, terminalId, frames: [
+        terminalOps.streamReadBytes.mockResolvedValue(TerminalStreamReadResponseSchema.parse(emptyOutput
+            ? { ok: true, terminalId, frames: [{ t: 'exit', terminalId, byteOffset: 0, exitCode, signal }],
+                nextByteOffset: 0, availableByteOffset: 0, droppedBeforeByteOffset: 0, done: true }
+            : { ok: true, terminalId, frames: [
             { t: 'bytes', terminalId, seq: 1, byteOffset: 0, byteLength: 9, encoding: 'base64', data: 'UUFfRkFJTA0K' },
             { t: 'exit', terminalId, byteOffset: 9, exitCode, signal },
         ], nextByteOffset: 9, availableByteOffset: 9, droppedBeforeByteOffset: 0, done: true }));
@@ -628,7 +633,7 @@ describe('useMachineTerminalSession', () => {
         const renderOutput = async () => {
             const rendered = await renderScreen(React.createElement(AppPaneProvider, null, phone
             ? React.createElement(ProjectCommandOutputPage, { serverId: homeIds.primary, operationId: snapshot.operationId,
-                name: 'Script', command: 'printf QA_FAIL', onClose: () => {} })
+                name: 'Script', command, onClose: () => {} })
             : stopping
             ? React.createElement(ProjectScriptRow, { testID: 'script', workspace: {
                 serverId: homeIds.primary, machineId: 'machine', workspaceId: 'worker-checkout', rootPath: '/worker/repo',
@@ -655,6 +660,15 @@ describe('useMachineTerminalSession', () => {
         await act(async () => {
             observeMachinePresenceForTest({ serverId: homeIds.primary, accountId: 'terminal-account' }, ['machine']);
         });
+        if (emptyOutput) {
+            await vi.waitFor(() => expect(screen.findByTestId('project-command-output-page.noOutput')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('Completed');
+            expect(screen.findByTestId('workspace-embedded-terminal-root')).toBeNull();
+            expect(terminalOps.streamReadBytes).toHaveBeenCalledWith('machine', expect.objectContaining({ terminalId }),
+                expect.objectContaining({ serverId: homeIds.primary }));
+            await screen.unmount();
+            return;
+        }
         const cancellation = createDeferred<unknown>();
         if (stopping) {
             if (!phone) await screen.pressByTestIdAsync('script');

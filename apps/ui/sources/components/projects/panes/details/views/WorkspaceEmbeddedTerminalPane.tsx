@@ -29,6 +29,8 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     focused?: boolean;
     chrome?: 'toolbar' | 'none';
     ownerStatesExit?: boolean;
+    /** Replaces a borrowed terminal after its byte stream finishes without emitting output. */
+    emptyOutput?: React.ReactNode;
     sizing?: 'fill' | 'content';
 }>;
 
@@ -74,6 +76,10 @@ const WorkspaceEmbeddedTerminalPaneContent = React.memo(function WorkspaceEmbedd
         ? { scopeId: props.scopeId, sessionId: null,
             workspaceScope: { serverId: props.serverId, machineId: props.machineId, rootPath: props.rootPath } }
         : null, [managedWorkspace, props.machineId, props.rootPath, props.scopeId, props.serverId]);
+
+    if (props.emptyOutput != null && controller.status === 'exited' && controller.outputRetention?.empty === true) {
+        return props.emptyOutput;
+    }
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

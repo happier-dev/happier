@@ -35,6 +35,7 @@ export const ProjectCommandOutputPane = React.memo(
       presentation?: 'inline' | 'page';
       /** Opt in only when the caller already renders the run's exit outcome. */
       ownerStatesExit?: boolean;
+      emptyOutput?: React.ReactNode;
       onOpenDetail?: () => void;
       /** Opens this output as its host's bottom terminal tab (desktop); preferred over the detail. */
       onOpenInTerminal?: () => void;
@@ -144,6 +145,7 @@ export const ProjectCommandOutputPane = React.memo(
           title={joinHappierFacts(props.title, machineName)}
           closeOnUnmount={false}
           ownerStatesExit={props.ownerStatesExit}
+          emptyOutput={props.emptyOutput}
           {...(page ? { sizing: hugsOutput ? 'content' as const : 'fill' as const } : {})}
           toolbarActionsStart={
             <>

@@ -18,6 +18,7 @@ import { Text } from '@/components/ui/text/Text';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Typography } from '@/constants/Typography';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -117,6 +118,13 @@ export const ProjectCommandOutputPage = React.memo(
         </View>
       );
     }
+    const emptyOutput = isActionOperationTerminal(operation.snapshot.state) ? (
+      <View style={styles.empty}>
+        <SurfaceStateCard size="line" kind="empty" title={t('projects.scripts.output.empty')}
+          testID="project-command-output-page.noOutput" />
+      </View>
+    ) : null;
+
     return (
       <View style={styles.page} testID="project-command-output-page.body">
         <View
@@ -145,13 +153,12 @@ export const ProjectCommandOutputPage = React.memo(
           </Text>
         ) : null}
         <View style={styles.output} onLayout={onOutputLayout}>
-          {/* Before a terminal exists the status line already says what the run is doing (queued,
-              copying, preparing); only a settled run with nothing to read says so here. */}
-          {operation && outputHeight && attachment?.terminalId ? (
+          {attachment?.terminalId ? (outputHeight ? (
             <ProjectCommandOutputFrame>
               <ProjectCommandOutputPane
                 operation={operation}
                 ownerStatesExit
+                emptyOutput={emptyOutput}
                 title={props.name}
                 height={outputHeight}
                 presentation="page"
@@ -163,12 +170,7 @@ export const ProjectCommandOutputPage = React.memo(
                 }
               />
             </ProjectCommandOutputFrame>
-          ) : operation && !presentation.live ? (
-            <View style={styles.empty}>
-              <SurfaceStateCard size="line" kind="empty" title={t('projects.scripts.output.empty')}
-                testID="project-command-output-page.noOutput" />
-            </View>
-          ) : null}
+          ) : null) : emptyOutput}
         </View>
         {canStop ? (
           <View style={styles.footer}>
