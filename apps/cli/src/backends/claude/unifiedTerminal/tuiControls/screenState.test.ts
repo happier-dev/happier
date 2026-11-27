@@ -1483,16 +1483,18 @@ describe('parseClaudeScreenState — labelled composer rule rows', () => {
     expect(state.userDraftPresent).toBe(true);
   });
 
-  it('keeps a labelled bottom rule out of a visible prompt row', () => {
+  it('retains indented separators in the draft and stops at the labelled closing rule', () => {
+    const separator = rule('Build check');
     const state = parseClaudeScreenState([
       'Earlier assistant output.',
-      rule('Website-Auftrag Fortsetzung'),
+      rule('Review session'),
       '❯ The first visible draft row',
-      '  The second visible draft row',
+      `  ${separator}`,
+      '  The last visible draft row',
       rule('↓ 4 more'),
       '  ⏵⏵ auto mode on (shift+tab to cycle)',
     ].join('\n'));
-    expect(state.composerContent).toBe('The first visible draft row\nThe second visible draft row');
+    expect(state.composerContent).toBe(`The first visible draft row\n${separator}\nThe last visible draft row`);
   });
 
   it('does not treat rows that are not complete rules, or a rule without the overflow marker, as a composer', () => {

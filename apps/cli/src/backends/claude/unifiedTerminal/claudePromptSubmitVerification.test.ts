@@ -227,13 +227,40 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       'Behalte in der Zusammenfassung: Auftrag, naechster Schritt, Entscheidungen samt Grund, verworfene Wege samt Grund, Artefakt-Kennungen (Pfade, Zweig, PR, CI-IDs, Task- und Subagent-IDs) und offene Nutzerfragen. Verwirf Tool-Ausgaben und abgeschlossene Teilaufgaben ausser deren Ergebnis. Die Fleet-Uebergabe wird nach dem Compact automatisch wieder eingespielt; verweise darauf, statt sie zu wiederholen.',
     ].join('\n');
     const policy = createClaudePromptSubmitVerificationPolicy();
-    expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(true);
-    // A visibly changed character must still be rejected.
-    expect(() => policy.isPromptStagedBeforeSubmit({
+    const submitEnter = vi.fn(async () => 'success' as const);
+    const submit = (screenText: string) => runTerminalPromptSubmission({
       promptText,
-      screenText: screenText.replace('wieder eingespielt', 'wieder eingespielX'),
-    })).toThrow();
+      verifyStagedBeforeSubmit: async ({ promptText }) => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter,
+      verifyAfterSubmit: async () => false,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+      postSubmitSettleMs: 0,
+    });
+
+    expect(await submit(screenText)).toEqual({ success: true });
+    expect(await submit(screenText.replace('wieder eingespielt', 'wieder eingespielX'))).toMatchObject({
+      success: false,
+      phase: 'after_write_before_enter',
+      submitMayHaveReachedPane: false,
+    });
+    expect(submitEnter).toHaveBeenCalledOnce();
   });
+
+  it.each(['Build status ↑ 2 jobs', 'Build status ↑ 2 more jobs'])(
+    'does not stage transcript text under a rule labelled %s',
+    (label) => {
+      const promptText = 'Check the staged draft before sending.';
+      const screenText = [
+        `─── ${label} ───`,
+        `  ${promptText}`,
+        '─────────────────────────────',
+      ].join('\n');
+
+      const policy = createClaudePromptSubmitVerificationPolicy();
+      expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(false);
+    },
+  );
 
   it('stages an unscrolled composer whose top rule carries the session name', () => {
     const screenText = readFileSync(

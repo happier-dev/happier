@@ -220,13 +220,15 @@ const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 // participate in the SAME last-input selection: an old shell capture cannot outrank a newer normal
 // draft, and an old normal composer cannot make the active shell prompt ready for ordinary input.
 const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?((?:>|›|❯)(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
-// A scrolled native composer replaces its hidden prompt row with an overflow rule row.
-// Rule rows are matched by STRUCTURE, never by a list of labels: a row that starts and ends with
-// `─` and may carry any labels between runs of `─` (session name, `↑ N more`, `↓ N more`, both, ...).
-// The top rule of a scrolled composer carries the overflow marker `↑ N`; the viewport below it is
-// indented, and the bottom rule closes it. Arbitrary transcript tails are not input.
-// Leave the next row's delimiter unconsumed so a newer prompt starts outside this match.
-const SCROLLED_COMPOSER = /(?:^|\n)─[^\n]*?↑[^\S\n]*[1-9]\d*[^\n]*─[^\S\n]*\n((?:(?:[^\S\n][^\n]*)?\n)+)─(?:[^\n]*─)?[^\S\n]*(?=\n|$)/;
+// Native horizontal rules may contain labels bounded by runs of horizontal glyphs.
+// Keep the rule at column zero so indented draft text can contain a similar separator.
+const HORIZONTAL_COMPOSER_RULE = /─+(?:[^\S\n]+\S[^\n]*?[^\S\n]+─+)?/;
+// A scrolled composer needs a complete upward-overflow label, an indented viewport,
+// and a closing rule. Leave the delimiter for a newer prompt outside this match.
+const SCROLLED_COMPOSER = new RegExp(
+  String.raw`(?:^|\n)(?=[^\n]*─[^\S\n]+↑[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+─)${HORIZONTAL_COMPOSER_RULE.source}\n((?:(?:[^\S\n][^\n]*)?\n)+)${HORIZONTAL_COMPOSER_RULE.source}(?=\n|$)`,
+  'g',
+);
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (live capture 2026-06-12 11:50, runner pid 58731): the selector header
 // renders `↑/↓ to select` and the focus cursor renders as `❯ ◯ <agent-type> <title>` rows. The
@@ -254,7 +256,9 @@ function lineIndexAt(text: string, index: number): number {
 
 // Composer-box bottom border / horizontal rule. Require a horizontal/corner glyph: whitespace-only
 // rows and vertical-only box rows can be intentional blank paragraphs inside the composer.
-const COMPOSER_BORDER_LINE = /^[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*$/;
+const COMPOSER_BORDER_LINE = new RegExp(
+  String.raw`^(?:${HORIZONTAL_COMPOSER_RULE.source}|[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*)$`,
+);
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[⏵←⏺✻✶·]|⚠)/;
 
@@ -775,7 +779,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
   const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
-  const scrolledMatch = lastMatch(new RegExp(SCROLLED_COMPOSER.source, 'g'), text);
+  const scrolledMatch = lastMatch(SCROLLED_COMPOSER, text);
   const activeScrolledMatch = scrolledMatch
     && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
     ? scrolledMatch

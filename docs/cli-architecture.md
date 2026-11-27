@@ -1713,9 +1713,9 @@ the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
 The development parser recognizes Claude's bordered `↑ N more` composer viewport
-when a small terminal hides the prompt marker. The rule rows around the viewport are
-matched by structure (a row that starts and ends with `─`), so labels such as the
-session name or `↓ N more` in either rule do not matter. Submission verifies the visible
+when a small terminal hides the prompt marker. The parser accepts labels such as the
+session name or `↓ N more` in the horizontal rules. A scrolled viewport requires an
+`↑ N more` label delimited by rule glyphs in its top row. Submission verifies the visible
 prompt text through that same parser, without requiring a terminal attachment or
 resize; an unrelated visible draft remains protected.
 In development source, normal and shell prompts share one active-input selection and
