@@ -40,7 +40,7 @@ import * as React from 'react';
 import { GITHUB_COMMENT_COUNT_FACT_ID_V1 } from '../triage/mapping/facts.js';
 import { GITHUB_RESPONSE_FAILURE_CODE } from '../observations/githubResponseFailure.js';
 import { formatUsageDurationCompact } from '@happier-dev/plugin-ui/components';
-import { presentActionFailure, type RenderContext } from '@happier-dev/plugin-sdk/ui';
+import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   createReviewCommentLinkedIssueIdV1,
 } from '@happier-dev/plugin-sdk/reviews';
@@ -79,6 +79,7 @@ import {
   usePluginTranslation,
   useExecutePluginAction,
   projectPluginActionControlExecutionV1,
+  projectPluginActionRejectionV1,
   isPluginActionConfirmationDeclined,
   useReviewCommentProposalsForEntry,
   useSurfaceContext,
@@ -425,19 +426,6 @@ function WriteOutcome({
 }: Readonly<{ outcome: GithubMutationOutcomeV1 }>): React.ReactElement {
   const text = usePluginTranslation();
   const { locale } = useSurfaceContext();
-  const host = usePluginHostApi();
-  const rejection = outcome.kind === 'rejected' ? outcome : null;
-  const [presented, setPresented] = React.useState<Readonly<{ outcome: typeof rejection; reason: string }> | null>(null);
-  React.useEffect(() => {
-    if (rejection === null) return;
-    let active = true;
-    void presentActionFailure(host, rejection.failure).then(result => {
-      if (active && result.reason !== rejection.failure.errorCode) {
-        setPresented({ outcome: rejection, reason: result.reason });
-      }
-    }, () => {});
-    return () => { active = false; };
-  }, [host, rejection]);
   if ('presentation' in outcome) {
     const presentation = outcome.presentation;
     const description = (outcome.kind === 'failed' || outcome.kind === 'uncertain') && outcome.failure?.class === 'rateLimit'
@@ -570,15 +558,7 @@ function WriteOutcome({
     );
   }
   if (outcome.kind === 'rejected') {
-    return (
-      <Banner
-        tone="danger"
-        title="Not carried out"
-        titleKey="plugins.github.ui.mutations.notCarriedOut"
-        description={presented?.outcome === outcome ? presented.reason
-          : text('plugins.github.ui.mutations.writeFailed', 'GitHub could not complete this change.')}
-      />
-    );
+    return <Action.Failure execution={outcome.execution} />;
   }
   return (
     <Banner
@@ -3826,7 +3806,11 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
   const sessions = input.linkedSessions;
   const [chosen, setChosen] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState(false);
-  const [answer, setAnswer] = React.useState<Readonly<{ tone: 'success' | 'warning' | 'danger'; label: string }> | null>(null);
+  const [answer, setAnswer] = React.useState<
+    Readonly<{ tone: 'success' | 'warning' | 'danger'; label: string }>
+    | Readonly<{ execution: PluginActionExecution }>
+    | null
+  >(null);
   if (suggestions.length === 0) return null;
   if (sessions.length === 0) {
     return <Text variant="micro" tone="neutral" value={text('plugins.github.ui.suggestion.noSession',
@@ -3839,9 +3823,11 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
     try {
       const projected = projectPluginActionControlExecutionV1(execution, text);
       if (isPluginActionConfirmationDeclined(projected) || projected.status === 'pending') return;
-      const parsed = ScmSuggestionApplyResponseSchema.safeParse(
-        execution.ok ? execution.result : null,
-      );
+      if (projected.status !== 'success') {
+        setAnswer({ execution: projected });
+        return;
+      }
+      const parsed = ScmSuggestionApplyResponseSchema.safeParse(projected.result);
       if (!parsed.success) {
         setAnswer({ tone: 'warning', label: text('plugins.github.ui.suggestion.unknown', 'Check the Session\'s changes to see what was applied.') });
         return;
@@ -3855,8 +3841,8 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
         label: [text('plugins.github.ui.suggestion.applied', 'Applied {applied} of {total} files.', {
           applied: String(applied), total: String(parsed.data.files.length) }), ...refused].join(' '),
       });
-    } catch {
-      setAnswer({ tone: 'warning', label: text('plugins.github.ui.suggestion.unknown', 'Check the Session\'s changes to see what was applied.') });
+    } catch (error) {
+      setAnswer({ execution: projectPluginActionRejectionV1(error, text) });
     } finally {
       setPending(false);
     }
@@ -3885,7 +3871,9 @@ function GithubSuggestionApply({ input, suggestions }: Readonly<{
             return { input: { sessionId: session.sessionId, suggestions: [...suggestions] } };
           }, onSettled: settle }} />
       </Row>
-      {answer === null ? null : <Status tone={answer.tone} label={answer.label} />}
+      {answer === null ? null : 'execution' in answer
+        ? <Action.Failure execution={answer.execution} />
+        : <Status tone={answer.tone} label={answer.label} />}
     </Stack>
   );
 }

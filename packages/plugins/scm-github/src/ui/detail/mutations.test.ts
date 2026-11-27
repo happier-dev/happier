@@ -500,7 +500,7 @@ describe('projectGithubMutationOutcomeV1', () => {
     const result = { kind: 'rejected', reason: 'head_advanced' } as const;
     expect(projectGithubMutationOutcomeV1({ status: 'success', result }, result)).toEqual({
       kind: 'rejected',
-      failure: { ok: false, errorCode: 'head_advanced' },
+      execution: { status: 'error', code: 'head_advanced', message: 'head_advanced', retryable: false },
     });
   });
 
@@ -522,7 +522,7 @@ describe('projectGithubMutationOutcomeV1', () => {
       status: 'error', code: 'permission_denied', message: 'Permission denied.', retryable: false,
     }, null)).toEqual({
       kind: 'rejected',
-      failure: { ok: false, errorCode: 'permission_denied', message: 'Permission denied.' },
+      execution: { status: 'error', code: 'permission_denied', message: 'Permission denied.', retryable: false },
     });
   });
 
@@ -563,7 +563,7 @@ describe('GitHub post-mutation provider semantics', () => {
     })).toBe(false);
     expect(githubMutationMayHaveChangedProviderStateV1({
       kind: 'rejected',
-      failure: { ok: false, errorCode: 'plugin_action_current_intent_rejected' },
+      execution: { status: 'error', code: 'plugin_action_current_intent_rejected', message: 'The confirmation was declined.', retryable: false },
     })).toBe(false);
   });
 });

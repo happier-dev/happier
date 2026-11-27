@@ -368,7 +368,7 @@ describe('projectGitlabWriteOutcomeV1', () => {
       retryable: false,
     });
 
-    expect(outcome).toMatchObject({ kind: 'rejected', code: 'plugin_action_surface_unavailable' });
+    expect(outcome).toMatchObject({ kind: 'rejected', execution: { code: 'plugin_action_surface_unavailable' } });
   });
 
   it('reports an unsettled transport as uncertain, never as idle or failed', () => {
@@ -394,8 +394,12 @@ describe('GitLab post-mutation provider semantics', () => {
     expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'unconfirmed' })).toBe(true);
     expect(gitlabWriteMayHaveChangedProviderStateV1({
       kind: 'rejected',
-      code: 'provider_transport_failed',
-      message: 'The handler may have dispatched before failing.',
+      execution: {
+        status: 'error',
+        code: 'provider_transport_failed',
+        message: 'The handler may have dispatched before failing.',
+        retryable: false,
+      },
     })).toBe(true);
     expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'unreadable' })).toBe(true);
     expect(gitlabWriteMayHaveChangedProviderStateV1({ kind: 'declined' })).toBe(false);

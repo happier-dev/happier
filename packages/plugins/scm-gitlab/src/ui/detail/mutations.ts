@@ -351,7 +351,7 @@ export type GitlabWriteOutcomeV1 =
   /** The user was asked to confirm and declined. Nothing left this process. */
   | Readonly<{ kind: 'declined' }>
   /** The host refused or failed the dispatch itself. */
-  | Readonly<{ kind: 'rejected'; code: string; message: string }>
+  | Readonly<{ kind: 'rejected'; execution: Extract<PluginActionExecution, { status: 'error' }> }>
   /** The transport could not settle. It may already have run. */
   | Readonly<{ kind: 'uncertain' }>
   /** The Action returned and this build cannot say what it returned as. */
@@ -407,17 +407,9 @@ export function projectGitlabWriteOutcomeV1(
   if (execution.status === 'idle' || execution.status === 'pending') return null;
   if (execution.status === 'outcomeUnknown') return Object.freeze({ kind: 'uncertain' as const });
   if (execution.status === 'error') {
-    // Only the confirmation-declined code proves nothing was written. Every other
-    // host error — a refused surface, a transport fault, a handler that threw
-    // after dispatching — is reported as an INCOMPLETE write, because the generic
-    // transport cannot tell a refused dispatch from a handler that ran.
     return isPluginActionConfirmationDeclined(execution)
       ? Object.freeze({ kind: 'declined' as const })
-      : Object.freeze({
-        kind: 'rejected' as const,
-        code: execution.code,
-        message: execution.message,
-      });
+      : Object.freeze({ kind: 'rejected' as const, execution });
   }
 
   const parsed = RESULT_SCHEMA_BY_WRITE[write].safeParse(execution.result);

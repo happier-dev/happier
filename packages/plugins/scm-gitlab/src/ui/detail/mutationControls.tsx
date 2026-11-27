@@ -286,7 +286,7 @@ function describeApplied(
 
 function projectSettledWrite(
   write: GitlabWriteIdV1,
-  outcome: GitlabWriteOutcomeV1 | null,
+  outcome: Exclude<GitlabWriteOutcomeV1, { kind: 'rejected' }> | null,
   text: PluginTranslate,
 ): SettledWriteV1 | null {
   if (outcome === null) return null;
@@ -360,19 +360,6 @@ function projectSettledWrite(
             'The outcome is unknown. Reload this merge request before trying again.',
           ),
       };
-    case 'rejected':
-      return {
-        tone: 'danger',
-        title: issueWrite
-          ? text(
-            'plugins.gitlab.ui.mutations.issue.rejected',
-            'This did not complete. Reload this issue to see where it stands.',
-          )
-          : text(
-            'plugins.gitlab.ui.mutations.rejected',
-            'This did not complete. Reload this merge request to see where it stands.',
-          ),
-      };
     default:
       return {
         tone: 'danger',
@@ -436,11 +423,7 @@ function GitlabWriteControl({
     },
   };
 
-  const settled = projectSettledWrite(
-    write,
-    projectGitlabWriteOutcomeV1(write, controllerExecution),
-    text,
-  );
+  const outcome = projectGitlabWriteOutcomeV1(write, controllerExecution);
 
   return (
     <Stack gap="small">
@@ -454,7 +437,9 @@ function GitlabWriteControl({
           controller={run}
         />
       </Row>
-      <SettledWriteBanner settled={settled} />
+      {outcome?.kind === 'rejected'
+        ? <Action.Failure execution={outcome.execution} />
+        : <SettledWriteBanner settled={projectSettledWrite(write, outcome, text)} />}
     </Stack>
   );
 }

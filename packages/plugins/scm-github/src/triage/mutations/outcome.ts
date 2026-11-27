@@ -1,4 +1,4 @@
-import type { PluginUiActionFailureV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui';
 import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1, TriageSourceOperationOutcomeV1 } from '@happier-dev/triage-protocol/v1';
 import { describeTriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type {
@@ -69,7 +69,7 @@ export type GithubLegacyMutationOutcomeV1 =
   | Readonly<{ kind: 'refused'; reason: GithubMutationRefusalReasonV1; unmetRequirements?: readonly GithubSkippedRequirementV1[] }>
   | Readonly<{ kind: 'uncertain'; failure: TriageSourceFailureV1 | null }>
   | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>
-  | Readonly<{ kind: 'rejected'; failure: PluginUiActionFailureV1 }>
+  | Readonly<{ kind: 'rejected'; execution: Extract<PluginActionExecution, { status: 'error' }> }>
   | Readonly<{ kind: 'unreadable' }>;
 
 export type GithubMutationResultV1 =
@@ -215,7 +215,7 @@ export function projectGithubMutationOutcomeV1(
   if (parsed.kind === 'rejected') {
     return Object.freeze({
       kind: 'rejected' as const,
-      failure: { ok: false as const, errorCode: parsed.reason },
+      execution: { status: 'error' as const, code: parsed.reason, message: parsed.reason, retryable: false },
     });
   }
   return Object.freeze({ kind: 'failed' as const, failure: parsed.failure });

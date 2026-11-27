@@ -304,16 +304,7 @@ function PublicationOutcome({ execution }: Readonly<{
         />
       );
     }
-    return (
-      <Banner
-        tone="warning"
-        title={text('plugins.gitlab.ui.publication.incomplete', 'Publication did not settle')}
-        description={text(
-          'plugins.gitlab.ui.publication.incomplete.description',
-          'The Action ended without a readable provider result. Reload before trying again.',
-        )}
-      />
-    );
+    return <Action.Failure execution={execution} />;
   }
   const parsed = GitlabReviewPublicationResultV1Schema.safeParse(execution.result);
   if (!parsed.success) {

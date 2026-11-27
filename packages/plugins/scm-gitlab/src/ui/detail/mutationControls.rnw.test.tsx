@@ -118,7 +118,8 @@ async function mountDetail(input: JsonValue = launchInput()): Promise<MountedFix
   const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
     recorded.push({ action, input });
     if (nextError !== null) return { ok: false, errorCode: nextError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextError.code, error: nextError.message,
-      ...(nextError.details === undefined ? {} : { details: nextError.details }) };
+      ...(nextError.details === undefined ? {} : { details: nextError.details }),
+      ...(nextError.data.failureCause === undefined ? {} : { failureCause: nextError.data.failureCause }) };
     return { ok: true, result: nextResult };
   });
   let fixture!: PluginUiTestkit;
@@ -138,6 +139,16 @@ async function mountDetail(input: JsonValue = launchInput()): Promise<MountedFix
       launchInput: input,
       handlers: {
         actionControl: controls.handler,
+        presentActionFailure({ failure }) {
+          const technicalDetails = [
+            { key: 'code', label: 'Code', value: failure.errorCode },
+            ...(failure.requestId ? [{ key: 'requestId', label: 'Request ID', value: failure.requestId }] : []),
+            ...(failure.failureCause?.errorCode ? [{ key: 'causeCode', label: 'Cause', value: failure.failureCause.errorCode }] : []),
+            ...(failure.details && typeof failure.details === 'object' && 'reasonCode' in failure.details
+              ? [{ key: 'reasonCode', label: 'Reason code', value: String(failure.details.reasonCode) }] : []),
+          ];
+          return { reason: failure.message ?? failure.error ?? failure.errorCode, nextStep: null, technicalDetails };
+        },
         executeAction: async ({ action, input: dispatched }) => {
           if (typeof action !== 'string' && Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
             throw new Error('A press write must execute through the host Action control.');
@@ -184,6 +195,28 @@ describe('the mounted GitLab merge-request writes', () => {
     await act(async () => { await act(async () => detail.controls.press('Merge')); });
     await expect(detail.getByText('You declined the confirmation, so nothing was written.')).resolves.toBeDefined();
     expect(completedMutations).toBe(0);
+  });
+
+  it('discloses the typed Action refusal after a merge request write', async () => {
+    nextError = new PluginError({
+      code: 'gitlab-write-forbidden',
+      message: 'GitLab refused to merge this request.',
+      details: { requestId: 'gitlab-merge-request', reasonCode: 'merge_request_write' },
+      failureCause: { phase: 'gitlab.provider_check', errorClass: 'Error', errorCode: 'gitlab_forbidden', httpStatus: 403 },
+    });
+    const detail = await mountDetail();
+    const existingDisclosures = new Set(document.querySelectorAll('[aria-label="Details"]'));
+    await act(async () => detail.controls.press('Merge'));
+    await expect(detail.getByText('GitLab refused to merge this request.')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('gitlab-merge-request');
+    const disclosure = [...document.querySelectorAll<HTMLElement>('[aria-label="Details"]')]
+      .find((button) => !existingDisclosures.has(button));
+    expect(disclosure).toBeDefined();
+    await act(async () => { disclosure!.click(); });
+    expect(document.body.textContent).toContain('Code: gitlab-write-forbidden');
+    expect(document.body.textContent).toContain('Request ID: gitlab-merge-request');
+    expect(document.body.textContent).toContain('Cause: gitlab_forbidden');
+    expect(document.body.textContent).toContain('Reason code: merge_request_write');
   });
 
   it('offers all three writes on an open merge request', async () => {

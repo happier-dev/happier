@@ -560,18 +560,7 @@ export function projectGithubMutationOutcomeV1(
 ): GithubMutationOutcomeV1 | GithubSecurityAlertMutationOutcomeV1 | null {
   if (execution.status === 'idle' || execution.status === 'pending' || isPluginActionConfirmationDeclined(execution)) return null;
   if (execution.status === 'outcomeUnknown') return Object.freeze({ kind: 'uncertain', failure: null });
-  if (execution.status === 'error') {
-    const { code, message, requestId, remediation, failureCause, details, effectAttempted } = execution;
-    return Object.freeze({ kind: 'rejected', failure: {
-      ok: false as const, errorCode: code,
-      ...(message === code ? {} : { message }),
-      ...(requestId === undefined ? {} : { requestId }),
-      ...(remediation === undefined ? {} : { remediation }),
-      ...(failureCause === undefined ? {} : { failureCause }),
-      ...(details === undefined ? {} : { details }),
-      ...(effectAttempted === undefined ? {} : { effectAttempted }),
-    } });
-  }
+  if (execution.status === 'error') return Object.freeze({ kind: 'rejected', execution });
   if (isPluginActionApprovalRequestCreated(execution.result)) return Object.freeze({ kind: 'approval' });
   if (parsed === null) return Object.freeze({ kind: 'unreadable' });
   const outcome = readTriageSourceOperationOutcomeV1(execution.result);

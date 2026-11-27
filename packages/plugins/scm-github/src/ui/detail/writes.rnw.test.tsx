@@ -307,7 +307,10 @@ async function mountDetail(
     try { return { ok: true, result: await executeBoundary(request) }; }
     catch (error) {
       if (!(error instanceof PluginError)) throw error;
-      return { ok: false, errorCode: error.code, error: error.message };
+      return { ok: false, errorCode: error.code, error: error.message,
+        ...(error.details === undefined ? {} : { details: error.details }),
+        ...(error.data.failureCause === undefined ? {} : { failureCause: error.data.failureCause }),
+      };
     }
   });
   await act(async () => {
@@ -335,6 +338,16 @@ async function mountDetail(
           return executeBoundary(request);
         },
         actionControl: controls.handler,
+        presentActionFailure({ failure }) {
+          const technicalDetails = [
+            { key: 'code', label: 'Code', value: failure.errorCode },
+            ...(failure.requestId ? [{ key: 'requestId', label: 'Request ID', value: failure.requestId }] : []),
+            ...(failure.failureCause?.errorCode ? [{ key: 'causeCode', label: 'Cause', value: failure.failureCause.errorCode }] : []),
+            ...(failure.details && typeof failure.details === 'object' && 'reasonCode' in failure.details
+              ? [{ key: 'reasonCode', label: 'Reason code', value: String(failure.details.reasonCode) }] : []),
+          ];
+          return { reason: failure.message ?? failure.error ?? failure.errorCode, nextStep: null, technicalDetails };
+        },
       },
     }) as PluginUiTestkit;
   });
@@ -1155,6 +1168,30 @@ describe('the mounted GitHub write controls', () => {
     });
   });
 
+  it('discloses the typed Action refusal after publishing a review', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    nextActionError = new PluginError({
+      code: 'review_comment_account_custody_denied',
+      message: 'Review publication requires the Account custodian.',
+      details: { requestId: 'github-review-request', reasonCode: 'publication_claim' },
+      failureCause: { phase: 'reviews.publication_claim', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: null },
+    });
+    await waitForPublicationProposalRead(detail);
+    await writePublicationSummary('Review publication summary.');
+    await act(async () => { await actionHost(detail).press('Publish 1 comment'); });
+    await expect(detail.getByText('Review publication requires the Account custodian.')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('github-review-request');
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Details' })); });
+    expect(document.body.textContent).toContain('Code: review_comment_account_custody_denied');
+    expect(document.body.textContent).toContain('Request ID: github-review-request');
+    expect(document.body.textContent).toContain('Cause: custodian_only');
+    expect(document.body.textContent).toContain('Reason code: publication_claim');
+  });
+
   it('shows the remedy for a definite own-PR review refusal', async () => {
     const detail = await mountDetail(
       { presentation: 'active', nativeLabel: 'Open' },
@@ -1289,7 +1326,9 @@ describe('the mounted GitHub write controls', () => {
     await act(async () => { await detail.press(choice); });
     await expect(detail.getByRole('button', { name: 'Assignees, octocat' })).resolves.toBeDefined();
     await expect(detail.queryByRole('button', { name: 'Assignees, octocat, hubot' })).resolves.toBeUndefined();
-    await expect(detail.getByText(kind === 'uncertain' ? 'Outcome unknown' : 'Not carried out')).resolves.toBeDefined();
+    const reason = kind === 'rejected' ? 'This change was not approved.'
+      : kind === 'uncertain' ? 'Outcome unknown' : 'Not carried out';
+    await expect(detail.getByText(reason)).resolves.toBeDefined();
   });
 
   it('PR member picker retries a failed directory without hiding the sibling or changing membership', async () => {

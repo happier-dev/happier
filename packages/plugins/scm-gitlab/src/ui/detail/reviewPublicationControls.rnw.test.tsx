@@ -172,7 +172,8 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
   const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
     recorded.push({ action, input });
     if (nextError !== null) return { ok: false, errorCode: nextError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextError.code, error: nextError.message,
-      ...(nextError.details === undefined ? {} : { details: nextError.details }) };
+      ...(nextError.details === undefined ? {} : { details: nextError.details }),
+      ...(nextError.data.failureCause === undefined ? {} : { failureCause: nextError.data.failureCause }) };
     return { ok: true, result: nextResult };
   });
   let fixture!: PluginUiTestkit;
@@ -204,6 +205,16 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
         actionControl: controls.handler,
+        presentActionFailure({ failure }) {
+          const technicalDetails = [
+            { key: 'code', label: 'Code', value: failure.errorCode },
+            ...(failure.requestId ? [{ key: 'requestId', label: 'Request ID', value: failure.requestId }] : []),
+            ...(failure.failureCause?.errorCode ? [{ key: 'causeCode', label: 'Cause', value: failure.failureCause.errorCode }] : []),
+            ...(failure.details && typeof failure.details === 'object' && 'reasonCode' in failure.details
+              ? [{ key: 'reasonCode', label: 'Reason code', value: String(failure.details.reasonCode) }] : []),
+          ];
+          return { reason: failure.message ?? failure.error ?? failure.errorCode, nextStep: null, technicalDetails };
+        },
         ...(options?.input.admittedReview ? {
           readResource: async () => ({
             contentType: 'application/json',
@@ -235,7 +246,8 @@ async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<M
   const controls = createPluginUiActionControlTestHost(async ({ action, input }) => {
     recorded.push({ action, input });
     if (nextError !== null) return { ok: false, errorCode: nextError.diagnostics?.some(diagnostic => diagnostic.code === 'plugin_action_current_intent_rejected') ? 'approval_rejected' : nextError.code, error: nextError.message,
-      ...(nextError.details === undefined ? {} : { details: nextError.details }) };
+      ...(nextError.details === undefined ? {} : { details: nextError.details }),
+      ...(nextError.data.failureCause === undefined ? {} : { failureCause: nextError.data.failureCause }) };
     return { ok: true, result: nextResult };
   });
   let fixture!: PluginUiTestkit;
@@ -638,6 +650,24 @@ describe('mounted GitLab Review publication controls', () => {
     expect(completed).toBe(0);
   });
 
+  it('discloses the typed Action refusal after publishing a review', async () => {
+    nextError = new PluginError({
+      code: 'review_comment_permission_denied',
+      message: 'The linked review does not allow publication.',
+      details: { requestId: 'gitlab-review-request', reasonCode: 'publication_claim' },
+      failureCause: { phase: 'gitlab.provider_check', errorClass: 'Error', errorCode: 'gitlab_forbidden', httpStatus: 403 },
+    });
+    const detail = await mountControl('merge-request');
+    await act(async () => detail.controls.press('Publish 1 comment'));
+    await expect(detail.getByText('The linked review does not allow publication.')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('gitlab-review-request');
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Details' })); });
+    expect(document.body.textContent).toContain('Code: review_comment_permission_denied');
+    expect(document.body.textContent).toContain('Request ID: gitlab-review-request');
+    expect(document.body.textContent).toContain('Cause: gitlab_forbidden');
+    expect(document.body.textContent).toContain('Reason code: publication_claim');
+  });
+
   it('requests the canonical exact get after an error that may have followed dispatch', async () => {
     nextError = new PluginError({
       code: 'gitlab-publication-dispatch-failed',
@@ -645,7 +675,7 @@ describe('mounted GitLab Review publication controls', () => {
     });
     const detail = await mountControl('merge-request');
     await act(async () => detail.controls.press('Publish 1 comment'));
-    await expect(detail.getByText('Publication did not settle')).resolves.toBeDefined();
+    await expect(detail.getByText('The handler did not return a publication result.')).resolves.toBeDefined();
     expect(completed).toBe(1);
   });
 

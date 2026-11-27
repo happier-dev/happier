@@ -27,6 +27,7 @@ import { sendGithubGraphqlRequest } from '../../triage/mutations/graphql.js';
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 let declineSuggestion = false;
+let refuseSuggestion = false;
 
 const SOURCE_CONTRIBUTION = Object.freeze({
   pluginId: GITHUB_PLUGIN_ID,
@@ -274,6 +275,14 @@ async function mountFeedback(
   const githubSlots = new Set<string>();
   const suggestionHost = createPluginUiActionControlTestHost(async ({ action, input }) => {
     if (declineSuggestion) { declineSuggestion = false; return { ok: false, errorCode: 'approval_rejected', error: 'Declined' }; }
+    if (refuseSuggestion) {
+      refuseSuggestion = false;
+      return {
+        ok: false, errorCode: 'session_not_found', error: 'The linked Session is unavailable.',
+        requestId: 'suggestion-apply-request',
+        failureCause: { phase: 'scm.suggestion.apply', errorClass: 'Error', errorCode: 'session_not_found', httpStatus: null },
+      };
+    }
     mutationInputs.push({ localId: action, input });
     return { ok: true, result: { success: false, files: [
       { path: 'src/pump.ts', status: 'applied' },
@@ -318,6 +327,16 @@ async function mountFeedback(
         },
         executeAction: executeBoundary,
         presentActionFailure({ failure }) {
+          if (failure.errorCode === 'session_not_found') {
+            return {
+              reason: failure.message ?? failure.error ?? failure.errorCode,
+              nextStep: null,
+              technicalDetails: [
+                ...(failure.requestId ? [{ key: 'requestId', label: 'Request ID', value: failure.requestId }] : []),
+                ...(failure.failureCause ? [{ key: 'causePhase', label: 'Cause phase', value: failure.failureCause.phase }] : []),
+              ],
+            };
+          }
           expect(failure.errorCode).toBe('contributed_action_unavailable');
           return { reason: 'This action is unavailable. Check the plugin and machine connection.', nextStep: null, technicalDetails: [] };
         },
@@ -376,6 +395,7 @@ function resetAnswers(): void {
 }
 
 afterEach(async () => {
+  refuseSuggestion = false;
   dispatched.splice(0);
   mutationInputs.splice(0);
   nextChecksGate = null;
@@ -734,6 +754,14 @@ describe('the mounted GitHub Feedback plane', () => {
       input: { sessionId: 'session-fix-1', suggestions: [suggestion, outdated] } }]);
     await expect(detail.getByText('Applied 1 of 2 files. src/tail.ts: the file changed since this suggestion.'))
       .resolves.toMatchObject({ content: expect.any(String) });
+
+    refuseSuggestion = true;
+    await act(async () => { await suggestionControls.get(detail)!.press('Apply 2 suggestions in Fix the pump'); });
+    await expect(detail.getByText('The linked Session is unavailable.')).resolves.toBeDefined();
+    expect(document.body.textContent).not.toContain('suggestion-apply-request');
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Details' })); });
+    expect(document.body.textContent).toContain('Request ID: suggestion-apply-request');
+    expect(document.body.textContent).toContain('Cause phase: scm.suggestion.apply');
   });
 
   it('renders envelope omissions and an unavailable continuation as partial evidence', async () => {
