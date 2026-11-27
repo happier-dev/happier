@@ -250,7 +250,7 @@ it('shares 171 Machine RPCs per scope and Account identity admissions, refreshes
         expect(reads).toBe(3);
         denied = true;
         invalidateAccountEncryptionModeCacheForChanges([{ kind: 'account', entityId: 'self', hint: { encryptionMode: 'plain' } }], { serverId });
-        await expect(readIdentity()).rejects.toMatchObject({ status: 403, code: 'account-encryption-currentness-unavailable' });
+        await expect(readIdentity()).rejects.toMatchObject({ status: 403, code: 'forbidden' });
         expect(reads).toBe(4);
         vi.useFakeTimers();
         await vi.advanceTimersByTimeAsync(180_000);
@@ -344,6 +344,25 @@ it.each([
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(new URL(String(fetchMock.mock.calls[0]?.[0])).origin).toBe('https://captured-currentness.test');
     expect(readCredentials).not.toHaveBeenCalled();
+});
+
+it.each([
+    { status: 401, expected: { kind: 'server', code: 'unauthorized' } },
+    { status: 403, expected: { kind: 'server', code: 'forbidden' } },
+    // 0.2 Homes have no currentness route; that stays the version signal.
+    { status: 404, expected: { kind: 'config', code: 'account-encryption-currentness-unavailable' } },
+])('carries the Home\'s typed refusal for a $status currentness read', async ({ status, expected }) => {
+    const credentials = { token: 'captured-token' };
+    const reads: string[] = [];
+    setRuntimeFetch(async url => {
+        reads.push(new URL(String(url)).pathname);
+        return Response.json({ error: status === 404 ? 'not-found' : 'forbidden' }, { status });
+    });
+    const request = createServerFetchAtEndpoint({ endpointUrl: 'https://refused-currentness.test', credentials });
+    await expect(fetchAccountEncryptionCurrentness(credentials, { request })).rejects.toMatchObject({
+        status, canTryAgain: false, ...expected,
+    });
+    expect(reads).toEqual(['/v1/account/encryption/currentness']);
 });
 
 it.each(['unchanged', 'intentional-disconnect', 'explicit-reconnect', 'reconfigure', 'mode', 'fingerprint', 'update', 'malformed-update', 'scope-reset', 'credential-retired', 'home-retired', 'fresh-denied'] as const)(

@@ -162,16 +162,17 @@ describe('apiAccountEncryptionMode', () => {
 
   it.each([
     { status: 503, body: { error: 'token-secret' }, step: 'http_response' },
-    { status: 403, body: { error: 'token-secret' }, step: 'http_response' },
+    // A denial keeps its typed cause; the diagnostic still records the refused read.
+    { status: 403, body: { error: 'token-secret' }, step: 'http_response', code: 'forbidden' },
     { status: 200, body: { mode: 'plain', private: 'token-secret' }, step: 'invalid_response' },
     { status: 400, body: { error: 'migration-required',
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'encryption_setup_required' } }, step: 'readiness_response' },
-  ])('logs safe currentness refusal facts for $step HTTP $status', async ({ status, body, step }) => {
+  ])('logs safe currentness refusal facts for $step HTTP $status', async ({ status, body, step, code }) => {
     const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
     const request = vi.fn(async () => Response.json(body, { status }));
     try {
       await expect(accountEncryptionMode.fetchAccountEncryptionCurrentness(credentials, { request }))
-        .rejects.toMatchObject({ code: 'account-encryption-currentness-unavailable' });
+        .rejects.toMatchObject({ code: code ?? 'account-encryption-currentness-unavailable' });
       expect(logged).toHaveBeenCalledWith('[accountEncryptionCurrentness] refusal ' + JSON.stringify({
         code: 'account-encryption-currentness-unavailable', step, errorClass: 'HappyError',
       }));

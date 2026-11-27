@@ -504,6 +504,12 @@ async function readReportedAccountEncryptionCurrentness(
             }
         }
         recordAccountEncryptionCurrentnessRefusal('http_response');
+        // An authentication refusal keeps its typed cause, as the mode route does.
+        if (response.status === 401 || response.status === 403) {
+            throw new HappyError('Failed to load encryption setting', false, {
+                status: response.status, kind: 'server', code: response.status === 401 ? 'unauthorized' : 'forbidden',
+            });
+        }
         throw new HappyError(
             'This server must be upgraded before changing account encryption',
             false,
