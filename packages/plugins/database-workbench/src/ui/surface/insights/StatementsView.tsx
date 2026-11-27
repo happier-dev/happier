@@ -16,6 +16,7 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
+import { WorkbenchProvider, useWorkbenchInstance } from '../../hooks.js';
 import { displayDatabaseStatementShape, formatCount, formatDuration, formatPercent } from './format.js';
 import { StatementDetail } from './StatementDetail.js';
 import { summarizeChanges, type StatementView } from './statements.js';
@@ -185,6 +186,7 @@ export function StatementsView(
   }>,
 ) {
   const translate = usePluginTranslation();
+  const instance = useWorkbenchInstance();
   const [openKey, setOpenKey] = React.useState<string | null>(null);
   const model = useHappierCollection({
     items: props.views,
@@ -274,13 +276,15 @@ export function StatementsView(
         })}
         renderDetail={() =>
           open ? (
-            <StatementDetail
-              view={open}
-              descriptor={props.descriptor}
-              {...(props.onOpenConsole
-                ? { onOpenConsole: props.onOpenConsole }
-                : {})}
-            />
+            <WorkbenchProvider instance={instance}>
+              <StatementDetail
+                view={open}
+                descriptor={props.descriptor}
+                {...(props.onOpenConsole
+                  ? { onOpenConsole: props.onOpenConsole }
+                  : {})}
+              />
+            </WorkbenchProvider>
           ) : null
         }
       />

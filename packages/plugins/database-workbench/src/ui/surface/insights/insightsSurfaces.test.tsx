@@ -276,6 +276,32 @@ describe('Database Insights surfaces', () => {
     }
   });
 
+  it('opens the selected statement and its actions in the host details pane', async () => {
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'hosted-statement', mountNonce: 'hosted-statement' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: pageContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: true } }),
+      handlers: {
+        ...resourceHandlers(),
+        executeAction: daemon(statements),
+        replacePageLocation: async ({ subPath }) => subPath,
+      },
+    });
+    try {
+      await settle();
+      await act(async () => { await page.press(await page.getByRole('button', { name: SLOW })); });
+      expect(await page.getByRole('group', { name: 'Details pane' })).toBeTruthy();
+      expect(await page.getByRole('button', { name: 'Check for index suggestions' })).toBeTruthy();
+      expect(await page.getByRole('button', { name: 'Prepare brief' })).toBeTruthy();
+    } finally {
+      await page.dispose();
+    }
+  });
+
   it('keeps current statements visible when Last Look cannot compare the samples', async () => {
     const presentationHost: PluginUiPresentationHost = {
       renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
