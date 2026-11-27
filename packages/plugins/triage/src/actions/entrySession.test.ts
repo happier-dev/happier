@@ -697,6 +697,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             // Reported as itself. A refusal arriving as success is the failure
             // the typed verdict exists to make unsayable.
             delivery: 'rejected',
+            linkTag: expect.any(String),
         });
         expect(invoker.calls.map((call) => call.actionId))
             .toEqual(['session.spawn_new', 'session.message.send', 'session.open']);
@@ -821,6 +822,7 @@ describe('the Session-start Action a mounted header can actually press', () => {
             // No delivery travelled with this start, and the wire says exactly
             // that rather than borrowing the vocabulary of one that did.
             delivery: 'notRequested',
+            linkTag: expect.any(String),
         });
         // Exactly one create and one open, in that order, and no second create.
         expect(invoker.calls.map((call) => call.actionId))
