@@ -13,6 +13,7 @@ import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/erro
 import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { agent } from '../index';
 import { createAgyConnectedServiceRuntimeAuthAdapter } from './createAgyConnectedServiceRuntimeAuthAdapter';
+import { classifyAgyAssistantTurnFailure } from './classifyAgyRuntimeFailure';
 
 const daemonBoundary = vi.hoisted(() => ({ notify: vi.fn(), outboxRoot: '' }));
 vi.mock('@/daemon/controlClient', () => ({ notifyDaemonConnectedServiceRuntimeAuthFailure: daemonBoundary.notify }));
@@ -53,6 +54,14 @@ describe('Antigravity native turn-failure classification', () => {
     expect(classification).toMatchObject({
       kind: 'usage_limit', limitCategory: 'usage_limit', serviceId: 'antigravity', profileId: 'selected-profile', groupId: 'selected-pool',
       resetsAtMs: 1_000_000 + ((142 * 60 + 7) * 60 + 6) * 1000,
+    });
+  });
+
+  it('fails the turn on the bare verification line agy acp prints without a link', () => {
+    // Observed live (agy acp 1.5.x, 2026-11-27, new account): the whole turn reply was "\n⚠ Verification required\n".
+    const failure = classifyAgyAssistantTurnFailure({ text: '\n⚠ Verification required\n', processEnv: {} });
+    expect((failure as { runtimeAuthClassification?: unknown } | null)?.runtimeAuthClassification).toMatchObject({
+      kind: 'validation', limitCategory: 'validation_failed', serviceId: 'antigravity',
     });
   });
 

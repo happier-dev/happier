@@ -32,8 +32,9 @@ const NATIVE_FAILURES: ReadonlyArray<readonly [RegExp, NativeFailure]> = [
   [/\bStatus: RESOURCE_EXHAUSTED\b/u, { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'account' }],
   // Inferred rendering: CLI literal for an empty Gemini Enterprise prepaid wallet.
   [/Your organization's prepaid balance is insufficient\./u, { kind: 'plan', limitCategory: 'plan_invalid', quotaScope: 'organization' }],
-  // Inferred rendering: CLI literals for the recoverable identity verification (VALIDATION_REQUIRED).
-  [/Verification required\. Please complete verification in your browser to continue\.|Verify your account to continue\./u,
+  // Recoverable identity verification (VALIDATION_REQUIRED). Observed (agy acp, 2026-11-27, new account):
+  // the bare line "Verification required" with no link; the longer forms are the CLI's own literals.
+  [/^Verification required\.?$|Verification required\. Please complete verification in your browser to continue\.|Verify your account to continue\./iu,
     { kind: 'validation', limitCategory: 'validation_failed', quotaScope: 'account', linkAction: true }],
   // Inferred rendering: CLI literal for the permanent Terms of Service block; the appeal link is the action.
   [/Your account is blocked due to a Terms of Service violation\./u,
