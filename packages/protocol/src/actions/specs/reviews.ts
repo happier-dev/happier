@@ -158,7 +158,7 @@ function createReviewActionSpecs(): readonly [
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     executionPlacements: ['session', 'machine'],
     executionPlacementForInput: resolveReviewExecutionPlacementForInput,
-    originalExecution: { daemonIngressSurfaces: ['ui'] },
+    originalExecution: { daemonIngressSurfaces: ['cli', 'ui'], machineAdmission: 'requester_own_work' },
     requesterAccountContentDemandForInput: input => resolveReviewExecutionPlacementForInput(input) === 'machine',
     approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
     machineRuntimeDemandForInput: (input, context) => resolveExecutionRunMachineRuntimeDemand(

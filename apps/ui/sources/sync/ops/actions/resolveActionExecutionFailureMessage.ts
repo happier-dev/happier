@@ -195,6 +195,10 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const cause = record.failureCause === undefined ? null : readActionFailureCauseV1(record.failureCause);
     const custodyCopy = resolveMachineCustodyRefusalCopy(code, cause);
     if (custodyCopy) return custodyCopy;
+    if (code === 'target_unavailable' && cause?.phase === 'execution_authorization'
+        && cause.errorCode === 'unsupported_operation') {
+        return t('errors.machineOperationUnsupported');
+    }
     if (cause && !('kind' in cause) && cause.errorCode !== null && cause.errorCode !== code) {
         const causeMessage = readFailureFallbackMessage({ code: cause.errorCode }, options);
         if (causeMessage) return causeMessage;

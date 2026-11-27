@@ -7708,6 +7708,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         invalidFormat: 'Ungültiges Format',
         operationFailed: 'Operation fehlgeschlagen',
         machineActionUnsupported: "Happier auf diesem Rechner muss dafür aktualisiert werden.",
+        machineOperationUnsupported: "Die ausgewählte Maschine unterstützt diese Aktion nicht. Wähle eine andere Maschine.",
         signupDisabled: 'Auf diesem Home sind neue Registrierungen deaktiviert. Melde dich mit einem bestehenden Konto an oder bitte die Home-Administration, Registrierungen zu aktivieren.',
         accountDisabled: ({ home }: { home: string }) => `Dieses Konto ist auf ${home} deaktiviert. Wende dich an die Home-Administration.`,
         homeIdentityMismatch: ({ home }: { home: string }) =>

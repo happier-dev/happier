@@ -8847,6 +8847,7 @@ const enErrors = {
   invalidFormat: 'Invalid format',
   operationFailed: 'Operation failed',
   machineActionUnsupported: "This machine’s Happier needs an update to do this.",
+  machineOperationUnsupported: "The selected machine doesn’t support this action. Choose another machine.",
   signupDisabled:
     'This Home has new account sign-ups disabled. Sign in with an existing account, or ask the Home admin to enable sign-ups.',
   accountDisabled: ({ home }: { home: string }) =>

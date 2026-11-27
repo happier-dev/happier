@@ -348,6 +348,72 @@ describe('original CLI Session Action delivery', () => {
         });
     });
 
+    it('delivers an attached CLI Review to the Session publisher', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-review-target-' }, async () => {
+            const accountId = 'owner';
+            const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 4,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const secret = new Uint8Array(32).fill(17);
+            const credentials = { token, credentialProvenance: 'stored_session' as const, encryption: { type: 'legacy' as const, secret } };
+            const sessionId = 'c123456789012345678901234';
+            const machineId = 'machine-b';
+            const session = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'e2ee', share: null,
+                metadata: encryptSessionPayload({ ctx: { encryptionKey: secret, encryptionVariant: 'legacy' },
+                    payload: { machineId, path: '/workspace', flavor: 'codex' } }) });
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'machine-a', accountId });
+            const actionId = 'review.start';
+            const input = getActionSpec(actionId).inputSchema.parse({ sessionId, scope: 'repository', instructions: 'Review this checkout.',
+                reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'muse', modelId: 'spark1.3' }] });
+            const run = { id: 'review-workflow', sourceArtifactId: null, ownerAccountId: accountId, visibleTeamId: null,
+                attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null,
+                finishedAt: null, origin: { kind: 'direct' }, state: 'running', revision: 1, machineId, workflowCustodyState: 'pending',
+                originDeliveryAckRevision: null,
+                availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
+                createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
+            const execution = { ok: true as const, result: { run, admission: 'created', reviewRound: { reviewId: 'review', roundOrdinal: 1 } } };
+            const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
+            // Substitute network I/O, keeping Session resolution, routing and the encrypted Action carrier real.
+            network.observe = () => createApiSessionSocketStub();
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+                if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
+                if (url.endsWith(`/v1/machines/${machineId}`)) return { status: 200, data: { machine: { id: machineId, active: true,
+                    kind: 'persistent', revokedAt: null, replacedByMachineId: null, managedMachineRef: null,
+                    access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } } } };
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            const deliver = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
+                const envelope = ExternalActionRequestEnvelopeSchema.parse(body);
+                if (envelope.v !== 2) throw new Error('Expected encrypted Machine delivery');
+                const target = { kind: 'machine' as const, machineId };
+                expect(envelope.target).toEqual(target);
+                const binding = { serverIdentityId: 'srv_home', accountId, authentication: { kind: 'terminal' as const, tokenEpoch: 4 },
+                    actionId, requestId: envelope.requestId, target };
+                const decoded = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    envelope, binding, material })?.input;
+                expect(decoded).toEqual(input);
+                expect(reconcileExternalActionTarget({ actionId, rawInput: decoded, target, currentMachineId: machineId }))
+                    .toMatchObject({ kind: 'ready', target: { kind: 'session', sessionId } });
+                return { status: 200, data: prepareExternalActionResponseV2({ request: envelope, binding, material,
+                    executedMachineId: machineId, randomBytes: length => new Uint8Array(length).fill(6), execution }).response };
+            });
+            vi.stubGlobal('fetch', async () => Response.json({ ok: false, errorCode: 'target_not_local', error: 'target_not_local' }));
+            const executor = createCliActionExecutorFromCredentials({ credentials, serverId: configuration.activeServerId,
+                serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
+                    v: 1, approvalWaivedSurfaces: { [actionId]: ['cli'] },
+                }) } });
+            const result = await executor.execute(actionId, input, { surface: 'cli' });
+            expect(deliver, JSON.stringify(result)).toHaveBeenCalledWith(
+                `https://home.test/v1/actions/${actionId}`, expect.anything(), expect.anything());
+            expect(result).toEqual(execution);
+        });
+    });
+
     it.each([
         { login: 'account login with an explicit Machine', terminal: false, reply: 'none' },
         { login: 'ordinary terminal login', terminal: true, reply: 'none' },

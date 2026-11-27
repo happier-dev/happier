@@ -2324,6 +2324,57 @@ describe("external Action execution authorization", () => {
         };
     }
 
+    it('admits Review start for a Team member with Machine Use and refuses an ungranted Account', async () => {
+        const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
+        const fixture = await createFixture({ qualifiedPat: false });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: member.id, role: 'member' } });
+        await db.machine.update({ where: { id: fixture.machine.id }, data: {
+            active: true, operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+        } });
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: fixture.account.id, machineId: fixture.machine.id,
+            principal: { kind: 'team', teamId: fixture.team.id }, level: 'view',
+        }))).toMatchObject({ kind: 'saved' });
+
+        const { app } = await createApp(fixture.team.id);
+        const post = async (accountId: string, actionId: string, input: ExternalActionRequestEnvelopeV1['input']) => {
+            const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+            return app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` },
+                payload: { v: 1, machineId: fixture.machine.id, envelope: {
+                    ...fixture.envelope, requestId: crypto.randomUUID(), input,
+                } } });
+        };
+        const review = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, cwd: '/workspace',
+            scope: 'repository', instructions: 'Review this checkout.', reviewers: [
+                { kind: 'engine', engineId: 'codex' },
+                { kind: 'person', principal: { kind: 'account', accountId: fixture.account.id }, required: true },
+            ] });
+        try {
+            const session = await post(member.id, 'session.spawn_new', {
+                directory: { kind: 'path', path: '/workspace' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            });
+            expect(session.statusCode, session.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(session.json()).binding)
+                .toMatchObject({ accountId: member.id, custodianAccountId: fixture.account.id });
+
+            const denied = await post(outsider.id, 'review.start', review);
+            expect(denied.statusCode, denied.body).toBe(409);
+            expect(denied.json()).toMatchObject({ code: 'target_unavailable' });
+
+            const admitted = await post(member.id, 'review.start', review);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json()).binding).toMatchObject({
+                actionId: 'review.start', accountId: member.id, custodianAccountId: fixture.account.id,
+                machineId: fixture.machine.id, installationId: fixture.machine.installationId,
+            });
+        } finally { await app.close(); }
+    });
+
     it.each(['owner', 'foreign'] as const)('spends a Review Team visibility consent only on its exact signed Session grant (%s)', async relationship => {
         const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
         const { SessionAccessGrantSetActionInputV1Schema } = await import('@happier-dev/protocol/sessions/access/sessionAccessActionsV1');

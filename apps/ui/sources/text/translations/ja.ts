@@ -8035,6 +8035,7 @@ localTailscale: {
       invalidFormat: "フォーマットが無効です",
       operationFailed: "操作に失敗しました",
       machineActionUnsupported: "このマシンの Happier を更新する必要があります。",
+      machineOperationUnsupported: "選択したマシンではこの操作に対応していません。別のマシンを選んでください。",
       signupDisabled: "このHomeでは新規アカウントの作成が無効になっています。既存のアカウントでサインインするか、Home管理者に登録の有効化を依頼してください。",
       accountDisabled: ({ home }: { home: string }) => `このアカウントは ${home} で無効になっています。Home の管理者にお問い合わせください。`,
       homeIdentityMismatch: ({ home }: { home: string }) =>

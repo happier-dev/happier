@@ -60,6 +60,15 @@ describe('Action failure presentation', () => {
         expect(say({ errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_future_reason' })).toBe('fallback');
     });
 
+    it('explains when execution authorization says the selected Machine cannot run an Action', () => {
+        const failure = { ok: false as const, error: 'target_unavailable', errorCode: 'target_unavailable',
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'unsupported_operation', httpStatus: null } };
+        expect(resolveActionExecutionFailureMessage(failure, t('common.requestFailed')))
+            .toBe(t('errors.machineOperationUnsupported'));
+        expect(presentActionExecutionFailure(failure).technicalDetails)
+            .toContainEqual(expect.objectContaining({ key: 'causeCode', value: 'unsupported_operation' }));
+    });
+
     it('presents the deployment installation refusal from the HTTP failure envelope', () => {
         const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired-installation',
             remedy: 'This Machine was reinstalled. Keep this Environment and reinstall it on the current installation.',
