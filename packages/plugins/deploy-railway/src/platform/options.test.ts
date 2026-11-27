@@ -24,7 +24,9 @@ function withOptions(respond: (query: string, variables: Record<string, unknown>
       expect(request.credentialBinding).toMatchObject({ kind: 'connectedAccountPurpose', purpose: 'cloud-api' });
       const document = JSON.parse(new TextDecoder().decode(request.body)) as typeof requests[number];
       requests.push(document);
-      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ data: respond(document.query, document.variables) })) };
+      const result = respond(document.query, document.variables);
+      const response = result instanceof Response ? result : Response.json({ data: result });
+      return { status: response.status, headers: {}, body: new Uint8Array(await response.arrayBuffer()) };
     } });
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { http, connectedAccounts: {
       requestSelection: unavailable, listAccounts: unavailable, materializeListedAccount: unavailable, watch: unavailable,
@@ -127,9 +129,37 @@ it('lists token projects across workspaces and resumes the selected workspace pa
     expect(nextPage).toEqual({ options: [{ value: projectId, label: projectId, source: { kind: 'railway-workspace', locator: second } }], nextCursor: expect.any(String) });
     await expect(read('providerAccountId', draft, nextPage.nextCursor)).resolves.toEqual({
       options: [{ value: 'second-project', label: 'second-project', source: { kind: 'railway-workspace', locator: second } }] });
-    expect(requests.map(({ variables }) => variables).filter(variables => variables.workspaceId)).toEqual([
+    expect(requests.map(({ variables }) => variables)).toEqual([
+      {},
       { workspaceId: third, after: null }, { workspaceId: first, after: null }, { workspaceId: second, after: null },
       { workspaceId: second, after: 'railway-cursor' },
+    ]);
+  }, null);
+});
+
+it('returns the typed Railway refusal if a remaining workspace disappears between project pages', () => {
+  const first = { id: 'current', name: 'Current' };
+  const remaining = { id: 'remaining', name: 'Remaining' };
+  let removed = false;
+  return withOptions((query, variables) => {
+    if (query.includes('me { workspaces')) return {
+      me: { workspaces: removed ? [first] : [first, remaining] }, externalWorkspaces: [],
+    };
+    if (variables.workspaceId === remaining.id && removed) {
+      return Response.json({ errors: [{ extensions: { code: 'FORBIDDEN' } }] });
+    }
+    return { projects: { edges: [{ node: { id: 'project', name: 'Project' } }],
+      pageInfo: { endCursor: null, hasNextPage: false } } };
+  }, async (read, requests) => {
+    const firstPage = await read('providerAccountId', draft) as { nextCursor: string };
+    expect(firstPage.nextCursor).toEqual(expect.any(String));
+    removed = true;
+    await expect(read('providerAccountId', draft, firstPage.nextCursor)).rejects.toMatchObject({
+      code: 'provider_unavailable',
+      data: { failureCause: { errorCode: 'railway_graphql_unavailable', nativeErrorCode: 'FORBIDDEN', httpStatus: 200 } },
+    });
+    expect(requests.map(({ variables }) => variables)).toEqual([
+      {}, { workspaceId: first.id, after: null }, { workspaceId: remaining.id, after: null },
     ]);
   }, null);
 });

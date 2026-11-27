@@ -40,6 +40,31 @@ it('N2 sibling only on the second environments page is counted', async () => {
   expect(requests).toHaveLength(2);
 });
 
+it('starts independent attachment continuations before either chain advances, keeping inventory order', async () => {
+  const { project, requests } = vendor(({ query, variables }) => {
+    if (query.includes('environment(id:')) {
+      const { environmentId, after } = variables;
+      if (environmentId === 'staging') {
+        return { environment: { id: 'staging', projectId: 'project', volumeInstances: after === 'staging-2'
+          ? page([], 'staging-3') : page([att('staging', 'database', 'vol')]) } };
+      }
+      return { environment: { id: 'qa', projectId: 'project', volumeInstances: page([att('qa', 'database', 'vol')]) } };
+    }
+    return { project: { id: 'project', environments: variables.after === null ? page([
+      { id: 'production', volumeInstances: page([att('production', 'database', 'vol')]) },
+      { id: 'staging', volumeInstances: page([], 'staging-2') },
+    ], 'next-environment') : page([{ id: 'qa', volumeInstances: page([], 'qa-2') }]) } };
+  });
+  await expect(project.readServiceVolume(selection)).resolves.toEqual({
+    id: 'vol', otherEnvironments: 2,
+    url: 'https://railway.com/project/project/volume/vol?environmentId=staging',
+  });
+  expect(requests).toHaveLength(5);
+  const continuations = requests.filter(({ variables }) => variables.environmentId).map(({ variables }) => variables.after);
+  expect(continuations.slice(0, 2)).toEqual(expect.arrayContaining(['staging-2', 'qa-2']));
+  expect(continuations[2]).toBe('staging-3');
+});
+
 it('N3 null volumeInstances in another environment throws (kept-unchecked), never exclusive', async () => {
   const { project } = vendor(projectWith(page([
     { id: 'production', volumeInstances: page([att('production', 'database', 'vol')]) },
