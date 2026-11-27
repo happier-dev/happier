@@ -747,8 +747,11 @@ export function projectUsageQuotaCoverage(reads: readonly UsageQuotaCoverageRead
     const sources = reads.flatMap(read => read.state ? [read.state] : []);
     const pending = reads.some(read => read.pending || read.state?.status === 'pending');
     const failure = sources.find(state => state.errorCode);
-    if (!value.length) return { status: pending || requestedHistoryPending ? 'pending' : failure ? 'error' : emptyStatus, sources,
-        ...(failure ? { errorCode: failure.errorCode } : {}) };
+    if (!value.length) {
+        const status = pending || requestedHistoryPending ? 'pending' : failure ? 'error' : emptyStatus;
+        return { status, sources, ...(status === 'available' ? { value } : {}),
+            ...(failure ? { errorCode: failure.errorCode } : {}) };
+    }
     // Complete retained readings remain usable during replacement. A failed
     // reply cannot settle the batch while another requested history is held.
     const partial = pending || (requestedHistoryPending && failure !== undefined)
