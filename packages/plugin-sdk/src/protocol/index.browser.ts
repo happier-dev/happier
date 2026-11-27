@@ -219,6 +219,8 @@ export { defineProtocolUniqueArray } from './protocolFacade.js';
 export { defineProtocolUtf8String } from './protocolFacade.js';
 export { defineTriageCompositeIdentifierStringV1 } from './triageEntryRef.js';
 export { defineTriageSingleLineStringV1 } from './triageEntryRef.js';
+export { applyDeploymentPreviewHeadV1, buildDeploymentPreviewEnvironmentQueryV1,
+    isOwnServerPreviewTargetV1, isReadyDeploymentPreviewDomainV1, projectDeploymentPreviewStateV1, selectCurrentPreviewEnvironmentsV1 } from './deployment.js';
 export { deploymentRevisionShortLabelV1 } from './deployment.js';
 export { embedProtocolJsonSchema } from './protocolFacade.js';
 export { encodeBase64 } from './encoding.js';
