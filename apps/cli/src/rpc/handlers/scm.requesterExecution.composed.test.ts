@@ -13,6 +13,8 @@ import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { invokeHostReviewedChildV1, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -27,6 +29,7 @@ import { configuration } from '@/configuration';
 import type { HostAgentIsolationLaunchSnapshot, HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { runWithHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -47,7 +50,9 @@ import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } f
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
+import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps/machineTransport';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -61,6 +66,7 @@ const os = vi.hoisted(() => ({
   memberReads: [] as string[],
   direct: [] as Array<{ command: string; uid: number | undefined; member: boolean }>,
   runAs: [] as Array<{ args: readonly string[]; uid?: number }>,
+  memberHomes: new Map<string, { path: string; uid: number }>(),
   subprocessWorker: false,
   terminalLaunch: false,
 }));
@@ -92,6 +98,13 @@ beforeAll(() => {
   syncBuiltinESMExports();
 });
 afterAll(() => { Object.assign(fsPromises, originalFs); syncBuiltinESMExports(); });
+vi.mock('@happier-dev/cli-common/process', async importOriginal => {
+  const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
+  return { ...actual, execFileWithDeadline: async (...request: Parameters<typeof actual.execFileWithDeadline>) => {
+    const nativeHome = os.memberHomes.get(request[1][2]);
+    return await runAgentIsolationMemberReadinessBoundary({ request, nativeHome }) ?? actual.execFileWithDeadline(...request);
+  } };
+});
 vi.mock('node:child_process', async original => {
   const actual = await original<typeof import('node:child_process')>();
   return { ...actual, spawn: (command: string, args: readonly string[] = [], options: SpawnOptions = {}): ChildProcess => {
@@ -139,7 +152,7 @@ vi.mock('node:child_process', async original => {
   } };
 });
 afterEach(() => { os.repository = ''; os.secret = ''; os.daemonTouches.length = 0; os.memberReads.length = 0;
-  os.direct.length = 0; os.runAs.length = 0; os.terminalLaunch = false; os.subprocessWorker = false; vi.restoreAllMocks(); });
+  os.direct.length = 0; os.runAs.length = 0; os.memberHomes.clear(); os.terminalLaunch = false; os.subprocessWorker = false; vi.restoreAllMocks(); });
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Owner test', '-c', 'user.email=owner@example.invalid', ...args],
   { cwd, encoding: 'utf8' });
@@ -198,6 +211,7 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     const agentUid = other ? 2402 : 2401;
     const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...request.requesterIdentity, homeServerIdentityId: home }),
       workspaceRoot, home: memberHome, agentUid, agentGid: agentUid };
+    os.memberHomes.set(memberIdentity.username, { path: memberHome, uid: agentUid });
     const snapshot = { ...daemonIsolation, workspaceRoots: [workspaceRoot], memberIdentity, localTransport: { agentUid, agentGid: agentUid },
       launch: { managedHappierBinaryPath: '/opt/happier/cli/current/happier', runtimeHome: join(memberHome, 'runtime'),
         environment: {}, selectedEnvironmentKeys: [], selectedMaterials: [] } };
@@ -535,6 +549,64 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(gitLaunches().length).toBeGreaterThan(0);
     expect(daemonGit()).toEqual([]);
     expect(os.daemonTouches).toEqual([]);
+  });
+
+  it('keeps a reviewed Can use child’s repository reads inside its own member folder', async () => {
+    const f = await fixture({ admissionCurrent: false });
+    const target = { kind: 'machine', machineId: f.machineId } as const;
+    const accountId = 'member-account';
+    const requestId = 'review-start';
+    const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'admitted-review-start',
+      binding: {
+        accountId, custodianAccountId: 'owner-account', admittedMachineRole: 'use',
+        authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+        serverIdentityId: f.home, machineId: f.machineId, installationId: f.installationId,
+        actionId: 'action.invoke', requestId, requestEnvelopeDigest: 'a'.repeat(43), target,
+      },
+    });
+    // Home is the network boundary. Preserve its admitted root and currentness.
+    Object.defineProperty(admitted, 'requesterHttpProjection', {
+      value: Object.freeze({
+        accountId, serverId: f.home, serverIdentityId: f.home, serverHttpBaseUrl: 'https://home.test',
+        accountEncryptionMode: 'plain', isCurrent: async () => true, createRequestHeaders: async () => null,
+      }),
+    });
+    const action = { pluginId: 'happier.triage', localId: 'sessions/start-pull-request-review-v1' };
+    const reviewed = await invokeHostReviewedChildV1<{ context: ActionExecutorContext }>({
+      parent: { actionId: 'action.invoke', input: { action, input: {} } },
+      context: {
+        surface: 'plugin', authority: 'present_user', runtimeAccountId: accountId,
+        actionRequestId: requestId, externalActionTarget: target,
+        externalActionExecutionAuthorization: retainVerifiedExternalActionRequester({ authorization: admitted, isCurrent: async () => true }),
+      },
+      child: { action, role: 'action_invoke', input: {} },
+      admittedReview: { action, role: 'action_invoke', surface: 'plugin' },
+      execute: async (_input, context) => ({ context }),
+    });
+    if (!('context' in reviewed)) throw new Error(`Expected reviewed child: ${JSON.stringify(reviewed)}`);
+    const child = { ...reviewed.context, defaultSessionId: 'session-1', externalActionTarget: undefined };
+    const transport = createCliMachineActionTransport({
+      machineActionDirectTargetTransport: { machineId: f.machineId, invoke: f.manager.invokeLocal.bind(f.manager) },
+    });
+    const status = (cwd: string) => transport.callMachineAction({
+      machineId: f.machineId, method: RPC_METHODS.SCM_STATUS_SNAPSHOT, effectActionId: 'scm.status.snapshot',
+      exactMachine: true, authority: 'present_user', context: child,
+      request: createTargetedActionRpcRequestV1(
+        { cwd, detail: 'facts', outcomeVersion: 1, operationStateVersion: 1 },
+        { ...target, project: { machineId: f.machineId, directory: cwd } }, child,
+      ),
+    });
+    expect(await status(f.memberRepository)).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+    const readCount = gitLaunches().length;
+    for (const cwd of [f.ownerRepository, f.otherMemberRepository]) {
+      expect(await status(cwd)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    }
+    expect(gitLaunches()).toHaveLength(readCount);
+    expect(os.runAs.map(run => run.uid)).toEqual([2401]);
   });
 
   // SCM-MEMBER-LIVE-1115: the Action surface sends the Project as a targeted machine target.

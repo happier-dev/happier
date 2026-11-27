@@ -21,6 +21,7 @@ import {
   isHostRequesterUnrestrictedOwner,
   isRequesterOwnWorkPlacedOnDaemonForHost,
   selectHostRequesterExecutionIdentity,
+  type HostRequesterExecutionIdentity,
 } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -1295,6 +1296,15 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(
       && body.data.transientRelationship?.relationshipId === relationshipId);
 }
 
+/** Home-admitted people and Account automation do this SCM work in their own member folder. */
+function admitsMemberFolderScm(
+  identity: HostRequesterExecutionIdentity,
+  method: string,
+): boolean {
+  return identity.kind === 'isolated' && (identity.presentPerson === true || identity.accountAutomation === true)
+    && (isScmMemberFolderRpcMethod(method) || isScmHostingCredentialRpcMethod(method));
+}
+
 export async function authorizeMachineRpcRequest(
   request: Readonly<{
     method: string;
@@ -1768,7 +1778,11 @@ export async function authorizeMachineRpcRequest(
         }, hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(request.signal),
           hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
-        if (identity.kind === 'unknown' || !isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
+        if (identity.kind === 'unknown') return forbidden('machine_admission');
+        const memberRead = localRepositoryRead
+          && retainedRequester?.authorization.binding.admittedMachineRole === 'use'
+          && admitsMemberFolderScm(identity, method);
+        if (!memberRead && !isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
         if (localRepositoryRead) {
           authorized = { ok: true, directWorkspaceRequester: identity };
@@ -2064,11 +2078,6 @@ export async function authorizeMachineRpcRequest(
         if (installationId !== machine.resolveInstallationId())
           return forbidden('machine_installation');
         // Home-admitted Manage on this physical receiver permits raw work.
-        // A person (or their own Account automation) reading or changing a repository, including its network and
-        // hosting work with their own connected accounts (owner ruling 2026-11-26): the SCM owner runs the whole
-        // operation in their member process, only inside their own folder.
-        const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
-          && (isScmMemberFolderRpcMethod(rpcMethod) || isScmHostingCredentialRpcMethod(rpcMethod));
         const unrestricted = isHostRequesterUnrestrictedOwner(identity);
         // Home admitted this grantee (Use or Manage) for this method. Where the owner turned
         // isolation off, their own work runs on the daemon (owner ruling 2026-11-23 ~15:10Z);
@@ -2078,7 +2087,7 @@ export async function authorizeMachineRpcRequest(
         if (directRequester) {
           // Placement never substitutes for the method's remaining authorization checks.
           authorized = { ok: true, directWorkspaceRequester: identity };
-        } else if (!nativeEffectOwner && !receivingManager && !unrestricted && !personLocalRepositoryRead) {
+        } else if (!nativeEffectOwner && !receivingManager && !unrestricted && !admitsMemberFolderScm(identity, rpcMethod)) {
           const refuseExecution = (errorCode: string, error: string): RpcAuthorizationResult => ({
             ok: false, errorCode, error,
             failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.requester_execution_isolation',
