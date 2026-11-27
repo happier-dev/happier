@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { formatHappierDataBytes, useHappierCollection, type CompositionSegment } from '@happier-dev/plugin-ui/presentation';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { formatStorageDay } from '@/components/machines/storage/storageCategoryText';
 import type { ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { StorageCapacityRow } from '@/components/storage/StorageCapacityRow';
@@ -224,23 +225,33 @@ function readFileKey(file: DiscussionStorageFile): string {
     return file.key;
 }
 
+const NO_FILE_ROW_COMMANDS = Object.freeze([]);
+
 /**
  * A file's "…" (lab scene 5 A): Show in the message and Download where the binding can do them, and Remove file only
  * where the server admits it.
  */
 function useFileRowActions(file: DiscussionStorageFile): CollectionRowActions {
     const commands = React.useContext(FileCommandsContext);
+    const showInMessage = commands?.show;
+    const show = showInMessage ? {
+        key: 'storage.discussion.show_in_message',
+        title: t('artifacts.browser.storageView.discussion.showInMessage'),
+        description: file.name.trim() || undefined,
+        invoke: () => showInMessage(file),
+    } : null;
+    useCurrentUiContextLocalCommands(show ? [show] : NO_FILE_ROW_COMMANDS, { contextKey: file.key });
     if (!commands) return {};
     return {
         busy: commands.busy,
         secondaryActions: [
-            ...(commands.show ? [{ id: 'show', label: t('artifacts.browser.storageView.discussion.showInMessage') }] : []),
+            ...(show ? [{ id: 'show', label: show.title }] : []),
             ...(commands.download ? [{ id: 'download', label: t('artifacts.browser.storageView.discussion.download') }] : []),
             ...(file.canRemove ? [{ id: 'remove', label: t('artifacts.browser.storageView.discussion.removeFile'), destructive: true,
                 disabled: commands.busy }] : []),
         ],
         onSecondaryAction: (id) => {
-            if (id === 'show') commands.show?.(file);
+            if (id === 'show') show?.invoke();
             else if (id === 'download') commands.download?.(file);
             else if (id === 'remove') commands.remove(file);
         },

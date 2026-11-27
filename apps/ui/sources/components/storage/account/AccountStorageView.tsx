@@ -1019,6 +1019,7 @@ const KIND_LEGEND_ORDER: readonly AccountStorageKindId[] = [
   'profilePictures', 'avatars', 'teamLogos',
 ];
 const MAP_LEGEND_APPEARANCE = { legend: 'compact', textStyle: happierPageTextMetrics('meta') } as const;
+const NO_ITEM_ROW_COMMANDS = Object.freeze([]);
 
 /**
  * A row's "…" (lab scenes 1 and 3), each through its Action and offered only where its owner admits it:
@@ -1036,16 +1037,30 @@ function useStorageItemRowActions(item: AccountStorageItem): CollectionRowAction
   const removeFile = useRemoveDiscussionFile(scope, commands?.changed);
   const trim = useTrimOldVersions(item, commands?.changed);
   const location = item.location;
+  const show = location.kind === 'discussion' && commands ? {
+    key: 'storage.item.show_in_message',
+    title: t('artifacts.browser.storageView.discussion.showInMessage'),
+    description: itemTitle(item).trim() || undefined,
+    invoke: () => commands.open(item),
+  } : null;
+  const history = location.kind !== 'discussion' && operations.canRead ? {
+    key: 'storage.item.show_old_versions',
+    title: t('artifacts.browser.storageView.items.showOldVersions'),
+    description: itemTitle(item).trim() || undefined,
+    invoke: () => operations.history(),
+  } : null;
+  const command = show ?? history;
+  useCurrentUiContextLocalCommands(command ? [command] : NO_ITEM_ROW_COMMANDS, { contextKey: item.key });
   if (location.kind === 'discussion') {
     // Show in the message opens the file where it lives, for anyone who can see it; Remove only where the server admits it.
     return {
       busy: removeFile.busy,
       secondaryActions: [
-        { id: 'show', label: t('artifacts.browser.storageView.discussion.showInMessage') },
+        ...(show ? [{ id: 'show', label: show.title }] : []),
         ...(item.viewerMayRemove ? [{ id: 'remove', label: t('artifacts.browser.storageView.discussion.removeFile'), destructive: true, disabled: removeFile.busy }] : []),
       ],
       onSecondaryAction: (id) => {
-        if (id === 'show') commands?.open(item);
+        if (id === 'show') show?.invoke();
         else if (id === 'remove') return removeFile.run({ discussionId: location.discussionId, messageId: location.messageId,
           blobId: location.attachmentId ?? item.id, name: itemTitle(item), bytes: item.bytes ?? 0,
           discussionTitle: item.discussionFile?.discussionTitle ?? null, own: item.discussionFile?.own === true });
@@ -1053,31 +1068,30 @@ function useStorageItemRowActions(item: AccountStorageItem): CollectionRowAction
     };
   }
   if (item.kind === 'artifactOldVersions') {
-    const history = artifact && operations.canRead;
     if (!history && !item.viewerMayTrim) return {};
     return {
       busy: trim.busy,
       secondaryActions: [
-        ...(history ? [{ id: 'history', label: t('artifacts.browser.storageView.items.showOldVersions') }] : []),
+        ...(history ? [{ id: 'history', label: history.title }] : []),
         ...(item.viewerMayTrim ? [{ id: 'trim', label: t('artifacts.browser.storageView.items.deleteOldVersions'), destructive: true, disabled: trim.busy }] : []),
       ],
       onSecondaryAction: (id) => {
-        if (id === 'history') operations.history();
+        if (id === 'history') history?.invoke();
         else if (id === 'trim') return trim.run();
       },
     };
   }
-  if (!artifact || !operations.canRead) return {};
+  if (!history) return {};
   return {
     busy: operations.deleting,
     secondaryActions: [
       { id: 'open', label: t('common.open') },
-      { id: 'history', label: t('artifacts.browser.storageView.items.showOldVersions') },
+      { id: 'history', label: history.title },
       ...(operations.canManage ? [{ id: 'delete', label: t('artifacts.browser.storageView.items.deleteEllipsis'), destructive: true, disabled: operations.deleting }] : []),
     ],
     onSecondaryAction: (id) => {
       if (id === 'open') commands?.open(item);
-      else if (id === 'history') operations.history();
+      else if (id === 'history') history.invoke();
       else if (id === 'delete') return operations.remove();
     },
   };
