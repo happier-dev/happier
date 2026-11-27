@@ -1,34 +1,56 @@
 import { readFile, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { AGY_OAUTH_CLIENT_ID, AGY_OAUTH_TOKEN_URL } from '@happier-dev/agents';
-import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { logger } from '@/ui/logger';
 import { ConnectedServiceImportError } from '@/cloud/connectedServices/connectedServiceImportError';
+import { resolveAgyMachineProfileDir } from '../acp/agyAcpLaunch';
 
 export type AgyNativeCredential = Readonly<{
   accessToken: string | null;
   refreshToken: string;
   expiresAt: number | null;
-  projectId: string | null;
 }>;
 const text = (value: unknown): string | null => typeof value === 'string' && value.trim() ? value.trim() : null;
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 const unavailable = () => new ConnectedServiceImportError('credentials_unavailable', 'Antigravity native credentials are unavailable');
 
-/** ACP 1.3.0 credential_store.py and CLI 1.3.3 consumer token envelope. File scopes are requested scopes, never grant evidence. */
-export function parseAgyNativeCredential(value: unknown, source: 'acp' | 'cli'): AgyNativeCredential | null {
+/** CLI consumer token envelope (`antigravity-oauth-token`). File scopes are requested scopes, never grant evidence. */
+export function parseAgyNativeCredential(value: unknown): AgyNativeCredential | null {
   const data = record(value);
-  if (!data) return null;
-  if (source === 'acp' && (text(data.client_id) !== AGY_OAUTH_CLIENT_ID || (text(data.token_uri) && text(data.token_uri) !== AGY_OAUTH_TOKEN_URL))) return null;
-  if (source === 'cli' && data.auth_method !== 'consumer') return null;
-  const tokens = source === 'cli' ? record(data.token) : data;
+  if (!data || data.auth_method !== 'consumer') return null;
+  const tokens = record(data.token);
   const refreshToken = text(tokens?.refresh_token);
   if (!tokens || !refreshToken) return null;
   const expiry = text(tokens.expiry);
-  const expiresAt = expiry ? Date.parse(expiry) : typeof tokens.expiry_date === 'number' ? tokens.expiry_date : null;
-  const accessToken = source === 'acp' ? text(tokens.token) ?? text(tokens.access_token) : text(tokens.access_token);
-  return { accessToken, refreshToken, expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : null, projectId: text(data.project_id) };
+  const expiresAt = expiry ? Date.parse(expiry) : null;
+  return { accessToken: text(tokens.access_token), refreshToken, expiresAt: expiresAt !== null && Number.isFinite(expiresAt) ? expiresAt : null };
+}
+
+/** The Antigravity CLI token file inside a `--gemini-dir` profile. */
+export const AGY_NATIVE_TOKEN_FILE_SEGMENTS = ['antigravity-cli', 'antigravity-oauth-token'] as const;
+
+/**
+ * Encode a credential as the CLI consumer token envelope that {@link parseAgyNativeCredential} reads.
+ * An unknown expiry is written as already expired so the CLI refreshes before its first request.
+ */
+export function serializeAgyNativeCliCredential(credential: Readonly<{
+  accessToken: string | null;
+  refreshToken: string;
+  expiresAt: number | null;
+  email: string | null;
+}>, now: number = Date.now()): Record<string, unknown> {
+  const expiresAt = credential.expiresAt ?? 0;
+  return {
+    auth_method: 'consumer',
+    ...(credential.email ? { id_token_email: credential.email } : {}),
+    token: {
+      access_token: credential.accessToken ?? '',
+      refresh_token: credential.refreshToken,
+      token_type: 'Bearer',
+      expiry: new Date(expiresAt).toISOString(),
+      expires_in: Math.max(0, Math.floor((expiresAt - now) / 1000)),
+    },
+  };
 }
 
 // Native CLI 1.3.3 uses a 500 ms detector budget, a 5 s Keyring read budget,
@@ -67,10 +89,10 @@ async function readCredentialCommand(command: string, args: string[], signal?: A
   });
 }
 
-async function readKeyring(account: string, signal?: AbortSignal): Promise<string | null> {
+async function readKeyring(signal?: AbortSignal): Promise<string | null> {
   const darwin = process.platform === 'darwin';
-  const args = darwin ? ['find-generic-password', '-s', 'gemini', '-a', account, '-w'] : ['lookup', 'service', 'gemini', 'username', account];
-  const result = await readCredentialCommand(darwin ? '/usr/bin/security' : 'secret-tool', args, signal, account === 'antigravity' ? CLI_KEYRING_BUDGET_MS : undefined);
+  const args = darwin ? ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'] : ['lookup', 'service', 'gemini', 'username', 'antigravity'];
+  const result = await readCredentialCommand(darwin ? '/usr/bin/security' : 'secret-tool', args, signal, CLI_KEYRING_BUDGET_MS);
   if (result.status === 0) return result.contents || null;
   if (darwin && result.status === 44) return null;
   throw unavailable();
@@ -126,29 +148,17 @@ async function nativeCliUsesFile(directory: string, signal?: AbortSignal): Promi
   }
 }
 
-export async function readAgyNativeCredential(source: 'acp' | 'cli' | 'cli-file', signal?: AbortSignal): Promise<AgyNativeCredential> {
+export async function readAgyNativeCredential(source: 'cli' | 'cli-file', signal?: AbortSignal): Promise<AgyNativeCredential> {
   signal?.throwIfAborted();
   // Windows credential-manager selection/reading has not been characterized.
   // Do not silently import a stale file instead of the native selected login.
   if (source === 'cli' && process.platform !== 'linux' && process.platform !== 'darwin') throw unavailable();
-  const home = resolveHomeDirFromEnvironment(process.env);
-  const geminiHome = process.env.GEMINI_HOME ? expandHomeDirPath(process.env.GEMINI_HOME, process.env) : join(home, '.gemini');
-  const cliDirectory = join(home, '.gemini', 'antigravity-cli');
-  const file = source === 'acp' ? join(geminiHome, 'antigravity-acp', 'acp_token.json') : join(cliDirectory, 'antigravity-oauth-token');
+  // The machine login Happier sessions use: the GEMINI_HOME profile, else ~/.gemini.
+  const cliDirectory = join(resolveAgyMachineProfileDir(process.env), 'antigravity-cli');
   let contents: string | null = null;
-  const forceAcpFile = ['1', 'true', 'yes'].includes((process.env.AGY_ACP_FORCE_FILE_STORAGE ?? '').toLowerCase());
-  if (source === 'acp' && process.platform === 'darwin' && !forceAcpFile) {
-    // ACP 1.3.0 checks the default Keychain with this read-only command and 2 s budget.
-    const keychain = await readCredentialCommand('/usr/bin/security', ['default-keychain'], signal, 2_000);
-    if (keychain.status === 0 && keychain.contents.replace(/^"|"$/g, '')) {
-      // Replaying ACP's writable functional probe would change native storage.
-      // A missing/failed Keychain read cannot establish that native ACP selected file.
-      contents = await readKeyring('antigravity-acp', signal);
-      if (!contents) throw unavailable();
-    }
-  } else if (source === 'cli' && !await nativeCliUsesFile(cliDirectory, signal)) {
+  if (source === 'cli' && !await nativeCliUsesFile(cliDirectory, signal)) {
     try {
-      contents = await readKeyring('antigravity', signal);
+      contents = await readKeyring(signal);
       if (contents) {
         const value: unknown = JSON.parse(contents);
         // Both native token-object decoders reject non-null primitives/arrays.
@@ -161,10 +171,10 @@ export async function readAgyNativeCredential(source: 'acp' | 'cli' | 'cli-file'
     }
   }
   if (!contents) {
-    try { contents = await readFile(file, { encoding: 'utf8', signal }); }
+    try { contents = await readFile(join(cliDirectory, 'antigravity-oauth-token'), { encoding: 'utf8', signal }); }
     catch { signal?.throwIfAborted(); throw unavailable(); }
   }
-  try { const credential = parseAgyNativeCredential(JSON.parse(contents), source === 'acp' ? 'acp' : 'cli'); if (credential) return credential; }
+  try { const credential = parseAgyNativeCredential(JSON.parse(contents)); if (credential) return credential; }
   catch { /* Safe typed boundary failure below. */ }
   throw unavailable();
 }

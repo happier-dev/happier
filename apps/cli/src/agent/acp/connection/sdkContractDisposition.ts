@@ -105,6 +105,6 @@ export const ACP_SDK_CLIENT_METHOD_DISPOSITION = {
   'mcp/connect': 'supported_not_advertised',
   'mcp/message': 'supported_not_advertised',
   'mcp/disconnect': 'supported_not_advertised',
-  'elicitation/create': 'supported_not_advertised',
+  'elicitation/create': 'integrated',
   'elicitation/complete': 'supported_not_advertised',
 } as const satisfies Record<(typeof CLIENT_METHODS)[keyof typeof CLIENT_METHODS], AcpSdkContractDisposition>;

@@ -5428,9 +5428,6 @@ export const it: TranslationStructure = {
       codexAcp: {
         title: "Adattatore Codex ACP",
       },
-      agyAcpServer: {
-          title: "Server ACP di Agy",
-      },
       githubCli: {
         title: "CLI GitHub",
       },
@@ -5755,18 +5752,6 @@ export const it: TranslationStructure = {
       reinstallTitle: "Reinstallare Codex ACP?",
       description:
         "Questo installa un adattatore ACP sperimentale per Codex che supporta il caricamento/la ripresa dei thread.",
-    },
-    agyAcpBanner: {
-        title: "Server ACP di Agy",
-        install: "Installa",
-        update: "Aggiorna",
-        reinstall: "Reinstalla",
-    },
-    agyAcpInstallModal: {
-        installTitle: "Installare il server ACP di Agy?",
-        updateTitle: "Aggiornare il server ACP di Agy?",
-        reinstallTitle: "Reinstallare il server ACP di Agy?",
-        description: "Questo installa il server ACP ufficiale e bloccato di Agy usato per le sessioni Agy. La CLI interattiva agy resta installata separatamente.",
     },
         githubCliBanner: {
             title: 'GitHub CLI',
@@ -7063,7 +7048,7 @@ export const it: TranslationStructure = {
       customColorTitle: 'Colore personalizzato',
       customColorMessage: 'Scegli una tonalità o inserisci un valore esadecimale.',
       invalidColor: 'Usa un valore esadecimale come #3A7BD5.',
-      removeColor: 'Rimuovi colore',
+      resetColor: 'Reimposta colore',
       inheritedFromProject: 'Dal progetto',
       customColorLabel: ({ hex }: { hex: string }) => `Colore personalizzato ${hex}`,
       colors: { blue: 'Blu', green: 'Verde', orange: 'Arancione', yellow: 'Giallo', red: 'Rosso', indigo: 'Indaco', purple: 'Viola' },

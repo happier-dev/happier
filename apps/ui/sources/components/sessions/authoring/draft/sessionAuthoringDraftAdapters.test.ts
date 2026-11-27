@@ -1103,6 +1103,36 @@ describe('sessionAuthoringDraftAdapters', () => {
         })).toHaveProperty('checkoutCreationDraft', null);
     });
 
+    it('restores a saved fallback binding and gives the built-in target key precedence', () => {
+        const target = { kind: 'builtInAgent', agentId: 'agy' } as const;
+        const connectedServices = { v: 1, bindingsByServiceId: { agy: { source: 'connected', selection: 'profile', profileId: 'team' } } } as const;
+        const localServices = { v: 1, bindingsByServiceId: { agy: { source: 'native' } } } as const;
+        const draft = buildLiveNewSessionAuthoringDraftFromResolvedInputs({
+            directory: '/tmp/project',
+            prompt: 'Continue',
+            backendTarget: target,
+            connectedServices: null,
+        });
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            agentNewSessionOptionStateByAgentId: { agy: { connectedServices } },
+            updatedAt: 123,
+        });
+
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft(persisted).connectedServices).toEqual(connectedServices);
+        expect(buildNewSessionAuthoringDraftFromPersistedDraft({
+            ...persisted,
+            agentNewSessionOptionStateByAgentId: {
+                ...persisted.agentNewSessionOptionStateByAgentId,
+                [buildBackendTargetKey(target)]: { connectedServices: localServices },
+            },
+        }).connectedServices).toEqual(localServices);
+    });
+
     it('builds a persisted new-session draft from the shared authoring draft', () => {
         const draft = buildNewSessionAuthoringDraft({
             directory: '/tmp/project',

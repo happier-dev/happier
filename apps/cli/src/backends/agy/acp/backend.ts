@@ -1,18 +1,32 @@
+import type { AgentBackend } from '@/agent/core';
 import { createCatalogDefinedAcpBackend, type CatalogDefinedAcpBackendOptions } from '@/agent/acp/catalog/createCatalogDefinedAcpBackend';
-import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuationSource';
+import { resolveAgyAcpLaunch, resolveAgyMachineProfileDir } from './agyAcpLaunch';
+import { importLegacyAgyConversation } from './agyConversationStore';
+import { agySessionModelAdapter, withOfferedAgyThoughtLevels } from './modelControls';
+import { AgyTransport } from './transport';
 
-// ACP 1.3.0 lets these inherited values override the selected account's endpoint/project.
-const ACCOUNT_ENDPOINT_OVERRIDES = ['AGY_ACP_CCPA_BASE_URL', 'AGY_ACP_CCPA_PROJECT'] as const;
+export type AgyAcpBackendOptions = CatalogDefinedAcpBackendOptions;
 
-export function createAgyAcpBackend(options: CatalogDefinedAcpBackendOptions) {
-  // ACP 1.3.0 distinguishes failed token refresh/onboarding from generic missing authentication.
-  options = { ...options, isAuthenticationSetupFailure: ({ code, data }) =>
-    code === -32000 && data !== null && typeof data === 'object' && !Array.isArray(data)
-      && 'reason' in data && data.reason === 'onboarding_failed' };
-  if (!findConnectedServiceChildSelection({ ...process.env, ...options.env }, 'antigravity')) {
-    return createCatalogDefinedAcpBackend('agy', options);
-  }
-  const env = Object.fromEntries(Object.entries(options.env ?? {}).filter(([key]) =>
-    !ACCOUNT_ENDPOINT_OVERRIDES.some((override) => key.toUpperCase() === override)));
-  return createCatalogDefinedAcpBackend('agy', { ...options, env, unsetEnv: [...options.unsetEnv ?? [], ...ACCOUNT_ENDPOINT_OVERRIDES] });
+export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promise<AgentBackend> {
+  return withOfferedAgyThoughtLevels(createCatalogDefinedAcpBackend('agy', {
+    ...options,
+    sessionModelAdapter: agySessionModelAdapter,
+    transportHandler: new AgyTransport(),
+    launch: async ({ loadSessionId, resolveDefaultLaunch }) => {
+      const command = resolveDefaultLaunch();
+      const env = { ...process.env, ...options.env };
+      const launch = resolveAgyAcpLaunch(env);
+      if (loadSessionId) await importLegacyAgyConversation(launch.profileDir ?? resolveAgyMachineProfileDir(env), loadSessionId);
+      return {
+        command: command.command,
+        args: [...command.args, ...launch.args],
+        env: launch.env,
+        unsetEnv: launch.unsetEnv,
+        ...(launch.admitInitializedAgent ? { admitInitializedAgent: launch.admitInitializedAgent } : {}),
+        requireListedSessionOnLoad: true,
+        providerTurnSource: createAgyBackgroundContinuationSource(),
+      };
+    },
+  }));
 }
