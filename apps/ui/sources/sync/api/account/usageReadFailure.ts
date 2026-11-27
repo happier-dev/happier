@@ -1,21 +1,26 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
-type CoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode'>;
+type CoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode' | 'unreadSessions'>;
 
 export function usagePageReadFamily(source: string): string {
     if (source === USAGE_COACH_PREFERENCES_READ_SOURCE) return 'how_you_work';
     return source.startsWith('quota:') ? 'quota' : source;
 }
 
+function hasRetryableUnreadWork(state: CoverageStatus): boolean {
+    return (state.unreadSessions?.failed ?? 0) > 0 || (state.unreadSessions?.timed_out ?? 0) > 0;
+}
+
 export function isUsageCoverageFailure(source: CoverageStatus): boolean {
-    return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed'
+    return source.status === 'error' || source.source === 'work' && (source.errorCode === 'work_evidence_failed'
+        || source.status === 'stale' && hasRetryableUnreadWork(source))
         || source.status === 'stale' && source.errorCode !== undefined && usagePageReadFamily(source.source) === 'quota'
         || source.source === USAGE_COACH_PREFERENCES_READ_SOURCE && source.status === 'pending' && source.errorCode !== undefined;
 }
 
 export function needsNewerServer(gap: Pick<UsageQuerySourceState, 'status' | 'updateRequired'>): boolean {
-    return gap.status === 'error' && gap.updateRequired?.component === 'server';
+    return (gap.status === 'error' || gap.status === 'unsupported') && gap.updateRequired?.component === 'server';
 }
 
 export function isUsageQuotaOwnershipUnproven(state: UsageQuerySourceState): boolean {
@@ -39,10 +44,10 @@ export function usageScopeRefusalCode(state: CoverageStatus) {
 }
 
 export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {
-    if (needsNewerServer(state) || isUsageQuotaOwnershipUnproven(state) || usageScopeRefusalCode(state)) return false;
+    if (needsNewerServer(state) || isUsageQuotaOwnershipUnproven(state)) return false;
     if (state.source === 'work' && (state.status === 'partial' || state.unreadSessions !== undefined)) {
         const settled = state.status === 'partial' || state.status === 'error' || state.status === 'stale';
-        return settled && ((state.unreadSessions?.failed ?? 0) > 0 || (state.unreadSessions?.timed_out ?? 0) > 0);
+        return settled && hasRetryableUnreadWork(state);
     }
-    return isUsageCoverageFailure(state);
+    return !usageScopeRefusalCode(state) && isUsageCoverageFailure(state);
 }

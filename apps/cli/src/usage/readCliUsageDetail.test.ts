@@ -193,7 +193,7 @@ describe('CLI Usage Session evidence demand', () => {
             totals: { eventCount: 1, tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
                 cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
         const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => failed === 'request'
-            ? batchResponse({ error: 'unavailable' }, 503)
+            ? batchResponse({ error: 'private server diagnostic', code: 'database_unavailable' }, 503)
             : batchResponse({ results: [{ sessionId: 'work-session', detail: {
                 status: 503, body: { error: 'database_transaction_timeout' },
             } }] }, 200, request));
@@ -202,7 +202,8 @@ describe('CLI Usage Session evidence demand', () => {
             accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
             resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
         expect(post).toHaveBeenCalledTimes(1);
-        expect(result.work).toMatchObject([{ status: 'error', errorCode: 'server_error', unreadSessions: { failed: 1 } }]);
+        expect(result.work).toMatchObject([{ status: 'error',
+            errorCode: failed === 'request' ? 'database_unavailable' : 'database_transaction_timeout', unreadSessions: { failed: 1 } }]);
         expect(result.work[0]?.evidence).toBeUndefined();
     });
 
@@ -361,7 +362,7 @@ describe('CLI Usage Session evidence demand', () => {
         { part: 'messages', status: 403, retained: false, cause: 'forbidden' },
         { part: 'detail', status: 200, retained: false, cause: 'forbidden' },
         { part: 'detail', status: 403, retained: false, cause: 'team_authentication_required',
-            bodyError: 'team_authentication_required', workFailure: 'auth_failed' },
+            bodyError: 'team_authentication_required', workFailure: 'team_authentication_required' },
         { part: 'messages', status: 503, retained: true, cause: 'team_authentication_unavailable',
             bodyError: 'team_authentication_unavailable' },
     ] as const)('preserves $part $status admission and Work independently ($cause)', async row => {
@@ -402,7 +403,7 @@ describe('CLI Usage Session evidence demand', () => {
         expect.soft(projected?.accounting?.totals).toEqual(value.totals);
         expect.soft(projected?.sources.find(source => source.source === 'work')).toMatchObject('workFailure' in row
             ? { status: 'error', errorCode: row.workFailure, unreadSessions: { machine_unavailable: 1,
-                ...(row.workFailure === 'auth_failed' ? { not_entitled: 1 } : { failed: 1 }) } }
+                ...(['auth_failed', 'team_authentication_required'].includes(row.workFailure) ? { not_entitled: 1 } : { failed: 1 }) } }
             : { status: 'unknown', errorCode: 'machine_offline',
                 unreadSessions: retained ? { machine_unavailable: 2 } : { machine_unavailable: 1, failed: 1 } });
         expect.soft(projected?.workSummary?.mergedPrCount).toBeUndefined();
@@ -438,11 +439,11 @@ describe('CLI Usage Session evidence demand', () => {
         expect(get).not.toHaveBeenCalled();
     });
 
-    it.each(['forbidden', 'cancelled'] as const)('does not relabel a %s batch as needing a newer server', async disposition => {
+    it.each(['credential_scope_denied', 'cancelled'] as const)('preserves a %s Session evidence batch outcome', async disposition => {
         const controller = new AbortController();
         const post = vi.spyOn(axios, 'post').mockImplementation(async () => {
             if (disposition === 'cancelled') controller.abort();
-            return batchResponse({ error: 'forbidden' }, 403);
+            return batchResponse({ error: 'credential_scope_denied' }, 403);
         });
         const get = vi.spyOn(axios, 'get');
         const read = readCliUsageDetail({ queries: [normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
@@ -454,7 +455,7 @@ describe('CLI Usage Session evidence demand', () => {
         else {
             const result = await read;
             expect(result.sessions).toEqual([]);
-            expect(result.howYouWork).toMatchObject([{ errorCode: 'auth_failed' }]);
+            expect(result.howYouWork).toMatchObject([{ errorCode: 'credential_scope_denied' }]);
             expect(result.howYouWork[0]).not.toHaveProperty('updateRequired');
         }
         expect(post).toHaveBeenCalledTimes(1);

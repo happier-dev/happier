@@ -17,7 +17,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
-import type { UsageAccountingSourceSnapshot, UsageQuerySourceState, UsageWorkSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { UsageAccountingSourceSnapshot, UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import type { StoredCredentials } from '@/persistence';
 import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol/account/encryptionMode';
@@ -28,7 +28,7 @@ import { resolveCredentialSessionContentCrypto, tryDecryptSessionOwnerMetadataVi
 import { readSessionAgentState } from '@/session/actions/cliActionDeps/sessionStateReaders';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
-import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { createHttpStatusError, HttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
 
 function classifySessionEvidencePartRead(status: number, body: object) {
     const error = createHttpStatusError(status, 'Usage Session evidence unavailable');
@@ -91,8 +91,9 @@ export async function readCliUsageDetail(input: Readonly<{
     const sessions = new Map<string, Detail>();
     type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1; transcriptOnly?: boolean }>;
     const activityFailures = new Map<string, ReadFailure>();
-    const workTargetFailures = new Map<string, ReadFailure>();
-    let requestFailure: ReadFailure | undefined;
+    type WorkReadFailure = ReadFailure & Readonly<{ httpStatus?: number }>;
+    const workTargetFailures = new Map<string, WorkReadFailure>();
+    let requestFailure: WorkReadFailure | undefined;
     const selectReadFailure = (failuresById: ReadonlyMap<string, ReadFailure>, sessionIds: readonly string[], includeTranscript = false) => {
         const failures = sessionIds.flatMap(id => {
             const failure = failuresById.get(id);
@@ -121,7 +122,16 @@ export async function readCliUsageDetail(input: Readonly<{
                         component: 'server', reason: 'usage_session_evidence_unsupported' };
                     throw Object.assign(createHttpStatusError(response.status, 'Usage Session evidence requires a newer server', 'update_required'), { details });
                 }
-                if (response.status !== 200) throw createHttpStatusError(response.status, 'Usage Session evidence unavailable');
+                if (response.status !== 200) {
+                    let errorCode: string | undefined;
+                    if (String(response.headers['content-type'] ?? '').toLowerCase().includes('application/json')) {
+                        let text = '';
+                        for await (const chunk of response.data.setEncoding('utf8')) text += chunk;
+                        try { errorCode = readSessionReadBatchFailureCodeV1(JSON.parse(text)); }
+                        catch { /* A malformed error body has only its transport status. */ }
+                    }
+                    throw createHttpStatusError(response.status, 'Usage Session evidence unavailable', errorCode ?? undefined);
+                }
                 const utf8 = new StringDecoder('utf8');
                 const ndjson = String(response.headers['content-type'] ?? '').toLowerCase().includes('application/x-ndjson');
                 const streamed: UsageSessionEvidenceResponse = { requests: [], results: [] };
@@ -173,8 +183,10 @@ export async function readCliUsageDetail(input: Readonly<{
             const { kind } = classifyServerEndpointError(error, { featureAbsentStatusCodes: [404] });
             const requirement = OperationUpdateRequiredV1Schema.safeParse(
                 error !== null && typeof error === 'object' && 'details' in error ? error.details : undefined);
+            const code = error instanceof HttpStatusError && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+            const httpStatus = readHttpStatus(error) ?? undefined;
             requestFailure = requirement.success
-                ? { errorCode: 'update_required', updateRequired: requirement.data } : { errorCode: kind };
+                ? { errorCode: 'update_required', updateRequired: requirement.data } : { errorCode: code ?? kind, httpStatus };
         }
     }
     const intervalSessionIds = new Set([...idsByQuery.values()].flat());
@@ -201,7 +213,7 @@ export async function readCliUsageDetail(input: Readonly<{
             const failedSnapshot = sessionParts.find(read => read && read.status !== 200 && read.status !== 404);
             if (failedSnapshot) {
                 const { kind } = classifyServerEndpointError(createHttpStatusError(failedSnapshot.status, 'Usage Session evidence unavailable'));
-                workTargetFailures.set(sessionId, { errorCode: kind });
+                workTargetFailures.set(sessionId, { errorCode: readSessionReadBatchFailureCodeV1(failedSnapshot.body) ?? kind, httpStatus: failedSnapshot.status });
             }
             const detail = part.detail!; // Batch admission requires every requested detail.
             if (detail.status !== 200) {
@@ -307,9 +319,7 @@ export async function readCliUsageDetail(input: Readonly<{
         resolveSession: async sessionId => {
             const session = sessions.get(sessionId);
             if (!session) {
-                const failure = requestFailure ?? workTargetFailures.get(sessionId);
-                if (!failure) return null;
-                return { errorCode: failure.errorCode === 'auth_failed' ? RPC_ERROR_CODES.FORBIDDEN : failure.errorCode };
+                return requestFailure ?? workTargetFailures.get(sessionId) ?? null;
             }
             if (!session.canReadWork) return { errorCode: RPC_ERROR_CODES.FORBIDDEN };
             return session.workTarget;
@@ -346,17 +356,8 @@ export async function readCliUsageDetail(input: Readonly<{
             }] });
         }
         return { query, asOfMs: input.nowMs, detail,
-            ...(requestFailure ?? accountActivityFailure ?? (detail.status === 'unknown' || failure?.updateRequired ? failure : undefined)) };
+            ...(requestFailure ? { errorCode: requestFailure.errorCode, ...(requestFailure.updateRequired ? { updateRequired: requestFailure.updateRequired } : {}) }
+                : accountActivityFailure ?? (detail.status === 'unknown' || failure?.updateRequired ? failure : undefined)) };
     });
-    return { howYouWork, howYouWorkProgress, work: work.map((source): UsageWorkSourceSnapshot => {
-            const ids = membership.get(getUsageQueryKey(source.query))?.turns?.map(row => row.sessionId) ?? accounting.get(getUsageQueryKey(source.query))
-                ?.flatMap(row => row.sessionId !== null && row.turnId !== null ? [row.sessionId] : []) ?? [];
-            const failure = requestFailure ?? selectReadFailure(workTargetFailures, ids);
-            if (failure?.updateRequired) {
-                return source.status === 'partial' ? { ...source, updateRequired: failure.updateRequired }
-                    : { ...source, ...failure, status: 'unsupported' };
-            }
-            return failure && source.status === 'error' ? { ...source, ...failure } : source;
-        }), sessions: [...sessions.values()].map(row => row.remedySession),
-    };
+    return { howYouWork, howYouWorkProgress, work, sessions: [...sessions.values()].map(row => row.remedySession) };
 }

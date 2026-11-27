@@ -1,3 +1,4 @@
+import type { OperationUpdateRequiredV1 } from '../compat/operationUpdateRequiredV1.js';
 import { isMachineRpcTimeoutError, isRpcMachineAdmissionUnavailableError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { isMachineRequestReachabilityFailureV1 } from '../machines/machineReachabilityV1.js';
 import { resolveSessionWorkspaceRootForMachine } from '../sessions/metadata/sessionWorkspaceLocationV1.js';
@@ -8,10 +9,13 @@ import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageW
 import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 
+type WorkTargetFailure = Readonly<{ errorCode: string; httpStatus?: number; updateRequired?: OperationUpdateRequiredV1 }>;
+export type UsageWorkSessionTarget = Readonly<{ machineId: string; cwd: string }> | WorkTargetFailure;
+
 /** Work follows the exact Home Session's Machine and the workspace path published for that Machine. */
 export function resolveUsageWorkSessionTarget(
     ownerMetadata: Readonly<{ machineId?: unknown; path?: unknown }> | null,
-): Readonly<{ machineId: string; cwd: string } | { errorCode: string }> {
+): UsageWorkSessionTarget {
     const machineId = typeof ownerMetadata?.machineId === 'string' ? ownerMetadata.machineId.trim() : '';
     if (machineId) {
         const candidatePath = typeof ownerMetadata?.path === 'string' ? ownerMetadata.path : '';
@@ -27,7 +31,7 @@ type UnreadReason = keyof UnreadSessions | 'machine_offline' | 'machine_admissio
 export type SessionWorkSourceResult = Readonly<(
     | { status: 'unsupported' | 'error' | 'unknown' }
     | { status: 'partial' | 'unsupported' | 'error'; evidence: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[] }
-) & { unreadReason?: UnreadReason; pullRequestsRead?: true }>;
+) & { unreadReason?: UnreadReason; pullRequestsRead?: true; targetFailure?: WorkTargetFailure }>;
 
 function classifyUnreadReason(code: string | undefined): UnreadReason {
     switch (code) {
@@ -47,8 +51,8 @@ function classifyUnreadReason(code: string | undefined): UnreadReason {
     }
 }
 
-function unreadSession(code: string | undefined): SessionWorkSourceResult {
-    const unreadReason = classifyUnreadReason(code);
+function unreadSession(code: string | undefined, httpStatus?: number): SessionWorkSourceResult {
+    const unreadReason = httpStatus === 401 || httpStatus === 403 ? 'not_entitled' : classifyUnreadReason(code);
     if (unreadReason === 'machine_offline' || unreadReason === 'machine_unavailable') return { status: 'unknown', unreadReason };
     // Explicit refusal withdraws old witnesses. A failed replacement carries no new admission.
     if (unreadReason === 'not_entitled') return { status: 'error', unreadReason, evidence: [], branchEvidence: [] };
@@ -108,7 +112,7 @@ export async function collectUsageWorkSources(input: Readonly<{
     queries: readonly UsageQuery[];
     accounting: readonly UsageAccountingSourceSnapshot[];
     sessionReads?: Map<string, Promise<SessionWorkSourceResult>>;
-    resolveSession: (sessionId: string) => Promise<Readonly<{ machineId: string; cwd: string } | { errorCode: string }> | null>;
+    resolveSession: (sessionId: string) => Promise<UsageWorkSessionTarget | null>;
     readMachine: (machineId: string, request: ScmWorkEvidenceReadRequest) => Promise<unknown>;
     onSessionAdmission?(sessionId: string, readable: boolean): void;
     previouslyRefused?(sessionId: string): boolean;
@@ -151,7 +155,13 @@ export async function collectUsageWorkSources(input: Readonly<{
             if (!resolved) continue;
             const { sessionId, target } = resolved;
             if (!target) { results.set(sessionId, { status: 'unknown', unreadReason: 'failed' }); continue; }
-            if ('errorCode' in target) { results.set(sessionId, unreadSession(target.errorCode)); continue; }
+            if ('errorCode' in target) {
+                const unread = unreadSession(target.errorCode, target.httpStatus);
+                results.set(sessionId, target.updateRequired
+                    ? { ...unread, status: 'unsupported', targetFailure: target }
+                    : unread.status === 'error' ? { ...unread, targetFailure: target } : unread);
+                continue;
+            }
             const sessions = machines.get(target.machineId) ?? [];
             sessions.push({ sessionId, cwd: target.cwd, turnIds: [...turnsBySession.get(sessionId)!] });
             machines.set(target.machineId, sessions);
@@ -240,8 +250,11 @@ export async function collectUsageWorkSources(input: Readonly<{
             && value.coverage?.status === 'complete' && value.coverage.range.complete;
         const status = measuredEmpty ? 'available' as const : selected.some(source => source.status === 'partial') ? 'partial' as const
             : readFailed ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
-        const errorCode = readFailed ? 'work_evidence_failed'
-            : hasOfflineMachine && (status === 'unknown' || status === 'partial') ? 'machine_offline' : undefined;
+        const targetFailure = selected.find(source => source.targetFailure?.updateRequired)?.targetFailure
+            ?? selected.find(source => source.targetFailure)?.targetFailure;
+        const { updateRequired } = targetFailure ?? {};
+        const errorCode = targetFailure?.errorCode ?? (readFailed ? 'work_evidence_failed'
+            : hasOfflineMachine && (status === 'unknown' || status === 'partial') ? 'machine_offline' : undefined);
         if (asOfMs === undefined) return {
             query, status: 'pending', evidence, branchEvidence,
             retainWorkSessionIds: admittedIds.filter(sessionId => {
@@ -250,12 +263,14 @@ export async function collectUsageWorkSources(input: Readonly<{
             }),
             ...(unreadBySession.length ? { unreadSessions, unreadBySession } : {}),
             ...(errorCode === undefined ? {} : { errorCode }),
+            ...(updateRequired ? { updateRequired } : {}),
         };
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
             pullRequestReadSessions,
             ...(status === 'error' ? {} : { asOfMs }),
             ...(unreadBySession.length ? { unreadSessions, unreadBySession } : {}),
-            ...(errorCode === undefined ? {} : { errorCode }) };
+            ...(errorCode === undefined ? {} : { errorCode }),
+            ...(updateRequired ? { updateRequired } : {}) };
     });
 
     // Install promises before awaiting targets. Each Machine's batch settles

@@ -807,7 +807,7 @@ export function readUsageCoverageGaps(
   return [...unique.values()];
 }
 
-type UsageCoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode'>;
+type UsageCoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode' | 'unreadSessions'>;
 
 function isUsageWorkOffline(source: UsageQuerySourceState): boolean {
   return source.source === 'work' && source.errorCode === 'machine_offline';
@@ -1006,7 +1006,9 @@ export function readUsageSourceNeedsNewerServer(slice: Pick<UsageQueryResultSlic
 
 /** The page header's one "Reading … needs a newer server" fact: shared reads this Home's server is too old for. */
 export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): string | null {
-  const names = [...new Set(readUsagePageFailures(slices).filter(needsNewerServer).map(source => usageSourceTitle(usagePageReadFamily(source.source))))];
+  const names = [...new Set(slices.flatMap(slice => slice.sources
+    .filter(source => isUsagePageReadSource(source.source) && needsNewerServer(source))
+    .map(source => usageSourceTitle(usagePageReadFamily(source.source)))))];
   return names.length ? t('usage.board.page.coverageNeedsNewerServer', { sources: names.join(', ') }) : null;
 }
 

@@ -453,6 +453,10 @@ describe('shared Usage identity and dependent coverage', () => {
         expect.soft(readUsagePageFailure([upgrade])).toBeNull();
         expect.soft(describeUsagePageNewerServerSources([upgrade])).toBe(newer);
         // Another component's requirement keeps the ordinary failure wording (it is not relabelled as a server update).
+        const workUpgrade = slice([{ source: 'work', status: 'unsupported', errorCode: 'update_required', updateRequired: server }]);
+        expect.soft(readUsagePageFailure([workUpgrade])).toBeNull();
+        expect.soft(describeUsagePageNewerServerSources([workUpgrade]))
+            .toBe(t('usage.board.page.coverageNeedsNewerServer', { sources: usageSourceTitle('work') }));
         const clientSlice = slice([{ source: 'how_you_work', status: 'error', errorCode: 'update_required', updateRequired: client }]);
         expect.soft(describeUsagePageNewerServerSources([clientSlice])).toBeNull();
         expect.soft(readUsagePageFailure([clientSlice])?.reason).toBe(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }));
@@ -531,6 +535,10 @@ describe('shared Usage identity and dependent coverage', () => {
         // A failed reread over retained links: what is listed is what arrived, and a Retry can replace it.
         expect.soft(header({ status: 'stale', errorCode: 'work_evidence_failed', asOfMs: 100 }))
             .toEqual({ reason: failedWork, retry: true, offline: false, refused: false });
+        expect.soft(header({ status: 'stale', errorCode: 'database_transaction_timeout', asOfMs: 100, unreadSessions: { failed: 1 } }))
+            .toMatchObject({ reason: failedWork, retry: true });
+        expect.soft(header({ status: 'error', errorCode: 'forbidden', unreadSessions: { not_entitled: 1, failed: 1 } }))
+            .toMatchObject({ retry: true, refused: true });
         // A typed refusal keeps its own line, never a Retry.
         expect.soft(header({ status: 'error', errorCode: 'forbidden' })).toEqual({ reason: '', retry: false, offline: false, refused: true });
     });

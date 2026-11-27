@@ -1110,9 +1110,13 @@ describe('mounted Usage page scope commands', () => {
         { layoutId: 'work', failures: ['scm_read_failed'], retryable: true },
         { layoutId: 'work', failures: [RPC_ERROR_CODES.FORBIDDEN], retryable: false, phone: true },
         { layoutId: 'work', failures: [RPC_ERROR_CODES.FORBIDDEN, 'scm_read_failed'], retryable: true },
-    ] as const)('says a settled Work gap on $layoutId with Retry eligibility $retryable for $failures (J-B46, G1)', async test => {
+        { layoutId: 'work', failures: [], retryable: true, targetFailure: 'refresh-503' },
+        { layoutId: 'work', failures: [], retryable: false, targetFailure: 'older-home' },
+    ] as const)('shows settled Work recovery on $layoutId with Retry $retryable ($failures $targetFailure)', async test => {
         const { layoutId, failures, retryable } = test;
         const phone = 'phone' in test && test.phone;
+        const targetFailure = 'targetFailure' in test ? test.targetFailure : undefined;
+        let targetRefreshFailed = false;
         if (phone) vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
             { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
@@ -1147,6 +1151,12 @@ describe('mounted Usage page scope commands', () => {
         });
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: `https://usage-work-gap-${layoutId}.test`, accountId: 'account-a' }],
             route: async request => {
+                if (request.path === '/v2/sessions/read-batch') {
+                    if (targetFailure === 'older-home') return Response.json({ error: 'not_found' }, { status: 404 });
+                    if (targetRefreshFailed) {
+                        return Response.json({ code: 'database_transaction_timeout' }, { status: 503 });
+                    }
+                }
                 const sessionAnswer = await sessionReads.handle(request);
                 if (sessionAnswer) return sessionAnswer;
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
@@ -1175,6 +1185,26 @@ describe('mounted Usage page scope commands', () => {
         // Every visible Work Retry, by test ID: the header's, or one at a ledger total.
         const retries = () => [...new Set(screen.findAll(node => typeof node.props?.testID === 'string'
             && (node.props.testID === 'usage-page.header.retry' || node.props.testID.endsWith('.workRetry'))).map(node => node.props.testID as string))];
+        if (targetFailure === 'older-home') {
+            const newer = t('usage.board.page.coverageNeedsNewerServer', { sources: usageSourceTitle('work') });
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(newer));
+            expect(retries()).toEqual([]);
+            return;
+        }
+        if (targetFailure === 'refresh-503') {
+            const { UsageOutcomesWidget } = await import('./widgets/UsageOutcomesWidget');
+            const outcome = () => screen.findAllByType(UsageOutcomesWidget)[0];
+            const linked = [expect.objectContaining({ pullRequest: expect.objectContaining({ number: 1, title: 'Linked' }) })];
+            await waitForHomeGovernance(() => expect(outcome()?.props.slice.work?.outcomes).toEqual(linked));
+            targetRefreshFailed = true;
+            await act(async () => { await outcome()!.props.model.refresh(); });
+            await waitForHomeGovernance(() => expect(outcome()?.props.slice.sources).toContainEqual(expect.objectContaining({
+                source: 'work', status: 'stale', errorCode: 'database_transaction_timeout',
+            })));
+            expect(outcome()?.props.slice.work?.outcomes).toEqual(linked);
+            expect(retries()).toEqual(['usage-page.header.retry']);
+            return;
+        }
         const witnessed = t('usage.board.page.coverageWitnessed', { sources: usageSourceTitle('work') });
         await waitForHomeGovernance(() => {
             if (phone) {

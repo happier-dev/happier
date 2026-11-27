@@ -72,6 +72,43 @@ describe('Usage Work repository admission', () => {
     expect(delivered?.workSummary).toEqual(result.workSummary);
   });
 
+  it.each([false, true])('projects a typed Home Work refusal with a readable sibling: %s', async readable => {
+    const sessionIds = readable ? ['allowed', 'refused'] : ['refused'];
+    const turns = sessionIds.map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier' as const] }));
+    const refused = { errorCode: 'team_authentication_required', httpStatus: 403 };
+    const branch: ScmBranchWorkEvidence = { sessionId: 'allowed', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } };
+    const { branch: _branch, ...checkpoint } = branch;
+    const accounting = [{ query, value: { ...value, sessionMembership: { turns },
+      contributions: turns.map(({ sessionId, turnId }) => ({
+        id: sessionId, sessionId, turnId, observedAtMs: 1, agentId: 'codex', modelId: null,
+        machineId: null, projectKey: null, workspaceId: null, source: 'runtime' as const,
+        tokens: value.totals.tokens, cost: value.totals.cost,
+      })) }, status: 'available' as const }];
+    const work = await collectUsageWorkSources({
+      queries: [query], accounting, assertCurrent: () => {}, now: () => 1000,
+      resolveSession: async sessionId => sessionId === 'refused' ? refused : { machineId: 'machine', cwd: '/repo' },
+      readMachine: async request => {
+        expect(request).toBe('machine');
+        return { sessions: [{ sessionId: 'allowed', status: 'partial', pullRequestsRead: true, branchEvidence: [branch],
+          evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+            baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+            number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1',
+            baseBranch: 'main', headBranch: 'feature', state: 'merged' } }] }] };
+      },
+    });
+    const batch = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
+    const source = { source: 'work', status: readable ? 'partial' : 'error', errorCode: refused.errorCode,
+      unreadSessions: { not_entitled: 1 } };
+    for (const delivery of [batch, projectUsageQueryDelivery(batch, 'agent')]) {
+      const row = UsageQueryBatchResultSchema.parse(delivery).results[0]!;
+      expect(row.sources.find(value => value.source === 'work')).toMatchObject(source);
+    }
+    expect(work[0]?.branchEvidence).toEqual(readable ? [branch] : []);
+    expect(batch.results[0]?.work?.outcomes).toHaveLength(readable ? 1 : 0);
+  });
+
   it('only publishes a measured zero when the PR read answered, independently of branch success', async () => {
     const usage = [{ query, status: 'available' as const, value: { ...value, contributions: [{
       id: 'request', observedAtMs: 2, sessionId: 'session', turnId: 'turn', agentId: 'codex', modelId: null,

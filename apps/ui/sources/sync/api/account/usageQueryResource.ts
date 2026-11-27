@@ -42,7 +42,6 @@ import { createUsageAccountingReader, getUsageAccountingReadKey, UsageAccounting
 import { captureAccountEncryptionCurrentness, getAccountEncryptionModeCacheRevision } from './apiAccountEncryptionMode';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
 import { machineScmWorkEvidenceRead } from '@/sync/ops/scm/machineScm';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { readSessionSnapshotsForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
@@ -1455,8 +1454,8 @@ function createUsageWorkTargetReader(context: UsageQueryAccountContext, signal?:
     const failureTarget = (error: unknown) => {
         requireCurrent(context, signal);
         const { errorCode, httpStatus } = readUsageHistoryFailure(error);
-        return { errorCode: errorCode === 'team_authentication_required' ? RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED
-            : httpStatus === 403 || errorCode === 'forbidden' || errorCode === 'unauthorized' ? RPC_ERROR_CODES.FORBIDDEN : errorCode };
+        return { errorCode, httpStatus,
+            ...(error instanceof SessionPartsHttpError && error.updateRequired ? { updateRequired: error.updateRequired } : {}) };
     };
     return async (sessionIds: readonly string[]): Promise<UsageWorkSessionTargets> => {
         const missing = sessionIds.filter(id => !resolved.has(id));
@@ -2591,7 +2590,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         return {
             queryKey, sessionIds: [...targets.keys()], targets,
             targetKey: JSON.stringify([...targets].map(([id, target]) => 'machineId' in target
-                ? [id, target.machineId, target.cwd] : [id, target.errorCode])),
+                ? [id, target.machineId, target.cwd] : [id, target.errorCode, target.httpStatus, target.updateRequired])),
             machineKey: readWorkMachineKey(targets),
         };
     };
