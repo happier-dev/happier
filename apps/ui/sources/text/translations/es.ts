@@ -18206,6 +18206,7 @@ settingsSession: {
             machinesUnreadable: "No se pudieron leer sus archivos de uso de agentes",
             machineReadFailed: 'No se pudieron actualizar estas fuentes. Se muestra la última lista.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `No encontrado en esta máquina: ${agents}`,
+            dismissedSources: 'Fuentes descartadas',
             chooseFolders: "Elegir carpetas",
             countedToggle: ({ agent }: { agent: string | number }) => `Contar el uso de ${agent}`,
             noMachinesTitle: "Aún no hay máquinas",

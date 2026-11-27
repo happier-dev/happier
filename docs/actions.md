@@ -4859,8 +4859,13 @@ not a complete accounting query. Consent, Stop, root
 changes and native-history deletion execute at the Machine's captured Account
 custodian through the canonical Action approval owner. Consent, root changes
 and deletion retain dangerous-Action approval (Ask first by default); a caller's
-`confirmed` flag cannot grant it. Dismissal is client-local presentation state
-and is unavailable to a headless caller, not a consent mutation.
+`confirmed` flag cannot grant it. After the Machine confirms an eligible found
+source, dismissal records the opaque source ID in Account KV for that Machine.
+The UI, CLI and Agent dispatch the Action to that Account owner. Discovery and
+inventory separate dismissed sources from the normal picker. Agent and MCP
+summaries include their opaque IDs under `summary.dismissedSourceIds`. Pass
+`dismissed: false` with the same source ID to remove its marker. Consent and
+capture remain governed by the Machine.
 
 In development source, each plugin's metadata-only `accountingSource` declares
 the ids emitted by its real codecs: `codex-native-accounting`,

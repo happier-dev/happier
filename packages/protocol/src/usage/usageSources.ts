@@ -1,5 +1,6 @@
 import { USAGE_SOURCE_ACTION_IDS } from './usageSourcesActionIdsV1.js';
-export { USAGE_SOURCE_ACTION_IDS } from './usageSourcesActionIdsV1.js';
+export { USAGE_SOURCE_ACTION_IDS, USAGE_SOURCE_DISCOVER_ACTION_ID, USAGE_SOURCE_DISMISS_ACTION_ID,
+  USAGE_SOURCE_GET_ACTION_ID } from './usageSourcesActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
@@ -34,6 +35,30 @@ export const UsageSourceV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type UsageSourceV1 = z.infer<typeof UsageSourceV1Schema>;
 
+const usageSourceDismissalsKvPrefix = 'workspace:usage-sources:dismissals:v1:';
+
+export function buildUsageSourceDismissalsKvKey(machineId: string): string {
+  return usageSourceDismissalsKvPrefix + encodeURIComponent(machineId);
+}
+
+export function isUsageSourceDismissalsKvKey(key: string): boolean {
+  if (!key.startsWith(usageSourceDismissalsKvPrefix)) return false;
+  try {
+    const machineId = id.safeParse(decodeURIComponent(key.slice(usageSourceDismissalsKvPrefix.length)));
+    return machineId.success && buildUsageSourceDismissalsKvKey(machineId.data) === key;
+  } catch {
+    return false;
+  }
+}
+
+export const UsageSourceDismissalsV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), sourceIds: z.array(id),
+}));
+
+export function isDismissibleUsageSource(source: Pick<UsageSourceV1, 'consent' | 'status'>): boolean {
+  return source.consent === 'disabled' && source.status === 'found';
+}
+
 /** Missing is an Agent inventory fact only when no other usable or retained root was discovered. */
 export function isUsageSourceMissing(source: Pick<UsageSourceV1, 'root' | 'consent' | 'pendingCount' | 'asOfMs' | 'status'>): boolean {
   return source.root.path === null && source.consent === 'disabled' && source.pendingCount === 0 && source.asOfMs === null
@@ -64,11 +89,13 @@ export function matchesUsageSourceAccountingScope(source: Pick<UsageSourceV1, 'a
     && selected.some(id => source.accountingSources?.includes(id));
 }
 export const UsageSourcesListV1Schema = lazyZodSchema(() => z.strictObject({ sources: z.array(UsageSourceV1Schema) }));
-/** Agent delivery only; opaque source ids retain the existing exact-detail selector. */
+/** Account disposition augments Machine inventory. Broad Agent reads keep only opaque selectors. */
 export const UsageSourcesActionListV1Schema = lazyZodSchema(() => z.strictObject({
   sources: UsageSourcesListV1Schema.shape.sources,
+  dismissedSources: z.optional(UsageSourcesListV1Schema.shape.sources),
   summary: z.optional(z.strictObject({
     sourceCount: UsageSourceV1Schema.shape.pendingCount,
+    dismissedSourceIds: z.optional(z.array(id)),
     groups: z.array(z.strictObject({
       agent: UsageSourceV1Schema.shape.agent,
       consent: UsageSourceV1Schema.shape.consent,
@@ -89,13 +116,15 @@ export const UsageSourceDeleteResultV1Schema = lazyZodSchema(() => z.strictObjec
   success: z.literal(true), deletedEventCount: z.number().check(z.int(), z.nonnegative()),
 }));
 export const UsageSourceDismissResultV1Schema = lazyZodSchema(() => z.strictObject({
-  status: z.enum(['dismissed', 'unavailable']),
+  status: z.enum(['dismissed', 'restored', 'unavailable']),
 }));
 
 export const USAGE_SOURCE_ACTION_INPUT_SCHEMAS = {
   'usage.sources.discover': target,
   'usage.sources.get': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(target, { sourceId: z.optional(id) }))),
-  'usage.sources.dismiss': sourceTarget,
+  'usage.sources.dismiss': lazyZodSchema(() => z.strictObject({
+    ...sourceTarget.shape, dismissed: z.optional(z.boolean()),
+  })),
   'usage.sources.consent.set': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(sourceTarget, { enabled: z.boolean() }))),
   'usage.sources.stop': sourceTarget,
   'usage.sources.root.set': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(sourceTarget, { root: z.nullable(id) }))),
@@ -122,15 +151,18 @@ export type UsageSourceActionOutputById = { readonly [K in UsageSourceActionId]:
 export function parseUsageSourceActionResult(actionId: UsageSourceActionId,
   target: Readonly<{ serverId: string; machineId: string; sourceId?: string }>,
   raw: unknown,
+  delivery: 'machine' | 'action' = 'machine',
 ): UsageSourceActionOutputById[UsageSourceActionId] | null {
   // Machine inventory is always complete. Only the Action delivery owner may
   // replace it with a summary after target identity has been validated here.
-  const parsed = nativeSourceOutputSchemas[actionId].safeParse(raw);
+  const schemas = delivery === 'machine' ? nativeSourceOutputSchemas : USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS;
+  const parsed = schemas[actionId].safeParse(raw);
   if (!parsed.success) return null;
   const result = parsed.data;
   const sources = 'sources' in result ? result.sources : 'source' in result ? [result.source] : [];
-  if (sources.some(source => source.serverId !== target.serverId || source.machineId !== target.machineId
-    || actionId !== 'usage.sources.root.set' && target.sourceId !== undefined && source.sourceId !== target.sourceId)) return null;
+  const wrongTarget = (source: UsageSourceV1) => source.serverId !== target.serverId || source.machineId !== target.machineId
+    || actionId !== 'usage.sources.root.set' && target.sourceId !== undefined && source.sourceId !== target.sourceId;
+  if (sources.some(wrongTarget) || ('dismissedSources' in result && Array.isArray(result.dismissedSources) && result.dismissedSources.some(wrongTarget))) return null;
   return result;
 }
 

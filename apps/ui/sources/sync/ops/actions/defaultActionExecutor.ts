@@ -910,7 +910,6 @@ type VoiceActionExecutorBinding = Readonly<{
   machineAdminAccessAction?: NonNullable<ActionExecutorDeps['machineAdminAccessAction']>;
   machineAgentIsolationAction?: NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>;
   machineReboot?: NonNullable<ActionExecutorDeps['machineReboot']>;
-  usageSourceDismiss?: Parameters<typeof createUiUsageSourceActionPort>[1];
   /** A mounted recap preview may provide the same client rasterization boundary. */
   usageRecapRender?: Parameters<typeof createUiUsageActionPorts>[1];
   /** Existing Resource acquisition; the Action still owns input, policy and approval. */
@@ -1939,7 +1938,7 @@ type VoiceActionExecutorBinding = Readonly<{
     publicProfileActions: accountContext && publicProfileHome && usageActions
       ? createUiPublicProfileActionPorts(accountContext, publicProfileHome, usageActions,
         (actionId, input, context) => executor.execute(actionId, input, context)) : undefined,
-    usageSourceAction: accountContext ? createUiUsageSourceActionPort(accountContext, opts?.usageSourceDismiss) : undefined,
+    usageSourceAction: accountContext ? createUiUsageSourceActionPort(accountContext) : undefined,
     scmActionExecute,
     appShellAction: createAppShellAction(accountContext),
     clientActionExecute: request => executeDesktopAppWindowClientAction(request, {

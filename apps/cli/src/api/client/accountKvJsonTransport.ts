@@ -16,7 +16,8 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 export type AccountKvAuthorizationRequest = Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>;
 export type CliAccountKvJsonTransportParams = Readonly<{
   credentials: StoredCredentials; key: string; serverBaseUrl?: string; signal?: AbortSignal; shouldContinue?: () => boolean;
-  resolveAuthorizationHeaders: (request: AccountKvAuthorizationRequest) => Readonly<Record<string, string>> | null;
+  resolveAuthorizationHeaders: (request: AccountKvAuthorizationRequest) =>
+    Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>;
 class AccountKvJsonTransportError extends Error {
   constructor(readonly code: string, message: string) {
@@ -89,14 +90,16 @@ export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccoun
   const check = () => {
     if (params.signal?.aborted || params.shouldContinue?.() === false) throw new AccountKvJsonTransportError('account_kv_scope_retired', 'The captured Account KV scope retired');
   };
-  const headers = (request: AccountKvAuthorizationRequest) => {
-    check(); const value = params.resolveAuthorizationHeaders(request);
+  const headers = async (request: AccountKvAuthorizationRequest) => {
+    check();
+    const value = await params.resolveAuthorizationHeaders(request);
+    check();
     if (!value) throw new AccountKvJsonTransportError('not_authenticated', 'Account authorization is unavailable');
     return { ...value, ...buildCurrentAccountStoredContentCompatibilityHttpHeaders() };
   };
   const context = async (usage: 'identity' | 'fresh-authority') => {
     return resolveCliAccountStorageContext({ credentials: params.credentials, serverBaseUrl: base,
-      authorizationHeaders: headers({ method: 'GET', path: '/v1/account/encryption/currentness' }),
+      authorizationHeaders: await headers({ method: 'GET', path: '/v1/account/encryption/currentness' }),
       signal: params.signal, shouldContinue: params.shouldContinue, usage });
   };
   type Context = Awaited<ReturnType<typeof context>>;
@@ -112,7 +115,7 @@ export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccoun
   const mutateEncoded = async (mutations: readonly { key: string; value: string; version: number }[]) => {
     const body = { mutations };
     const response = await axios.post(`${base}/v1/kv`, body,
-      { headers: headers({ method: 'POST', path: '/v1/kv', body }), validateStatus: () => true, ...(params.signal ? { signal: params.signal } : {}) });
+      { headers: await headers({ method: 'POST', path: '/v1/kv', body }), validateStatus: () => true, ...(params.signal ? { signal: params.signal } : {}) });
     check();
     if (response.status !== 200 && response.status !== 409) throw new AccountKvJsonTransportError('account_kv_unavailable', 'Account KV mutation failed');
     return mutationResponse.parse(response.data);
@@ -147,7 +150,7 @@ export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccoun
     openRow: async row => { check(); return openRow(row, await (rowAdmission ??= context('identity'))); },
     read: async key => {
       check(); const admitted = await context('identity'); const path = `/v1/kv/${encodeURIComponent(key)}`;
-      const response = await axios.get(`${base}${path}`, { headers: headers({ method: 'GET', path }), validateStatus: () => true,
+      const response = await axios.get(`${base}${path}`, { headers: await headers({ method: 'GET', path }), validateStatus: () => true,
         ...(params.signal ? { signal: params.signal } : {}) });
       check(); if (response.status === 404) return { value: null, version: -1 };
       if (response.status !== 200) throw new AccountKvJsonTransportError('account_kv_unavailable', 'Account KV read failed');
@@ -164,7 +167,7 @@ export function createCliAccountKvJsonCollectionTransport(params: Omit<CliAccoun
         // The HTTP KV owner admits at most 1,000 records per page, not per Account.
         const query = new URLSearchParams({ prefix, limit: '1000', ...(afterKey ? { afterKey } : {}) });
         const path = `/v1/kv?${query}`;
-        const response = await axios.get(`${base}${path}`, { headers: headers({ method: 'GET', path }), validateStatus: () => true,
+        const response = await axios.get(`${base}${path}`, { headers: await headers({ method: 'GET', path }), validateStatus: () => true,
           ...(params.signal ? { signal: params.signal } : {}) });
         check();
         if (response.status !== 200) throw new AccountKvJsonTransportError('account_kv_unavailable', 'Account KV list failed');

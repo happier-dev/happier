@@ -1,10 +1,12 @@
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
     type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { parseUsageSourceActionResult, USAGE_SOURCE_ACTION_INPUT_SCHEMAS, USAGE_SOURCE_CONSENT_DISCLOSURE,
-    type UsageSourceActionId, type UsageSourceActionInputById, type UsageSourceActionOutputById, type UsageSourceDateRangeV1,
-    type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
+import { buildUsageSourceDismissalsKvKey, isDismissibleUsageSource, parseUsageSourceActionResult, USAGE_SOURCE_ACTION_INPUT_SCHEMAS, USAGE_SOURCE_CONSENT_DISCLOSURE,
+    type UsageSourceActionId, type UsageSourceActionInputById, type UsageSourceDateRangeV1,
+    type UsageSourcesActionListV1, type UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { subscribeKvPrefixChanges } from '@/sync/engine/socket/kvUpdateDispatcher';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -14,12 +16,12 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 export type UsageSourcesOperation = Readonly<{ actionId: UsageSourceActionId; sourceId?: string }>;
 export type UsageSourcesSnapshot = Readonly<{
     sources: readonly UsageSourceV1[];
+    dismissedSources: readonly UsageSourceV1[];
     loaded: boolean;
     retired: boolean;
     pending: readonly UsageSourcesOperation[];
     error: ActionExecuteFailure | null;
     approval: ActionApprovalRequestCreatedResult | null;
-    dismissedSourceIds: readonly string[];
     historyDeletion: Readonly<{ sourceId: string; deletedEventCount: number; dateRange?: UsageSourceDateRangeV1 }> | null;
     /** The last whole-machine read failed: said once for the machine, while every source keeps its own status. */
     machineReadFailed: boolean;
@@ -32,8 +34,7 @@ export type UsageSourcesController = Readonly<{
     refresh(sourceId?: string): Promise<ActionExecuteResult>;
     setConsent(sourceId: string, enabled: boolean): Promise<ActionExecuteResult>;
     notNow(sourceId: string): Promise<ActionExecuteResult>;
-    deliverDismiss(input: UsageSourceActionInputById['usage.sources.dismiss'], context: Pick<ActionExecutorContext, 'signal'>):
-        Promise<UsageSourceActionOutputById['usage.sources.dismiss']>;
+    restore(sourceId: string): Promise<ActionExecuteResult>;
     setRoot(sourceId: string, root: string | null, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
     stop(sourceId: string): Promise<ActionExecuteResult>;
     deleteHistory(sourceId: string, dateRange?: UsageSourceDateRangeV1): Promise<ActionExecuteResult>;
@@ -48,9 +49,10 @@ const isRead = (id: UsageSourceActionId) => id === 'usage.sources.discover' || i
  * them while its own read refreshes them, never on loading rows. Keyed by the scope's lifetime, so another Account
  * (a new lifetime) never sees them and they go with it.
  */
-const lastKnownSources = new WeakMap<ServerAccountScopeLifetime, Map<string, readonly UsageSourceV1[]>>();
+type UsageSourcesInventory = Pick<UsageSourcesSnapshot, 'sources' | 'dismissedSources'>;
+const lastKnownSources = new WeakMap<ServerAccountScopeLifetime, Map<string, UsageSourcesInventory>>();
 
-export function readUsageSourcesLastKnown(lifetime: ServerAccountScopeLifetime | null, machineId: string): readonly UsageSourceV1[] | null {
+export function readUsageSourcesLastKnown(lifetime: ServerAccountScopeLifetime | null, machineId: string): UsageSourcesInventory | null {
     return lifetime?.isCurrent() ? lastKnownSources.get(lifetime)?.get(machineId) ?? null : null;
 }
 
@@ -59,14 +61,15 @@ export function readUsageSourcesLastKnown(lifetime: ServerAccountScopeLifetime |
 export function createUsageSourcesController(options: Readonly<{
     machineId: string;
     lifetime: ServerAccountScopeLifetime;
+    credentials?: AuthCredentials;
     executor?: Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'>;
 }>): UsageSourcesController {
     const target = USAGE_SOURCE_ACTION_INPUT_SCHEMAS['usage.sources.discover'].parse({
         serverId: options.lifetime.scope.serverId, machineId: options.machineId,
     });
     const lastKnown = readUsageSourcesLastKnown(options.lifetime, options.machineId);
-    let snapshot: UsageSourcesSnapshot = { sources: lastKnown ?? [], loaded: lastKnown !== null, retired: false, pending: [], error: null,
-        approval: null, dismissedSourceIds: [], historyDeletion: null, machineReadFailed: false };
+    let snapshot: UsageSourcesSnapshot = { ...(lastKnown ?? { sources: [], dismissedSources: [] }),
+        loaded: lastKnown !== null, retired: false, pending: [], error: null, approval: null, historyDeletion: null, machineReadFailed: false };
     const listeners = new Set<() => void>();
     const operations = new Map<AbortController, UsageSourcesOperation>();
     let retirement: Readonly<{ dispose(): void }> | undefined;
@@ -75,8 +78,9 @@ export function createUsageSourcesController(options: Readonly<{
     const publish = (next: UsageSourcesSnapshot) => {
         snapshot = next;
         if (!next.retired && options.lifetime.isCurrent()) {
-            const known = lastKnownSources.get(options.lifetime) ?? new Map<string, readonly UsageSourceV1[]>();
-            if (next.loaded) known.set(options.machineId, next.sources); else known.delete(options.machineId);
+            const known = lastKnownSources.get(options.lifetime) ?? new Map<string, UsageSourcesInventory>();
+            if (next.loaded) known.set(options.machineId, { sources: next.sources, dismissedSources: next.dismissedSources });
+            else known.delete(options.machineId);
             lastKnownSources.set(options.lifetime, known);
         }
         for (const listener of listeners) listener();
@@ -88,29 +92,17 @@ export function createUsageSourcesController(options: Readonly<{
         refreshRequested = false;
         unsubscribeWake?.();
         retirement?.dispose();
-        publish({ sources: [], loaded: false, retired: true, pending: [], error: null, approval: null,
-            dismissedSourceIds: [], historyDeletion: null, machineReadFailed: false });
+        publish({ sources: [], dismissedSources: [], loaded: false, retired: true, pending: [], error: null, approval: null,
+            historyDeletion: null, machineReadFailed: false });
     };
     const current = () => {
         if (!options.lifetime.isCurrent()) dispose();
         return !snapshot.retired;
     };
-    // Both the button and the mounted Action acknowledge this local effect through the same delivery.
-    const deliverDismiss: UsageSourcesController['deliverDismiss'] = async (input, context) => {
-        context.signal?.throwIfAborted();
-        if (!current() || input.serverId !== target.serverId || input.machineId !== target.machineId
-            || !snapshot.sources.some(source => source.sourceId === input.sourceId && source.consent === 'disabled' && source.status === 'found')) {
-            return { status: 'unavailable' };
-        }
-        if (!snapshot.dismissedSourceIds.includes(input.sourceId)) {
-            publish({ ...snapshot, dismissedSourceIds: [...snapshot.dismissedSourceIds, input.sourceId] });
-        }
-        return { status: 'dismissed' };
-    };
-    const execute = createFrontDoorActionExecute(options.executor, { usageSourceDismiss: deliverDismiss });
-    const reconcile = (sources: readonly UsageSourceV1[]) => {
+    const execute = createFrontDoorActionExecute(options.executor);
+    const reconcile = (sources: readonly UsageSourceV1[], previousSources = snapshot.sources) => {
         const next = sources.map(source => {
-            const previous = snapshot.sources.find(row => row.sourceId === source.sourceId);
+            const previous = previousSources.find(row => row.sourceId === source.sourceId);
             if (!previous) return source;
             if (sameStrictJsonValue(previous, source)) return previous;
             // Progress changes must not retire a mounted candidate listing for the
@@ -123,8 +115,8 @@ export function createUsageSourcesController(options: Readonly<{
                         ? previous.externalSessionSource : source.externalSessionSource }),
             };
         });
-        return next.length === snapshot.sources.length && next.every((row, index) => row === snapshot.sources[index])
-            ? snapshot.sources : next;
+        return next.length === previousSources.length && next.every((row, index) => row === previousSources[index])
+            ? previousSources : next;
     };
     // A machine read that reports a source last known failed only as re-checking ('reading', no error) has not
     // answered for it yet: the Machine clears the error on rediscovery and re-checks. It keeps its failed status until
@@ -144,8 +136,11 @@ export function createUsageSourcesController(options: Readonly<{
         if (sourceId === undefined && retain) { publish({ ...snapshot, error, machineReadFailed: true }); return; }
         const sources = snapshot.sources.flatMap(source => sourceId !== undefined && source.sourceId !== sourceId ? [source]
             : !retain ? [] : [source.status === 'unavailable' ? source : { ...source, status: 'unavailable' as const }]);
-        publish({ ...snapshot, sources: reconcile(sources), loaded: retain ? snapshot.loaded : sources.length > 0, error,
-            ...(!retain ? { dismissedSourceIds: [], historyDeletion: null } : {}) });
+        const dismissedSources = retain ? snapshot.dismissedSources : snapshot.dismissedSources.filter(source =>
+            sourceId !== undefined && source.sourceId !== sourceId);
+        publish({ ...snapshot, sources: reconcile(sources), dismissedSources,
+            loaded: retain ? snapshot.loaded : sources.length + dismissedSources.length > 0, error,
+            ...(!retain ? { historyDeletion: null } : {}) });
     };
 
     async function run<K extends UsageSourceActionId>(actionId: K, input: UsageSourceActionInputById[K], callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> {
@@ -164,13 +159,13 @@ export function createUsageSourcesController(options: Readonly<{
         operations.set(controller, operation);
         publish({ ...snapshot, pending: [...operations.values()], error: null, approval: null, machineReadFailed: false });
         try {
-            let discovered: readonly UsageSourceV1[] | undefined;
+            let discovered: UsageSourcesActionListV1 | undefined;
             const result = await execute(actionId, input, {
                 ...(callerContext ?? { surface: 'ui' as const }),
                 serverId: target.serverId, expectedAccountId: options.lifetime.scope.accountId,
                 signal: controller.signal,
                 ...(actionId === 'usage.sources.discover' && callerContext ? {
-                    captureUsageSourceDiscovery: (sources: readonly UsageSourceV1[]) => { discovered = sources; },
+                    captureUsageSourceDiscovery: inventory => { discovered = inventory; },
                 } : {}),
             });
             if (!current()) return failure('action_account_scope_changed');
@@ -184,7 +179,7 @@ export function createUsageSourcesController(options: Readonly<{
                 publish({ ...snapshot, approval: approval.data });
                 return result;
             }
-            const data = parseUsageSourceActionResult(actionId, input, discovered ? { sources: discovered } : result.result);
+            const data = parseUsageSourceActionResult(actionId, input, discovered ?? result.result, 'action');
             if (!data) {
                 const invalid = failure(isRead(actionId) ? 'usage_source_response_invalid' : 'usage_source_mutation_outcome_unknown');
                 publishFailure(actionId, sourceId, invalid);
@@ -196,7 +191,9 @@ export function createUsageSourcesController(options: Readonly<{
                     const index = snapshot.sources.findIndex(source => source.sourceId === sourceId);
                     sources.splice(index < 0 ? sources.length : index, 0, ...data.sources);
                 }
-                publish({ ...snapshot, sources: reconcile(sources), loaded: true });
+                publish({ ...snapshot, sources: reconcile(sources), loaded: true,
+                    dismissedSources: sourceId === undefined
+                        ? reconcile(data.dismissedSources ?? [], snapshot.dismissedSources) : snapshot.dismissedSources });
             } else if ('source' in data) {
                 // root.set may legitimately replace its opaque source identity.
                 const sources = snapshot.sources.filter(source => source.sourceId !== sourceId && source.sourceId !== data.source.sourceId);
@@ -207,10 +204,19 @@ export function createUsageSourcesController(options: Readonly<{
                 const range = 'dateRange' in input ? input.dateRange : undefined;
                 publish({ ...snapshot, historyDeletion: { sourceId, deletedEventCount: data.deletedEventCount,
                     ...(range === undefined ? {} : { dateRange: range }) } });
-            } else if ('status' in data && data.status === 'unavailable') {
-                publish({ ...snapshot, error: failure('usage_source_dismiss_unavailable') });
+            } else if ('status' in data) {
+                if (data.status === 'unavailable') publish({ ...snapshot, error: failure('usage_source_dismiss_unavailable') });
+                else if (data.status === 'dismissed') {
+                    const source = snapshot.sources.find(row => row.sourceId === sourceId && isDismissibleUsageSource(row));
+                    if (source) publish({ ...snapshot, sources: snapshot.sources.filter(row => row !== source),
+                        dismissedSources: [...snapshot.dismissedSources, source] });
+                } else {
+                    const source = snapshot.dismissedSources.find(row => row.sourceId === sourceId);
+                    if (source) publish({ ...snapshot, sources: [...snapshot.sources, source],
+                        dismissedSources: snapshot.dismissedSources.filter(row => row !== source) });
+                }
             }
-            return { ...result, result: data };
+            return discovered ? result : { ...result, result: data };
         } catch {
             if (!current()) return failure('action_account_scope_changed');
             const error = failure(controller.signal.aborted ? 'cancelled'
@@ -230,11 +236,19 @@ export function createUsageSourcesController(options: Readonly<{
     // A retained list can be displayed before its mounted Action engine binds.
     // Push reads start with the first explicit demand, never with presentation alone.
     function subscribeWake() {
-        unsubscribeWake ??= subscribeHomeAccountChange(() => {
+        if (unsubscribeWake) return;
+        const requestRefresh = () => {
             if (!current() || !snapshot.loaded) return;
             refreshRequested = true;
             drainRefresh();
-        }, { serverIds: [target.serverId], usageSourcesMachineIds: [target.machineId], reconnect: 'refresh' });
+        };
+        const offHome = subscribeHomeAccountChange(requestRefresh,
+            { serverIds: [target.serverId], usageSourcesMachineIds: [target.machineId], reconnect: 'refresh' });
+        const key = buildUsageSourceDismissalsKvKey(target.machineId);
+        const offDismissals = options.credentials ? subscribeKvPrefixChanges(key, changes => {
+            if (changes.some(change => change.key === key || change.key === null)) requestRefresh();
+        }, { credentials: options.credentials, shouldContinue: current }) : undefined;
+        unsubscribeWake = () => { offHome(); offDismissals?.(); };
     }
     retirement = options.lifetime.onRetire(dispose);
     if (!current()) retirement.dispose();
@@ -253,7 +267,7 @@ export function createUsageSourcesController(options: Readonly<{
         },
         setConsent: (sourceId, enabled) => run('usage.sources.consent.set', { ...target, sourceId, enabled }),
         notNow: sourceId => run('usage.sources.dismiss', { ...target, sourceId }),
-        deliverDismiss,
+        restore: sourceId => run('usage.sources.dismiss', { ...target, sourceId, dismissed: false }),
         setRoot: (sourceId, root, callerContext) => run('usage.sources.root.set', { ...target, sourceId, root }, callerContext),
         stop: sourceId => run('usage.sources.stop', { ...target, sourceId }),
         deleteHistory: (sourceId, dateRange) => run('usage.sources.history.delete', { ...target, sourceId,

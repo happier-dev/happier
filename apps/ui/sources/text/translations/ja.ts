@@ -18486,6 +18486,7 @@ settingsSession: {
             machinesUnreadable: "エージェントの使用状況ファイルを読み込めませんでした",
             machineReadFailed: 'これらのソースを更新できませんでした。前回のリストを表示しています。',
             notFoundAgents: ({ agents }: { agents: string | number }) => `このマシンで見つかりません: ${agents}`,
+            dismissedSources: '非表示にしたソース',
             chooseFolders: "フォルダを選択",
             countedToggle: ({ agent }: { agent: string | number }) => `${agent}の使用量を集計`,
             noMachinesTitle: "マシンはまだありません",

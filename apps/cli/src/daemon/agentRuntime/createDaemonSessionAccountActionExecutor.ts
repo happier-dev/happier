@@ -14,6 +14,7 @@ import { ActionIdSchema, ACTION_ID_FAMILIES_V1, ACTION_INVOKE_ACTION_ID_V1, isWo
 import { WorkspaceSyncRelationshipTerminateActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceSyncStopController } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { USAGE_SOURCE_DISMISS_ACTION_ID, USAGE_SOURCE_GET_ACTION_ID } from '@happier-dev/protocol/usage/usageSources';
 import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
 import { blocksPublicProviderComment, INTERNAL_DISCUSSION_REPLY_MESSAGE, INTERNAL_DISCUSSION_REPLY_REQUIRED }
@@ -628,6 +629,21 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           return execute({ kind: 'action.execute', actionId, input: parsed.data, requestId: options.actionRequestId,
             witness: operation.witness, ...(operation.surface ? { surface: operation.surface } : {}),
             ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) }, authority, undefined, target.machineId);
+        },
+      } : {}),
+      ...(operation.actionId === USAGE_SOURCE_DISMISS_ACTION_ID ? {
+        executeOrdinaryChildAction: (actionId, input, options) => {
+          const parsed = StrictJsonValueSchema.safeParse(input);
+          const target = options?.externalActionTarget;
+          if (actionId !== USAGE_SOURCE_GET_ACTION_ID || !parsed.success || !options?.actionRequestId || target?.kind !== 'machine') {
+            return Promise.resolve({ ok: false as const, errorCode: 'invalid_action_input', error: 'invalid_action_input' });
+          }
+          // The private lookup uses its own exact Machine proof and the original Session witness.
+          // The dismissal itself retains Account placement, including Restore with no Machine read.
+          return execute({ kind: 'action.execute', actionId, input: parsed.data, requestId: options.actionRequestId,
+            witness: operation.witness, ...(operation.surface ? { surface: operation.surface } : {}),
+            ...(operation.executionRun ? { executionRun: operation.executionRun } : {}) },
+          options.signal ? { ...authority, signal: options.signal } : authority, undefined, target.machineId);
         },
       } : {}),
       ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave || operation.actionId === USAGE_QUERY_ACTION_ID_V1 ? {

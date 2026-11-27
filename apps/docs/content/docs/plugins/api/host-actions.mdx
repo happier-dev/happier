@@ -27846,7 +27846,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `usage.sources.discover`
 
-**Find usage records on a machine** — Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet. Agent and MCP results summarize source statuses and include source IDs; use usage.sources.get with sourceId for exact detail.
+**Find usage records on a machine** — Look for usage records that agents keep on a machine, such as token counts. Nothing is collected yet. Agent and MCP results summarize source statuses and list dismissedSourceIds separately; use usage.sources.get with sourceId for exact detail.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -27861,7 +27861,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `usage.sources.dismiss`
 
-**Dismiss a found usage source** — Hide a usage source Happier found, without collecting from it.
+**Dismiss or restore a found usage source** — Hide a found source without collecting from it. Pass dismissed: false to restore a source from the dismissed inventory.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -27874,11 +27874,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Server id
 - `machineId` (text, required): Machine id
 - `sourceId` (text, required): Source id
-- `clientId` (text): Client id
+- `dismissed` (boolean): Dismissed
 
 ## `usage.sources.get`
 
-**Read usage source** — See whether Happier collects usage from one source and how far it has got. Agent and MCP reads without sourceId summarize the inventory; select one returned sourceId for exact detail.
+**Read usage source** — See whether Happier collects usage from one source and how far it has got. Agent and MCP reads without sourceId summarize the inventory and list dismissedSourceIds separately; select one returned sourceId for exact detail.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.

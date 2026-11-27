@@ -16221,6 +16221,7 @@ settingsSession: {
           machinesUnreadable: "No s’han pogut llegir els seus fitxers d’ús d’agents",
           machineReadFailed: 'No s’han pogut actualitzar aquestes fonts. Es mostra l’última llista.',
           notFoundAgents: ({ agents }: { agents: string | number }) => `No s’han trobat en aquesta màquina: ${agents}`,
+          dismissedSources: 'Fonts descartades',
           chooseFolders: "Tria les carpetes",
           countedToggle: ({ agent }: { agent: string | number }) => `Compta l’ús de ${agent}`,
           noMachinesTitle: "Encara no hi ha màquines",

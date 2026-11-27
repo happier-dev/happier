@@ -21548,6 +21548,7 @@ const enUsage = {
       machinesUnreadable: "Couldn't read their agent usage files",
       machineReadFailed: "Couldn't refresh these sources. Showing the last list.",
       notFoundAgents: ({ agents }: { agents: string | number }) => `Not found on this machine: ${agents}`,
+      dismissedSources: 'Dismissed sources',
       chooseFolders: "Choose folders",
       countedToggle: ({ agent }: { agent: string | number }) => `Count ${agent} usage`,
       noMachinesTitle: "No machines yet",

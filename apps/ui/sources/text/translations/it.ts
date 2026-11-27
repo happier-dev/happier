@@ -18577,6 +18577,7 @@ settingsSession: {
             machinesUnreadable: "Impossibile leggere i loro file di utilizzo degli agenti",
             machineReadFailed: 'Impossibile aggiornare queste fonti. Viene mostrato l’ultimo elenco.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Non trovato su questa macchina: ${agents}`,
+            dismissedSources: 'Fonti nascoste',
             chooseFolders: "Scegli le cartelle",
             countedToggle: ({ agent }: { agent: string | number }) => `Conta l’utilizzo di ${agent}`,
             noMachinesTitle: "Ancora nessuna macchina",

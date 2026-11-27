@@ -18352,6 +18352,7 @@ settingsSession: {
             machinesUnreadable: "Ihre Nutzungsdateien von Agents konnten nicht gelesen werden",
             machineReadFailed: 'Diese Quellen konnten nicht aktualisiert werden. Die letzte Liste wird angezeigt.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Auf diesem Gerät nicht gefunden: ${agents}`,
+            dismissedSources: 'Ausgeblendete Quellen',
             chooseFolders: "Ordner wählen",
             countedToggle: ({ agent }: { agent: string | number }) => `${agent}: Nutzung zählen`,
             noMachinesTitle: "Noch keine Rechner",

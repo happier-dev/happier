@@ -257,7 +257,6 @@ export function clientActionUnavailable(actionId: ActionId): ActionExecuteResult
   }
   if (isAppShellActionId(actionId) && actionId !== 'inbox.mark_all_read') return { ok: true, result: { status: 'unavailable' } };
   if (isWorkflowAuthoringActionId(actionId)) return { ok: true, result: { status: 'unavailable' } };
-  if (actionId === 'usage.sources.dismiss') return { ok: true, result: { status: 'unavailable' } };
   if (actionId === 'session.authoring.open') {
     return { ok: true, result: { kind: 'unavailable', reason: 'client_unavailable' } };
   }

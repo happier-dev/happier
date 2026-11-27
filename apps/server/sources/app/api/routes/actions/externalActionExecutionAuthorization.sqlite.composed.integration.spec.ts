@@ -108,6 +108,8 @@ import { inviteDiscussionParticipant } from '@/app/discussions/accessService';
 import { createSessionInputReplyProgressInTx } from '@/app/session/messages/sessionMessageReply';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { registerAccountSettingsRoutes } from "@/app/api/routes/account/registerAccountSettingsRoutes";
+import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
+import { buildUsageSourceDismissalsKvKey } from '@happier-dev/protocol/usage/usageSources';
 import { kvRoutes } from '@/app/api/routes/kv/kvRoutes';
 import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
@@ -7577,6 +7579,203 @@ describe("external Action execution authorization", () => {
             expect(await verify('PUT', path, body)).toBeNull();
             expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).toBeNull();
         } finally { await app.close(); }
+    });
+
+    it('discovers, dismisses and restores Usage Sources through signed Session Agent Account KV', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        const session = await db.session.create({ data: { accountId: fixture.account.id,
+            tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        const machineId = fixture.machine.id;
+        const installationId = fixture.machine.installationId!;
+        await db.accessKey.create({ data: { accountId: fixture.account.id, machineId,
+            sessionId: session.id, data: 'opaque-source-key' } });
+        await db.machine.update({ where: { id: machineId }, data: { active: true, lastActiveAt: new Date(),
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        const serverId = 'sources-home';
+        const target = { kind: 'machine' as const, machineId };
+        const address = { serverId, machineId };
+        const input = { ...address, sourceId: 'fixture-source' };
+        const source = { ...input, agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
+            root: { kind: 'default', path: '/fixture-signed-source' }, consent: 'disabled', status: 'found',
+            coverage: 'unknown', pendingCount: 0, asOfMs: null } as const;
+        const keyPath = '/v1/kv/' + encodeURIComponent(buildUsageSourceDismissalsKvKey(machineId));
+        const phases: Array<{ path: string; root: string | undefined; effect: string | undefined; bearer: boolean }> = [];
+        const roots = new Map<string, string>();
+        const presence = createSessionPublisherPresence();
+        const { app } = await createApp(fixture.team.id, false, async () => machineId, undefined, false, routes => {
+            registerAutomationActionIndexRoutes(routes);
+            // Capture Home's verified Action after it decodes the body-framed signed requests.
+            routes.addHook('onResponse', async (request: FastifyRequest) => {
+                if (request.url === '/v1/account/encryption/currentness' || request.url === '/v1/kv' || request.url === keyPath) {
+                    phases.push({ path: request.url, root: request.externalActionRootActionId,
+                        effect: request.externalActionEffectActionId, bearer: request.headers.authorization !== undefined });
+                }
+            });
+        }, true);
+        const io = new SocketServer(app.server, { path: '/v1/updates' });
+        io.use((socket, next) => {
+            void (async () => {
+                const verified = await auth.verifyTokenForRoute(socket.handshake.auth.token);
+                if (!verified || verified.userId !== fixture.account.id) return next(new Error('Unauthorized'));
+                socket.data = { userId: verified.userId, authTokenKind: verified.authTokenKind,
+                    authAuthority: verified.authority, authTokenAuthenticationEvidence: verified.authenticationEvidence,
+                    clientType: socket.handshake.auth.clientType, machineId: socket.handshake.auth.machineId };
+                qualifyCurrentAccountStoredContentSocket(socket);
+                if (socket.data.clientType === 'machine-scoped') {
+                    const verifiedInstallation = resolveVerifiedMachineSocketInstallationId({ accountId: fixture.account.id,
+                        machineId, machine: fixture.machine, socketAuth: socket.handshake.auth });
+                    if (verifiedInstallation !== installationId) return next(new Error('Invalid installation'));
+                    socket.data.verifiedMachineInstallationId = verifiedInstallation;
+                    await socket.join(getMachineSocketRoom(verified.userId, machineId));
+                    await socket.join(getAccountSessionSocketRoom(verified.userId, session.id));
+                    const publisher = await presence.registerPublisher({ socket,
+                        binding: { accountId: verified.userId, machineId, sessionId: session.id },
+                        completeActivitySnapshot: { state: 'active', activeCount: 1 } });
+                    if (publisher.status !== 'registered') return next(new Error('Session publisher not registered'));
+                }
+                next();
+            })().catch(next);
+        });
+        io.on('connection', socket => registerSocketRpcHandlers({
+            userId: fixture.account.id, socket, io, sessionPublisherPresence: presence,
+        }));
+        eventRouter.setIo(io);
+        const serverHttpBaseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
+        const homeId = await getOrCreateServerIdentityId();
+        const actionsSettings = setScopedActionApprovalPreference({ actionId: 'usage.sources.dismiss',
+            scope: target, surface: 'agent', mode: 'waived', settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
+        const makeExecutor = () => createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: serverHttpBaseUrl,
+            serverIdentityId: homeId, machineId, externalActionMachineRequestPrivateKey: fixture.keyPair.secretKey,
+            externalActionMachineInstallationId: installationId,
+            actionsSettingsProvider: { getActionsSettings: () => actionsSettings },
+            pluginActionExecutionOwner: 'current_process' });
+        const rpcAdmission: string[] = [];
+        const manager = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId,
+            encryptionMode: 'plain', logger: (message, diagnostic) => {
+                if (message === '[RPC] Request completed' && diagnostic && typeof diagnostic === 'object') {
+                    const phase = Reflect.get(diagnostic, 'admissionPredicate');
+                    if (typeof phase === 'string') rpcAdmission.push(phase);
+                }
+            },
+            authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                machineId, resolveHomeServerIdentityId: getOrCreateServerIdentityId, resolveInstallationId: () => installationId,
+                resolveCustodianAccountId: async () => fixture.account.id,
+                verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey: fixture.keyPair.secretKey,
+                    daemonToken: token, serverHttpBaseUrl }),
+            }, source),
+            prepareRequesterAccountContext: request => runWithServerHttpBaseUrl(serverHttpBaseUrl, () =>
+                prepareRequesterAccountActionContext({ ...request, purpose: request.purpose ?? { kind: 'external_action' },
+                    machineId, installationId, installationPrivateKey: fixture.keyPair.secretKey,
+                    serverId, serverIdentityId: homeId, serverHttpBaseUrl, ownCredentials: credentials,
+                    isCurrent: async () => !request.signal?.aborted, createExecutor: makeExecutor,
+                })),
+        });
+        // The installed Machine emits a stable inventory. Its codec, registration and signed relay are real.
+        manager.registerHandler('usage.sources.discover', async () => ({ sources: [source] }));
+        manager.registerHandler('usage.sources.get', async () => ({ sources: [source] }));
+        const machine = connectSocket(serverHttpBaseUrl, { path: '/v1/updates', transports: ['websocket'], autoConnect: false,
+            reconnection: false, auth: { token, clientType: 'machine-scoped', machineId, installationId,
+                installationPublicKey: encodeRpcBase64(fixture.keyPair.publicKey, 'base64url'),
+                installationProof: signMachineInstallationProof({ payload: { version: 1, machineId,
+                    installationId, accountId: fixture.account.id }, privateKey: fixture.keyPair.secretKey }),
+                ...currentAccountStoredContentCompatibilitySocketAuth } });
+        machine.on(SOCKET_RPC_EVENTS.REQUEST, (request, acknowledge) => { void manager.handleRequest(request, undefined, 'authenticated_home_socket').then(acknowledge); });
+        machine.on('connect', () => manager.onSocketConnect(machine));
+        machine.on('disconnect', () => manager.onSocketDisconnect());
+        try {
+            await new Promise<void>((resolve, reject) => {
+                machine.once('connect', resolve); machine.once('connect_error', reject); machine.connect();
+            });
+            expect(await manager.waitForRegisteredHandlers(['usage.sources.discover', 'usage.sources.get'],
+                { timeoutMs: 10_000 })).toEqual({ status: 'ready' });
+            await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+                await bootstrapAccountSettingsContext({ credentials, mode: 'blocking' });
+                const execute = createDaemonSessionAccountActionExecutor({ credentials, token, serverId,
+                    serverHttpBaseUrl, machineId,
+                    prepareExternalActionAuthorization: async ({ operation, sessionActionOrigin, isCallerCurrent }) => {
+                        const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId: operation.actionId,
+                            input: operation.input, requestId: operation.requestId, target, machineId,
+                            sourceMachineId: machineId, accountId: fixture.account.id, accountEncryptionMode: 'plain',
+                            tokenEpochHint: fixture.account.tokenEpoch, token, serverId, serverIdentityId: homeId,
+                            serverHttpBaseUrl, installationId, privateKey: fixture.keyPair.secretKey,
+                            sessionActionOrigin, isCurrent: isCallerCurrent });
+                        if (!authorization) return null;
+                        roots.set(operation.actionId, authorization.token);
+                        authorizationRequests.set(authorization.token, { target, installationId, requestId: operation.requestId });
+                        const admitted = await projectRequesterAccountActionAuthorization({ authorization, serverIdentityId: homeId,
+                            bootstrap: { credentials, serverHttpBaseUrl, isCurrent: isCallerCurrent,
+                                attribution: { serverId, accountId: fixture.account.id, machineId, installationId },
+                                getBoundSessionId: () => session.id } });
+                        return admitted ? { authorization: admitted, target } : null;
+                    },
+                    createExecutor: makeExecutor,
+                });
+                const invoke = (actionId: 'usage.sources.discover' | 'usage.sources.get' | 'usage.sources.dismiss',
+                    input: ExternalActionRequestEnvelopeV1['input']) => execute({ kind: 'action.execute', actionId, input,
+                    requestId: crypto.randomUUID(), surface: 'agent',
+                    witness: { turnId: 'usage-sources-turn', inputId: crypto.randomUUID(), callerPermissionMode: 'default',
+                        userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
+                        agentStartCaller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 } } },
+                    { sessionId: session.id, isCurrent: async () => true });
+
+                const initial = await invoke('usage.sources.discover', address);
+                expect(initial, JSON.stringify({ result: initial, phases, rpcAdmission })).toMatchObject({
+                    ok: true, result: { sources: [], summary: { sourceCount: 1 } },
+                });
+                const dismissed = await invoke('usage.sources.dismiss', input);
+                expect(dismissed, JSON.stringify({ result: dismissed, phases, rpcAdmission })).toMatchObject({ ok: true, result: { status: 'dismissed' } });
+                const inventory = await invoke('usage.sources.get', address);
+                expect(inventory, JSON.stringify(inventory)).toMatchObject({
+                    ok: true, result: { sources: [], summary: { sourceCount: 0, dismissedSourceIds: [source.sourceId] } },
+                });
+                expect(JSON.stringify(inventory)).not.toContain(source.root.path);
+                const restored = await invoke('usage.sources.dismiss', { ...input, dismissed: false });
+                expect(restored, JSON.stringify(restored)).toMatchObject({ ok: true, result: { status: 'restored' } });
+                const after = await invoke('usage.sources.discover', address);
+                expect(after, JSON.stringify(after)).toMatchObject({ ok: true, result: { summary: { sourceCount: 1 } } });
+                expect(after).not.toMatchObject({ result: { summary: { dismissedSourceIds: [source.sourceId] } } });
+                const writes = phases.filter(phase => phase.path === '/v1/kv');
+                const reads = phases.filter(phase => phase.path === keyPath);
+                expect(writes).toEqual(Array.from({ length: 2 }, () => ({
+                    path: '/v1/kv', root: 'usage.sources.dismiss', effect: 'usage.sources.dismiss', bearer: false,
+                })));
+                expect(new Set(reads.map(phase => phase.root))).toEqual(new Set([
+                    'usage.sources.discover', 'usage.sources.get', 'usage.sources.dismiss',
+                ]));
+                expect(reads.every(phase => phase.root === phase.effect && !phase.bearer)).toBe(true);
+                expect(phases).toContainEqual({ path: '/v1/account/encryption/currentness',
+                    root: 'usage.sources.dismiss', effect: 'usage.sources.dismiss', bearer: false });
+
+                const otherKeyPath = '/v1/kv/' + encodeURIComponent('workspace:unrelated');
+                for (const actionId of ['usage.sources.discover', 'usage.sources.get', 'usage.sources.dismiss']) {
+                    const authorizationToken = roots.get(actionId)!;
+                    const rejected = await app.inject({ method: 'GET', url: otherKeyPath, headers: machineHeaders({
+                        authorizationToken, effectActionId: actionId, method: 'GET', path: otherKeyPath,
+                        body: undefined, privateKey: fixture.keyPair.secretKey,
+                    }) });
+                    expect(rejected.statusCode, actionId).toBe(401);
+                }
+                const body = { mutations: [{ key: buildUsageSourceDismissalsKvKey(machineId), value: null, version: -1 }] };
+                const deniedWrite = await app.inject({ method: 'POST', url: '/v1/kv', payload: body, headers: machineHeaders({
+                    authorizationToken: roots.get('usage.sources.discover')!, effectActionId: 'usage.sources.discover',
+                    method: 'POST', path: '/v1/kv', body, privateKey: fixture.keyPair.secretKey,
+                }) });
+                expect(deniedWrite.statusCode).toBe(401);
+                const otherMachinePath = '/v1/kv/' + encodeURIComponent(buildUsageSourceDismissalsKvKey('other-machine'));
+                const wrongMachine = await app.inject({ method: 'GET', url: otherMachinePath, headers: machineHeaders({
+                    authorizationToken: roots.get('usage.sources.get')!, effectActionId: 'usage.sources.get',
+                    method: 'GET', path: otherMachinePath, body: undefined, privateKey: fixture.keyPair.secretKey,
+                }) });
+                expect(wrongMachine.statusCode).toBe(401);
+            });
+        } finally {
+            machine.disconnect();
+            await new Promise<void>(resolve => io.close(() => resolve()));
+            await app.close();
+        }
     });
 
     it('keeps Coach suppression signed HTTP purpose exclusive to the dedicated Coach roots', async () => {

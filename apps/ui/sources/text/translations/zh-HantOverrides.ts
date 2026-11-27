@@ -13975,6 +13975,7 @@ settingsSession: {
             deliveryUnconfirmed: "系統分享面板已開啟，但無法確認是否完成。重試前請檢查所選應用程式。",
             statMergedPrs: "已連結的已合併 PR",
         }, sources: {
+            dismissedSources: '已隱藏的來源',
             foundCaption: "加入來源後才會統計原生用量",
             coveragePurpose: "所選歷史記錄報告的內容",
             unpricedPurpose: "沒有價格的 token",

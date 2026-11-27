@@ -18154,6 +18154,7 @@ settingsSession: {
             machinesUnreadable: "Не удалось прочитать их файлы использования агентов",
             machineReadFailed: 'Не удалось обновить эти источники. Показан последний список.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Не найдено на этой машине: ${agents}`,
+            dismissedSources: 'Скрытые источники',
             chooseFolders: "Выбрать папки",
             countedToggle: ({ agent }: { agent: string | number }) => `Учитывать использование ${agent}`,
             noMachinesTitle: "Пока нет машин",

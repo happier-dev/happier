@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { USAGE_SOURCE_DISMISS_ACTION_ID, USAGE_SOURCE_GET_ACTION_ID } from '@happier-dev/protocol/usage/usageSources';
+import type { UsageSourceActionRequest } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import { createUsageSourceActionPort } from '@happier-dev/protocol/actions/executor/usageSourceActions';
 import { readMachineDeploymentReferencesV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -35,7 +38,7 @@ import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '@happier-dev/protocol/local
 import type { CliDeploymentEnvironmentAccessRead, CliDeploymentEnvironmentAccessObserve } from '@/deployments/createCliDeploymentActionDeps';
 export function createCliMachineResourceActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'token' | 'externalActionMachineInstallationId' | 'externalActionMachineRequestPrivateKey' | 'serverIdentityId' | 'machineActionDirectTargetTransport' | 'machineGuardAction' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
-  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, readEnvironmentAccess, observeEnvironmentAccessChanges, executionRunActionFailure, machineRebootReferences, resolveServerRequestHeaders }: Readonly<{
+  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, readEnvironmentAccess, observeEnvironmentAccessChanges, executionRunActionFailure, machineRebootReferences, resolveServerRequestHeaders, usageSourceDismissalTransport }: Readonly<{
     projectHomeAdmission: CliProjectAdmission['projectHomeAdmission'];
     callMachineAction: CliMachineActionCall;
     assertProjectRequesterCurrent: CliProjectAdmission['assertProjectRequesterCurrent'];
@@ -44,6 +47,8 @@ export function createCliMachineResourceActionDeps(
     projectHomeId: string;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, actionId: string,
       request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
+    usageSourceDismissalTransport?(key: string, request: UsageSourceActionRequest, context: ActionExecutorContext):
+      ReturnType<NonNullable<Parameters<typeof createUsageSourceActionPort>[0]['dismissalTransport']>>;
     machineRebootReferences?: ActionExecutorDeps['machineRebootReferences'];
     readEnvironmentAccess: CliDeploymentEnvironmentAccessRead;
     observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
@@ -636,6 +641,7 @@ export function createCliMachineResourceActionDeps(
     usageSourceAction: async (request, context) => {
       const denied = await projectHomeAdmission(request.input.serverId, context);
       if (denied) return executionRunActionFailure('server_target_mismatch');
+      const { credentials } = params;
       return createUsageSourceActionPort({
         serverId: request.input.serverId,
         assertCurrent: async context => {
@@ -648,8 +654,22 @@ export function createCliMachineResourceActionDeps(
           }
           context.signal?.throwIfAborted();
         },
+        ...(usageSourceDismissalTransport ? {
+          dismissalTransport: (key, context) => usageSourceDismissalTransport(key, request, context),
+        } : {}),
         rpc: async (request, context) => {
-          if (!params.credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+          const binding = context.externalActionExecutionAuthorization?.binding;
+          if (request.actionId === USAGE_SOURCE_GET_ACTION_ID && binding?.actionId === USAGE_SOURCE_DISMISS_ACTION_ID
+            && binding.sessionActionOrigin) {
+            const executeRead = context.executeOrdinaryChildAction;
+            if (!executeRead) return executionRunActionFailure('requester_account_context_unavailable');
+            const result = await executeRead(request.actionId, request.input, {
+              externalActionTarget: { kind: 'machine', machineId: request.input.machineId },
+              actionRequestId: randomUUID(), ...(context.signal ? { signal: context.signal } : {}),
+            });
+            return result.ok ? result.result : result;
+          }
+          if (!credentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
           const call = () => callMachineAction({ machineId: request.input.machineId, serverId: request.input.serverId,
             method: request.actionId, request: request.input, authority: context.authority, authorization: context.rpcSessionAuthorization,
             context, effectActionId: request.actionId, exactMachine: true, ...(context.signal ? { signal: context.signal } : {}) });

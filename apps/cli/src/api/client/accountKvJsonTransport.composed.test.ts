@@ -11,6 +11,12 @@ import { createAccountKvHttpFixture } from '../../../../ui/sources/dev/testkit/f
 import { Encryption } from '../../../../ui/sources/sync/encryption/encryption';
 import { createAccountKvJsonTransport } from '../../../../ui/sources/sync/ops/account/accountKvJsonTransport';
 import { encodeBase64, encrypt } from '@/api/encryption';
+import { buildUsageSourceDismissalsKvKey } from '@happier-dev/protocol/usage/usageSources';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { handleActionsCommand } from '@/cli/commands/actions';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
+import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { acquireRequesterAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
@@ -150,6 +156,72 @@ it.each(['mode', 'key', 'epoch'] as const)('refuses legacy lazy re-sealing after
         expect(fixture.storage.readRequests().filter(request => request.method === 'POST')).toHaveLength(1);
         expect(fixture.currentnessReads()).toBe(2);
     } finally { await fixture.close(); }
+});
+
+it.each(['cli', 'agent'] as const)('persists a %s Usage Sources dismissal through the credentialed dispatcher without an App', async surface => {
+    const serverId = 'usage-sources-home';
+    const machineId = 'usage-sources-machine';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'usage-sources-account', session: 'stored-session', tokenEpoch: 7,
+        provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' } as const;
+    const input = { serverId, machineId, sourceId: 'source' };
+    const source = { ...input, agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        root: { kind: 'default', path: '/fixture' }, consent: 'disabled', status: 'found',
+        coverage: 'unknown', pendingCount: 0, asOfMs: null } as const;
+    const storage = createAccountKvHttpFixture();
+    const server = createServer(async (request, response) => {
+        if (request.url === '/v1/account/encryption/currentness') {
+            response.setHeader('Content-Type', 'application/json');
+            response.end(JSON.stringify(createAccountEncryptionCurrentnessFixture({ mode: 'plain' })));
+        } else if (!await storage.handle(request, response)) {
+            response.statusCode = 404;
+            response.end();
+        }
+    });
+    await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+        const actionsSettings = setScopedActionApprovalPreference({ actionId: 'usage.sources.dismiss',
+            scope: { kind: 'machine', machineId }, surface, mode: 'waived', settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
+        const options = {
+            credentials, serverId, serverApiUrl: base,
+            actionsSettingsProvider: { getActionsSettings: () => actionsSettings },
+            machineActionDirectTargetTransport: { machineId, invoke: async () => ({ sources: [source] }) },
+        };
+        const execute = () => createCliActionExecutorFromCredentials(options);
+        const context = { surface, serverId,
+            authority: surface === 'cli' ? 'present_user' : 'account_automation', bypassApprovals: true } as const;
+        if (surface === 'cli') {
+            const output = captureConsoleJsonOutput();
+            const previousExitCode = process.exitCode;
+            try {
+                await handleActionsCommand(['invoke', 'usage.sources.dismiss', '--server-id', serverId,
+                    '--input-json', JSON.stringify(input), '--yes', '--json'], {
+                    getServerProfileFn: async () => ({ id: serverId, name: 'Fixture Home', serverUrl: base, webappUrl: base,
+                        createdAt: 1, updatedAt: 1, lastUsedAt: 1 }),
+                    readCredentialsForServerIdFn: async () => credentials,
+                    createExecutorFn: params => createCliActionExecutorFromCredentials({ ...options, ...params }),
+                });
+                const printed = output.json();
+                expect(printed, JSON.stringify(printed)).toMatchObject({ ok: true, data: { status: 'dismissed' } });
+            } finally { output.restore(); process.exitCode = previousExitCode; }
+        } else {
+            expect(await execute().execute('usage.sources.dismiss', input, context))
+                .toMatchObject({ ok: true, result: { status: 'dismissed' } });
+        }
+        if (surface === 'agent') {
+            const inventory = await execute().execute('usage.sources.get', { serverId, machineId }, context);
+            expect(inventory).toMatchObject({ ok: true, result: { sources: [],
+                summary: { sourceCount: 0, dismissedSourceIds: [source.sourceId] } } });
+            expect(JSON.stringify(inventory)).not.toContain(source.root.path);
+        }
+        const port = createAccountKvJsonTransport({ key: buildUsageSourceDismissalsKvKey(machineId), credentials: { token },
+            request: (path, init) => fetch(`${base}${path}`, init), shouldContinue: () => true });
+        await expect(port.read()).resolves.toMatchObject({ value: { v: 1, sourceIds: [input.sourceId] } });
+    } finally {
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
 });
 
 it('UI legacy read re-seals real HTTP rows consumed by the paired CLI tasks.internal.list Action', async () => {

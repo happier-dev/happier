@@ -30,6 +30,7 @@ import { createPrepareDeployment } from '@/workspaces/prepareDeployment';
 import { resolveAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import { createMachineUpdatesRolloutActionDeps } from '@/machines/setup/composeMachineUpdates';
 import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher } from '@/machines/setup/composeMachineSetup';
+import { readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -1116,6 +1117,22 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
   const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
     resolveServerRequestHeaders,
+    usageSourceDismissalTransport: async (key, request, context) => {
+      const denied = await admitAccountStorage(request.input.serverId, context);
+      if (denied) throw createActionExecuteFailureError(denied);
+      const authorization = context.externalActionExecutionAuthorization;
+      const requester = readRequesterAccountActionTransportContext(authorization);
+      const credentials = authorization ? requester?.credentials : params.credentials;
+      if (!credentials || authorization && (!requester || !authorization.requesterHttpProjection)) {
+        throw createActionExecuteFailureError(executionRunActionFailure('requester_account_context_unavailable'));
+      }
+      const { createCliAccountKvJsonTransport } = await import('@/api/client/accountKvJsonTransport');
+      return createCliAccountKvJsonTransport({ credentials, key,
+        serverBaseUrl: requester?.serverHttpBaseUrl ?? todoHomeBaseUrl,
+        ...(context.signal ? { signal: context.signal } : {}),
+        resolveAuthorizationHeaders: http => resolveAccountStorageHeaders(context, request.actionId, http),
+      });
+    },
     readEnvironmentAccess: deploymentStorageDeps.readEnvironmentAccess,
     observeEnvironmentAccessChanges: deploymentStorageDeps.observeEnvironmentAccessChanges, executionRunActionFailure });
   const connectionsDeps = createCliConnectionsActionDeps(params, { callMachineAction, connectedServiceAction, projectHomeId,

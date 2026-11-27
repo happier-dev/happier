@@ -17851,6 +17851,7 @@ settingsSession: {
             machinesUnreadable: "无法读取其代理使用文件",
             machineReadFailed: '无法刷新这些来源。正在显示上次的列表。',
             notFoundAgents: ({ agents }: { agents: string | number }) => `在此机器上未找到：${agents}`,
+            dismissedSources: '已隐藏的来源',
             chooseFolders: "选择文件夹",
             countedToggle: ({ agent }: { agent: string | number }) => `统计 ${agent} 的用量`,
             noMachinesTitle: "还没有机器",

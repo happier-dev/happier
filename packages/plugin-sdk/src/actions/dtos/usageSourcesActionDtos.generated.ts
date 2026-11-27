@@ -17,8 +17,7 @@ export type UsageSourcesActionInputById = {
         serverId: string;
         machineId: string;
         sourceId: string;
-    } & {
-        clientId?: string | undefined;
+        dismissed?: boolean | undefined;
     };
     readonly "usage.sources.consent.set": {
         serverId: string;
@@ -72,27 +71,7 @@ export type UsageSourcesActionResultById = {
             discoveredFileCount?: number | undefined;
             errorCode?: string | undefined;
         }[];
-        summary?: undefined | {
-            sourceCount: number;
-            groups: {
-                agent: {
-                    pluginId: string;
-                    localId: string;
-                };
-                consent: 'disabled' | 'enabled';
-                status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
-                coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
-                sourceCount: number;
-                pendingCount: number;
-                sources: {
-                    sourceId: string;
-                    discoveredFileCount?: number | undefined;
-                }[];
-            }[];
-        };
-    };
-    readonly "usage.sources.get": {
-        sources: {
+        dismissedSources?: undefined | {
             serverId: string;
             machineId: string;
             sourceId: string;
@@ -132,10 +111,78 @@ export type UsageSourcesActionResultById = {
                     discoveredFileCount?: number | undefined;
                 }[];
             }[];
+            dismissedSourceIds?: string[] | undefined;
+        };
+    };
+    readonly "usage.sources.get": {
+        sources: {
+            serverId: string;
+            machineId: string;
+            sourceId: string;
+            agent: {
+                pluginId: string;
+                localId: string;
+            };
+            root: {
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
+            };
+            consent: 'disabled' | 'enabled';
+            status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
+            pendingCount: number;
+            asOfMs: null | number;
+            accountingSources?: string[] | undefined;
+            captureKind?: 'from_logs' | undefined;
+            externalSessionSource?: ExternalSessionsSource | undefined;
+            discoveredFileCount?: number | undefined;
+            errorCode?: string | undefined;
+        }[];
+        dismissedSources?: undefined | {
+            serverId: string;
+            machineId: string;
+            sourceId: string;
+            agent: {
+                pluginId: string;
+                localId: string;
+            };
+            root: {
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
+            };
+            consent: 'disabled' | 'enabled';
+            status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
+            pendingCount: number;
+            asOfMs: null | number;
+            accountingSources?: string[] | undefined;
+            captureKind?: 'from_logs' | undefined;
+            externalSessionSource?: ExternalSessionsSource | undefined;
+            discoveredFileCount?: number | undefined;
+            errorCode?: string | undefined;
+        }[];
+        summary?: undefined | {
+            sourceCount: number;
+            groups: {
+                agent: {
+                    pluginId: string;
+                    localId: string;
+                };
+                consent: 'disabled' | 'enabled';
+                status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
+                coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
+                sourceCount: number;
+                pendingCount: number;
+                sources: {
+                    sourceId: string;
+                    discoveredFileCount?: number | undefined;
+                }[];
+            }[];
+            dismissedSourceIds?: string[] | undefined;
         };
     };
     readonly "usage.sources.dismiss": {
-        status: 'dismissed' | 'unavailable';
+        status: 'dismissed' | 'restored' | 'unavailable';
     };
     readonly "usage.sources.consent.set": {
         source: {

@@ -6175,7 +6175,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         const refusal = readActionFailureEnvelope(result);
         if (refusal) return refusal;
         if (!('sources' in result)) return { ok: true, result };
-        if (id === 'usage.sources.discover') ctx.captureUsageSourceDiscovery?.(result.sources);
+        if (id === 'usage.sources.discover') ctx.captureUsageSourceDiscovery?.(result);
         return { ok: true, result: projectUsageSourcesDelivery(result, 'sourceId' in input ? input.sourceId : undefined, ctx.surface) };
       }
       const connectedServiceActionId = isActionFamilyId(actionId, ConnectedServiceConfigurationActionIdV1Schema) ? actionId : null;

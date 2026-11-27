@@ -18080,6 +18080,7 @@ settingsSession: {
             machinesUnreadable: "Impossible de lire leurs fichiers d'utilisation d'agent",
             machineReadFailed: 'Impossible d’actualiser ces sources. Dernière liste affichée.',
             notFoundAgents: ({ agents }: { agents: string | number }) => `Introuvable sur cette machine : ${agents}`,
+            dismissedSources: 'Sources masquées',
             chooseFolders: "Choisir les dossiers",
             countedToggle: ({ agent }: { agent: string | number }) => `Compter l’usage de ${agent}`,
             noMachinesTitle: "Aucune machine pour l'instant",

@@ -722,7 +722,7 @@ export type ActionExecutorContext = Readonly<{
   /** Host-only read admission for Coach mutations; ordinary usage.query remains progressive. Never wire input. */
   usageQueryReadiness?: 'coach_evidence' | 'public_profile';
   /** The mounted Sources controller receives its own admitted inventory before agent delivery is summarized. */
-  captureUsageSourceDiscovery?: (sources: readonly import('../../usage/usageSources.js').UsageSourceV1[]) => void;
+  captureUsageSourceDiscovery?: (inventory: import('../../usage/usageSources.js').UsageSourcesActionListV1) => void;
   /** Exact prepared public disclosure, retained only by the live host invocation. Never wire input. */
   publicProfilePreparedAction?: import('./publicProfileActions.js').PreparedPublicProfileAction;
   /** Host-local handoff of the canonical preview computation; never Action/RPC input. */

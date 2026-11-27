@@ -17165,6 +17165,7 @@ settingsSession: {
       machinesUnreadable: "Nie udało się odczytać plików użycia ich agentów",
       machineReadFailed: 'Nie udało się odświeżyć tych źródeł. Wyświetlana jest ostatnia lista.',
       notFoundAgents: ({ agents }: { agents: string | number }) => `Nie znaleziono na tej maszynie: ${agents}`,
+      dismissedSources: 'Ukryte źródła',
       chooseFolders: "Wybierz foldery",
       countedToggle: ({ agent }: { agent: string | number }) => `Licz użycie ${agent}`,
       noMachinesTitle: "Brak maszyn",

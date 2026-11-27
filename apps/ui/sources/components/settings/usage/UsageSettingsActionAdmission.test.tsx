@@ -10,26 +10,20 @@ import { ConnectedPresentationRecordV1Schema, ConnectedPresentationRowMutationV1
 import type { UsagePlanAccount } from './widgets/plans/usagePlansModel';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { buildUsageSourceDismissalsKvKey } from '@happier-dev/protocol/usage/usageSources';
+import { dispatchKvFeedChanges } from '@/sync/engine/socket/kvUpdateDispatcher';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { decodeAccountStoredJsonContent, encodeAccountStoredJsonContent } from '@/sync/encryption/accountStoredJsonContent';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD, ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 const harness = createHomeGovernanceHarness();
-const mountedSourceAction = vi.hoisted(() => ({
-    execute: null as import('@/sync/ops/actions/frontDoorRuntimeActionExecutor').FrontDoorActionExecute | null,
-}));
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
     const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
     const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
-    const create = createFrontDoorActionExecuteForVitest(original);
-    return { ...original, createFrontDoorActionExecute: ((executor, options) => {
-        const execute = create(executor, options);
-        if (!executor && options?.usageSourceDismiss) mountedSourceAction.execute = execute;
-        return execute;
-    }) satisfies typeof original.createFrontDoorActionExecute };
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
 });
 
 const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
@@ -346,85 +340,80 @@ describe('Usage settings UI Action admission', () => {
         await screen.unmount();
     });
 
-    it('hides the card when the mounted discovery dismissal Action acknowledges it, including after remount', async () => {
-        const lifetime = captureActiveServerAccountScopeLifetime();
-        expect(lifetime?.scope.serverId).toBe(serverId);
-        const machineId = 'discovery-machine';
-        const sourceId = 'discovery-claude';
+    it('restores the same discovered source after Not now and a remount', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const machineId = 'dismiss-machine';
+        const sourceId = 'dismiss-source';
         const input = { serverId, machineId, sourceId };
-        const source = {
-            ...input, agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        const source = { ...input, agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
             root: { kind: 'default', path: '/fixture' }, consent: 'disabled', status: 'found',
-            coverage: 'unknown', pendingCount: 0, asOfMs: null,
-        } as const;
-        const context = { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: lifetime!.scope.accountId } as const;
-        // Supply only the discovery/status RPC transport. The mounted UI and its typed executor stay real.
-        const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockImplementation(async <R, A>(params: ServerScopedMachineRpcParams<A>) => {
-            expect(params.method === 'usage.sources.discover' || params.method === 'usage.sources.get').toBe(true);
-            return { sources: [source] } as R;
-        });
-        const render = () => renderScreen(<UsageSourcesMachines lifetime={lifetime!} serverId={serverId}
-            machines={[{ id: machineId, name: 'Fixture machine', online: true }]} testID="sources"
-            input={{ agents: [], machines: [], sources: [] }} />);
-        const card = `sources.machine.${machineId}.source.${sourceId}`;
-        const refused = { ok: true, result: { status: 'unavailable' } };
-        let retired: typeof mountedSourceAction.execute = null;
-        try {
-            for (const entry of ['action', 'remounted_action', 'menu'] as const) {
-                const screen = await render();
-                await waitForHomeGovernance(() => expect(screen.findByTestId(`${card}.add`)).toBeTruthy());
-                const controller = screen.tree.root.findAll(node => node.props.source?.sourceId === sourceId
-                    && typeof node.props.controller?.getSnapshot === 'function')[0]?.props.controller as
-                    import('./widgets/usageSourcesController').UsageSourcesController;
-                expect(controller.getSnapshot().dismissedSourceIds).toEqual([]);
-                const execute = mountedSourceAction.execute;
-                if (!execute) throw new Error('The real mounted Action executor was not captured');
-                if (retired && entry === 'remounted_action') {
-                    expect(await retired('usage.sources.dismiss', input, context)).toMatchObject(refused);
-                    expect(controller.getSnapshot().dismissedSourceIds).toEqual([]);
-                }
-                if (entry === 'menu') {
-                    expect(screen.findByTestId(`${card}.notNow`)).toBeFalsy();
-                    await screen.pressByTestIdAsync(`${card}.options`);
-                    await screen.pressByTestIdAsync(`${card}.notNow`);
-                    await waitForHomeGovernance(() => expect(screen.findByTestId(`${card}.add`)).toBeFalsy());
-                } else await act(async () => {
-                    expect(await execute('usage.sources.dismiss', input, context))
-                        .toMatchObject({ ok: true, result: { status: 'dismissed' } });
-                });
-                expect({
-                    cardVisible: Boolean(screen.findByTestId(`${card}.add`)),
-                    dismissedSourceIds: controller.getSnapshot().dismissedSourceIds,
-                }).toEqual({ cardVisible: false, dismissedSourceIds: [sourceId] });
-                expect(await execute('usage.sources.get', input, context)).toMatchObject({ ok: true, result: { sources: [source] } });
-                await screen.unmount();
-                expect(await execute('usage.sources.dismiss', input, context)).toMatchObject(refused);
-                retired = execute;
-            }
-        } finally {
-            rpc.mockRestore();
-            mountedSourceAction.execute = null;
+            coverage: 'unknown', pendingCount: 0, asOfMs: null } as const;
+        const menuSource = { ...source, sourceId: 'menu-source' };
+        const kv = createAccountKvHttpFixture();
+        const key = buildUsageSourceDismissalsKvKey(machineId);
+        for (const route of ['POST /v1/kv/bulk', 'POST /v1/kv']) {
+            harness.answer(serverId, route, { select: async (_body, request) => {
+                const response = await kv.handleFetch(request.url, request.init);
+                if (!response) throw new Error('Expected Account KV route');
+                return { status: response.status, body: await response.json() };
+            } });
         }
+        const rpc = vi.spyOn(machineRpc, 'machineRpcWithServerScope').mockImplementation(async <R, A>(params: ServerScopedMachineRpcParams<A>) => {
+            const requested = (params.payload as { sourceId?: string }).sourceId;
+            return { sources: [source, menuSource].filter(row => requested === undefined || row.sourceId === requested) } as R;
+        });
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://usage-settings.test');
+        const render = () => renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <UsageSourcesMachines lifetime={lifetime} serverId={serverId}
+                machines={[{ id: machineId, name: 'Fixture machine', online: true }]} testID="sources"
+                input={{ agents: [], machines: [], sources: [] }} />
+        </InjectedAuthProvider>);
+        const card = (id: string) => `sources.machine.${machineId}.source.${id}`;
+        const context = { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: lifetime.scope.accountId } as const;
+        try {
+            const screen = await render();
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`${card(sourceId)}.add`)).toBeTruthy());
+            await act(async () => {
+                expect(await createDefaultActionExecutor().execute('usage.sources.dismiss', input, context))
+                    .toMatchObject({ ok: true, result: { status: 'dismissed' } });
+                dispatchKvFeedChanges({ credentials, keys: [key], cursor: 1 });
+            });
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`${card(sourceId)}.add`)).toBeFalsy());
+            expect(await createDefaultActionExecutor().execute('usage.sources.get', input, context))
+                .toMatchObject({ ok: true, result: { sources: [source] } });
+
+            const menu = card(menuSource.sourceId);
+            await screen.pressByTestIdAsync(`${menu}.options`);
+            await screen.pressByTestIdAsync(`${menu}.notNow`);
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`${menu}.add`)).toBeFalsy());
+            await screen.unmount();
+
+            const remounted = await render();
+            expect(await createDefaultActionExecutor().execute('usage.sources.get', { serverId, machineId }, context))
+                .toMatchObject({ ok: true, result: { sources: [] } });
+            expect(remounted.findByTestId(`${card(sourceId)}.add`)).toBeFalsy();
+            expect(remounted.findByTestId(`${menu}.add`)).toBeFalsy();
+            const dismissed = `sources.machine.${machineId}.dismissed.toggle`;
+            expect(remounted.findByTestId(dismissed)).toBeTruthy();
+            await remounted.pressByTestIdAsync(dismissed);
+            expect(remounted.findByTestId(`${menu}.restore`)).toBeTruthy();
+            await remounted.pressByTestIdAsync(`${menu}.restore`);
+            await waitForHomeGovernance(() => expect(remounted.findByTestId(`${menu}.add`)).toBeTruthy());
+            expect(remounted.findByTestId(`${card(sourceId)}.add`)).toBeFalsy();
+            await remounted.unmount();
+            const afterRestore = await render();
+            await waitForHomeGovernance(() => expect(afterRestore.findByTestId(`${menu}.add`)).toBeTruthy());
+            expect(afterRestore.findByTestId(`${card(sourceId)}.add`)).toBeFalsy();
+            await afterRestore.unmount();
+
+            const hook = await renderHook(() => useMountedActionExecution(lifetime.scope));
+            await act(async () => { await harness.switchAccount(serverId, 'other-account'); });
+            expect(await hook.getCurrent().execute('usage.sources.dismiss', input))
+                .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+            await hook.unmount();
+        } finally { rpc.mockRestore(); }
     });
 
-    it('retains mounted local delivery beneath canonical admission and refuses it after Account retirement', async () => {
-        const dismissed = new Set<string>();
-        const executorOptions = { usageSourceDismiss: async (input: { sourceId: string }) => {
-            dismissed.add(input.sourceId);
-            return { status: 'dismissed' as const };
-        } };
-        const hook = await renderHook(() => useMountedActionExecution({ serverId, accountId: 'usage-account' },
-            { executorOptions }));
-        const input = { serverId, machineId: 'machine', sourceId: 'source' };
-        expect(await hook.getCurrent().execute('usage.sources.dismiss', input))
-            .toMatchObject({ ok: true, result: { status: 'dismissed' } });
-        expect([...dismissed]).toEqual(['source']);
-        await act(async () => { await harness.switchAccount(serverId, 'other-account'); });
-        expect(await hook.getCurrent().execute('usage.sources.dismiss', { ...input, sourceId: 'retired' }))
-            .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
-        expect([...dismissed]).toEqual(['source']);
-        await hook.unmount();
-    });
     it('retries model-price Refresh after confirmation cancellation and refuses a retired control', async () => {
         let refreshes = 0;
         harness.answer(serverId, 'POST /v1/account/usage/prices/refresh', { select: () => {

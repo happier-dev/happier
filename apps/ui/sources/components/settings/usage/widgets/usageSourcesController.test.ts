@@ -417,11 +417,11 @@ describe('Usage Sources consent controller', () => {
         expect(controller.getSnapshot().sources).toEqual([]);
     });
 
-    it('reports unavailable dismissal when the executor has no mounted delivery', async () => {
+    it('keeps a source visible when the Action reports dismissal unavailable', async () => {
         const { controller } = harness(async () => ({ sources: [source] }));
         await controller.discover();
         expect(await controller.notNow('source')).toMatchObject({ ok: true, result: { status: 'unavailable' } });
-        expect(controller.getSnapshot()).toMatchObject({ sources: [source], dismissedSourceIds: [], error: { errorCode: 'usage_source_dismiss_unavailable' } });
+        expect(controller.getSnapshot()).toMatchObject({ sources: [source], error: { errorCode: 'usage_source_dismiss_unavailable' } });
         controller.dispose();
     });
 

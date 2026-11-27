@@ -25,5 +25,7 @@ export function projectUsageSourcesDelivery(
         sourceCount: 1, pendingCount: source.pendingCount, sources: [selector] });
     }
   }
-  return { sources: [], summary: { sourceCount: inventory.sources.length, groups: [...groups.values()] } };
+  return { sources: [], summary: { sourceCount: inventory.sources.length, groups: [...groups.values()],
+    ...(inventory.dismissedSources?.length ? { dismissedSourceIds: inventory.dismissedSources.map(source => source.sourceId) } : {}),
+  } };
 }

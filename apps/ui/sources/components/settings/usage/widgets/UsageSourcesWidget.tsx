@@ -352,13 +352,13 @@ const MachineSources = React.memo(function MachineSources(
   React.useEffect(() => {
     if (controller && props.online && ready) void controller.discover();
   }, [controller, props.online, ready]);
-  const scoped = selectUsageSourceDiscoveryInventory(snapshot.sources).filter(source => matchesUsageSourceAccountingScope(source, props.accountingSources)
+  const inScope = (source: UsageSourceV1) => matchesUsageSourceAccountingScope(source, props.accountingSources)
     && (!props.agentIds.length || props.agentIds.some(agentId =>
     agentId === buildQualifiedPluginContributionKey(source.agent)
-      || agentId === resolveBundledAgentIdFromContributionIdentity(source.agent))));
-  const rows = scoped
-    .filter(source => !(source.consent === 'disabled' && source.status === 'found' && snapshot.dismissedSourceIds.includes(source.sourceId)))
-    .map(source => ({ source, status: resolveUsageSourceRowStatus(source) }));
+      || agentId === resolveBundledAgentIdFromContributionIdentity(source.agent)));
+  const scoped = selectUsageSourceDiscoveryInventory(snapshot.sources).filter(inScope);
+  const dismissedSources = selectUsageSourceDiscoveryInventory(snapshot.dismissedSources).filter(inScope);
+  const rows = scoped.map(source => ({ source, status: resolveUsageSourceRowStatus(source) }));
   const tracked = rows.filter(row => row.status.kind !== 'found' && row.status.kind !== 'missing');
   const found = rows.filter(row => row.status.kind === 'found');
   // One Agent's folders sit together (what is counted first), so a name never repeats across separate status groups.
@@ -369,7 +369,7 @@ const MachineSources = React.memo(function MachineSources(
   const discovering = snapshot.pending.some(operation => operation.actionId === 'usage.sources.discover');
   // One status per machine: an unreadable machine is never also "looking", and a machine with
   // nothing to show joins its group's single line instead of drawing a header of its own.
-  const state: UsageSourcesMachineState = snapshot.approval || (snapshot.loaded && scoped.length > 0) ? 'content'
+  const state: UsageSourcesMachineState = snapshot.approval || (snapshot.loaded && scoped.length + dismissedSources.length > 0) ? 'content'
     : snapshot.error && !snapshot.loaded ? 'unreadable'
       : snapshot.loaded ? 'none' : 'looking';
   // Consent is asked where a source can be added or resumed (or is counted and can be stopped).
@@ -389,7 +389,7 @@ const MachineSources = React.memo(function MachineSources(
         <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
       </View>
       {/* A revisit's controller opens on the last-known sources a frame later; until then the rows hold their count. */}
-      <ItemLoadStateRows state={{ kind: 'loading' }} rows={readUsageSourcesLastKnown(props.lifetime, props.machineId)?.length || 3} lines={2}
+      <ItemLoadStateRows state={{ kind: 'loading' }} rows={readUsageSourcesLastKnown(props.lifetime, props.machineId)?.sources.length || 3} lines={2}
         accessibilityLabel={`${props.machineName} · ${t('usage.board.sources.machineLooking')}`} />
     </View>
   );
@@ -413,7 +413,7 @@ const MachineSources = React.memo(function MachineSources(
         <SurfaceFreshnessLine testID={`${props.testID}.readFailed`} tone="warning" reason={t('usage.board.sources.machineReadFailed')}
           action={{ label: t('common.retry'), onPress: () => { void retry?.(); }, testID: `${props.testID}.readFailed.retry` }} />
       ) : null}
-      {snapshot.approval || (controller && listed.length + missing.length > 0) ? <View style={styles.machineBody}
+      {snapshot.approval || (controller && listed.length + missing.length + dismissedSources.length > 0) ? <View style={styles.machineBody}
         onLayout={event => { if (near) { const height = event.nativeEvent.layout.height; setBodyHeight(previous => previous === height ? previous : height); } }}>
       {!near ? <View style={{ height: bodyHeight }} /> : null}
       {near && snapshot.approval ? <Text style={styles.note}>{t('usage.board.sources.approvalPending')}</Text> : null}
@@ -426,10 +426,33 @@ const MachineSources = React.memo(function MachineSources(
         <MissingSources sources={missing} controller={controller} machineName={props.machineName} serverId={props.serverId}
           busy={snapshot.pending} testID={`${props.testID}.missing`} visible={near} />
       ) : null}
+      {controller && dismissedSources.length > 0 ? (
+        <DismissedSources testID={`${props.testID}.dismissed`} visible={near}>
+          {dismissedSources.map(source => (
+            <FoundSourceRow key={source.sourceId} {...rowProps(source)} controller={controller} dismissed />
+          ))}
+        </DismissedSources>
+      ) : null}
       </View> : null}
     </View>
   );
 });
+
+function DismissedSources(props: Readonly<{ testID: string; visible: boolean; children: React.ReactNode }>) {
+  const [open, setOpen] = React.useState(false);
+  const label = t('usage.board.sources.dismissedSources');
+  const toggle = useUsageDisclosureCommand(label, open, () => setOpen(value => !value), props.visible);
+  if (!props.visible) return null;
+  return (
+    <View testID={props.testID} style={styles.missing}>
+      <View style={styles.missingLine}>
+        <RoundButton size="small" display="inverted" title={open ? t('common.done') : label}
+          onPress={toggle} testID={`${props.testID}.toggle`} />
+      </View>
+      {open ? props.children : null}
+    </View>
+  );
+}
 
 const usageSourceAgentKey = (source: UsageSourceV1) =>
   resolveBundledAgentIdFromContributionIdentity(source.agent) ?? buildQualifiedPluginContributionKey(source.agent);
@@ -548,9 +571,19 @@ function TrackedSourceRow(props: SourceRowProps & Readonly<{ status: UsageSource
 }
 
 /** A source found on the machine and not counted yet: what it is, where it is, Add; Not now waits in its menu. */
-function FoundSourceRow(props: SourceRowProps) {
+function FoundSourceRow(props: SourceRowProps & Readonly<{ dismissed?: boolean }>) {
   const { source, controller } = props;
-  const { agentId, agent, busy, folder, accessibilityContext, changeFolder } = useSourceRow(props);
+  const { agentId, agent, busy, folder, accessibilityContext, changeFolder } = useSourceRow(props, !props.dismissed);
+  if (props.dismissed) return (
+    <View testID={props.testID} style={styles.source} accessibilityState={{ busy }}>
+      <SourceIdentity agentId={agentId} agent={agent} folder={folder} serverId={props.serverId} />
+      <View style={styles.controls}>
+        <RoundButton size="small" display="secondary" title={t('common.restore')} loading={busy}
+          accessibilityLabel={`${t('common.restore')}: ${agent}, ${accessibilityContext}`}
+          onPress={() => { void controller.restore(source.sourceId); }} testID={`${props.testID}.restore`} />
+      </View>
+    </View>
+  );
   const actions: ItemAction[] = [
     ...folderActions(props.testID, source, controller, busy, changeFolder),
     { id: `${props.testID}.notNow`, title: t('usage.board.sources.notNow'), icon: 'eye-slash', disabled: busy,

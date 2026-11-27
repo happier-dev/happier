@@ -236,6 +236,8 @@ import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { accountUsageRoutePaths } from '@/app/api/routes/account/accountUsageRoutePaths';
 import { USAGE_PRICE_ACTION_IDS, isUsageAppCallsReadParentActionIdV1, isUsagePriceActionIdV1, isUsagePublicRecapActionIdV1, isUsagePrivateRecapActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { buildUsageSourceDismissalsKvKey, isUsageSourceDismissalsKvKey,
+    USAGE_SOURCE_DISCOVER_ACTION_ID, USAGE_SOURCE_DISMISS_ACTION_ID, USAGE_SOURCE_GET_ACTION_ID } from '@happier-dev/protocol/usage/usageSources';
 import { KvMutationRequestSchema } from '@/app/kv/kvMutate';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { bindPublicProfilePreparedHttpRequestV1, isHomeDomainActionIdV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
@@ -3008,6 +3010,34 @@ function isScmReviewedMarksHttpPurpose(proof: ExternalActionExecutionRequestProo
     } catch { return false; }
 }
 
+/** The original requester spends this root on its own private Sources disposition record. */
+function isUsageSourceDismissalsHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    const { binding } = verified;
+    if (verified.effectActionId !== binding.actionId || binding.accountId !== binding.custodianAccountId) return false;
+    if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+    const dismiss = binding.actionId === USAGE_SOURCE_DISMISS_ACTION_ID;
+    const method = proof.method.toUpperCase();
+    if (dismiss && method === 'POST' && proof.path === '/v1/kv') {
+        const mutation = KvMutationRequestSchema.safeParse(proof.body);
+        return mutation.success && mutation.data.mutations.length === 1
+            && mutation.data.mutations[0]?.value !== null
+            && isUsageSourceDismissalsKvKey(mutation.data.mutations[0]!.key);
+    }
+    const prefix = '/v1/kv/';
+    if (method !== 'GET' || proof.body !== undefined || !proof.path.startsWith(prefix)) return false;
+    try {
+        const key = decodeURIComponent(proof.path.slice(prefix.length));
+        if (proof.path !== prefix + encodeURIComponent(key)) return false;
+        // Dismiss runs on the Session host. Its input can select a different
+        // Machine's row in the same requester's Account.
+        return dismiss ? isUsageSourceDismissalsKvKey(key)
+            : binding.target.kind === 'machine' && key === buildUsageSourceDismissalsKvKey(binding.target.machineId);
+    } catch {
+        return false;
+    }
+}
+
 /** Native resource observers read only their retained Account-mode projection. */
 function isMachineOutcomeSummaryHttpPurpose(proof: ExternalActionExecutionRequestProof): boolean {
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
@@ -5237,6 +5267,10 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (verified.effectActionId !== verified.binding.actionId
             || verified.binding.accountId !== verified.binding.custodianAccountId
             || !isScmReviewedMarksHttpPurpose(proof)) return refuse('verification_purpose');
+    } else if (verified.binding.actionId === USAGE_SOURCE_DISCOVER_ACTION_ID
+        || verified.binding.actionId === USAGE_SOURCE_GET_ACTION_ID
+        || verified.binding.actionId === USAGE_SOURCE_DISMISS_ACTION_ID) {
+        if (!isUsageSourceDismissalsHttpPurpose(verified, proof)) return refuse('verification_purpose');
     } else if (verified.binding.actionId === MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1) {
         // Not folded into the read-root rule: its tested contract spends only its own KV prefix, and no flow needs more.
         if (verified.effectActionId !== verified.binding.actionId

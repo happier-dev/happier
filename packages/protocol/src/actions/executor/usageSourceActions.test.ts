@@ -10,6 +10,35 @@ const source: UsageSourceV1 = { serverId: 'home', machineId: 'machine', sourceId
   coverage: 'unknown', pendingCount: 0, asOfMs: null };
 
 describe('admitted Usage source transport', () => {
+  it('restores a dismissed source in a new Action port after same-root rediscovery', async () => {
+    let value: unknown = null;
+    let version = -1;
+    const transport = {
+      read: async () => ({ value, version }),
+      compareAndSet: async (next: unknown, expectedVersion: number) => {
+        expect(expectedVersion).toBe(version);
+        value = next;
+        return { success: true as const, version: ++version };
+      },
+    };
+    const host = { serverId: 'home', assertCurrent() {}, rpc: async () => ({ sources: [source] }),
+      dismissalTransport: async () => transport };
+    const input = { serverId: source.serverId, machineId: source.machineId, sourceId: source.sourceId };
+    const target = { serverId: source.serverId, machineId: source.machineId };
+    const context = { surface: 'cli' } as const;
+    expect(await createUsageSourceActionPort(host)({ actionId: 'usage.sources.dismiss', input }, context))
+      .toEqual({ status: 'dismissed' });
+    const fresh = createUsageSourceActionPort(host);
+    const hidden = { sources: [], dismissedSources: [source] };
+    expect(await fresh({ actionId: 'usage.sources.discover', input: target }, context)).toEqual(hidden);
+    expect(await fresh({ actionId: 'usage.sources.get', input: target }, context)).toEqual(hidden);
+    expect(await fresh({ actionId: 'usage.sources.dismiss', input: { ...input, dismissed: false } }, context))
+      .toEqual({ status: 'restored' });
+    const reopened = createUsageSourceActionPort(host);
+    expect(await reopened({ actionId: 'usage.sources.get', input: target }, context)).toEqual({ sources: [source] });
+    expect(await fresh({ actionId: 'usage.sources.get', input }, context)).toEqual({ sources: [source] });
+  });
+
   it('requires full native inventory before any Action summary projection', async () => {
     const port = createUsageSourceActionPort({ serverId: 'home', assertCurrent() {},
       rpc: async () => ({ sources: [], summary: { sourceCount: 1, groups: [{ agent: source.agent, consent: 'disabled',
