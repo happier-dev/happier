@@ -2494,7 +2494,7 @@ jobs:
 
       - name: Verify Windows installer security contracts
         shell: pwsh
-        run: node --test scripts/release/installers_security.test.mjs
+        run: node --test scripts/release/installers_security.test.mjs scripts/release/installers_windows_payload_promotion.contract.test.mjs
 
       - name: Verify Windows scheduled task contracts
         shell: pwsh
@@ -2763,6 +2763,7 @@ jobs:
             .project/logs/e2e/*core*/cli-update-*/*.log
             .project/logs/e2e/*core*/cli-update-*/*.json
             .project/logs/e2e/*core*/cli-update-*/*.jsonl
+            .project/logs/e2e/*core*/cli-update-*/daemon-home/logs/*.log
             .project/logs/e2e/vitest-heartbeat-diagnostic.ndjson
           if-no-files-found: ignore
 
@@ -2914,6 +2915,7 @@ jobs:
 
       - name: Run unified Docker release-assets validation
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           INSTALLERS_CHANNEL: ${{ inputs.installers_channel }}
           RELAY_UPGRADE_TO_SOURCE: ${{ inputs.relay_upgrade_to_source }}
           RELAY_UPGRADE_TO_REF: ${{ inputs.relay_upgrade_to_ref }}
@@ -3383,6 +3385,9 @@ jobs:
 
 
       - name: Install Sapling
+        env:
+          # The release-asset API download is rate limited per IP without a token.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
@@ -3511,6 +3516,9 @@ jobs:
 
 
       - name: Install Sapling
+        env:
+          # The release-asset API download is rate limited per IP without a token.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           bash scripts/ci/install_sapling_ubuntu22.sh
 
@@ -3576,6 +3584,10 @@ jobs:
             blacksmith-linux-4vcpu)
               ubuntu_2204=blacksmith-4vcpu-ubuntu-2204
               ubuntu_2404=blacksmith-4vcpu-ubuntu-2404
+              ;;
+            blacksmith-linux-8vcpu)
+              ubuntu_2204=blacksmith-8vcpu-ubuntu-2204
+              ubuntu_2404=blacksmith-8vcpu-ubuntu-2404
               ;;
             *)
               echo "Unsupported runner_pool: $RUNNER_POOL" >&2

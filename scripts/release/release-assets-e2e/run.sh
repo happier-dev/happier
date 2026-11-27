@@ -28,6 +28,10 @@ show_help="0"
 docker_retry_attempts="${HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_ATTEMPTS:-4}"
 docker_retry_sleep_seconds="${HAPPIER_RELEASE_ASSETS_DOCKER_RETRY_SLEEP_SECONDS:-5}"
 
+# Match installers-smoke: prefer the workflow token, then the runtime token.
+# Keep credentials in the environment, never in build args or generated env files.
+export HAPPIER_GITHUB_TOKEN="${GITHUB_TOKEN-${HAPPIER_GITHUB_TOKEN-}}"
+
 usage() {
   cat <<EOF
 Usage: $0 [--mode=npm|local] [--stack-spec <spec>] [--cli-spec <spec>] [--cli-install=global|npx] [--monorepo=github|local] [--timeout-s <seconds>] [--with-remote-daemon|--no-remote-daemon] [--with-remote-server|--no-remote-server] [--remote-server-db=postgres|sqlite] [--remote-installer=shim|official] [--remote-auth-mode=reuse-cli|bootstrap] [--with-docker-images|--no-docker-images] [--docker-channel=preview|stable] [--docker-images-db=sqlite|postgres|both] [--with-relay-upgrade|--no-relay-upgrade] [--relay-upgrade-from-channel=preview|stable] [--relay-upgrade-db=sqlite|postgres|both] [--relay-upgrade-to-server-tag=server-v<version>] [--relay-upgrade-to-server-version=<version>] [--keep]
@@ -636,7 +640,7 @@ run_dockerhub_images_smoke() {
 
       echo "[npm-e2e-smoke] running dockerhub dev-box happier-cli smoke (db=$db_case)..."
       set +e
-      "${compose_images[@]}" --env-file "$docker_env_file" run --rm --no-deps devbox-smoke
+      "${compose_images[@]}" --env-file "$docker_env_file" run --rm --no-deps -e HAPPIER_GITHUB_TOKEN devbox-smoke
       status=$?
       set -e
 
@@ -995,7 +999,7 @@ echo "[npm-e2e-smoke] checking stack daemon connectivity (machine registration).
 
 echo "[npm-e2e-smoke] running happier-cli smoke..."
 set +e
-"${compose_run[@]}" --env-file "$env_file" run --rm --no-deps cli
+"${compose_run[@]}" --env-file "$env_file" run --rm --no-deps -e HAPPIER_GITHUB_TOKEN cli
 status=$?
 set -e
 
@@ -1031,7 +1035,7 @@ if [[ "$with_any_remote" == "1" ]]; then
     fi
 
     set +e
-    "${compose_remote[@]}" --env-file "$env_file" run --rm --no-deps remote-server-smoke
+    "${compose_remote[@]}" --env-file "$env_file" run --rm --no-deps -e HAPPIER_GITHUB_TOKEN remote-server-smoke
     status=$?
     set -e
 
@@ -1075,7 +1079,7 @@ if [[ "$with_any_remote" == "1" ]]; then
     fi
 
     set +e
-    "${compose_remote[@]}" --env-file "$env_file" run --rm --no-deps "$remote_service"
+    "${compose_remote[@]}" --env-file "$env_file" run --rm --no-deps -e HAPPIER_GITHUB_TOKEN "$remote_service"
     status=$?
     set -e
 
@@ -1095,7 +1099,7 @@ fi
 
 echo "[npm-e2e-smoke] running second CLI machine smoke..."
 set +e
-"${compose_run[@]}" --env-file "$env_file" run --rm --no-deps cli2
+"${compose_run[@]}" --env-file "$env_file" run --rm --no-deps -e HAPPIER_GITHUB_TOKEN cli2
 status=$?
 set -e
 
