@@ -533,6 +533,7 @@
   ["scm.diffSummary.capture","use"],
   ["scm.diffSummary.result.edit","use"],
   ["scm.diffSummary.result.undo","use"],
+  ["scm.suggestion.apply","use"],
   ["scm.diffSummary.result.delete","custodian_only"],
   ["scm.diffSummary.result.clear","custodian_only"],
   ["scm.diffSummary.refine","use"],

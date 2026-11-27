@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util';
+import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { deriveScmHostingProviderConnectedAccountPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
@@ -12,7 +12,7 @@ type Owner = Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'listAccoun
  * narrows its existing declaration authority; it cannot create a target, binding
  * selection, credential, Session or native-home authority. */
 export function createWorkspaceEffectConnectedAccounts(input: Readonly<{
-  effect: WorkspaceCheckoutEffect;
+  effect: Pick<WorkspaceCheckoutEffect, 'contributions'>;
   owner: Owner;
   signal: AbortSignal;
   assertCurrent(): Promise<void>;
@@ -20,11 +20,18 @@ export function createWorkspaceEffectConnectedAccounts(input: Readonly<{
   const purposes = (input.effect.contributions.scmHostingProviders ?? [])
     .map(deriveScmHostingProviderConnectedAccountPurposeAuthorization).filter(value => value !== null);
   const refusal = () => privateProjectCheckoutRefusal();
+  // By value: a request crossing the child's frame is plain JSON, while declarations are parsed identities.
+  const serviceRefsKey = (refs: readonly Readonly<{ pluginId: string; localId: string }>[]) =>
+    JSON.stringify(refs.map(ref => [ref.pluginId, ref.localId]));
+  const requestKey = (request: Parameters<Owner['getBinding']>[0]) => {
+    try { return `${qualifiedPurposeKey(request.purpose)}|${serviceRefsKey(request.serviceRefs)}`; }
+    catch { throw refusal(); }
+  };
   const authorize = async (request: Parameters<Owner['getBinding']>[0]) => {
     input.signal.throwIfAborted();
     await input.assertCurrent();
-    const purpose = purposes.find(value => isDeepStrictEqual(value.purpose, request.purpose)
-      && isDeepStrictEqual(value.serviceRefs, request.serviceRefs));
+    const key = requestKey(request);
+    const purpose = purposes.find(value => `${qualifiedPurposeKey(value.purpose)}|${serviceRefsKey(value.serviceRefs)}` === key);
     if (!purpose || request.exactPurposeBindingSubjectId !== undefined || request.sessionId !== undefined) throw refusal();
     return { purpose: purpose.purpose, serviceRefs: purpose.serviceRefs,
       signal: AbortSignal.any([input.signal, request.signal]) };

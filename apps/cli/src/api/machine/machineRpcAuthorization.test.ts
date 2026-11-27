@@ -527,10 +527,13 @@ describe('authorizeMachineRpcRequest', () => {
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.BASH}`, params: {},
       machineAdmission: { ...machineAdmission, role: 'manage' }, callerAuthority: 'account_automation' }, boundary))
       .toEqual({ ok: true });
-    // A Use member's local repository read reaches the SCM owner (member process); forge reads stay refused.
+    // A Use member's local repository read, and their forge work with their own accounts (owner ruling 2026-11-26),
+    // reach the SCM owner (member process); a comparison on this Machine's stored credentials stays refused.
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_STATUS_SNAPSHOT}`, params: {}, machineAdmission,
       callerAuthority: 'account_automation' }, boundary)).toEqual({ ok: true });
     expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_PULL_REQUEST_LIST}`, params: {}, machineAdmission,
+      callerAuthority: 'account_automation' }, boundary)).toEqual({ ok: true });
+    expect(await authorizeMachineRpcRequest({ method: `machine:${RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE}`, params: {}, machineAdmission,
       callerAuthority: 'account_automation' }, boundary)).toMatchObject({ ok: false, errorCode: 'machine_manage_required' });
     for (const method of Object.values(PRIVATE_SPAWN_SESSION_RPC_METHODS)) {
       const request = { method: `machine:${method}`, machineAdmission, callerAuthority: 'account_automation' as const };

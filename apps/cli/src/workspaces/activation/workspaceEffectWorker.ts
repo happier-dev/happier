@@ -6,6 +6,7 @@ import { createBackgroundServiceProcessServiceClient, type BackgroundServiceProc
 import { executeWorkspaceCheckoutEffect, type WorkspaceCheckoutEffect, type WorkspaceCheckoutEffectContext } from './workspaceEffect';
 import type { MaterializedProjectCheckout } from './materializeProjectCheckout';
 import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
+import { runWithAdmittedScmRequesterCredentials } from '@/scm/accountScope';
 import { executePrivateProjectSyncEffect, privateSyncEffectError, type PrivateProjectNativeSyncProcessPort,
   type PrivateProjectSyncEffectConfiguration, type PrivateProjectSyncNetwork, type WorkspaceNativeSyncEffect, type WorkspaceNativeCopyBaselineEffect } from './privateProjectSyncEffect';
 import { readWorkspaceSyncNativeCopyOnceBaseline } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
@@ -92,7 +93,11 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
             }
             if ('kind' in dispatched && dispatched.kind === 'scm_read') {
               if (!services.completeScmRead) throw privateProjectCheckoutRefusal();
-              await services.completeScmRead(await executeMemberScmRead(dispatched, signal, services));
+              const read = () => executeMemberScmRead(dispatched, signal, services);
+              // Another person's network or hosting work: the same requester scope as the daemon's, with only the
+              // accounts the daemon brokered for them (none: every credential use settles authentication required).
+              await services.completeScmRead(await (dispatched.requesterCredentials
+                ? runWithAdmittedScmRequesterCredentials(services.connectedAccounts ?? null, read) : read()));
               send({ kind: 'settled', id: runId });
               return;
             }

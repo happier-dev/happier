@@ -111,9 +111,9 @@ export type ScmActionSpecDefinition<
   /**
    * Works only on the local repository at the input's folder, with Git alone, so it can run as the OS user who
    * owns that folder. `read` (status, history, diffs, file content) may also run as a requesting person with Can
-   * use. `write` (stage, commit, branch, stash, remotes, including fetch/pull/push with that user's own Git
-   * credentials) needs Manage unless it is a `memberFolderWrite`. Never set on forge, hosting, saved-result or
-   * Agent-starting methods: those run on this Machine's own credentials or services.
+   * use. `write` (stage, commit, branch, stash, remotes) needs Manage unless it is a `memberFolderWrite`, or a
+   * `hostingCredentials` method run with the person's own accounts (fetch, pull, push, publish). Never set on forge,
+   * hosting, saved-result or Agent-starting methods.
    */
   localRepository?: 'read' | 'write';
   /**
@@ -126,10 +126,11 @@ export type ScmActionSpecDefinition<
    */
   memberFolderWrite?: true;
   /**
-   * Writes into the input's folder with this Machine's SCM hosting credentials (clone). In a member's folder it is
-   * refused `credential_scope_denied`: those credentials are not that member's, and Git's ownership check does not
-   * cover a new directory. Hosting methods that work on an existing repository need no mark: in a member folder the
-   * daemon's Git refuses that repository before any hosting call.
+   * Authenticates to a hosting provider (fetch, pull, push, publish, clone, pull requests, hosting repositories).
+   * Whose credential: the Machine's owner uses this Machine's logins and connected accounts; anyone else uses only
+   * their own connected accounts (owner ruling 2026-11-26). Where the Machine keeps people in separate OS users,
+   * it runs for a person only in their own member folder, in their member process; in a member folder it is
+   * refused `credential_scope_denied` for anyone but that folder's member.
    */
   hostingCredentials?: true;
 }>;
@@ -950,7 +951,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.fetch' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'external', localRepository: 'write',
+    sideEffectClass: 'external', hostingCredentials: true, localRepository: 'write',
     inputSchema: scm.ScmRemoteRequestSchema,
     outputSchema: scm.ScmRemoteResponseSchema,
     inputHints: {
@@ -976,7 +977,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.pull' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'external', localRepository: 'write',
+    sideEffectClass: 'external', hostingCredentials: true, localRepository: 'write',
     inputSchema: SessionScmPullInputSchema,
     outputSchema: scm.ScmRemoteResponseSchema,
     inputHints: {
@@ -1023,7 +1024,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.push' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'external', localRepository: 'write',
+    sideEffectClass: 'external', hostingCredentials: true, localRepository: 'write',
     inputSchema: ScmRemotePushActionInputSchema,
     outputSchema: scm.ScmRemoteResponseSchema,
     inputHints: {
@@ -1047,7 +1048,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.remote.publish' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'external', localRepository: 'write',
+    sideEffectClass: 'external', hostingCredentials: true, localRepository: 'write',
     inputSchema: branches.ScmRemotePublishRequestSchema,
     outputSchema: branches.ScmRemotePublishResponseSchema,
     inputHints: {
@@ -1199,7 +1200,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmPullRequestListResponseSchema,
     inputSchema: ScmPullRequestListRequestSchema,
     inputHints: {
@@ -1245,7 +1246,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmPullRequestGetResponseSchema,
     inputSchema: SessionScmPullRequestGetInputSchema,
     inputHints: {
@@ -1278,7 +1279,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external',
+    sideEffectClass: 'external', hostingCredentials: true,
     outputSchema: ScmPullRequestOpenOrReuseResponseSchema,
     inputSchema: ScmPullRequestOpenOrReuseRequestSchema,
     inputHints: {
@@ -1313,7 +1314,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmPullRequestOpenComposeResponseSchema,
     inputSchema: ScmPullRequestOpenComposeRequestSchema,
     inputHints: {
@@ -1345,7 +1346,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'write',
+    sideEffectClass: 'write', hostingCredentials: true,
     outputSchema: ScmPullRequestCheckoutResponseSchema,
     inputSchema: ScmPullRequestCheckoutRequestSchema,
     inputHints: {
@@ -1645,7 +1646,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
     id: 'scm.hostingRepository.get', approval: {result: 'required'},
     title: 'Read hosting repository',
     description: 'Read authoritative public repository metadata through the selected Machine’s SCM hosting provider.',
-    safety: 'safe', placements: [], sideEffectClass: 'read',
+    safety: 'safe', placements: [], sideEffectClass: 'read', hostingCredentials: true,
     bindings: { rpcMethod: RPC_METHODS.SCM_HOSTING_REPOSITORY_GET, sdkMethod: 'scm.hostingRepository.get' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     cli: { commands: [{ path: ['scm', 'hosting-repository', 'get'], visibility: 'canonical' }] },
@@ -1671,7 +1672,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'read',
+    sideEffectClass: 'read', hostingCredentials: true,
     outputSchema: ScmHostingRepositoryDescribePublishTargetsResponseSchema,
     inputSchema: ScmHostingRepositoryDescribePublishTargetsRequestSchema,
     inputHints: {
@@ -1713,7 +1714,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
       cli: true,
       rpc: true,
     },
-    sideEffectClass: 'external',
+    sideEffectClass: 'external', hostingCredentials: true,
     outputSchema: ScmHostingRepositoryPublishResponseSchema,
     inputSchema: ScmHostingRepositoryPublishRequestSchema,
     inputHints: {

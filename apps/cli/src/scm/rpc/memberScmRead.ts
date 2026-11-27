@@ -26,6 +26,8 @@ import { resolveCwd } from '@/scm/runtime';
 import type { ExecuteScmActionOperationParams } from '@/scm/actions/executeScmActionOperation';
 import { createMemberWorkspaceReadServices, type MemberWorkspaceReadServices } from '@/workspaces/activation/memberWorkspaceSource';
 import type { WorkspaceEffectServices } from '@/workspaces/activation/workspaceEffectWorker';
+import { createWorkspaceEffectConnectedAccounts } from '@/workspaces/activation/workspaceEffectServices';
+import { readScmRequesterCredentials, type ScmRequesterConnectedAccounts } from '@/scm/accountScope';
 
 export type MemberScmRemovalService = (input: Parameters<NonNullable<ExecuteScmActionOperationParams['removeWorktree']>>[0],
   workspace: MemberWorkspaceReadServices) => ReturnType<NonNullable<ExecuteScmActionOperationParams['removeWorktree']>>;
@@ -40,6 +42,8 @@ export type MemberScmReadEffect = Readonly<{
   method: string;
   input: unknown;
   scm: AdmittedScmEffect;
+  /** Another person's network or hosting work: only their own accounts, brokered by the daemon, authenticate. */
+  requesterCredentials?: true;
 }>;
 
 const unavailable = (code = 'agent_isolation_unavailable') =>
@@ -57,6 +61,8 @@ export async function runMemberScmEffect<T>(input: Readonly<{
   workspaceRoot: string; signal: AbortSignal;
   effect: (scm: AdmittedScmEffect) => unknown;
   services?: Partial<WorkspaceEffectServices>;
+  /** The requester's own connected accounts; the child receives HTTP authentication only. */
+  connectedAccounts?: ScmRequesterConnectedAccounts;
 }>): Promise<T> {
   const executable = input.agentIsolation.read()?.launch?.managedHappierBinaryPath;
   if (!executable) throw unavailable();
@@ -74,6 +80,9 @@ export async function runMemberScmEffect<T>(input: Readonly<{
       refusal: unavailable, services: {
         onEffectsIssued: async () => {}, complete: async () => { throw unavailable('workspace_effect_protocol_invalid'); },
         ...input.services,
+        ...(input.connectedAccounts ? { connectedAccounts: createWorkspaceEffectConnectedAccounts({ effect: admitted.effect,
+          owner: input.connectedAccounts, signal: input.signal,
+          assertCurrent: async () => { input.signal.throwIfAborted(); admitted.assertCurrent(); } }) } : {}),
         fail: async (error: Error) => { failure = error; },
         completeScmRead: async (value: T) => { result = { value }; },
       } });
@@ -106,6 +115,8 @@ export async function readScmAsMember(
     signal: AbortSignal;
     removeWorktree?: MemberScmRemovalService;
     reportScmWatchEvent?: WorkspaceEffectServices['reportScmWatchEvent'];
+    /** Set for another person's network or hosting work; their own brokered accounts, when they have any. */
+    requesterCredentials?: Readonly<{ connectedAccounts?: ScmRequesterConnectedAccounts }>;
   }>,
 ): Promise<unknown> {
   // Lexical only: the member child resolves links as the member.
@@ -121,6 +132,7 @@ export async function readScmAsMember(
     };
   }
   return runMemberScmEffect({ ...input,
+    ...(input.requesterCredentials?.connectedAccounts ? { connectedAccounts: input.requesterCredentials.connectedAccounts } : {}),
     effect: scm => ({
       kind: 'scm_read',
       workspaceRoot: input.workspaceRoot,
@@ -128,6 +140,7 @@ export async function readScmAsMember(
       method: input.method,
       input: input.input,
       scm,
+      ...(input.requesterCredentials ? { requesterCredentials: true as const } : {}),
     } satisfies MemberScmReadEffect),
     services: {
       ...(input.removeWorktree ? { removeScmWorktree: input.removeWorktree } : {}),
@@ -156,7 +169,9 @@ export async function executeMemberScmRead(
       errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
       error: folder.error,
     };
-  const registry = await createWorkspaceEffectScmRegistry(effect.scm, {});
+  // The worker bound another person's scope (`requesterCredentials`): only their brokered accounts authenticate.
+  const connectedAccounts = readScmRequesterCredentials()?.connectedAccounts;
+  const registry = await createWorkspaceEffectScmRegistry(effect.scm, connectedAccounts ? { connectedAccounts } : {});
   try {
     if (effect.method === RPC_METHODS.SCM_WORKSPACE_WATCH) {
       const request = ScmWorkspaceWatchRequestSchema.parse(effect.input);

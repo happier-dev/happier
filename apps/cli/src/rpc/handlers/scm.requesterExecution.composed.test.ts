@@ -47,6 +47,11 @@ import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } f
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
 
 const os = vi.hoisted(() => ({
   identity: undefined as unknown as import('node:async_hooks').AsyncLocalStorage<'member'>,
@@ -152,9 +157,11 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   memberIdentityUnavailable?: true;
   /** Home's answer for this person's Machine grant (false: withdrawn). */
   admissionCurrent?: boolean;
+  /** The hosting provider plugin is installed, and each person's own connected accounts by Account id. */
+  hostingAccounts?: ReadonlyMap<string, NonNullable<ReturnType<typeof createConnectedAccountPurposeBindingOwner>>>;
   resolveProjectRuntime?: NonNullable<Parameters<typeof registerScmHandlers>[2]>['resolveProjectRuntime'] }> = {}) {
   const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+    runtimeOptions: { pluginIds: ['happier.scm.backend.git', ...(options.hostingAccounts ? ['happier.scm.forge.github'] : [])] } });
   onTestFinished(() => plugins.dispose());
   const directory = await mkdtemp(join(tmpdir(), 'happier-scm-requester-'));
   onTestFinished(() => removeTempDir(directory));
@@ -179,7 +186,10 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     workspaceRoots: [ownerRepository],
   };
   // The member binding is native OS state: its folder is a real directory of this fixture.
-  const prepareNativeOperation = (async (request: Readonly<{ requesterIdentity: HostRequesterExecutionIdentity }>) => {
+  const prepareNativeOperation = (async (request: Readonly<{ requesterIdentity: HostRequesterExecutionIdentity;
+    requesterAccount?: Readonly<{ accountId: string }> }>) => {
+    // Stand-in for the requester material owner (Home's Account store): the requester's OWN accounts, by admitted custody.
+    const requesterAccounts = request.requesterAccount ? options.hostingAccounts?.get(request.requesterAccount.accountId) : undefined;
     if (request.requesterIdentity.kind !== 'isolated') throw Object.assign(new Error('not a member'), { code: 'agent_isolation_unavailable' });
     if (options.memberIdentityUnavailable) return { requesterIdentity: request.requesterIdentity, workingDirectory: memberRoot,
       agentIsolation: { requesterIdentity: request.requesterIdentity, read: () => daemonIsolation }, dispose: async () => {} };
@@ -192,6 +202,7 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
       launch: { managedHappierBinaryPath: '/opt/happier/cli/current/happier', runtimeHome: join(memberHome, 'runtime'),
         environment: {}, selectedEnvironmentKeys: [], selectedMaterials: [] } };
     return { requesterIdentity: request.requesterIdentity, memberIdentity, workingDirectory: workspaceRoot,
+      ...(requesterAccounts ? { connectedAccounts: requesterAccounts } : {}),
       agentIsolation: { requesterIdentity: request.requesterIdentity, read: () => snapshot },
       materialTarget: { runtimeHome: snapshot.launch.runtimeHome, memberIdentity }, dispose: async () => {} };
   }) as unknown as ApiMachineClient['prepareNativeOperation'];
@@ -239,9 +250,11 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     } },
   });
   const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal,
-    localActionContext?: RpcHandlerContext['localActionContext'], sessionActionOrigin?: RpcHandlerContext['sessionActionOrigin']) =>
+    localActionContext?: RpcHandlerContext['localActionContext'], sessionActionOrigin?: RpcHandlerContext['sessionActionOrigin'],
+    callerInputAuthorization?: ExternalActionExecutionAuthorizationV1) =>
     manager.invokeLocal(method, params, { ...(localActionContext ? { localActionContext } : {}), ...(signal ? { signal } : {}), rpcContext: {
       callerAuthority: 'present_user',
+      ...(callerInputAuthorization ? { callerInputAuthorization } : {}),
       ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
       verifyMachineAdmissionCurrent: async () => true,
       machineAdmission: { actorAccountId: accountId, custodianAccountId: 'owner-account', machineId, installationId,
@@ -349,6 +362,48 @@ const ownFolderGitRequests = (cwd: string) => [
   [RPC_METHODS.SCM_REMOTE_REMOVE, { cwd, name: 'origin' }],
   [RPC_METHODS.SCM_REPOSITORY_INIT, { cwd }],
   [RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK, { cwd, confirmed: true, confirmationToken: REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN }],
+] as const;
+
+const GITHUB_PLUGIN = 'happier.scm.forge.github';
+/** Real purpose-binding owner; only persistence, Account metadata and the credential producer are stand-ins. */
+function hostingAccountOwner(accountId: string, token: string, materialized: string[]) {
+  const account = { service: { pluginId: GITHUB_PLUGIN, localId: 'github-account' }, accountId };
+  let bindings: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [{
+    purpose: { consumer: { pluginId: GITHUB_PLUGIN, localId: 'github' }, purpose: 'authentication' },
+    target: { kind: 'account', account } }] };
+  return createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => bindings, update: async mutate => (bindings = mutate(bindings)), subscribe: () => ({ dispose() {} }) },
+    selectTarget: async () => { throw new Error('No Account selection in this flow'); },
+    resolveTarget: async () => ({ displayName: accountId, account }),
+    assertTargetAccountMaterializable: async () => undefined,
+    materializeAccount: async () => { materialized.push(accountId); return { kind: 'httpHeaders', headers: { authorization: `Bearer ${token}` } }; },
+    projectTargetAccounts: async () => ({ status: 'complete', accounts: [{ account, displayName: accountId, state: 'connected',
+      connectedAccountOrigins: ['https://github.com'], connectedAccountBases: ['https://github.com'] }] }),
+  });
+}
+/** Home's admitted requester custody, reduced to the host-local facet the SCM ingress reads. */
+function admittedCustody(f: Readonly<{ home: string; machineId: string; installationId: string }>, accountId: string) {
+  const projection = {};
+  Object.defineProperty(projection, requesterActionContext, { value: { accountId, savedSecretOperationContext: {} }, enumerable: false });
+  // Boundary fixture: the signed Home authorization is not reconstructed here.
+  return { binding: { accountId, custodianAccountId: 'owner-account', serverIdentityId: f.home, machineId: f.machineId,
+    installationId: f.installationId, requestId: `custody-${accountId}` },
+  requesterAccountProjection: projection } as unknown as ExternalActionExecutionAuthorizationV1;
+}
+
+// Every network and hosting family a person runs with their own accounts (hostingCredentials), one request each.
+const ownFolderCredentialRequests = (folder: string, cwd: string) => [
+  [RPC_METHODS.SCM_REMOTE_FETCH, { cwd, remote: 'origin' }],
+  [RPC_METHODS.SCM_REMOTE_PULL, { cwd, remote: 'origin' }],
+  [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'main' }],
+  [RPC_METHODS.SCM_REMOTE_PUBLISH, { cwd, remote: 'origin', branch: 'main' }],
+  [RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd }],
+  [RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd, base: 'main', title: 'x' }],
+  [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH, { cwd, providerKind: 'github', owner: 'member', repositoryName: 'project', visibility: 'private' }],
+  [RPC_METHODS.SCM_REPOSITORY_CLONE, { provider: { id: 'github:github.com', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com',
+    urlSafety: { allowedSchemes: ['https:'] } }, repository: { nameWithOwner: 'member/project', webUrl: 'https://github.com/member/project',
+    cloneUrl: 'https://github.com/member/project.git', visibility: 'private', defaultBranch: 'main' },
+  destinationParentPath: folder, destinationDirectoryName: 'clone', protocol: 'https', confirmed: true, authorizationToken: 'clone-repository' }],
 ] as const;
 
 // R126S3 / ISOLATION-REPAIR-1114 / MEMBER-SCM-READ-1114 / SEC-FORKC-1115F on a separate-users Machine.
@@ -703,7 +758,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
 
   // F-B-MEMBER-SCM-WRITES-1116: Manage is full control (owner ruling 2026-10-31), so the Git panel's
   // writes in a member folder work, run whole in that member's child; daemon Git never runs there.
-  it('runs Manage Git writes of a member folder (stage, commit, branch, push) in that member child', async () => {
+  it('runs Manage Git writes of a member folder (stage, commit, branch) in that member child, and refuses its push', async () => {
     const f = await fixture();
     const remote = join(f.directory, 'member-remote.git');
     execFileSync('git', ['init', '-q', '--bare', remote]);
@@ -720,16 +775,17 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       [RPC_METHODS.SCM_CHANGE_INCLUDE, { cwd, paths: ['notes.txt'] }],
       [RPC_METHODS.SCM_COMMIT_CREATE, { cwd, message: 'manage commit' }],
       [RPC_METHODS.SCM_BRANCH_CREATE, { cwd, name: 'feature', checkout: true }],
-      [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'feature' }],
     ] as const) {
       const response = await runWithHostingProviderRuntimeServices(services as unknown as Parameters<typeof runWithHostingProviderRuntimeServices>[0],
         () => f.invoke(method, params, 'manager-account', 'manage'));
       expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: true });
     }
     expect(git(f.memberRepository, 'log', '-1', '--format=%s|%an')).toBe('manage commit|Member test\n');
-    expect(execFileSync('git', ['--git-dir', remote, 'rev-parse', 'feature'], { encoding: 'utf8' }).trim())
-      .toBe(git(f.memberRepository, 'rev-parse', 'HEAD').trim());
-    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(4).fill(['workspace-effect', 2401]));
+    // Network work there would authenticate as someone: only the folder's member may (SEC-RU2-1126B N2).
+    expect(await f.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'feature' }, 'manager-account', 'manage'))
+      .toMatchObject({ success: false, actionErrorCode: 'credential_scope_denied' });
+    expect(() => execFileSync('git', ['--git-dir', remote, 'rev-parse', '--verify', '-q', 'feature'], { encoding: 'utf8' })).toThrow();
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(3).fill(['workspace-effect', 2401]));
     expect(gitLaunches().length).toBeGreaterThan(0);
     expect(daemonGit()).toEqual([]);
     expect(os.daemonTouches).toEqual([]);
@@ -759,8 +815,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(await direct.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: direct.memberRepository, message: 'not mine' },
       'other-account', 'use')).toMatchObject({ success: false });
     expect(git(direct.memberRepository, 'rev-parse', 'HEAD')).toBe(memberHead);
-    // Isolation expected but unavailable: the local commit is admitted only into the member child, which cannot
-    // start, so it is refused before any Git (network source control keeps the Manage refusal there).
+    // Isolation expected but unavailable: the local commit and the push (owner ruling 2026-11-26: a person's own
+    // network work) are admitted only into the member child, which cannot start, so both are refused before any Git.
     const unavailable = await fixture({ sourceRuntimeIsolation: 'required' });
     const unavailableRepository = await repository(unavailable.directory, 'guest-project');
     const before = gitLaunches().length;
@@ -770,7 +826,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(gitLaunches().length).toBe(before);
     expect(git(unavailableRepository, 'log', '-1', '--format=%s')).toBe('initial\n');
     expect(await unavailable.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: unavailableRepository, remote: 'origin', branch: 'main' },
-      'member-account', 'use')).toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
+      'member-account', 'use')).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE' });
+    expect(gitLaunches().length).toBe(before);
   });
 
   // F-B follow-up: blame is a local repository read (an Action-spec RPC); in the member child it runs
@@ -841,9 +898,9 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
-  // SEC-FORKC-1116 N1: hosting work that reads no member folder runs as it does elsewhere, and repository
-  // hosting work there is refused by Git's own ownership check (no second refusal).
-  it('resolves a hosting address for a member Project like any other, and Git refuses a member-folder PR create', async () => {
+  // SEC-FORKC-1116 N1: hosting work that reads no member folder runs as it does elsewhere. Hosting work on a member's
+  // repository authenticates, so for anyone but that member it is refused before any Git (SEC-RU2-1126B N2).
+  it('resolves a hosting address for a member Project like any other, and refuses a Manage PR create in a member folder before any Git', async () => {
     const f = await fixture();
     const services = { resolveScmHostingProviderRegistry: async () => ({ providers: [], getProvider: () => undefined,
       detectRemote: () => ({ kind: 'unresolved' }), buildCompareUrl: () => ({ kind: 'unresolved' }) }) };
@@ -857,13 +914,10 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const member = await resolve(f.memberRepository);
     expect(member, JSON.stringify(member)).toEqual(outside);
     expect(JSON.stringify(member)).not.toContain('credential_scope_denied');
-    // Git's different-owner hook stands in for the member owning the repository on a real host.
-    vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1');
-    onTestFinished(() => { vi.unstubAllEnvs(); });
     const created = await f.invoke(RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd: f.memberRepository, base: 'main', title: 'x' },
       'manager-account', 'manage');
-    expect(created, JSON.stringify(created)).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE',
-      error: expect.stringContaining('git_dubious_ownership') });
+    expect(created, JSON.stringify(created)).toMatchObject({ success: false, actionErrorCode: 'credential_scope_denied' });
+    expect(gitLaunches()).toEqual([]);
     expect(os.runAs).toEqual([]);
   });
 
@@ -1163,29 +1217,29 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
 
   it('refuses every newly opened family at the next request once the grant is withdrawn, before any member child', async () => {
     const f = await fixture({ admissionCurrent: false });
-    // Suggestion apply has no Machine route row (Home keeps it to the custodian), so this receiver never sees a guest's.
-    for (const [method, params] of ownFolderGitRequests(f.memberRepository)) {
+    for (const [method, params] of [...ownFolderGitRequests(f.memberRepository), ...ownFolderCredentialRequests(f.memberRoot, f.memberRepository),
+      ['scm.suggestion.apply', { sessionId: 'session-1', cwd: f.memberRepository, suggestions: [] }] as const]) {
       expect(await f.invoke(method, params, 'member-account', 'use'), method).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    expect(os.runAs).toEqual([]);
+    expect(gitLaunches()).toEqual([]);
+    // Isolation OFF: the same withdrawn grant refuses suggestion apply and every credential family, before any Git.
+    const off = await fixture({ admissionCurrent: false, sourceRuntimeIsolation: 'disabled' });
+    for (const [method, params] of [...ownFolderCredentialRequests(off.memberRoot, off.memberRepository),
+      ['scm.suggestion.apply', { sessionId: 'session-1', cwd: off.memberRepository, suggestions: [] }] as const]) {
+      expect(await off.invoke(method, params, 'member-account', 'use'), `isolation off ${method}`)
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     }
     expect(os.runAs).toEqual([]);
     expect(gitLaunches()).toEqual([]);
   });
 
-  // Network and hosting work runs on credentials; until a credential lane gives a guest their own, each family keeps
-  // the Manage refusal (one request per family, so opening the local families cannot widen these). Worktree create
-  // and remove run through the host Project lifecycle on this Machine's Account, so they stay refused too.
-  it('keeps Can use network, hosting, clone, comparison and Project worktree families on the Manage refusal, before any Git', async () => {
+  // Comparisons run on this Machine's stored Account and model credentials, and worktree create and remove run through
+  // the host Project lifecycle on this Machine's Account: each keeps the Manage refusal (one request per family).
+  it('keeps Can use comparison and Project worktree families on the Manage refusal, before any Git', async () => {
     const f = await fixture();
     const cwd = f.memberRepository;
     for (const [method, params] of [
-      [RPC_METHODS.SCM_REMOTE_FETCH, { cwd, remote: 'origin' }],
-      [RPC_METHODS.SCM_REMOTE_PULL, { cwd, remote: 'origin' }],
-      [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'main' }],
-      [RPC_METHODS.SCM_REMOTE_PUBLISH, { cwd, remote: 'origin', branch: 'main' }],
-      [RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd }],
-      [RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE, { cwd, base: 'main', title: 'x' }],
-      [RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH, { cwd }],
-      [RPC_METHODS.SCM_REPOSITORY_CLONE, { destinationParentPath: f.memberRoot, destinationDirectoryName: 'clone' }],
       [RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, { cwd, source: { kind: 'workingTree' } }],
       [RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, { cwd, source: { kind: 'workingTree' } }],
       [RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ, { cwd, resultId: 'result' }],
@@ -1234,9 +1288,179 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const f = await fixture();
     expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.ownerRepository }, 'member-account', 'use'))
       .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
-    expect(await f.invoke(RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd: f.memberRepository }, 'member-account', 'use'))
-      .toMatchObject({ errorCode: 'machine_manage_required' });
+    expect(await f.invoke(RPC_METHODS.SCM_PULL_REQUEST_LIST, { cwd: f.ownerRepository }, 'member-account', 'use'))
+      .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
     expect(daemonGit()).toEqual([]);
     expect(os.daemonTouches).toEqual([]);
+  });
+
+  // GUEST-HOSTING-CREDENTIALS-2 (owner ruling 2026-11-26; SEC-RU2-1126B N2): network and hosting work in a member folder
+  // runs only for that folder's member. The Machine's owner and a Manage person are refused before any Git or member
+  // child, so neither this Machine's credential nor that member's login can serve their request.
+  it('refuses network and hosting work in a member folder for anyone but that member, before any Git or member child', async () => {
+    const f = await fixture();
+    for (const accountId of ['owner-account', 'manager-account']) {
+      for (const [method, params] of ownFolderCredentialRequests(f.memberRoot, f.memberRepository)) {
+        const response = await f.invoke(method, params, accountId, 'manage');
+        expect(response, `${accountId} ${method} ${JSON.stringify(response)}`)
+          .toMatchObject({ success: false, actionErrorCode: 'credential_scope_denied' });
+      }
+    }
+    expect(gitLaunches()).toEqual([]);
+    expect(os.runAs).toEqual([]);
+  });
+
+  // A Can use member's network and hosting work runs whole in their member child, in their own folder only. With no
+  // connected account of their own it settles authentication required: their member login is never consulted either.
+  it('runs a Can use member’s network work in their own folder in their member child, with only their own accounts', async () => {
+    const f = await memberRepositoryWithIdentity();
+    const cwd = f.memberRepository;
+    const marker = join(f.directory, 'member-helper-invoked');
+    git(cwd, 'remote', 'add', 'origin', 'https://github.com/member/project.git');
+    git(cwd, 'config', 'credential.helper', `!f() { echo invoked > '${marker}'; echo username=x; echo password=synthetic-member-login; }; f`);
+    for (const [method, params] of [
+      [RPC_METHODS.SCM_REMOTE_FETCH, { cwd, remote: 'origin' }],
+      [RPC_METHODS.SCM_REMOTE_PULL, { cwd, remote: 'origin' }],
+      [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'main' }],
+    ] as const) {
+      const response = await f.invoke(method, params, 'member-account', 'use');
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
+    }
+    expect(existsSync(marker)).toBe(false);
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(3).fill(['workspace-effect', 2401]));
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  // Composed negatives for the widened admission: wrong person, wrong folder (owner's repository, another member's
+  // folder, a symlink or a parent path out of the folder), no member binding and a withdrawn grant (above), each
+  // refused before any Git process.
+  it('refuses a Can use member’s network and hosting work outside their own folder and without a member binding, before any Git', async () => {
+    const f = await fixture();
+    const link = join(f.memberRoot, 'outside-link');
+    await symlink(f.ownerRepository, link);
+    for (const [accountId, folder, cwd] of [
+      ['member-account', f.directory, f.ownerRepository],
+      ['member-account', f.otherMemberRoot, f.otherMemberRepository],
+      ['member-account', link, link],
+      ['member-account', join(f.memberRoot, '..'), '../owner-project'],
+      ['other-account', f.memberRoot, f.memberRepository],
+    ] as const) {
+      for (const [method, params] of ownFolderCredentialRequests(folder, cwd)) {
+        const response = await f.invoke(method, params, accountId, 'use');
+        expect(response, `${accountId} ${cwd} ${method} ${JSON.stringify(response)}`).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+      }
+    }
+    expect(gitLaunches()).toEqual([]);
+    // A `.git` pointer file in their own folder naming the owner's repository: the request runs only in their member
+    // child, as them, so the OS account decides; Git's ownership check (forced here: the harness has one OS user)
+    // refuses before any network command, and no daemon Git or credential is involved.
+    const pointer = join(f.memberRoot, 'pointer');
+    await mkdir(pointer);
+    await writeFile(join(pointer, '.git'), `gitdir: ${join(f.ownerRepository, '.git')}\n`);
+    vi.stubEnv('GIT_TEST_ASSUME_DIFFERENT_OWNER', '1');
+    onTestFinished(() => { vi.unstubAllEnvs(); });
+    os.runAs.length = 0;
+    for (const [method, params] of ownFolderCredentialRequests(f.memberRoot, pointer).filter(([method]) => method !== RPC_METHODS.SCM_REPOSITORY_CLONE)) {
+      const response = await f.invoke(method, params, 'member-account', 'use');
+      expect(response, `pointer ${method} ${JSON.stringify(response)}`).toMatchObject({ success: false });
+    }
+    vi.unstubAllEnvs();
+    expect(git(f.ownerRepository, 'remote')).toBe('');
+    expect(daemonGit()).toEqual([]);
+    expect(new Set(os.runAs.map(run => run.uid))).toEqual(new Set([2401]));
+    os.direct.length = 0;
+    const unbound = await fixture({ memberIdentityUnavailable: true });
+    for (const [method, params] of ownFolderCredentialRequests(unbound.memberRoot, unbound.memberRepository)) {
+      const response = await unbound.invoke(method, params, 'member-account', 'use');
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: false });
+      expect(JSON.stringify(response)).not.toContain('"success":true');
+    }
+    expect(gitLaunches()).toEqual([]);
+  });
+
+  // The positive: a Can use member's push in their own folder authenticates with their own connected account only.
+  // The daemon brokers HTTP authentication into the member child; the token never reaches the daemon's Git, another
+  // member's request, the result or the repository configuration.
+  it('pushes for a Can use member with their own connected account, brokered into their member child only', async () => {
+    const memberToken = 'synthetic-member-hosting-token-1126';
+    const otherToken = 'synthetic-other-member-hosting-token-1126';
+    const materialized: string[] = [];
+    const f = await fixture({ hostingAccounts: new Map([
+      ['member-account', hostingAccountOwner('member-account', memberToken, materialized)],
+      ['other-account', hostingAccountOwner('other-account', otherToken, materialized)],
+    ]) });
+    git(f.memberRepository, 'config', 'user.name', 'Member test');
+    git(f.memberRepository, 'config', 'user.email', 'member@example.invalid');
+    const basic = (token: string) => `Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+    const forge = await startGitSmartHttpFixture({ authorization: basic(memberToken), branch: 'main' });
+    onTestFinished(() => forge.close());
+    // The forge fixture serves each authorized request with its own `git http-backend` on this side; nothing else may.
+    const forgeSetupGit = daemonGit().length;
+    const repositoryUrl = 'https://github.com/member/project.git';
+    git(f.memberRepository, 'remote', 'add', 'origin', repositoryUrl);
+    // A branch the forge does not have yet (its own `main` has unrelated history).
+    git(f.memberRepository, 'checkout', '-q', '-b', 'guest-work');
+    const seen: (string | null)[] = [];
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (resource: string | URL | Request, init?: RequestInit) => {
+      const url = String(resource instanceof Request ? resource.url : resource);
+      if (!url.startsWith(`${repositoryUrl}/`)) return await realFetch(resource, init);
+      seen.push(new Headers(init?.headers).get('authorization'));
+      return await realFetch(`${forge.url}/${url.slice(repositoryUrl.length + 1)}`, init);
+    });
+    onTestFinished(() => { vi.unstubAllGlobals(); });
+    const pushed = await f.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: f.memberRepository, remote: 'origin', branch: 'guest-work' },
+      'member-account', 'use', undefined, undefined, undefined, admittedCustody(f, 'member-account'));
+    expect(pushed, JSON.stringify(pushed)).toMatchObject({ success: true });
+    expect(execFileSync('git', ['--git-dir', forge.bareRepositoryPath, 'rev-parse', 'guest-work'], { encoding: 'utf8' }).trim())
+      .toBe(head(f.memberRepository));
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every(header => header === basic(memberToken))).toBe(true);
+    expect(materialized).toEqual(['member-account']);
+    // The same push replayed from an Action whose admitted custody travels only in the retained original ingress
+    // (SEC-RU2-1127A F1): the member's own account, in their child, again.
+    await commitFile(f.memberRepository, 'replayed.txt', 'replayed', 'replayed');
+    const replayed = await f.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: f.memberRepository, remote: 'origin', branch: 'guest-work' },
+      'member-account', 'use', undefined, { externalActionExecutionAuthorization: admittedCustody(f, 'member-account') });
+    expect(replayed, JSON.stringify(replayed)).toMatchObject({ success: true });
+    expect(execFileSync('git', ['--git-dir', forge.bareRepositoryPath, 'rev-parse', 'guest-work'], { encoding: 'utf8' }).trim())
+      .toBe(head(f.memberRepository));
+    expect(seen.every(header => header === basic(memberToken))).toBe(true);
+    expect(materialized).toEqual(['member-account', 'member-account']);
+    // The other member's own request into this folder never reaches it, and never uses this member's account.
+    expect(await f.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: f.memberRepository, remote: 'origin', branch: 'guest-work' },
+      'other-account', 'use', undefined, undefined, undefined, admittedCustody(f, 'other-account')))
+      .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    expect(materialized).toEqual(['member-account', 'member-account']);
+    const captured = [JSON.stringify(pushed), JSON.stringify(replayed), readFileSync(join(f.memberRepository, '.git', 'config'), 'utf8')].join('\n');
+    expect(captured.includes(memberToken) || captured.includes(Buffer.from(`x-access-token:${memberToken}`).toString('base64'))).toBe(false);
+    expect(new Set(os.runAs.map(run => run.uid))).toEqual(new Set([2401, 2402]));
+    expect(daemonGit().length - forgeSetupGit).toBe(forge.requests.filter(request => request.status !== 401).length);
+  });
+  // SEC-RU2-1127B T1 (reviewer case B5; Coordination 2026-11-26 12:32Z negatives for the suggestion-apply Use row):
+  // a symlink escape with isolation on, and another member's folder with isolation off, leave every file unchanged.
+  it('refuses scm.suggestion.apply (Use row) through symlink escape with isolation on, and another member’s folder with isolation off', async () => {
+    const f = await fixture();
+    for (const repo of [f.memberRepository]) { git(repo, 'config', 'user.name', 'Member test'); git(repo, 'config', 'user.email', 'member@example.invalid'); }
+    const cwd = f.memberRepository;
+    await commitFile(cwd, 's.txt', 'one\ntwo\n', 'suggested');
+    await writeFile(join(f.ownerRepository, 's.txt'), 'one\ntwo\n');
+    const suggestion = (path: string, oid: string) => ({ path, commitOid: oid, startLine: 2, endLine: 2, originalLines: ['two'],
+      replacement: 'TWO', outdated: false });
+    await symlink(f.ownerRepository, join(cwd, 'owner-link'));
+    for (const [requestCwd, path] of [[cwd, 'owner-link/s.txt'], [join(cwd, 'owner-link'), 's.txt']] as const) {
+      const refused = await f.invoke('scm.suggestion.apply', { sessionId: 'session-1', cwd: requestCwd,
+        suggestions: [suggestion(path, head(cwd))] }, 'member-account', 'use');
+      expect(JSON.stringify(refused)).not.toContain('"success":true');
+    }
+    expect(readFileSync(join(f.ownerRepository, 's.txt'), 'utf8')).toBe('one\ntwo\n');
+    const direct = await fixture({ sourceRuntimeIsolation: 'disabled' });
+    git(direct.memberRepository, 'config', 'user.name', 'Member test'); git(direct.memberRepository, 'config', 'user.email', 'member@example.invalid');
+    await commitFile(direct.memberRepository, 'm.txt', 'one\ntwo\n', 'member file');
+    const refusedOff = await direct.invoke('scm.suggestion.apply', { sessionId: 'session-1', cwd: direct.memberRepository,
+      suggestions: [{ ...suggestion('m.txt', head(direct.memberRepository)) }] }, 'other-account', 'use');
+    expect(JSON.stringify(refusedOff)).not.toContain('"success":true');
+    expect(readFileSync(join(direct.memberRepository, 'm.txt'), 'utf8')).toBe('one\ntwo\n');
   });
 });

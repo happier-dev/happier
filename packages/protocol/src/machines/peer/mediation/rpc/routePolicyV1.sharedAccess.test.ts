@@ -62,7 +62,15 @@ it.each([
   ['daemon.computer.personal.actions.execute', 'use'],
   ['daemon.machines.liveStream.source.admit', 'use'],
   ['daemon.machines.liveStream.personal.relay.start', 'use'],
+  // Coordination 2026-11-26 12:32Z: review suggestions are a repository write like commit.
+  ['scm.suggestion.apply', 'use'],
 ] as const)('declares the approved shared Machine access for %s as %s', (method, role) => {
   expect(MACHINE_RPC_ROUTE_POLICIES.find(policy => policy.method === method)).toBeDefined();
   expect(resolveMachineRpcRoutePolicy(method).sharedMachineAccess).toBe(role);
+});
+
+// Coordination 2026-11-26 12:32Z: commit plans still run on this Machine's stored credentials.
+it.each(['scm.diffSummary.commitPlan.accept', 'scm.diffSummary.commitPlan.stop', 'scm.diffSummary.commitPlan.includeHookChanges',
+  'scm.diffSummary.commitPlan.cancel', 'scm.diffSummary.commitPlan.recover'])('keeps %s with the custodian', method => {
+  expect(resolveMachineRpcRoutePolicy(method).sharedMachineAccess).toBe('custodian_only');
 });

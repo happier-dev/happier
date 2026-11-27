@@ -134,7 +134,7 @@ import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
-import { runWithScmAccountScope, runWithScmRequesterCredentials, type ScmRequesterCredentialMaterial } from '@/scm/accountScope';
+import { readScmRequesterCredentials, runWithScmAccountScope, runWithScmRequesterCredentials, type ScmRequesterCredentialMaterial } from '@/scm/accountScope';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -169,6 +169,9 @@ export function registerScmHandlers(
     }>,
 ): void {
     type IsolatedRequester = Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+    type Requester = Pick<IsolatedRequester, 'requester'>;
+    const isSameRequester = (a: Requester, b: Requester) =>
+        a.requester.serverId === b.requester.serverId && a.requester.accountId === b.requester.accountId;
     const refused = (actionErrorCode: string) => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
         actionErrorCode, error: 'Source control could not run on this Machine' });
     const readErrorCode = (error: unknown): string => {
@@ -196,10 +199,14 @@ export function registerScmHandlers(
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
             ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
         let native: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>>;
+        // Network and hosting work in a member's own folder authenticates only with that member's own connected
+        // accounts, brokered into their member child (HTTP headers only); this Machine's logins never cross.
+        const requester = isScmHostingCredentialRpcMethod(method) ? readScmRequesterCredentials() : undefined;
         try {
             // This consumes the existing member binding; a person without one has no folder here.
             native = await deps.nativeOperationRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: context,
-                signal: context.signal, readMaterial: () => material, allowMemberPreparation: false });
+                signal: context.signal, readMaterial: () => material, allowMemberPreparation: false,
+                ...(requester?.account ? { requesterAccount: requester.account } : {}) });
         } catch (error) { return refuseRequesterPlacement(method, 'scm.requester.native_preparation', error, false); }
         try {
             if (!native.memberIdentity) return refuseRequesterPlacement(method, 'scm.requester.member_identity', undefined, false);
@@ -209,7 +216,8 @@ export function registerScmHandlers(
             const memberRoot = native.memberIdentity.workspaceRoot;
             const placement = { agentIsolation: native.agentIsolation, requesterIdentity: identity,
                 workspaceRoot: memberRoot, ...(projectRoot !== undefined ? { root: projectRoot } : {}),
-                method, input, signal: context.signal };
+                method, input, signal: context.signal,
+                ...(requester ? { requesterCredentials: native.connectedAccounts ? { connectedAccounts: native.connectedAccounts } : {} } : {}) };
             if (reportScmWatchEvent) return await readScmAsMember({ ...placement, reportScmWatchEvent });
             const removeMemberWorktree: import('@/scm/rpc/memberScmRead').MemberScmRemovalService | undefined = deps.resolveProjectRuntime
                 ? async (removal, workspace) => {
@@ -248,6 +256,7 @@ export function registerScmHandlers(
         const requester = directRequester ? undefined : await deps?.resolveRequester?.(context);
         const identity = directRequester ?? requester?.identity;
         if (!identity) return await run();
+        const hosting = isScmHostingCredentialRpcMethod(method);
         try {
             const comparisons = method.startsWith('scm.diffSummary.') || method === RPC_METHODS.SCM_DIFF_FILE
                 && input !== null && typeof input === 'object' && Reflect.get(input, 'captured') !== undefined;
@@ -260,25 +269,25 @@ export function registerScmHandlers(
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository
                 // reads and writes (F-B) run in that member's own child, as that member. Happier never
-                // adds a safe.directory exception for it. The clone refusal is a consistency guard:
-                // clone writes a new directory with this Machine's hosting credentials, and Git cannot
-                // check ownership of a directory that does not yet exist. It protects no other person
-                // and is not a credential or security boundary (SEC-FORKC-1116B subtraction note).
+                // adds a safe.directory exception for it. Network and hosting work (clone included) is
+                // different: it authenticates, so in a member folder it runs only for that folder's member,
+                // with their own connected accounts (owner ruling 2026-11-26, SEC-RU2-1126B N2).
                 const target = readRequestCwd(input, projectRoot);
                 const readOwner = deps?.nativeOperationRuntime?.readMemberFolderOwner;
-                const hosting = isScmHostingCredentialRpcMethod(method);
                 const member = readOwner && target !== undefined && (hosting || comparisons || isScmLocalRepositoryRpcMethod(method))
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
                 if (member && !unrestricted) return refuseRequesterPlacement(method, 'scm.requester.member_folder', undefined, false);
-                if (member && hosting) return refused('credential_scope_denied');
+                // Network and hosting work in a member folder runs only for the member who owns it, with their own
+                // accounts: neither this Machine's nor that member's credential ever serves someone else's request.
+                if (member && hosting && !isSameRequester(member, identity)) return refused('credential_scope_denied');
                 // A member's placed Session already selected its target source: Git runs there, never
                 // on this Machine as the member (SEC1116H §4b).
                 if (member) return selected.kind === 'local'
                     ? await executeAsMember(member) : await run();
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
-            if (!comparisons && !isScmMemberFolderRpcMethod(method)) return await run();
+            if (!comparisons && !hosting && !isScmMemberFolderRpcMethod(method)) return await run();
             if (identity.kind !== 'isolated') return refuseRequesterPlacement(method, 'scm.requester.identity', undefined, false);
             // The member's own placed Session already selected its target: their read runs there, never
             // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the
@@ -286,8 +295,7 @@ export function registerScmHandlers(
             if (selected.kind !== 'local') {
                 const owner = await deps?.nativeOperationRuntime?.readMemberFolderOwner?.(readRequestCwd(input, projectRoot))
                     .catch(() => null);
-                if (owner && owner.requester.serverId === identity.requester.serverId
-                    && owner.requester.accountId === identity.requester.accountId) return await run();
+                if (owner && isSameRequester(owner, identity)) return await run();
             }
             return await executeAsMember(identity);
         } finally { await requester?.dispose(); }
