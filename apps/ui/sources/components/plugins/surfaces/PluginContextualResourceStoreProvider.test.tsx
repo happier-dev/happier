@@ -107,20 +107,18 @@ it.each([
         widgetInstalledPackage(harness.pluginId, 'Service facts'));
     const projection = { ...declarations, resourcesById: harness.input.resourcesById };
     const unpublish = publishCommittedAppShellPluginUiProjection(() => projection);
-    const screen = await renderScreen(<PluginContextualResourceStoreProvider>
-        <AppShellPluginUiProjectionValueProvider value={{
-            pluginUiProjection: projection, accountLifetime: harness.account.lifetime, pluginBrowserProjection: null,
-            phase: 'current', interactionEnabled: true, serverId: scope.serverId, machineId: null, platform: 'web',
-            clientExecutableActivation: { status: 'ready' }, reloadConnectedAccountProjection() {}, reloadClientExecutables() {},
-        }}>
-            <DeploymentEnvironmentRows testID="phone-services" accessibilityLabel="Services" serverId={scope.serverId}
-                lifetime={harness.account.lifetime} columns={{ collectionId: SERVICES_APPS_COLLECTION_ID }} items={[{
-                    environment: createDeploymentEnvironmentHeaderV1({ id: 'env-phone', serverId: scope.serverId }),
-                    currentDeployment: { ...createDeploymentReceiptHeaderV1({ state: 'succeeded' }), commitSubject: 'Ship the storefront' },
-                    title: 'Storefront',
-                }]} />
-        </AppShellPluginUiProjectionValueProvider>
-    </PluginContextualResourceStoreProvider>);
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{
+        pluginUiProjection: projection, accountLifetime: harness.account.lifetime, pluginBrowserProjection: null,
+        phase: 'current', interactionEnabled: true, serverId: scope.serverId, machineId: null, platform: 'web',
+        clientExecutableActivation: { status: 'ready' }, reloadConnectedAccountProjection() {}, reloadClientExecutables() {},
+    }}>
+        <DeploymentEnvironmentRows testID="phone-services" accessibilityLabel="Services" serverId={scope.serverId}
+            lifetime={harness.account.lifetime} columns={{ collectionId: SERVICES_APPS_COLLECTION_ID }} items={[{
+                environment: createDeploymentEnvironmentHeaderV1({ id: 'env-phone', serverId: scope.serverId }),
+                currentDeployment: { ...createDeploymentReceiptHeaderV1({ state: 'succeeded' }), commitSubject: 'Ship the storefront' },
+                title: 'Storefront',
+            }]} />
+    </AppShellPluginUiProjectionValueProvider>);
     try {
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Issues 9'));
         if (wideColumn) {

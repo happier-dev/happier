@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { PluginServiceListFieldResourceResultV1Schema, type AdmittedPluginListFilterFieldV1 } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { createPluginMountedResourceDemand } from '@/components/plugins/surfaces/pluginMountedResourceDemand';
-import { PluginContextualResourceState, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
+import { PluginContextualResourceState, PluginContextualResourceStoreProvider, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { resolvePluginContextualResourceBinding } from '@/components/plugins/surfaces/pluginResourceBinding';
 import { readPluginSurfaceResourceReference } from '@/components/plugins/surfaces/pluginSurfaceResourceRead';
 import { readPluginUiResourceProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -57,11 +57,13 @@ export function ServiceColumnResources(props: Readonly<{ projection: PluginUiPro
     }
     return groups;
   }, [owner, props.projection, revision]);
-  return <DemandContext.Provider value={owner}>
-    {props.lifetime && [...groups].map(([key, group]) => <ServiceColumnGroup key={key} owner={owner} {...group}
-      projection={props.projection} lifetime={props.lifetime!} />)}
-    {props.children}
-  </DemandContext.Provider>;
+  return <PluginContextualResourceStoreProvider>
+    <DemandContext.Provider value={owner}>
+      {props.lifetime && [...groups].map(([key, group]) => <ServiceColumnGroup key={key} owner={owner} {...group}
+        projection={props.projection} lifetime={props.lifetime!} />)}
+      {props.children}
+    </DemandContext.Provider>
+  </PluginContextualResourceStoreProvider>;
 }
 
 function ServiceColumnGroup(props: Readonly<{ owner: Owner; demands: readonly ServiceColumnDemand[];
