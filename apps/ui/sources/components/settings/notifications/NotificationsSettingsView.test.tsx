@@ -784,10 +784,17 @@ describe('NotificationsSettingsView', () => {
         expect(storage.getState().localSettings.attentionDeviceOverridesV1.sounds.inApp).toBe(true);
     });
 
-    it('leaves the in-app switch and volume to web and desktop hosts', async () => {
-        const screen = await openNotificationsScreen();
-        expect(screen.findRow('settings-notifications-sounds-in-app')).toBeNull();
-        expect(screen.findRow('settings-notifications-sounds-volume')).toBeNull();
+    it('shows in-app sound controls on web and hides them on native hosts', async () => {
+        const nativeScreen = await openNotificationsScreen();
+        expect(nativeScreen.findRow('settings-notifications-sounds-in-app')).toBeNull();
+        expect(nativeScreen.findRow('settings-notifications-sounds-volume')).toBeNull();
+        await disposeScreen?.();
+        disposeScreen = undefined;
+
+        platformState.os = 'web';
+        const webScreen = await openNotificationsScreen();
+        expect(requireRow(webScreen, 'settings-notifications-sounds-in-app')).toBeTruthy();
+        expect(requireRow(webScreen, 'settings-notifications-sounds-volume')).toBeTruthy();
     });
 
     it('writes the activity surfaces master toggle through the local settings writer', async () => {
