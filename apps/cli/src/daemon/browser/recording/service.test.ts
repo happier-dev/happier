@@ -151,9 +151,10 @@ describe('browser recording daemon service', () => {
     const started = await service.startRecording(confidentialStartInput);
     if (started.status !== 'started') throw new Error('Expected admitted recording');
     const input = { recordingId: started.recording.recordingId, navigationGenerationEnd: 7 };
-    const stopped = await service.stopRecording(input);
+    const stopped = await service.stopRecording(input, { actionRequestId: 'stop-request' });
     expect(StrictJsonValueSchema.safeParse(stopped).success).toBe(true);
-    expect(stopped).toMatchObject({ status: 'failed', reason: 'capture_failed' });
+    expect(stopped).toMatchObject({ status: 'failed', reason: 'capture_failed', requestId: 'stop-request',
+      failureCause: { phase: 'recording.capture_stop', errorClass: 'Error' } });
     expect(await service.stopRecording(input)).toEqual(stopped);
     expect(StrictJsonValueSchema.safeParse(service.getRecordingStatus(input.recordingId)).success).toBe(true);
     expect(StrictJsonValueSchema.safeParse(service.listRecordingsForView({ browserSessionId: 'browser_session_1', viewId: confidentialStartInput.viewId })).success).toBe(true);

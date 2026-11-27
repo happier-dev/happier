@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 
@@ -22,6 +23,7 @@ export function createRecordingResultSchemas<R extends z.ZodMiniType, O extends 
     stop: lazyZodSchema(() => z.discriminatedUnion('status', [
       z.strictObject({ status: z.literal('finalized'), recording: session }),
       z.strictObject({ status: z.literal('failed'), recording: session, reason: outcomeReason,
+        failureCause: z.optional(ActionFailureCauseV1Schema), requestId: z.optional(z.string()),
         saveFailure: z.optional(RecordingSaveFailureV1Schema) }), unavailable,
     ])),
     terminal: lazyZodSchema(() => z.discriminatedUnion('status', [

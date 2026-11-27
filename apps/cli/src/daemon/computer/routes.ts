@@ -181,7 +181,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       if (isComputerRecordingActionIdV1(actionId) && actionId !== COMPUTER_RECORDING_ACTION_IDS_V1.start) {
         // Retained records remain stoppable/readable after provider removal or target closure.
         const request = parsed.data as ComputerRecordingActionInput;
-        return recording.dispatch(actionId, request, sourceIdentity, desktopKey);
+        return recording.dispatch(actionId, request, sourceIdentity, desktopKey, context);
       }
       const selected = (provider: ComputerProviderIdV1) => findSelected(sourceIdentity, provider, desktopKey);
       const selection = (provider: ComputerProviderIdV1) => selectionFor(sourceIdentity, provider, desktopKey);

@@ -203,8 +203,8 @@ export function createBrowserRecordingDaemonRuntime(
       return result;
     },
 
-    async stopRecording(stopInput) {
-      const result = await baseRoutes.stopRecording(stopInput);
+    async stopRecording(stopInput, context) {
+      const result = await baseRoutes.stopRecording(stopInput, context);
       if (result.status !== 'unavailable') {
         commandMediaTargetsByRecordingId?.delete(stopInput.recordingId);
       } else if (

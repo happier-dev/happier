@@ -360,3 +360,19 @@ control or recording operation in its current toolbar and device-operation catal
 the shared adapter's ability to consume a simulator stream is not a recording entry.
 Existing saved WebM recordings are unchanged. Playback support is decided by the
 existing preview owner on the viewing device.
+
+## Failed Stop diagnostics
+
+The shared recording lifecycle carries an optional canonical `ActionFailureCauseV1`
+and the real Stop invocation's `requestId` in failed Stop results for Browser and
+Computer. It owns the `recording.capture_stop` or `recording.media_persistence`
+phase; repeated Stop returns the retained terminal diagnostic and original request.
+Older results without these optional fields remain readable. Strict 0.3 development
+readers and producers must be updated together; this is not a released 0.2 protocol.
+
+The shared ffmpeg encoder retains its selected encoder/container/MIME type, exit
+code or signal, and a closed stderr class. Its one failure log contains only these
+safe fields. Raw stderr, arguments and paths are never logged. The capture adapters
+preserve the originating error; the existing recording alert passes its typed cause
+and request to Technical details. These diagnostics describe the next failure;
+they cannot recover causes discarded by an older daemon.

@@ -14,6 +14,7 @@ import { createBrowserRecordingSessionMediaWriter, type BrowserRecordingSessionM
 import { createBrowserRecordingAttachToComposer } from '../recording/attachToComposer';
 import type { MachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import type { ComputerCaptureSource } from './source';
+import type { RecordingStopContext } from '../recording/service';
 import type { RecordingOperationContext } from '../recording/sessionMediaHost';
 
 export type ComputerRecordingOptions = Readonly<{
@@ -89,7 +90,7 @@ export function createComputerRecording(input: Readonly<{
         captureKind: 'streamFrameCapture', captureSource: { kind: 'machineLiveStream', streamFamily: 'screen', sourceId: source.sourceId },
         recordingCapabilities: { maxFps }, mimeType: outputMimeType ?? 'video/webm', retentionClass: request.retentionClass }, context);
     },
-    async dispatch(actionId: ComputerRecordingActionIdV1, request: ComputerRecordingActionInput, sourceIdentity: ComputerSourceIdentityV1, desktopKey?: string) {
+    async dispatch(actionId: ComputerRecordingActionIdV1, request: ComputerRecordingActionInput, sourceIdentity: ComputerSourceIdentityV1, desktopKey?: string, context?: RecordingStopContext) {
       const sourceId = request.sourceId;
       if (!sourceId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } as const;
       if (actionId === ids.list || actionId === ids.cleanupExpired) {
@@ -105,7 +106,7 @@ export function createComputerRecording(input: Readonly<{
       }
       if (actionId === ids.status) return recording;
       if (actionId === ids.stop) return service.stopRecording({ recordingId: recording.recordingId,
-        ...('expiresAtMs' in request && request.expiresAtMs !== undefined ? { expiresAtMs: request.expiresAtMs } : {}) });
+        ...('expiresAtMs' in request && request.expiresAtMs !== undefined ? { expiresAtMs: request.expiresAtMs } : {}) }, context);
       if (actionId === ids.attachToComposer) return attach({ recordingId: recording.recordingId,
         ...('sessionId' in request && request.sessionId ? { sessionId: request.sessionId } : {}) });
       return service.cancelRecording({ recordingId: recording.recordingId,

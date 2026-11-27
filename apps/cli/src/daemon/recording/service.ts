@@ -1,3 +1,6 @@
+import { logger } from '@/ui/logger';
+import { readActionFailureCauseV1, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { randomUUID } from 'node:crypto';
 import type { DaemonBrowserRecordingUnavailableReasonV1 } from '@happier-dev/protocol/browser/recording/v1';
 import type { BrowserRecordingCaptureSourceV1, BrowserDiagnosticFidelityV1, BrowserEvidenceSessionMediaReferenceV1, BrowserRecordingCapabilities, BrowserRecordingCaptureKindV1, BrowserRenderEngineKindV1, BrowserRecordingOutcomeReasonV1, BrowserRecordingPolicyStateV1, BrowserRecordingRetentionClassV1, BrowserRecordingSessionV1, BrowserSemanticAdapterKindV1, BrowserViewTargetKindV1 } from '@happier-dev/protocol';
@@ -7,6 +10,8 @@ import type { SurfaceInputControl } from '../surfaces/inputControl';
 import type { RecordingSaveFailureV1 } from '@happier-dev/protocol/recording/results';
 import type { RecordingOperationContext, RecordingSaveAdmission } from './sessionMediaHost';
 import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
+
+export type RecordingStopContext = Pick<RpcActionExecutorContext, 'actionRequestId'>;
 
 const RECORDING_ID_PREFIX = 'browser_recording';
 
@@ -83,7 +88,7 @@ export type BrowserRecordingStorageRecord = Readonly<{
 export type BrowserRecordingDaemonService<R extends RecordingSession = BrowserRecordingSessionV1, S extends RecordingStartInput = BrowserRecordingRuntimeStartInput, Q = BrowserRecordingTarget> = Readonly<{
   dispose(): Promise<void>;
   startRecording(input: S, context?: RecordingOperationContext): Promise<BrowserRecordingRuntimeStartResult<R>>;
-  stopRecording(input: BrowserRecordingRuntimeStopInput): Promise<BrowserRecordingRuntimeStopResult<R>>;
+  stopRecording(input: BrowserRecordingRuntimeStopInput, context?: RecordingStopContext): Promise<BrowserRecordingRuntimeStopResult<R>>;
   cancelRecording(input: BrowserRecordingRuntimeCancelInput): Promise<BrowserRecordingRuntimeTerminalResult<R>>;
   cleanupExpiredRecordings(input: Readonly<{ nowMs: number; target?: Q; includeRecording?: (recording: R) => boolean; beforeEffect?: () => Promise<void> }>): Promise<Readonly<{
     discardedRecordingIds: readonly string[];
@@ -208,7 +213,7 @@ export type BrowserRecordingRuntimeStartResult<R extends RecordingSession = Brow
 
 export type BrowserRecordingRuntimeStopResult<R extends RecordingSession = BrowserRecordingSessionV1> =
   | Readonly<{ status: 'finalized'; recording: R }>
-  | Readonly<{ status: 'failed'; recording: R; reason: BrowserRecordingOutcomeReasonV1; saveFailure?: RecordingSaveFailureV1 }>
+  | Readonly<{ status: 'failed'; recording: R; reason: BrowserRecordingOutcomeReasonV1; saveFailure?: RecordingSaveFailureV1; failureCause?: ActionFailureCauseV1; requestId?: string }>
   | Readonly<{ status: 'unavailable'; reason: BrowserRecordingDaemonUnavailableReason }>;
 
 export type BrowserRecordingRuntimeTerminalResult<R extends RecordingSession = BrowserRecordingSessionV1> =
@@ -386,12 +391,15 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
     return { status: 'discarded', recording: discarded };
   }
 
+  const failedStopResults = new Map<string, BrowserRecordingRuntimeStopResult<R>>();
+
   async function finalizeRecording(
     recording: R,
     adapter: BrowserRecordingCaptureAdapter<R>,
     stopInput: Pick<BrowserRecordingRuntimeStopInput, 'stoppedAtMs' | 'expiresAtMs'> &
       Readonly<{ navigationGenerationEnd?: number }>,
     control?: SurfaceInputControl,
+    context?: RecordingStopContext,
   ): Promise<BrowserRecordingRuntimeStopResult<R>> {
     let artifact: BrowserRecordingCapturedArtifact | null = null;
     try {
@@ -417,10 +425,17 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       await putRecording(finalized, false);
       return { status: 'finalized', recording: finalized };
     } catch (error) {
+      const diagnostic = {
+        failureCause: readActionFailureCauseV1({ ...projectActionFailureCauseV1(error),
+          phase: artifact ? 'recording.media_persistence' : 'recording.capture_stop' }),
+        ...(context?.actionRequestId ? { requestId: context.actionRequestId } : {}),
+      };
       if (control?.isObservationHeld()) {
         const outcome = await terminalOutcome(recording, 'policy_revoked', now());
         if (outcome.status === 'unavailable') return outcome;
-        return { status: 'failed', recording: outcome.recording, reason: 'policy_revoked' };
+        const result = { status: 'failed' as const, recording: outcome.recording, reason: 'policy_revoked' as const, ...diagnostic };
+        failedStopResults.set(recording.recordingId, result);
+        return result;
       }
       // A stopped capture that could not be saved is not a capture failure; the writer names the failed step.
       const reason = artifact ? 'media_persistence_failed' as const : 'capture_failed' as const;
@@ -434,9 +449,14 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         mediaRef: undefined,
       });
       await putRecording(failed, false);
-      return { status: 'failed', recording: failed, reason, ...(saveFailure ? { saveFailure } : {}) };
+      const result = { status: 'failed' as const, recording: failed, reason, ...(saveFailure ? { saveFailure } : {}),
+        ...diagnostic };
+      failedStopResults.set(recording.recordingId, result);
+      return result;
     } finally {
-      if (artifact?.cleanup) await artifact.cleanup();
+      if (artifact?.cleanup) await artifact.cleanup().catch(error => {
+        logger.warn('[recording] cleanup failed', { failureCause: projectActionFailureCauseV1(error, 'recording.cleanup') });
+      });
     }
   }
 
@@ -583,7 +603,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
       return (control ? await control.observeWhile(start) : await start()) ?? confidentialityUnavailable();
     },
 
-    async stopRecording(stopInput) {
+    async stopRecording(stopInput, context) {
       const recording = readRecording(stopInput.recordingId);
       if (!recording) {
         return {
@@ -591,6 +611,8 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
           reason: createUnavailable('browser_recording_missing', 'Browser recording is no longer available.'),
         };
       }
+      const terminal = failedStopResults.get(recording.recordingId);
+      if (terminal) return terminal;
       const control = activeAdapterByRecordingId.get(recording.recordingId)?.control ?? input.resolveInputControl?.(recording);
       if (recording.status === 'finalized' || recording.status === 'completed') {
         return { status: 'finalized', recording };
@@ -620,7 +642,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         };
       }
 
-      const finalize = () => finalizeRecording(recording, adapter, stopInput, control);
+      const finalize = () => finalizeRecording(recording, adapter, stopInput, control, context);
       // Finalization owns an admitted capture, not a new page observation. Confidential
       // delivery waits for this operation; its stopped prefix remains safe to persist.
       return control ? await control.drainWhile(finalize) : await finalize();

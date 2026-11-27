@@ -437,7 +437,7 @@ describe('browser recording stream-frame adapter', () => {
         }),
       },
     });
-    const encoderDiscard = vi.fn(async () => {});
+    const encoderDiscard = vi.fn(async () => { throw new Error('cleanup failed'); });
     const adapter = createBrowserRecordingStreamFrameCaptureAdapter({
       captureRegistry: registry,
       encoderFactory: async () => ({

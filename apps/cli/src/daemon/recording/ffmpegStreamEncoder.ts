@@ -3,9 +3,12 @@ import { observeProcessLaunch } from '@/processes/launchNotification';
 import { withProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { createInterface } from 'node:readline';
+import { logger } from '@/ui/logger';
+import { projectActionFailureCauseV1, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Writable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 
 import { resolveFfmpegStaticBinaryPath } from '@/daemon/runtime/ffmpegStatic';
 import { RecordingEncoderUnavailableError } from './encoderFailure';
@@ -18,6 +21,7 @@ import type {
 
 export type BrowserRecordingFfmpegProcess = Readonly<{
   stdin: Writable;
+  stderr?: Readable | null;
   kill(signal?: NodeJS.Signals): boolean;
   once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
   once(event: 'error', listener: (error: Error) => void): unknown;
@@ -139,6 +143,26 @@ function killFfmpeg(child: BrowserRecordingFfmpegProcess): void {
   }
 }
 
+type EncoderProcessOutcome = {
+  format: RecordingOutputFormat;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  stderrClass: 'unclassified' | 'encoder_unavailable' | 'encoder_initialization_failed' | 'invalid_input' | 'output_write_failed';
+};
+
+class RecordingEncoderError extends Error {
+  constructor(readonly outcome: EncoderProcessOutcome, cause?: unknown) {
+    super(ENCODER_FAILED_MESSAGE, { cause });
+  }
+
+  get failureCause() {
+    return readActionFailureCauseV1({ ...projectActionFailureCauseV1(this.cause, 'recording.encoder'),
+      nativeErrorCode: this.outcome.signal ? `signal_${this.outcome.signal.toLowerCase()}`
+        : this.outcome.exitCode !== null ? `exit_${this.outcome.exitCode}` : 'process_error',
+      nativeErrorReason: this.outcome.stderrClass });
+  }
+}
+
 function createGenericFailure(cause?: unknown): Error {
   return new Error(ENCODER_FAILED_MESSAGE, { cause });
 }
@@ -162,6 +186,7 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
   private lastFrame: Buffer | null = null;
   private pendingFrame: Readonly<{ index: number; payload: Buffer }> | null = null;
   readonly ready: Promise<void>;
+  private readonly outcome: EncoderProcessOutcome;
 
   constructor(
     private readonly child: BrowserRecordingFfmpegProcess,
@@ -171,14 +196,29 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     private readonly fps: number,
     private readonly format: RecordingOutputFormat,
   ) {
+    this.outcome = { format, exitCode: null, signal: null, stderrClass: 'unclassified' };
+    if (child.stderr) {
+      const lines = createInterface({ input: child.stderr });
+      lines.on('line', line => {
+        // Match known ffmpeg diagnostics, retaining only the closed class, never the line.
+        if (/Unknown encoder/i.test(line)) this.outcome.stderrClass = 'encoder_unavailable';
+        else if (/Error (?:while opening encoder|initializing output stream)|Cannot load lib|No capable devices found/i.test(line)) this.outcome.stderrClass = 'encoder_initialization_failed';
+        else if (/Invalid data found when processing input|Could not find codec parameters|Error while decoding/i.test(line)) this.outcome.stderrClass = 'invalid_input';
+        else if (/No space left on device|Error writing trailer|Error submitting a packet to the muxer/i.test(line)) this.outcome.stderrClass = 'output_write_failed';
+      });
+      child.once('close', () => lines.close());
+    }
     this.ready = new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);
       child.once('error', error => reject(this.fail(error)));
     });
     this.closePromise = new Promise<void>(resolve => {
-      child.once('close', (code) => {
+      child.once('close', (code, signal) => {
+        this.outcome.exitCode = code;
+        this.outcome.signal = signal;
         this.childPhase = 'closed';
-        if (code !== 0) this.fail();
+        if ((code !== 0 || signal) && !this.state.discarded) this.fail();
+        if (this.state.failure) logger.warn('[recording] encoder failed', this.outcome);
         resolve();
       });
     });
@@ -227,11 +267,11 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
       if (input.frameCount <= 0) throw this.fail();
       const targetFrames = Math.max(1, Math.ceil(input.durationMs * this.fps / 1_000));
       while (this.pendingFrame || this.writtenFrames < targetFrames) {
-        if (this.state.failure || this.child.stdin.destroyed) throw createGenericFailure();
+        if (this.state.failure || this.child.stdin.destroyed) throw this.fail();
         if (this.child.stdin.writableNeedDrain) {
           await Promise.race([
             once(this.child.stdin, 'drain'),
-            this.closePromise.then(() => { throw createGenericFailure(); }),
+            this.closePromise.then(() => { throw this.fail(); }),
           ]);
         }
         this.flushPendingFrame();
@@ -294,7 +334,7 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
 
   private fail(cause?: unknown): Error {
     if (!this.state.failure) {
-      this.state.failure = createGenericFailure(cause);
+      this.state.failure = new RecordingEncoderError(this.outcome, cause);
     }
     return this.state.failure;
   }
@@ -353,7 +393,7 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
     });
     const child = spawnFfmpeg(ffmpegBinaryPath, args, {
       env: withProcessOwnerEnvironment(process.env, { kind: 'happier', component: 'recording_encoder' }),
-      stdio: ['pipe', 'ignore', 'ignore'],
+      stdio: ['pipe', 'ignore', 'pipe'],
       windowsHide: true,
     });
     const encoder = new FfmpegBrowserRecordingStreamFrameEncoder(

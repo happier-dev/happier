@@ -10746,6 +10746,15 @@ no wire field or schema changes.
 
 ## Browser recording and diagnostics (unreleased 0.3)
 
+Failed Stop results now accept optional canonical `failureCause` and the actual
+invocation's `requestId` through the shared recording result factory, for Browser
+and Computer. The lifecycle owns capture-stop versus media-persistence phase and
+retains the terminal diagnostic for repeated Stop. Results omitting these fields
+remain valid. Matching strict 0.3 readers (daemon IPC, Action outputs and UI) move
+with the producer; this adds no migration or released 0.2 recording compatibility
+path. Encoder diagnostics retain only selected format, exit code/signal and a
+closed stderr class, never raw stderr, arguments or paths.
+
 The closed V1 recording-list Action input and Machine RPC request require
 `browserSessionId` beside `viewId`. The matching daemon and UI adapters move
 together under the unpublished 0.3 direct cut; omitting Session scope is rejected

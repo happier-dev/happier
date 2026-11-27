@@ -133,6 +133,18 @@ describe('browser recording cdpScreencast adapter', () => {
     }
   });
 
+  it('preserves the original frame error when Stop also fails to shut down the producer', async () => {
+    const fake = createFakeTransport();
+    const original = Object.assign(new Error('frame rejected'), { code: 'EPIPE' });
+    const encoder = createFakeEncoder(4096, () => { throw original; });
+    const recording = createRecording();
+    const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({ transport: fake.transport, encoderFactory: async () => encoder });
+    expect(await adapter.start({ recording })).toMatchObject({ status: 'started' });
+    fake.emit(jpegFrame(1, Buffer.from('frame')));
+    fake.stopSpy.mockRejectedValue(new Error('secondary shutdown failure'));
+    await expect(adapter.stop({ recordingId: recording.recordingId, recording })).rejects.toBe(original);
+  });
+
   it('keeps accepting page frames until Stop', async () => {
     const fake = createFakeTransport();
     const encoder = createFakeEncoder();

@@ -31,7 +31,7 @@ vi.mock('node:child_process', async importOriginal => {
 
 afterEach(() => { capabilityProbe.binary = ''; vi.restoreAllMocks(); });
 
-async function setup(encoder: 'available' | 'unavailable' | 'failed' | 'h264' = 'available') {
+async function setup(encoder: 'available' | 'unavailable' | 'failed' | 'h264' | 'stop-failed' = 'available') {
   const directory = await mkdtemp(join(tmpdir(), 'happier-computer-recording-'));
   const binary = join(directory, 'managed-encoder');
   if (encoder === 'h264') { await writeFile(binary, 'identity'); capabilityProbe.binary = binary; }
@@ -53,7 +53,7 @@ async function setup(encoder: 'available' | 'unavailable' | 'failed' | 'h264' = 
       const child = new EventEmitter();
       const stdin = new Writable({ write(_chunk, _encoding, callback) { encodedFrames++; callback(); },
         final(callback) { void writeFile(args.at(-1)!, encoder === 'h264' ? Buffer.from('000000186674797069736f6d0000020069736f6d6d703432', 'hex') : Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1]))
-          .then(() => { callback(); child.emit('close', 0, null); }, callback); } });
+          .then(() => { callback(); child.emit('close', encoder === 'stop-failed' ? 1 : 0, null); }, callback); } });
       queueMicrotask(() => {
         if (encoder === 'failed') { child.emit('error', new Error('synthetic launch failure')); child.emit('close', -2, null); }
         else child.emit('spawn');
@@ -67,7 +67,7 @@ async function setup(encoder: 'available' | 'unavailable' | 'failed' | 'h264' = 
     resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
   const executor = createActionExecutor({ runtimeActionExecute });
   const context = { authority: 'present_user' as const, surface: 'ui' as const, defaultSessionId: 'session',
-    defaultSessionMachineId: 'machine', serverId: 'home' };
+    defaultSessionMachineId: 'machine', serverId: 'home', actionRequestId: 'computer-recording-invocation' };
   const invoke = (id: string, input: Record<string, unknown>, agent = false) => executor.execute(id as ActionId,
     { machineId: 'machine', sourceId: source.sourceId, ...input }, agent
       ? { ...context, authority: 'account_automation', surface: 'agent', bypassApprovals: true } : context);
@@ -76,6 +76,18 @@ async function setup(encoder: 'available' | 'unavailable' | 'failed' | 'h264' = 
 }
 
 describe('Computer recording through the real Action entry', () => {
+  it('carries a failed Stop through Computer Action output validation with its invocation identity', async () => {
+    const fixture = await setup('stop-failed');
+    try {
+      const started = await fixture.invoke('computer.recording.start', { mediaTarget: { sessionId: 'session', messageLocalId: 'failed-stop' } });
+      if (!started.ok) throw new Error('Start failed');
+      const { recording } = started.result as { recording: { recordingId: string } };
+      const stopped = await fixture.invoke('computer.recording.stop', { recordingId: recording.recordingId });
+      expect(stopped).toMatchObject({ ok: true, result: { status: 'failed', reason: 'capture_failed',
+        requestId: 'computer-recording-invocation', failureCause: { phase: 'recording.capture_stop', nativeErrorCode: 'exit_1' } } });
+    } finally { await fixture.close(); }
+  });
+
   it('reports MP4 on Agent Start and persists the produced MP4 type on Stop', async () => {
     const fixture = await setup('h264');
     try {

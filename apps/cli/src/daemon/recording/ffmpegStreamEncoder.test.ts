@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { Writable } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createFfmpegBrowserRecordingStreamFrameEncoderFactory, resolveRecordingOutputFormat } from './ffmpegStreamEncoder';
@@ -88,6 +88,7 @@ describe('recording encoder output ownership', () => {
     let outputPath = '';
     let args: readonly string[] = [];
     const child = Object.assign(new EventEmitter(), {
+      stderr: new PassThrough(),
       stdin: new Writable({ write(_chunk, _encoding, callback) { callback(); } }),
       kill: () => true,
     });
@@ -109,8 +110,12 @@ describe('recording encoder output ownership', () => {
       expect(args).toContain('frag_keyframe+empty_moov+default_base_moof');
       expect(outputPath).toMatch(/\.mp4$/);
       encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: Buffer.from('frame') });
+      child.stderr.write('Error while opening encoder: private /workspace/file token-value\n');
       child.emit('close', null, 'SIGKILL');
-      await expect(encoder.finish({ recording, frameCount: 1, durationMs: 80 })).rejects.toThrow();
+      await expect(encoder.finish({ recording, frameCount: 1, durationMs: 80 })).rejects.toMatchObject({
+        failureCause: { phase: 'recording.encoder', nativeErrorCode: 'signal_sigkill', nativeErrorReason: 'encoder_initialization_failed' },
+        outcome: { exitCode: null, signal: 'SIGKILL', stderrClass: 'encoder_initialization_failed', format: { encoder: 'libx264', container: 'mp4' } },
+      });
       await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       child.emit('close', null, 'SIGKILL');
@@ -176,7 +181,7 @@ describe('recording encoder output ownership', () => {
           },
         });
         const encoder = await factory({ recording, outputMimeType: 'video/webm' });
-        const failure = new Error('encoder boundary failed');
+        const failure = Object.assign(new Error('encoder boundary failed'), { code: 'EPIPE' });
         if (outcome === 'error' || outcome === 'stdin-error') {
           encoder.appendFrame({ sequence: 1, timestampMs: 1_000,
             payloadKind: 'image_keyframe', payload: Buffer.from('frame') });
@@ -199,7 +204,7 @@ describe('recording encoder output ownership', () => {
         child.emit('close', null, 'SIGKILL');
         if (outcome === 'discard') expect(await result).toBe('discarded');
         else expect(await result).toMatchObject({ message: 'Browser recording ffmpeg encoder failed.',
-          ...((outcome === 'error' || outcome === 'stdin-error') ? { cause: failure } : {}) });
+          ...((outcome === 'error' || outcome === 'stdin-error') ? { cause: failure, failureCause: expect.objectContaining({ errorCode: 'EPIPE' }) } : {}) });
         await repeatedDiscard;
         await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });
       } finally {

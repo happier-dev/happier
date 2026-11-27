@@ -57,6 +57,31 @@ function createStartInput(viewId = 'view_1') {
 }
 
 describe('browser recording daemon routes', () => {
+  it.each(['capture', 'persistence'] as const)('carries %s failure and invocation identity through the strict Stop reader and replay', async phase => {
+    const { createBrowserRecordingDaemonService } = await import('./service');
+    const { createBrowserRecordingRoutes } = await import('./routes');
+    const { createBrowserRecordingActionRoutes } = await import('./actionRoutes');
+    const service = createBrowserRecordingDaemonService({ now: () => 10_000,
+      captureAdapters: [{ captureKind: 'streamFrameCapture', start: async () => ({ status: 'started' }),
+        stop: async () => {
+          if (phase === 'capture') throw Object.assign(new Error('private external detail'), { code: 'EPIPE' });
+          return { durationMs: 1_000, byteSize: 800_000, frameCount: 12, fps: 12, mimeType: 'video/webm',
+            source: recordingArtifactSource, cleanup: async () => { throw new Error('cleanup failed'); } };
+        }, discard: async () => {} }],
+      mediaWriter: { persistRecording: async () => { throw Object.assign(new Error('private external detail'), { code: 'EPIPE' }); }, discardRecording: async () => {} },
+    });
+    const routes = createBrowserRecordingRoutes({ service, resolveStartContext: () => ({ browserRecordingEnabled: true, recordingCapabilities }) });
+    const started = await routes.startRecording(createStartInput());
+    if (started.status !== 'started') throw new Error('Expected started');
+    const actions = createBrowserRecordingActionRoutes({ routes });
+    const request = { recordingId: started.recording.recordingId, navigationGenerationEnd: 7 };
+    const stopped = await actions.dispatch('browser.recording.stop', request, { actionRequestId: 'actual-stop' });
+    expect(stopped).toMatchObject({ status: 'failed', requestId: 'actual-stop',
+      failureCause: { phase: phase === 'capture' ? 'recording.capture_stop' : 'recording.media_persistence', errorCode: 'EPIPE' } });
+    expect(JSON.stringify(stopped)).not.toContain('private external detail');
+    expect(await actions.dispatch('browser.recording.stop', request, { actionRequestId: 'replay-stop' })).toEqual(stopped);
+  });
+
   it('resolves daemon recording context before starting and exposes status/list/stop through protocol-safe envelopes', async () => {
     const { createBrowserRecordingDaemonService } = await import('./service');
     const { createBrowserRecordingRoutes } = await import('./routes');

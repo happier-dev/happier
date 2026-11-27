@@ -199,7 +199,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
         active.frames.closed = true;
         await active.session.stop();
         if (active.frames.fatalError) {
-          throw new Error('CDP screencast frame encoding failed.');
+          throw active.frames.fatalError;
         }
         const durationMs = Math.max(0, nowMs() - active.recording.startedAtMs);
         const output = await active.encoder.finish({
@@ -220,7 +220,7 @@ export function createBrowserRecordingCdpScreencastCaptureAdapter(
       } catch (error) {
         await active.encoder.discard({ recording: active.recording, reason: 'capture_failed' }).catch(() => undefined);
         activeByRecordingId.delete(input.recordingId);
-        throw error;
+        throw active.frames.fatalError ?? error;
       }
     },
 

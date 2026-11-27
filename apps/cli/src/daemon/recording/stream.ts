@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { MACHINE_LIVE_STREAM_BASELINE_CODEC_V1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 import type { BrowserRecordingMachineLiveStreamCaptureSourceV1, BrowserRecordingOutcomeReasonV1, MachineLiveStreamFrameV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
 
@@ -308,9 +310,8 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
       }
       try {
         await stopCaptureSession(active.captureSession);
-        if (active.fatalError()) {
-          throw new Error('Browser stream recording frame encoding failed.');
-        }
+        const fatalError = active.fatalError();
+        if (fatalError) throw fatalError;
         const durationMs = Math.max(0, nowMs() - active.recording.startedAtMs);
         const output = await active.encoder.finish({
           recording: active.recording,
@@ -328,9 +329,11 @@ export function createBrowserRecordingStreamFrameCaptureAdapter<R extends Record
           cleanup: output.cleanup,
         };
       } catch (error) {
-        await active.encoder.discard({ recording: active.recording, reason: 'capture_failed' });
+        await active.encoder.discard({ recording: active.recording, reason: 'capture_failed' }).catch(cleanupError => {
+          logger.warn('[recording] cleanup failed', { failureCause: projectActionFailureCauseV1(cleanupError, 'recording.cleanup') });
+        });
         activeByRecordingId.delete(input.recordingId);
-        throw error;
+        throw active.fatalError() ?? error;
       }
     },
 

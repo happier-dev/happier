@@ -2,6 +2,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserRecordingCleanupOptions, BrowserRecordingRoutes } from './routes';
+import type { RecordingStopContext } from '../../recording/service';
 import type { RecordingOperationContext } from '../../recording/sessionMediaHost';
 
 /**
@@ -21,7 +22,7 @@ export type BrowserRecordingActionRouteFailure = Readonly<{
 
 export type BrowserRecordingActionRoutes = Readonly<{
   getRecordingStatus?: BrowserRecordingRoutes['getRecordingStatus'];
-  dispatch(actionId: RuntimeActionIdV1, input: unknown, context?: RecordingOperationContext, options?: BrowserRecordingCleanupOptions): Promise<unknown>;
+  dispatch(actionId: RuntimeActionIdV1, input: unknown, context?: RecordingOperationContext & RecordingStopContext, options?: BrowserRecordingCleanupOptions): Promise<unknown>;
 }>;
 
 const invalidParameters: BrowserRecordingActionRouteFailure = {
@@ -49,7 +50,7 @@ export function createBrowserRecordingActionRoutes(input: Readonly<{
         case 'browser.recording.start':
           return await routes.startRecording(value, context);
         case 'browser.recording.stop':
-          return await routes.stopRecording(value);
+          return await routes.stopRecording(value, context);
         // `cancel` aborts an in-flight recording; `discard` disposes a finalized one. Both share the
         // cancel input contract (`DaemonBrowserRecordingCancelInputV1`) and the single terminal
         // disposal route owner, so they map to the same service-backed route.
