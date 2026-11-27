@@ -6112,6 +6112,14 @@ treats exactly those plugins' entries on that Machine as current and interactive
 execution target, and is never read as absent. The aggregate catalogue phase and
 interaction flag still require a complete catalogue.
 
+An AppShell consumer can also ask for just the whole families it renders. The
+passive Machine observer publishes the covered Actions, Resources, input types,
+Store kinds and UI contribution families from its existing answer. A row can
+execute only through the selected origin that supplied its current installed
+occurrence. A selected Machine's empty family retires rows in that family.
+Unread families stay pending and whole-plugin fleet agreement still requires a
+complete declaration for the plugin. This is unreleased 0.3 source behavior.
+
 Every manifest carries `sectionFrameVersion: 2`: index frames travel as raw index
 text, and body pages as their JSON span array. A manifest without that version,
 or a body that fails its digest, settles as `invalid-response` with a

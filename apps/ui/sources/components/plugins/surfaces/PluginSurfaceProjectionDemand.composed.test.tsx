@@ -101,7 +101,9 @@ afterEach(async () => {
     installDisconnectedServerSocketBoundary();
 });
 
-it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'starter', 'starter-warm', 'skills', 'services', 'workflow-row-details'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+const storeKindSections = ['familiesById.storeKinds'] as const;
+
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory', 'store-scoped-directory', 'starter', 'starter-warm', 'skills', 'services', 'workflow-row-details'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
     const accountId = 'presented-demand-account';
     const serverIdentityId = `srv_presented_demand_${surface}`;
     const starterSurface = surface === 'starter' || surface === 'starter-warm';
@@ -158,7 +160,8 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             list: 'list', read: 'read', installed: 'installed', prepare: 'prepare', acquire: 'acquire', manage: 'manage',
         },
     } });
-    const declaredDirectory = surface === 'store-declared-directory';
+    const scopedDirectory = surface === 'store-scoped-directory';
+    const declaredDirectory = surface === 'store-declared-directory' || scopedDirectory;
     if (declaredDirectory) materialization = PluginMachineMaterializationV1Schema.parse({ ...materialization,
         // Directory metadata does not depend on acquiring renderer declarations.
         declaredManifest: {
@@ -207,6 +210,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             },
         }) });
     const requests: ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>[] = [];
+    const suppliedSectionDigests: string[] = [];
     // Only the Socket transport is substituted. Admission, cache, section
     // hydration, Account publication, currentness and mounted consumers are real.
     installDisconnectedServerSocketBoundary(socket => {
@@ -230,6 +234,9 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
             requests.push(request);
             const result = request.sectionRead ? deferred.read(request.sectionRead.digest, request.sectionRead.offset,
                 request.sectionRead.includeDigests) : deferred.manifest;
+            if (scopedDirectory && result && 'sectionBody' in result) {
+                suppliedSectionDigests.push(result.digest, ...(result.bodies?.map(body => body.digest) ?? []));
+            }
             return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
         });
     });
@@ -336,7 +343,7 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
                 {visible ? <WorkflowsColumn /> : null}
             </AppShellPluginUiProjectionProvider>;
             if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
-                <StoreDiscover demand={{ presented: visible }} project={null}>
+                <StoreDiscover demand={{ presented: visible }} project={null} sections={scopedDirectory ? storeKindSections : undefined}>
                     {() => <DeclaredDirectoryKinds />}
                 </StoreDiscover>
             </AppShellPluginUiProjectionProvider>;
@@ -432,6 +439,22 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         }
         if (declaredDirectory) {
             await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1));
+            if (scopedDirectory) {
+                await waitForHomeGovernance(() => expect(current?.currentPresentationSections).toContain(storeKindSections[0]));
+                await flushHookEffects();
+                expect(current?.phase).toBe('establishing');
+                const families = Object.entries(deferred.manifest.sections)
+                    .filter(([section, digest]) => section.startsWith('familiesById.')
+                        && suppliedSectionDigests.includes(digest))
+                    .map(([section]) => section);
+                expect(families).toEqual(storeKindSections);
+                const settledFrames = suppliedSectionDigests.length;
+                await tree.update(<Presented visible={false} />);
+                await tree.update(<Presented visible />);
+                await flushHookEffects();
+                expect(suppliedSectionDigests).toHaveLength(settledFrames);
+                return;
+            }
             await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));
             await flushHookEffects();
             // StoreDiscover intentionally requests allInstallations (35e95d33bdc).

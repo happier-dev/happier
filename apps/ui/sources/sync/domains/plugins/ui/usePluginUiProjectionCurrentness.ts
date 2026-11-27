@@ -55,7 +55,7 @@ const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
     kind: 'error' as const,
     reason: 'transport' as const,
 });
-import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, LIST_EXTENSION_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS, SKILL_PROJECTION_SECTIONS, THEME_PROJECTION_SECTIONS } from './projectionSections';
+import { APP_SHELL_PRESENTATION_SECTIONS, type AppShellPresentationSection, CONNECTED_ACCOUNT_PROJECTION_SECTIONS, LIST_EXTENSION_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS, SKILL_PROJECTION_SECTIONS, THEME_PROJECTION_SECTIONS } from './projectionSections';
 import { selectPresentedPluginUiProjection } from './presentedPluginUiProjection';
 export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
 const CONNECTED_ACCOUNT_PROJECTION_UNSUPPORTED = Object.freeze({
@@ -112,6 +112,7 @@ type LoadedProjectionState = Readonly<{
     installedPackages?: Readonly<{ authorityKey: string; projection: PluginUiProjectionModel;
         /** Plugins whose UI slices this answer holds: their entries in `projection` are current. */
         presentedPluginIds?: ReadonlySet<string>;
+        currentPresentationSections?: readonly AppShellPresentationSection[];
         /** This answer read the registry source section: `projection`'s registry sources are current. */
         registrySourcesRead?: boolean;
         skillsRead?: boolean;
@@ -145,6 +146,8 @@ export type PluginUiProjectionCurrentness = Readonly<{
      * were read). Other plugins in it are not loaded. Null when none, or once presentation is current.
      */
     presentedPluginIds?: ReadonlySet<string> | null;
+    /** Whole UI sections answered by the current Machine authority while its catalogue establishes. */
+    currentPresentationSections?: readonly AppShellPresentationSection[];
     /**
      * `installedPackagesProjection`'s registry source declarations are current: their section was
      * read, so they publish without waiting on this Machine's other presentation sections.
@@ -527,17 +530,23 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 if (!presentationReady) {
                     const covered = sections ? readDaemonProjectionCoveredPlugins(entry, sections) : null;
                     const held = previous.installedPackages;
+                    const answered = APP_SHELL_PRESENTATION_SECTIONS.filter(section => daemonProjectionHasSections(entry, [section]));
+                    const priorSections = held?.currentPresentationSections;
+                    const currentPresentationSections = priorSections && priorSections.length === answered.length
+                        && answered.every((section, index) => priorSections[index] === section)
+                        ? priorSections : answered.length ? Object.freeze(answered) : undefined;
                     const presentedPluginIds = held?.presentedPluginIds && covered
                         && held.presentedPluginIds.size === covered.size && [...covered].every(id => held.presentedPluginIds!.has(id))
                         ? held.presentedPluginIds : covered?.size ? covered : undefined;
                     const installedPackages = held?.authorityKey === authorityKey
                         && held.projection === entry.inputs.pluginUiProjection && held.presentedPluginIds === presentedPluginIds
+                        && held.currentPresentationSections === currentPresentationSections
                         && (held.registrySourcesRead ?? false) === registrySourcesRead
                         && (held.skillsRead ?? false) === skillsRead
                         && (held.themesRead ?? false) === themesRead
                         && (held.listExtensionsRead ?? false) === listExtensionsRead
                         ? held : { authorityKey, projection: entry.inputs.pluginUiProjection, presentedPluginIds,
-                            registrySourcesRead, skillsRead, themesRead, listExtensionsRead };
+                            currentPresentationSections, registrySourcesRead, skillsRead, themesRead, listExtensionsRead };
                     return previous.connectedAccountProjection === connectedAccountProjection
                         && previous.installedPackages === installedPackages
                         ? previous : { ...previous, connectedAccountProjection, installedPackages };
@@ -651,6 +660,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         && loadedProjection.installedPackages?.authorityKey === authorityKey
         ? loadedProjection.installedPackages.projection : null;
     const presentedPluginIds = installedPackagesProjection ? loadedProjection.installedPackages?.presentedPluginIds ?? null : null;
+    const currentPresentationSections = installedPackagesProjection ? loadedProjection.installedPackages?.currentPresentationSections : undefined;
     const registrySourcesCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.registrySourcesRead === true;
     const skillsCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.skillsRead === true;
     const themesCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.themesRead === true;
@@ -700,6 +710,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         connectedAccountProjection,
         installedPackagesProjection,
         presentedPluginIds,
+        currentPresentationSections,
         registrySourcesCurrent,
         skillsCurrent,
         themesCurrent,
@@ -707,6 +718,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     }), [
         installedPackagesProjection,
         presentedPluginIds,
+        currentPresentationSections,
         registrySourcesCurrent,
         skillsCurrent,
         themesCurrent,

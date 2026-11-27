@@ -1,6 +1,25 @@
 import { DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS, DAEMON_PROJECTION_SESSION_PLUGINS,
     daemonProjectionPluginSectionId } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
+import type { PluginUiProjectionModel } from './projection';
+
+// These are the fields AppShell can publish from a standalone section answer.
+// Section absence only settles fields produced by that section.
+export const APP_SHELL_PRESENTATION_FIELDS_BY_SECTION = {
+    actionsById: ['actionsById'],
+    resourcesById: ['resourcesById'],
+    'familiesById.inputTypes': ['inputTypesById'],
+    'familiesById.storeKinds': ['storeKindsById'],
+    'familiesById.pluginUi': ['translationsByPluginId', 'sessionHeaderActionsById', 'searchProvidersById',
+        'hostedWebById', 'reactNativeBundlesById', 'surfacePlacementsById', 'settingsGroupsById', 'settingsPagesById',
+        'listExtensionsById', 'unknownEntriesById'],
+} as const satisfies Record<string, readonly (keyof PluginUiProjectionModel)[]>;
+
+export type AppShellPresentationSection = keyof typeof APP_SHELL_PRESENTATION_FIELDS_BY_SECTION;
+export const APP_SHELL_PRESENTATION_SECTIONS = Object.freeze(
+    Object.keys(APP_SHELL_PRESENTATION_FIELDS_BY_SECTION) as AppShellPresentationSection[],
+);
+
 // Presented UI needs destinations, their executable Actions, physical renderer facts,
 // Account descriptors, Store registry sources, backup destinations, Voice catalog authority and translation Resource declarations.
 // Other catalogues retain separate demand.

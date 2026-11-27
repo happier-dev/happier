@@ -1,3 +1,5 @@
+import { APP_SHELL_PRESENTATION_FIELDS_BY_SECTION, type AppShellPresentationSection } from './projectionSections';
+
 import { compareCodeUnits } from '@/utils/strings/compareCodeUnits';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
@@ -157,6 +159,7 @@ export type PluginUiProjectionUnionMember = Readonly<{
      * of the member stays establishing (not loaded, never absent).
      */
     currentPluginIds?: ReadonlySet<string>;
+    currentPresentationSections?: readonly AppShellPresentationSection[];
 }>;
 
 /** One plugin's phase on a Machine: its read slices make it current before the whole catalogue. */
@@ -165,6 +168,18 @@ function readMemberPluginPhase(member: PluginUiProjectionUnionMember, pluginId: 
 }
 function isMemberPluginInteractive(member: PluginUiProjectionUnionMember, pluginId: string): boolean {
     return member.currentPluginIds?.has(pluginId) === true || member.interactionEnabled;
+}
+
+const scopedPresentationSectionByField = new Map<keyof PluginUiProjectionModel, AppShellPresentationSection>(
+    Object.entries(APP_SHELL_PRESENTATION_FIELDS_BY_SECTION).flatMap(([section, fields]) =>
+        fields.map(field => [field, section as AppShellPresentationSection] as const)),
+);
+
+function memberHasCurrentField(member: PluginUiProjectionUnionMember, field: UnionMapKey): boolean {
+    const sections = member.currentPresentationSections;
+    if (!sections) return false;
+    const section = scopedPresentationSectionByField.get(field);
+    return section !== undefined && sections.includes(section);
 }
 
 /** Installed release slots bind the graph omitted by portable manifest-only declarations. */
@@ -1010,7 +1025,8 @@ function prepareUnionPublicationSource(members: readonly PluginUiProjectionUnion
     const { keysByPlugin, pluginIds } = contributionKeys;
     const conflictSensitivePluginIds = new Set<string>();
     const declaredOrigins = new Map<string, readonly PluginMachineExecutionOriginV1[]>();
-    const changes = collectPluginUnionChanges(previousMembers, members, previous?.modelIndexes, modelIndexes, memberHasActivationRefusal);
+    const changes = collectPluginUnionChanges(previousMembers, members, previous?.modelIndexes, modelIndexes,
+        (member, pluginId) => memberHasActivationRefusal(member, pluginId, member.currentPresentationSections !== undefined));
     for (const id of pluginIds) {
         if (previous && !changes.declarations.has(id)) {
             if (previous.conflictSensitivePluginIds.has(id)) conflictSensitivePluginIds.add(id);
@@ -1631,8 +1647,8 @@ function resolveMemberEntryExecutionOrigin(
     return readPluginUiProjectionEntryOrPackageExecutionOrigin(member.projection, entry, packageOriginsByPluginId);
 }
 
-function memberHasActivationRefusal(member: PluginUiProjectionUnionMember, pluginId: string): boolean {
-    return readMemberPluginPhase(member, pluginId) === 'current' && member.projection?.diagnostics?.some(diagnostic =>
+function memberHasActivationRefusal(member: PluginUiProjectionUnionMember, pluginId: string, fieldCurrent = false): boolean {
+    return (fieldCurrent || readMemberPluginPhase(member, pluginId) === 'current') && member.projection?.diagnostics?.some(diagnostic =>
         diagnostic.plugin.id === pluginId && diagnostic.host === 'daemon' && diagnostic.resolution.state === 'current'
         && diagnostic.data.code === 'plugin_activation_failed' && diagnostic.data.severity === 'error') === true;
 }
@@ -1641,18 +1657,21 @@ function resolveMemberContributionOrigin(
     member: PluginUiProjectionUnionMember & Readonly<{ projection: PluginUiProjectionModel }>,
     entry: UnknownRecord,
     packageOriginsByPluginId?: Map<string, PluginMachineExecutionOriginV1 | null>,
+    field?: UnionMapKey,
 ): PluginUiContributionOriginV1 | null {
     const pluginId = readString(entry.pluginId);
     if (!pluginId) return null;
     const observedInstallation = member.materializationsByPluginId?.[pluginId];
-    const activationRefused = memberHasActivationRefusal(member, pluginId);
+    const fieldCurrent = field !== undefined && memberHasCurrentField(member, field)
+        && entryHasCurrentOccurrence(member.projection, { pluginId, occurrenceId: readString(entry.occurrenceId) ?? undefined });
+    const activationRefused = memberHasActivationRefusal(member, pluginId, fieldCurrent);
     const unavailableReasonCode = member.unavailableReasonCode ?? (activationRefused ? 'plugin_activation_failed' : undefined);
     return Object.freeze({ machineId: member.machineId, serverId: member.serverId,
         ...(member.serverIdentityId ? { serverIdentityId: member.serverIdentityId } : {}),
         ...(unavailableReasonCode ? { unavailableReasonCode } : {}),
-        phase: readMemberPluginPhase(member, pluginId),
+        phase: fieldCurrent ? 'current' : readMemberPluginPhase(member, pluginId),
         executionOrigin: resolveMemberEntryExecutionOrigin(member, entry, packageOriginsByPluginId),
-        interactionEnabled: isMemberPluginInteractive(member, pluginId) && member.projection.generation !== null
+        interactionEnabled: (fieldCurrent || isMemberPluginInteractive(member, pluginId)) && member.projection.generation !== null
             && member.projection.installedPackagesById[pluginId]?.enabled !== false
             && (!observedInstallation || (observedInstallation.enabled && observedInstallation.trustState === 'trusted'))
             && (readString(entry.occurrenceId) !== null || readPluginUiProjectionEntryExecutionOrigin(entry) !== null) });
@@ -1698,6 +1717,7 @@ function samePluginUiProjectionUnionMemberInputs(member: PluginUiProjectionUnion
                     ))))
             && member.phase === other.phase
             && member.currentPluginIds === other.currentPluginIds
+            && member.currentPresentationSections === other.currentPresentationSections
             && member.unavailableReasonCode === other.unavailableReasonCode
             && member.interactionEnabled === other.interactionEnabled);
 }
@@ -1832,10 +1852,20 @@ function derivePluginUiProjectionUnion(
         return agreement.conflictingIdentities;
     }));
     const selectedMembersByPluginId = new Map<string, (typeof contributing)[number]>();
+    let scopedMembersByMachine: Map<string, (typeof contributing)[number]> | undefined;
+    for (const member of contributing) {
+        if (!member.currentPresentationSections) continue;
+        (scopedMembersByMachine ??= new Map()).set(JSON.stringify([member.serverIdentityId, member.machineId]), member);
+    }
     for (const [pluginId, supplies] of suppliesByPluginId) {
         const selected = selectedOriginsByPluginId.get(pluginId);
         if (!selected) continue;
-        const selectedMember = supplies.find(member => declarationMaps(member.projection).some(map => Object.values(map).some(entry => {
+        const scopedMember = scopedMembersByMachine?.get(JSON.stringify([selected.serverIdentityId,
+            getPluginMachineExecutionOriginRef(selected).machineId]));
+        const installed = scopedMember?.projection.installedPackagesById[pluginId];
+        const packageOrigin = installed && readPluginUiProjectionEntryExecutionOrigin({ pluginId, executionOrigin: installed.executionOrigin });
+        const selectedMember = packageOrigin && arePluginMachineExecutionOriginsEqual(selected, packageOrigin)
+            ? scopedMember : supplies.find(member => declarationMaps(member.projection).some(map => Object.values(map).some(entry => {
             const record = asRecord(entry);
             if (record?.pluginId !== pluginId) return false;
             const origin = resolveMemberEntryExecutionOrigin(member, record);
@@ -1910,10 +1940,10 @@ function derivePluginUiProjectionUnion(
         const families = readModelFamilies(model);
         let resolvedOrigins = resolvedMemberOrigins.get(member);
         if (!resolvedOrigins) { resolvedOrigins = new Map(); resolvedMemberOrigins.set(member, resolvedOrigins); }
-        const originFor = (entry: UnknownRecord): PluginUiContributionOriginV1 | null => {
+        const originFor = (entry: UnknownRecord, field: UnionMapKey): PluginUiContributionOriginV1 | null => {
             let origin = resolvedOrigins.get(entry);
             if (origin === undefined) {
-                origin = resolveMemberContributionOrigin(member, entry, packageOriginsByPluginId);
+                origin = resolveMemberContributionOrigin(member, entry, packageOriginsByPluginId, field);
                 resolvedOrigins.set(entry, origin);
             }
             if (!origin) return null;
@@ -1924,7 +1954,7 @@ function derivePluginUiProjectionUnion(
             // origin within this synchronous union only; changed occurrence,
             // currentness or selection still goes through the real admission.
             const previous = pluginId ? admittedOriginsByPluginId.get(pluginId) : undefined;
-            if (previous && previous.interactionEnabled === origin.interactionEnabled
+            if (previous && previous.phase === origin.phase && previous.interactionEnabled === origin.interactionEnabled
                 && (previous.executionOrigin === executionOrigin || (previous.executionOrigin !== null && executionOrigin !== null
                     && arePluginMachineExecutionOriginsEqual(previous.executionOrigin, executionOrigin)))) return previous;
             if (pluginId) admittedOriginsByPluginId.set(pluginId, origin);
@@ -1932,87 +1962,91 @@ function derivePluginUiProjectionUnion(
         };
 
         for (const [pluginId, entry] of families.translationsByPluginId) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'translationsByPluginId');
             if (origin) publishFirstAdmitted(member, translationsByPluginId, pluginId, entry, origin);
         }
         for (const [id, entry] of families.sessionHeaderActionsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'sessionHeaderActionsById');
             if (origin) publishFirstAdmitted(member, sessionHeaderActionsById, id, entry, origin);
         }
         for (const [id, entry] of families.searchProvidersById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'searchProvidersById');
             if (origin) publishFirstAdmitted(member, searchProvidersById, id, entry, origin);
         }
         for (const [id, entry] of families.composerControlsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'composerControlsById');
             if (origin) publishFirstAdmitted(member, composerControlsById, id, entry, origin);
         }
         for (const [id, entry] of families.composerRegionsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'composerRegionsById');
             if (origin) publishFirstAdmitted(member, composerRegionsById, id, entry, origin);
         }
         for (const [id, entry] of families.composerReferencesById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'composerReferencesById');
             if (origin) publishFirstAdmitted(member, composerReferencesById, id, entry, origin);
         }
         for (const [id, entry] of families.hostedWebById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'hostedWebById');
             if (origin) publishFirstAdmitted(member, hostedWebById, id, entry, origin);
         }
         for (const [id, entry] of families.reactNativeBundlesById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'reactNativeBundlesById');
             if (origin) publishFirstAdmitted(member, reactNativeBundlesById, id, entry, origin);
         }
         for (const [id, entry] of families.surfacePlacementsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'surfacePlacementsById');
             if (origin) publishFirstAdmitted(member, surfacePlacementsById, id, entry, origin);
         }
         for (const [id, entry] of families.settingsGroupsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'settingsGroupsById');
             if (origin) publishFirstAdmitted(member, settingsGroupsById, id, entry, origin);
         }
         for (const [id, entry] of families.settingsPagesById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'settingsPagesById');
             if (origin) publishFirstAdmitted(member, settingsPagesById, id, entry, origin);
         }
         for (const [id, entry] of families.actionsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'actionsById');
             if (origin) publishFirstAdmitted(member, actionsById, id, entry, origin);
         }
         for (const [id, entry] of families.voiceProvidersById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'voiceProvidersById');
             if (origin) publishFirstAdmitted(member, voiceProvidersById, id, entry, origin);
         }
         for (const [id, entry] of families.dragSourcesById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'dragSourcesById');
             if (origin) publishFirstAdmitted(member, dragSourcesById, id, entry, origin);
         }
         for (const [id, entry] of families.workItemsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'workItemsById');
             if (origin) publishFirstAdmitted(member, workItemsById, id, entry, origin);
         }
         for (const [id, entry] of families.dropTargetsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'dropTargetsById');
             if (origin) publishFirstAdmitted(member, dropTargetsById, id, entry, origin);
         }
         for (const [id, entry] of families.listExtensionsById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'listExtensionsById');
             if (origin) publishFirstAdmitted(member, listExtensionsById, id, entry, origin);
         }
         for (const [id, entry] of families.unknownEntriesById) {
-            const origin = originFor(entry);
+            const origin = originFor(entry, 'unknownEntriesById');
             if (origin) {
                 publishFirstAdmitted(member, unknownEntriesById, id, entry, origin);
             }
         }
         for (const [id, entry] of families.resourcesById) {
-            const hasProducerStamp = entry.executionOrigin !== undefined;
-            const origin = hasProducerStamp
-                ? resourceHasCurrentProducerOrigin(model, entry)
-                    && selectedOriginOwnsEntry({ entry, machineId: member.machineId, selectedOriginsByPluginId }) ? originFor(entry) : null
-                // Earlier rows are only contextual facts of an admitted UI
-                // contribution, never independent app-scope read authority.
-                : admittedOriginsByPluginId.get(entry.pluginId);
+            let origin: PluginUiContributionOriginV1 | null | undefined;
+            if (entry.executionOrigin !== undefined) {
+                origin = resourceHasCurrentProducerOrigin(model, entry)
+                    && selectedOriginOwnsEntry({ entry, machineId: member.machineId, selectedOriginsByPluginId })
+                    ? originFor(entry, 'resourcesById') : null;
+            } else {
+                // Contextual declarations cannot inherit currentness from a different section.
+                const contextualOrigin = admittedOriginsByPluginId.get(entry.pluginId);
+                origin = contextualOrigin && member.currentPresentationSections
+                    ? originFor(entry, 'resourcesById') : contextualOrigin;
+            }
             if (origin) publishFirstAdmitted(member, resourcesById, id, entry, origin);
         }
         for (const [id, entry] of families.inputTypesById) {
@@ -2020,7 +2054,7 @@ function derivePluginUiProjectionUnion(
                 && (readPluginUiProjectionEntryExecutionOrigin(entry) === null
                     || !selectedOriginsByPluginId.has(entry.pluginId)
                     || selectedOriginOwnsEntry({ entry, machineId: member.machineId, selectedOriginsByPluginId }))
-                ? originFor(entry)
+                ? originFor(entry, 'inputTypesById')
                 : null;
             // A registered type's schema remains a declaration when its source
             // cannot execute. Keep that occurrence for schema/options identity;
@@ -2031,21 +2065,21 @@ function derivePluginUiProjectionUnion(
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.machineRecipesById[id]
                 ?? machineRecipesById[id];
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'machineRecipesById') : null;
             if (origin) publishFirstAdmitted(member, machineRecipesById, id, entry, origin);
         }
         for (const [id, entry] of families.machineSetupPresetsById) {
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.machineSetupPresetsById[id]
                 ?? machineSetupPresetsById[id];
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'machineSetupPresetsById') : null;
             if (origin) publishFirstAdmitted(member, machineSetupPresetsById, id, entry, origin);
         }
         for (const [id, entry] of families.backupDestinationsById) {
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.backupDestinationsById[id]
                 ?? backupDestinationsById[id];
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'backupDestinationsById') : null;
             if (origin) publishFirstAdmitted(member, backupDestinationsById, id, entry, origin);
         }
         for (const [id, entry] of families.registrySourcesById) {
@@ -2055,7 +2089,7 @@ function derivePluginUiProjectionUnion(
                 ?? registrySourcesById[id];
             // A supplier must declare this row's content, not a conflicting URL.
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'registrySourcesById') : null;
             // A source settles from its own read: its row keeps the occurrence its admitted supply carries, without
             // waiting for Administration to select the plugin's execution origin (a restored origin is admitted only
             // once the whole UI is current). Conflicting suppliers still drop it.
@@ -2065,32 +2099,32 @@ function derivePluginUiProjectionUnion(
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.subjectKindsById[id]
                 ?? subjectKindsById[id];
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'subjectKindsById') : null;
             if (origin) publishFirstAdmitted(member, subjectKindsById, id, entry, origin);
         }
         for (const [id, entry] of families.storeKindsById) {
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.storeKindsById[id]
                 ?? storeKindsById[id];
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'storeKindsById') : null;
             if (origin) publishFirstAdmitted(member, storeKindsById, id, entry, origin);
         }
         for (const [id, entry] of families.skillsById) {
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'skillsById') : null;
             if (origin) publishFirstAdmitted(member, skillsById, id, entry, origin);
         }
         for (const [id, entry] of families.notificationCategoriesById) {
             const representative = selectedMembersByPluginId.get(entry.pluginId)?.projection.notificationCategoriesById[id]
                 ?? notificationCategoriesById[id];
             if (representative && !sameDeclarationContent(entry.definition, representative.definition, comparisons)) continue;
-            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry) : null;
+            const origin = model.installedPackagesById[entry.pluginId]?.enabled === true ? originFor(entry, 'notificationCategoriesById') : null;
             if (origin) publishFirstAdmitted(member, notificationCategoriesById, id, entry, origin);
         }
         for (const [id, entry] of families.atmospherePicturesById) {
             const origin = entryHasCurrentOccurrence(model, entry)
                 && (readPluginUiProjectionEntryExecutionOrigin(entry) === null
                     || selectedOriginOwnsEntry({ entry, machineId: member.machineId, selectedOriginsByPluginId }))
-                ? originFor(entry)
+                ? originFor(entry, 'atmospherePicturesById')
                 : null;
             if (origin) publishFirstAdmitted(member, atmospherePicturesById, id, entry, origin);
         }
@@ -2098,7 +2132,7 @@ function derivePluginUiProjectionUnion(
             const origin = entryHasCurrentOccurrence(model, entry)
                 && (readPluginUiProjectionEntryExecutionOrigin(entry) === null
                     || selectedOriginOwnsEntry({ entry, machineId: member.machineId, selectedOriginsByPluginId }))
-                ? originFor(entry)
+                ? originFor(entry, 'themesById')
                 : null;
             if (origin) publishFirstAdmitted(member, themesById, id, entry, origin);
         }
@@ -2114,7 +2148,8 @@ function derivePluginUiProjectionUnion(
             // Coverage belongs to the selected publication, even when another
             // selectable replica supplies different declarations.
             if (installedPackage?.resourceDeclarationsComplete
-                && (readMemberPluginPhase(member, pluginId) !== 'current' || (conflictedPluginIds.has(pluginId) && selectedMember !== member))) {
+                && ((readMemberPluginPhase(member, pluginId) !== 'current' && !memberHasCurrentField(member, 'resourcesById'))
+                    || (conflictedPluginIds.has(pluginId) && selectedMember !== member))) {
                 const { resourceDeclarationsComplete: _coverage, ...retainedPackage } = installedPackage;
                 installedPackage = Object.freeze(retainedPackage);
             }
@@ -2127,20 +2162,22 @@ function derivePluginUiProjectionUnion(
         }
     }
 
-    // Selection chooses one whole declaration, so entries exclusive to another
-    // replica cannot leak into the selected artifact's catalog. Shared entries
-    // keep their reported supplies for Administration's origin picker.
+    // A selected source can settle absence only for fields it has answered.
+    // Other rows retain their declaration and supplies while that source establishes.
     const publishedMaps: readonly Record<string, unknown>[] = [translationsByPluginId, sessionHeaderActionsById, searchProvidersById,
         hostedWebById, reactNativeBundlesById, surfacePlacementsById, settingsGroupsById, settingsPagesById, actionsById,
         voiceProvidersById, dragSourcesById, workItemsById, dropTargetsById, atmospherePicturesById, themesById, registrySourcesById, subjectKindsById, storeKindsById, backupDestinationsById, machineRecipesById, machineSetupPresetsById, notificationCategoriesById, skillsById, listExtensionsById, unknownEntriesById, inputTypesById,
         composerControlsById, composerRegionsById, composerReferencesById, resourcesById];
+    const publishedFields = [...DECLARATION_MAP_KEYS, 'resourcesById'] as const;
     for (const [index, map] of publishedMaps.entries()) {
         for (const [key, entry] of Object.entries(map)) {
             const pluginId = readString(asRecord(entry)?.pluginId);
             const selectedMember = pluginId ? selectedMembersByPluginId.get(pluginId) : undefined;
-            if (selectedMember) {
-                const selectedMaps = [...declarationMaps(selectedMember.projection), selectedMember.projection.resourcesById];
-                if (!Object.hasOwn(selectedMaps[index]!, key)) { delete map[key]; continue; }
+            const field = publishedFields[index]!;
+            if (pluginId && selectedMember && (!selectedMember.currentPresentationSections || selectedMember.phase === 'current'
+                || selectedMember.currentPluginIds?.has(pluginId)
+                || memberHasCurrentField(selectedMember, field))) {
+                if (!Object.hasOwn(selectedMember.projection[field], key)) { delete map[key]; continue; }
             }
             const supplies = suppliesByMap.get(map)?.get(key)?.supplies;
             if (supplies) map[key] = Object.freeze({ ...asRecord(entry), hostSupplies: publishPluginUiContributionSupplies(supplies) });

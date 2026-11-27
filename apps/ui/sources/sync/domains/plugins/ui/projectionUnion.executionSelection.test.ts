@@ -82,6 +82,55 @@ it('does not replace a captured selected placement with a sibling Resource suppl
         .toBeNull();
 });
 
+it('settles absence for the selected replica only in the family it has answered', () => {
+    const pluginId = 'acme.scoped-selection';
+    const resourceKey = `${pluginId}/status`;
+    const placementKey = `surfacePlacement:${pluginId}:sibling-only`;
+    const sourceCustody = { kind: 'development' as const, registeredRootId: 'selection-root' };
+    const replica = (machineId: string, hasSiblingPlacement: boolean) => {
+        const executionOrigin = PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId: 'srv_selection',
+            sourceRef: { pluginId, machineId, sourceCustody } });
+        const stamp = { occurrenceId: machineId, executionOrigin };
+        const projection = widgetProjectionOf(hasSiblingPlacement
+            ? [{ pluginId, localId: 'sibling-only', target: 'app', ...stamp }] : [], {
+            [pluginId]: { id: pluginId, displayName: 'Scoped selection', enabled: true, version: '1.0.0',
+                ...stamp, sourceCustody, source: { kind: 'localPath', locator: 'selection-root' } },
+        }, { [resourceKey]: { id: 'status', pluginId, ...stamp,
+            resourceKind: 'config', scope: 'global', contentType: 'application/json' } });
+        return { machineId, serverId: 'home-a', serverIdentityId: executionOrigin.serverIdentityId,
+            phase: 'current' as const, interactionEnabled: true, projection };
+    };
+    const selected = replica('machine-a', false);
+    const sibling = replica('machine-b', true);
+    const executionOrigin = selected.projection.installedPackagesById[pluginId]!.executionOrigin!;
+    const selections = new Map([[pluginId, executionOrigin]]);
+    const publish = createPluginUiProjectionUnionPublication();
+    const resourcesOnly = { ...selected, phase: 'establishing' as const, interactionEnabled: false,
+        currentPresentationSections: ['resourcesById'] as const };
+    const first = publish.publish([resourcesOnly, sibling], selections);
+    expect(first.hasEstablishingMembers).toBe(true);
+    expect(readPluginUiContributionOrigin(first.pluginUiProjection?.resourcesById[resourceKey]))
+        .toMatchObject({ phase: 'current', interactionEnabled: true, executionOrigin });
+    const pendingPlacement = first.pluginUiProjection?.surfacePlacementsById[placementKey];
+    expect(pendingPlacement).toBeDefined();
+    expect(readPluginUiContributionOrigin(pendingPlacement)).toBeNull();
+    const after = publish.publish([{ ...resourcesOnly,
+        currentPresentationSections: ['resourcesById', 'familiesById.pluginUi'] as const }, sibling], selections);
+    expect(after.pluginUiProjection?.surfacePlacementsById[placementKey]).toBeUndefined();
+    expect(after.hasEstablishingMembers).toBe(true);
+
+    const contextualProjection = { ...sibling.projection, resourcesById: {
+        [resourceKey]: { ...sibling.projection.resourcesById[resourceKey]!, executionOrigin: undefined },
+    } };
+    const contextualOrigin = sibling.projection.installedPackagesById[pluginId]!.executionOrigin!;
+    const partialUi = { ...sibling, projection: contextualProjection, phase: 'establishing' as const,
+        interactionEnabled: false, currentPresentationSections: ['familiesById.pluginUi'] as const };
+    const contextual = publish.publish([partialUi], new Map([[pluginId, contextualOrigin]])).pluginUiProjection;
+    expect(readPluginUiContributionOrigin(contextual?.surfacePlacementsById[placementKey]))
+        .toMatchObject({ phase: 'current', interactionEnabled: true });
+    expect(readPluginUiContributionOrigin(contextual?.resourcesById[resourceKey])?.interactionEnabled ?? false).toBe(false);
+});
+
 it('retains the identity of every unchanged candidate fact when only establishing targets change', () => {
     const pluginId = 'acme.execution-fact-identity';
     const sourceCustody = { kind: 'development' as const, registeredRootId: 'fact-identity-root' };

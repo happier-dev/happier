@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
@@ -7,7 +8,9 @@ import { projectPluginSkillDeclarationV1 } from '@happier-dev/protocol/plugins/c
 
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
-import { createAppShellPluginUiProjectionPublication } from './appShellPluginUiProjectionPublication';
+
+await loadSyncSingletonForTests();
+const { createAppShellPluginUiProjectionPublication } = await import('./appShellPluginUiProjectionPublication');
 
 it('retains admitted Machine Store kinds when the installed census contains only UI declarations', async () => {
     // JQ-R15: the development installation has an admitted Machine candidate,
@@ -31,12 +34,25 @@ it('retains admitted Machine Store kinds when the installed census contains only
         definition: { id: 'skills', title: 'Skills', format: 'git', kinds: ['skill'], url: 'https://example.com/skills' } }), ...stamp };
     const skill = { ...projectPluginSkillDeclarationV1({ pluginId, pluginVersion: '1.0.0',
         definition: { id: 'check', directory: './skills/check' } }), ...stamp };
+    const actionKey = `${pluginId}/refresh`;
+    const inputType = { id: `${pluginId}/repository`, pluginId, pluginVersion: '1.0.0', ...stamp,
+        definition: { id: 'repository', title: 'Repository', semantic: 'repository', valueSchema: { type: 'string' as const } } };
+    const resourceKey = `${pluginId}/status`;
     const runtime = (includeDeclarations: boolean) => normalizePluginUiProjection(PluginProjectionV2Schema.parse({
         v: 2, generation: includeDeclarations ? 1 : 2,
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Theme Store', version: '1.0.0', enabled: true,
             source: { kind: 'localPath', locator: '/plugins/store' }, sourceCustody, ...stamp } },
-        agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {},
+        actionsById: includeDeclarations ? { [actionKey]: {
+            id: 'refresh', pluginId, ...stamp, title: 'Refresh preview', scopes: ['global'], surfaces: ['ui'],
+            placementBindings: ['commandPalette'], dangerLevel: 'safe', execution: { target: 'daemon' },
+        } } : {},
+        resourcesById: includeDeclarations ? { [resourceKey]: {
+            id: 'status', pluginId, ...stamp, resourceKind: 'config', scope: 'global', contentType: 'application/json',
+        } } : {},
+        settingsById: {}, diagnostics: [],
         familiesById: {
+            inputTypes: { family: 'inputTypes', entriesById: includeDeclarations ? { [inputType.id]: inputType } : {} },
             storeKinds: { family: 'storeKinds', entriesById: includeDeclarations ? { [storeKind.id]: storeKind } : {} },
             registrySources: { family: 'registrySources', entriesById: includeDeclarations ? { [registrySource.id]: registrySource } : {} },
             skills: { family: 'skills', entriesById: includeDeclarations ? { [skill.id]: skill } : {} },
@@ -58,8 +74,51 @@ it('retains admitted Machine Store kinds when the installed census contains only
     });
     try {
         owner.publishSources(sources);
-        publishRuntime(runtime(true));
         owner.publishExecutionOrigin(pluginId, null, executionOrigin, [executionOrigin]);
+        const scoped = { pluginUiProjection: null, installedPackagesProjection: runtime(true),
+            currentPresentationSections: ['familiesById.storeKinds'] as const,
+            pluginBrowserProjection: null, phase: 'establishing' as const, interactionEnabled: false,
+            machineId: 'machine', serverId: scope.serverId, platform: 'web' as const, accountLifetime: null,
+        };
+        owner.publishMachineCurrentness('machine', null, { ...scoped, currentPresentationSections: undefined });
+        await Promise.resolve();
+        expect(owner.getSnapshot().pluginUiProjection?.storeKindsById[storeKind.id]).toBeUndefined();
+        let publications = 0;
+        const stopFirst = owner.subscribe(() => { publications++; }, 'committed');
+        try {
+            owner.publishMachineCurrentness('machine', null, scoped);
+            await Promise.resolve();
+            expect(publications).toBe(1);
+        } finally { stopFirst(); }
+        const scopedSnapshot = owner.getSnapshot();
+        expect(scopedSnapshot.projectionUnion.hasEstablishingMembers).toBe(true);
+        expect(scopedSnapshot.pluginUiProjection?.storeKindsById[storeKind.id]).toMatchObject({
+            definition: storeKind.definition,
+            hostOrigin: { phase: 'current', interactionEnabled: true, executionOrigin },
+        });
+        expect(scopedSnapshot.pluginUiProjection?.skillsById[skill.id]).toBeUndefined();
+        const scopedNotifications: unknown[] = [];
+        const stopScoped = owner.subscribe(() => scopedNotifications.push(owner.getSnapshot()), 'committed');
+        try {
+            for (let arrival = 0; arrival < 12; arrival++) owner.publishMachineCurrentness('machine', null, { ...scoped });
+            await Promise.resolve();
+            expect(scopedNotifications).toHaveLength(0);
+            owner.publishMachineCurrentness('machine', null, { ...scoped, currentPresentationSections: [
+                'familiesById.storeKinds', 'actionsById', 'familiesById.pluginUi', 'familiesById.inputTypes', 'resourcesById',
+            ] });
+            await Promise.resolve();
+            expect(scopedNotifications).toHaveLength(1);
+            const palette = owner.getSnapshot();
+            const origin = { phase: 'current', interactionEnabled: true, executionOrigin };
+            expect(palette.pluginUiProjection?.actionsById[actionKey]).toMatchObject({ hostOrigin: origin });
+            expect(palette.pluginUiProjection?.inputTypesById[inputType.id]).toMatchObject({ hostOrigin: origin });
+            expect(palette.pluginUiProjection?.resourcesById[resourceKey]).toMatchObject({ hostOrigin: origin });
+            expect(palette.pluginUiProjection?.skillsById[skill.id]).toBeUndefined();
+            expect(palette.projectionUnion.hasEstablishingMembers).toBe(true);
+            publishRuntime(runtime(true));
+            await Promise.resolve();
+            expect(scopedNotifications).toHaveLength(2);
+        } finally { stopScoped(); }
         const admitted = owner.getSnapshot();
         expect(owner.readExecutionOriginCandidates(pluginId)).toMatchObject({
             sourceCandidates: [{ validation: { kind: 'admitted' }, releaseContent: 'matched' }],

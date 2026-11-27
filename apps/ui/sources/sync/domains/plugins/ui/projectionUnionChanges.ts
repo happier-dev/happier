@@ -21,6 +21,7 @@ export function collectPluginUnionChanges(previousMembers: readonly PluginUiProj
         if (before === after) return;
         const left = before?.projection ? previousIndexes?.get(before.projection) : undefined;
         const right = after?.projection ? indexes.get(after.projection) : undefined;
+        const coverageChanged = before?.currentPresentationSections !== after?.currentPresentationSections;
         // A picture's order is its position in the member dictionary; derive it only when that dictionary was replaced.
         let picturePositions: readonly [ReadonlyMap<string, number>, ReadonlyMap<string, number>] | undefined;
         const picturesReordered = (ids: ReadonlySet<string> | undefined): boolean => {
@@ -33,13 +34,16 @@ export function collectPluginUnionChanges(previousMembers: readonly PluginUiProj
         for (const id of new Set([...left?.keysByPlugin.keys() ?? [], ...right?.keysByPlugin.keys() ?? []])) {
             const contributes = (index: UnionSourceModelIndex | undefined) => [...index?.keysByPlugin.get(id) ?? []]
                 .some(([key, ids]) => key !== 'installedPackagesById' && ids.size > 0);
-            if (!contributes(left) && !contributes(right)) continue;
+            if (!contributes(left) && !contributes(right)) {
+                if (coverageChanged) availability.add(id);
+                continue;
+            }
             if (!before || !after || !left || !right
                 || left.publicationIndex.slices[id] !== right.publicationIndex.slices[id]
                 || !samePluginUiMaterializationFacts(before.materializationsByPluginId?.[id], after.materializationsByPluginId?.[id])) {
                 declarations.add(id); availability.add(id); continue;
             }
-            if (before.phase !== after.phase || before.interactionEnabled !== after.interactionEnabled
+            if (coverageChanged || before.phase !== after.phase || before.interactionEnabled !== after.interactionEnabled
                 || before.unavailableReasonCode !== after.unavailableReasonCode
                 || (before.projection!.generation === null) !== (after.projection!.generation === null)
                 || (before.projection!.diagnostics !== after.projection!.diagnostics

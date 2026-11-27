@@ -1,3 +1,5 @@
+import { APP_SHELL_PRESENTATION_FIELDS_BY_SECTION, type AppShellPresentationSection } from '@/sync/domains/plugins/ui/projectionSections';
+
 import { getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { shallow } from 'zustand/shallow';
@@ -123,28 +125,33 @@ const NO_SETTINGS_PAGES: readonly PluginUiProjectionModel['settingsPagesById'][s
  */
 const partialPresentationByRead = new WeakMap<PluginUiProjectionModel, Readonly<{
     retained: PluginUiProjectionModel; registrySources: boolean; skills: boolean; themes: boolean;
-    listExtensions: boolean; model: PluginUiProjectionModel;
+    listExtensions: boolean; sections: readonly AppShellPresentationSection[] | undefined; model: PluginUiProjectionModel;
 }>>();
 function withReadPresentationFamilies(retained: PluginUiProjectionModel | null, read: PluginUiProjectionModel,
-    registrySources: boolean, skills: boolean, themes: boolean, listExtensions: boolean): PluginUiProjectionModel {
-    if (registrySources && (!retained || retained.generation == null)) return read;
+    registrySources: boolean, skills: boolean, themes: boolean, listExtensions: boolean,
+    sections?: readonly AppShellPresentationSection[]): PluginUiProjectionModel {
+    if (!sections && registrySources && (!retained || retained.generation == null)) return read;
     const base = retained ?? EMPTY_PLUGIN_UI_PROJECTION;
     const held = partialPresentationByRead.get(read);
     if (held?.retained === base && held.registrySources === registrySources && held.skills === skills && held.themes === themes
-        && held.listExtensions === listExtensions) return held.model;
-    const installedPackagesById = { ...read.installedPackagesById, ...base.installedPackagesById };
+        && held.listExtensions === listExtensions && held.sections === sections) return held.model;
+    const installedPackagesById = sections ? { ...base.installedPackagesById, ...read.installedPackagesById }
+        : { ...read.installedPackagesById, ...base.installedPackagesById };
     if (themes) for (const theme of Object.values(read.themesById)) {
         const installed = read.installedPackagesById[theme.pluginId];
         if (installed) installedPackagesById[theme.pluginId] = installed;
     }
     const model: PluginUiProjectionModel = Object.freeze({ ...base,
         generation: base.generation ?? read.generation,
+        diagnostics: sections ? read.diagnostics : base.diagnostics,
         installedPackagesById: Object.freeze(installedPackagesById),
         registrySourcesById: registrySources ? read.registrySourcesById : base.registrySourcesById,
         skillsById: skills ? read.skillsById : base.skillsById,
         themesById: themes ? read.themesById : base.themesById,
-        listExtensionsById: listExtensions ? read.listExtensionsById : base.listExtensionsById });
-    partialPresentationByRead.set(read, { retained: base, registrySources, skills, themes, listExtensions, model });
+        listExtensionsById: listExtensions ? read.listExtensionsById : base.listExtensionsById,
+        ...Object.fromEntries((sections ?? []).flatMap(section => APP_SHELL_PRESENTATION_FIELDS_BY_SECTION[section]
+            .map(field => [field, read[field]] as const))) });
+    partialPresentationByRead.set(read, { retained: base, registrySources, skills, themes, listExtensions, sections, model });
     return model;
 }
 
@@ -470,6 +477,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 || (before?.interactionEnabled ?? false) !== report.interactionEnabled
                 || (before?.installedPackagesProjection ?? null) !== (report.installedPackagesProjection ?? null)
                 || (before?.presentedPluginIds ?? null) !== (report.presentedPluginIds ?? null)
+                || before?.currentPresentationSections !== report.currentPresentationSections
                 || (before?.registrySourcesCurrent ?? false) !== (report.registrySourcesCurrent ?? false)
                 || (before?.skillsCurrent ?? false) !== (report.skillsCurrent ?? false)
                 || (before?.themesCurrent ?? false) !== (report.themesCurrent ?? false)
@@ -654,8 +662,10 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 && (Object.keys(read.themesById).length > 0 || Object.keys(presentedProjection?.themesById ?? {}).length > 0);
             const listExtensionsRead = current?.listExtensionsCurrent === true && read !== null
                 && (Object.keys(read.listExtensionsById).length > 0 || Object.keys(presentedProjection?.listExtensionsById ?? {}).length > 0);
-            const presentation = read && (registrySourcesRead || skillsRead || themesRead || listExtensionsRead)
-                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, skillsRead, themesRead, listExtensionsRead)
+            const currentPresentationSections = read ? current?.currentPresentationSections : undefined;
+            const presentation = read && (registrySourcesRead || skillsRead || themesRead || listExtensionsRead || currentPresentationSections)
+                ? withReadPresentationFamilies(presentedProjection, read, registrySourcesRead, skillsRead, themesRead, listExtensionsRead,
+                    currentPresentationSections)
                 : presentedProjection;
             // The last theme demand can leave when its installation is withdrawn.
             // An exact Home report retires cached themes even without another theme section read.
@@ -669,6 +679,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 projection: merge.publish(declaration?.models ?? NO_MODELS, themesAdmitted,
                     declaration?.materializationsByPluginId, undefined, declaration?.completeUiPluginIds),
                 ...(presentedPluginIds ? { currentPluginIds: presentedPluginIds } : {}),
+                ...(currentPresentationSections ? { currentPresentationSections } : {}),
                 phase: current?.phase === 'unavailable' || current?.phase === 'retainedOffline' ? current.phase
                     : current?.pluginUiProjection?.generation == null && declaration?.hasUnprovenDeclarations ? 'establishing' : current?.phase ?? 'establishing',
                 unavailableReasonCode: current?.unavailableReasonCode, interactionEnabled: current?.interactionEnabled ?? false,
