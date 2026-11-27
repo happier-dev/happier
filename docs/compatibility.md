@@ -10940,6 +10940,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `openNewSession` accepts optional `creationReview` copy in its
+closed V1 seed. Its closed title and body object uses the existing localized
+string contract. The device-local draft supplement retains it when present.
+Older seeds and saved drafts without the copy use the ordinary creation
+review. Match development hosts and SDKs for the strict request under the
+0.3 direct cut. The Session Action input, reviewed operands and wire epoch
+keep their existing contracts.
+
 In unreleased 0.3, discrete Action select hints optionally carry `createNew`.
 The creator reference, draft bindings, result mappings and optional
 duplicate-name feedback are closed declarations. Dropping the hint preserves

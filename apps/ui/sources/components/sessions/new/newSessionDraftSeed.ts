@@ -88,6 +88,7 @@ export type NewSessionDraftIntroV1 = Readonly<{
 export type NewSessionDraftSeedV1 = Readonly<{
     intro?: NewSessionDraftIntroV1;
     actionDefault?: NewSessionDraft['actionDefault'];
+    creationReview?: NewSessionDraft['creationReview'];
     postCreateAction?: NewSessionDraft['postCreateAction'];
     sessionName?: NewSessionDraft['sessionName'];
     initialSessionFacts?: NewSessionDraft['initialSessionFacts'];
@@ -132,6 +133,7 @@ function joinDraftInput(existingInput: string, promptText: string): string {
 export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1): boolean {
     return seed.intro !== undefined
         || seed.actionDefault !== undefined
+        || seed.creationReview !== undefined
         || seed.postCreateAction !== undefined
         || seed.sessionName !== undefined
         || seed.spaceMembership !== undefined
@@ -203,6 +205,7 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
         ...base,
         ...(input.seed.intro === undefined ? {} : { intro: input.seed.intro }),
         ...(input.seed.actionDefault === undefined ? {} : { actionDefault: input.seed.actionDefault }),
+        ...(input.seed.creationReview === undefined ? {} : { creationReview: input.seed.creationReview }),
         ...(input.seed.postCreateAction === undefined ? {} : { postCreateAction: input.seed.postCreateAction }),
         ...(input.seed.sessionName === undefined ? {} : { sessionName: input.seed.sessionName }),
         ...(input.seed.spaceMembership === undefined ? {} : { spaceMembership: input.seed.spaceMembership }),

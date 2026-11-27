@@ -40,6 +40,7 @@ import {
   type PluginContributionIdentityV1,
 } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
+import { PluginLocalizedStringV2Schema } from '../contributions/publicTypes.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import {
@@ -828,6 +829,12 @@ export const PluginUiNewSessionActionDefaultV1Schema = lazyZodSchema(() => z.str
 }));
 export type PluginUiNewSessionActionDefaultV1 = z.infer<typeof PluginUiNewSessionActionDefaultV1Schema>;
 
+/** Authored copy for the native review of a seeded Session creation. */
+export const PluginUiNewSessionCreationReviewV1Schema = lazyZodSchema(() => z.strictObject({
+  title: PluginLocalizedStringV2Schema,
+  body: PluginLocalizedStringV2Schema,
+}));
+
 const PluginUiNewSessionPostCreateActionV1Schema = lazyZodSchema(() => z.strictObject({
   action: asProtocolZod(PluginUiQualifiedActionReferenceV1Schema),
   input: PluginUiJsonObjectV1Schema,
@@ -910,6 +917,7 @@ const SessionAuthoringOpenSeedV1Schema = lazyZodSchema(() => z.strictObject({
   { message: 'A directory intent cannot compete with a placement path or request a managed checkout.' })));
 export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.safeExtend(SessionAuthoringOpenSeedV1Schema, {
   postCreateAction: z.optional(PluginUiNewSessionPostCreateActionV1Schema),
+  creationReview: z.optional(PluginUiNewSessionCreationReviewV1Schema),
 }));
 export type PluginUiNewSessionSeedV1 = z.infer<typeof PluginUiNewSessionSeedV1Schema>;
 

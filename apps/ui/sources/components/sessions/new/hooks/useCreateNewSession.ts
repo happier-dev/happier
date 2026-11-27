@@ -1356,6 +1356,9 @@ export function useCreateNewSession(params: Readonly<{
                 ? getSessionDraftSnapshot(current.draftScope, { kind: 'newSession', draftId: current.draftId })
                 : null;
             const sourceDraftExisted = sourceDraft !== null;
+            const sessionCreationReview = current.draftScope && current.draftId
+                ? readNewSessionDraftFromRepository({ scope: current.draftScope, draftId: current.draftId })?.creationReview
+                : undefined;
             const hasSeededPostCreateAction = sourceDraft?.localSupplement.newSessionLocalState?.postCreateAction !== undefined;
             // Keep the submitted draft available for its one-shot Action and notice before handing it off.
             const handOffBeforeFollowUp = hasSeededPostCreateAction ? undefined : handOffAdmittedLaunch;
@@ -1973,6 +1976,7 @@ export function useCreateNewSession(params: Readonly<{
                         }
                         const execution = await executeManualSessionSpawnNewAction(spawnInput, {
                             surface: 'ui',
+                            ...(sessionCreationReview === undefined ? {} : { sessionCreationReview }),
                             ...(current.managedDefaultsContext ? { sessionCreationDefaults: {
                                 context: current.managedDefaultsContext,
                                 ...(current.managedDefaultsUnavailable ? { unavailableDefaults: current.managedDefaultsUnavailable } : {}),

@@ -27,7 +27,7 @@ function workflowTriggerLabels(environmentName?: string | null): WorkflowTrigger
     };
 }
 
-function resolvePluginConfirmationText(text: NonNullable<TargetActionApprovalRequestV1['inputFields']>[number]['title']): string {
+export function resolvePluginConfirmationText(text: NonNullable<TargetActionApprovalRequestV1['inputFields']>[number]['title']): string {
     const translated = typeof text === 'string' ? undefined : getTranslationValue(text.key);
     return resolvePluginLocalizedStringV2Text(text, typeof translated === 'string' ? translated : undefined);
 }

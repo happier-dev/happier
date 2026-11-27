@@ -1516,20 +1516,26 @@ describe('the entry action controls on the mounted detail header', () => {
         return harness;
     }
 
-    it('opens the prefilled composer from the primary\'s chevron even when the profile resolves a one-click start', async () => {
+    it.each(['Start now', 'Add instructions…'] as const)('carries the %s press separately from the saved Start defaults', async press => {
         const harness = oneClickHarness();
+        // An unsettled Start and an explicit Add instructions both open the ordinary composer.
+        if (press === 'Start now') harness.setBackends([]);
         const shell = await mountShell(harness);
         await openTheRow(shell);
 
         await pressAction(shell, 'Direct fix options');
-        await pressMenuItem(shell, 'Add instructions…');
+        await pressMenuItem(shell, press);
 
-        // Add instructions is the action in review-first mode (owner ruling 2026-11-07): the same New Session
-        // composer as Ask, prefilled with the action's task and the entry, and nothing exists until the person sends.
         expect(draftsOpened).toBe(0);
         expect(harness.startRequests).toEqual([]);
         expect(newSessionSeeds).toHaveLength(1);
-        expect(JSON.stringify(newSessionSeeds[0])).toContain('Fix this.');
+        expect(newSessionSeeds[0]).toMatchObject({
+            prompt: expect.stringContaining('Fix this.'),
+            actionDefault: { label: 'Direct fix', launchMode: 'start' },
+            creationReview: press === 'Start now'
+                ? { title: 'Direct fix', body: { fallback: 'Start a new Session' } }
+                : { title: { fallback: 'Add instructions' }, body: { params: { action: 'Direct fix' } } },
+        });
     }, 60_000);
 
     it('opens a fresh Fix composer from the recent linked investigation despite storage order', async () => {

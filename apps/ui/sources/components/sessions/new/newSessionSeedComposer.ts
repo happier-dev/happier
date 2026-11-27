@@ -180,6 +180,7 @@ export function seedAndOpenNewSession(params: Readonly<{
     const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
         seed: {
             ...(seed.actionDefault === undefined ? {} : { actionDefault: seed.actionDefault }),
+            ...(seed.creationReview === undefined ? {} : { creationReview: seed.creationReview }),
             ...(postCreateAction && pluginId ? {
                 postCreateAction: {
                     intent: postCreateAction,

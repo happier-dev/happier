@@ -13,7 +13,10 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
+import { resolvePluginConfirmationText } from '@/components/approvals/approvalFieldValues';
+import { isSessionSpawnNewActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import type { UiActionExecutorContext } from './defaultActionExecutor';
 
 type ConfirmationPresenter = NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>;
 
@@ -62,7 +65,11 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
     const present = (reviewPreview: unknown) => presentActionApproval({ ...presentationInput,
       preview: reviewPreview, kind: 'confirmation', subject: detectedProvider?.name ?? (reading.named ? reading.text : null), role, formatPath });
     const presentation = present(preview);
-    const confirmationSummary = [presentation.summary,
+    const creationReview = isSessionSpawnNewActionIdV1(actionId)
+      ? (context as UiActionExecutorContext).sessionCreationReview : undefined;
+    const title = creationReview ? resolvePluginConfirmationText(creationReview.title) : presentation.title;
+    const authoredBody = creationReview ? resolvePluginConfirmationText(creationReview.body) : null;
+    const confirmationSummary = [authoredBody, presentation.summary,
       ...(detectedProvider ? [detectedProvider.where, detectedProvider.availability,
         detectedProvider.models?.title, detectedProvider.models?.subtitle] : []),
     ].filter(Boolean).join('\n\n');
@@ -74,7 +81,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
       ? await reviewFacts.confirmActionReview({ actionId, actionArgs: input, preview,
         summaryPlacement: 'host',
         presetSubject: nativeConfirmationSubject,
-        title: actionId === 'account.delete' ? t('settingsAccount.deleteAccountConfirmTitle') : presentation.title ?? t('approvals.untitled'),
+        title: actionId === 'account.delete' ? t('settingsAccount.deleteAccountConfirmTitle') : title ?? t('approvals.untitled'),
         // Deleting the Account says what goes before anything else on the card, above its Technical details.
         summary: reviewRecovery ? null : actionId === 'account.delete' ? t('settingsAccount.deleteAccountConsequence')
           : confirmationSummary || null,
@@ -99,7 +106,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
       ? await Modal.prompt(t('settingsAccount.deleteAccountConfirmTitle'), t('settingsAccount.deleteAccountConfirmBody'), {
         placeholder: 'DELETE', confirmText: t('settingsAccount.deleteAccount'),
       }) === 'DELETE'
-      : await Modal.confirm(presentation.title ?? t('approvals.untitled'), confirmationSummary,
+      : await Modal.confirm(title ?? t('approvals.untitled'), confirmationSummary,
         { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
           ...(presentation.destructive ? { destructive: true } : {}),
           ...(context.signal ? { signal: context.signal } : {}), });

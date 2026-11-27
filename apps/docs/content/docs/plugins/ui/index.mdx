@@ -332,6 +332,15 @@ alone. An unavailable checkout or an out-of-checkout selection returns
 ordinary Action when the person confirms it. The picker supplies neither file
 contents nor permission to perform the Action.
 
+### Name the Session creation review (development)
+
+In unreleased 0.3, pass `creationReview: { title, body }` to
+`host.openNewSession(seed)` to describe the press that opened the draft. The
+host keeps this copy with the draft on the current device and shows it if
+Session creation requires confirmation. The native review shows the creation
+effects and uses its usual confirmation verb. Describe what the person will
+create from the draft.
+
 ### Run an Action after creating the Session (development)
 
 In unreleased 0.3, mounted plugins can include one `postCreateAction` in

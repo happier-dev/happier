@@ -73,7 +73,7 @@ import {
     type TriageNewSessionFailureV1,
 } from '../ui/header/newSessionSeedCommand.js';
 import { requestTriageNewSessionDraft } from '../ui/header/newSessionDraftCommand.js';
-import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { triageActionDefaultSeedV1, triageSessionCreationReviewV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
 import { buildTriageEntrySessionHandoffV1 } from './entrySessionHandoff.js';
 import { selectTriageSendRecipientV1 } from './entryStartChoices.js';
@@ -1033,6 +1033,7 @@ export function createTriageEntrySessionStartController(
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
                         entries: [request], linkEntry: request, promptText, profileId: action.profileId,
                         actionDefault: triageActionDefaultSeedV1(request.savedAction ?? action),
+                        ...(request.comparisonDestination === undefined ? { creationReview: triageSessionCreationReviewV1(action) } : {}),
                         attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
                         ...(request.teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId: request.teamModelFromSessionId }),

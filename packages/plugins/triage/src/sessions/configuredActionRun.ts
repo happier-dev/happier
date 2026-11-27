@@ -22,7 +22,7 @@ import { sameTriageEntryReference } from '../corpus/identity/components.js';
 import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
 import { readTriageActionExecutionPlacementV1, readTriageActionLaunchDirectoryV1, resolveTriageActionCheckoutV1, resolveTriageActionPlacementV1 } from './actionLaunch.js';
 import { readTriageAgentExecutionTargetV1, readTriageInvestigationAgentV1 } from './agentTarget.js';
-import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
+import { triageActionDefaultSeedV1, triageSessionCreationReviewV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import { projectTriageActionPlacementCandidatesV1, projectTriageNewSessionDestinationV1 } from '../ui/header/newSessionDestination.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
@@ -387,6 +387,7 @@ export async function runTriageConfiguredHandoffV1(
                 ...(primary === undefined ? {} : { linkEntry: primary }),
                 // The configurator shows the record as saved, not this handoff's delivery or Profile choice.
                 actionDefault: triageActionDefaultSeedV1(configured.action), checkoutIntent: checkout, signal: options.signal,
+                creationReview: triageSessionCreationReviewV1(action),
                 ...(agent?.status === 'resolved' ? { agentTarget: agent.agentTarget } : {}),
                 placement: execution ?? ((input.context.kind === 'healthAlert' || input.context.kind === 'failure') && input.context.machine
                     ? { executionTarget: input.context.machine } : null), candidates,

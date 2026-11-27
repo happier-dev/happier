@@ -5782,6 +5782,8 @@ type DefaultActionExecutorOptions = Parameters<typeof buildDefaultActionExecutor
 /** UI-only projection qualifier; the captured Account owner enforces it before admission. */
 export type UiActionExecutorContext = import('@/components/plugins/surfaces/pluginSurfaceActionDispatch').PluginSurfaceActionExecutorContext & Readonly<{
   expectedAccountId?: string;
+  /** Local Session creation copy. The receiving Action's review still owns effects and confirmation. */
+  sessionCreationReview?: import('@/sync/domains/state/persistence').NewSessionDraft['creationReview'];
   /** Local read-aloud presentation only; never serialized into Action custody. */
   voiceSpeechSource?: import('@/voice/backends/tts/localVoiceTtsProviderControllers').VoiceReadAloudSource;
   /** Reviewed Delete routing only; the receiving owner still admits expectedRevision and authority. Never serialized. */

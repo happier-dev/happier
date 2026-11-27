@@ -175,6 +175,7 @@ const NewSessionDraftExecutionTargetSchema = z.strictObject({
 export interface NewSessionDraft {
     intro?: import('@/components/sessions/new/newSessionDraftSeed').NewSessionDraftIntroV1;
     actionDefault?: PluginUiNewSessionActionDefaultV1;
+    creationReview?: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedV1['creationReview'];
     postCreateAction?: Readonly<{
         intent: NonNullable<import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedV1['postCreateAction']>;
         pluginId: string;

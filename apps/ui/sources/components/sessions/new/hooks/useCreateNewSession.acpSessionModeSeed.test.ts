@@ -41,7 +41,15 @@ installDisconnectedServerSocketBoundary(socket => { configureConnectedServerSock
 const newSessionPush = vi.hoisted(() => vi.fn<(route: unknown) => void>());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => false));
-const modalShowSpy = vi.hoisted(() => vi.fn((dialog: { props?: { onCancel?: () => void }; chrome?: { testID?: string } }) => {
+const nativeSpawnReview = vi.hoisted(() => ({ respond: false }));
+const modalShowSpy = vi.hoisted(() => vi.fn((dialog: {
+  props?: { onCancel?: () => void; onAnswer?: (confirmed: boolean) => void; confirmLabel?: string };
+  chrome?: { testID?: string; title?: string; subtitle?: string };
+}) => {
+  if (dialog.chrome?.testID === 'actions.confirmation-review.modal' && nativeSpawnReview.respond) {
+    queueMicrotask(() => dialog.props?.onAnswer?.(false));
+    return 'test-spawn-confirmation';
+  }
   if (dialog.chrome?.testID !== 'app-shell-transient-interaction-dialog') return '';
   queueMicrotask(() => dialog.props?.onCancel?.());
   return 'test-action-confirmation';
@@ -198,8 +206,15 @@ async function createHarness() {
   }));
 
   // Exercise the real Action executor and custody owner through the daemon transport boundary.
+  let reviewIssued = false;
   const spawn = async (raw: unknown) => {
-    const result = await sessionSpawnNewRpcSpy(SessionSpawnNewInputV2Schema.parse(raw));
+    const input = SessionSpawnNewInputV2Schema.parse(raw);
+    if (nativeSpawnReview.respond && !reviewIssued) {
+      reviewIssued = true;
+      return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+        details: { reviewDigest: 'a'.repeat(43), review: { actionArgs: input, preview: { kind: 'session_spawn' } } } };
+    }
+    const result = await sessionSpawnNewRpcSpy(input);
     if (result.type === 'success') createdSessions.set(result.sessionId,
       createPlainSessionCurrentProjectionRecordFixture({ id: result.sessionId,
         metadata: { path: '/tmp', host: 'test-machine', machineId: result.executionTarget.machineId } }));
@@ -261,6 +276,8 @@ async function createHarness() {
       account = await restoreAccount();
       currentHarnessOptions = options;
       createdSessions.clear();
+      reviewIssued = false;
+      nativeSpawnReview.respond = false;
       sessionSpawnNewRpcSpy.mockReset().mockImplementation(defaultSpawn);
       actionOperationGetRpcSpy.mockReset().mockResolvedValue({ kind: 'not_found' });
       scopedSocketEmitWithAckSpy.mockImplementation(async (event, input) => {
@@ -612,12 +629,18 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
   it.each([
     'agent', 'linked', 'refused', 'confirmation', 'account-mismatch',
     'docked-fix-start', 'docked-add-instructions', 'docked-investigate', 'docked-refused', 'docked-plain',
+    'docked-fix-review', 'docked-add-instructions-review',
   ] as const)('settles a New Session draft with an ordinary Triage Action (%s)', async scenario => {
     const { useCreateNewSession, sessionSpawnNewRpcSpy, actionOperationGetRpcSpy, seedOwnedSession, seedTemporaryDestination } = await setupHarness();
     const docked = scenario.startsWith('docked-');
     const refused = scenario === 'refused' || scenario === 'docked-refused';
     const plain = scenario === 'docked-plain';
-    const startsAnother = scenario === 'docked-add-instructions';
+    const startsAnother = scenario === 'docked-add-instructions' || scenario === 'docked-add-instructions-review';
+    const reviewCopy = scenario === 'docked-fix-review'
+      ? { title: 'Direct fix', body: 'Start a new Session' }
+      : scenario === 'docked-add-instructions-review'
+        ? { title: 'Add instructions', body: 'Create a Session for Direct fix with the instructions from this draft.' }
+        : undefined;
     const linksEntry = scenario === 'agent' || scenario === 'linked'
       || scenario === 'docked-fix-start' || scenario === 'docked-add-instructions' || scenario === 'docked-investigate';
     const { seedAndOpenNewSession } = await import('../newSessionSeedComposer');
@@ -789,10 +812,24 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();
       } else if (plain) open({ prompt: 'Address this entry' });
       else {
+        const authoring = {
+          entries: [],
+          linkEntry: { entryRef, display: TESTKIT_LINK_DISPLAY, sourceInstance: configured.instance },
+          ...(reviewCopy === undefined ? {} : {
+            creationReview: reviewCopy,
+            actionDefault: { pluginId: manifest.id, configuredActionId: 'custom-fix', label: 'Direct fix', launchMode: 'start' as const },
+          }),
+          promptText: scenario === 'docked-investigate' ? 'Investigate this entry'
+            : startsAnother ? 'Add instructions for this entry' : 'Fix this entry',
+          profileId: null,
+          checkoutIntent: 'none' as const,
+          placement: null,
+          candidates: [],
+        };
         expect(await requestTriageNewSessionAuthoringV1({
           version: () => ({ methods: ['openNewSession'] }),
           openNewSession: async seed => {
-            if (scenario !== 'docked-fix-start') return open(seed);
+            if (!reviewCopy && scenario !== 'docked-fix-start') return open(seed);
             const { createPluginOpenNewSessionHandler } = await import('@/components/plugins/surfaces/pluginOpenNewSessionHostApi');
             const caller = { pluginId: manifest.id, contributionLocalId: TRIAGE_APP_PAGE_LOCAL_ID_V1 };
             const handler = createPluginOpenNewSessionHandler({
@@ -806,9 +843,7 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
             draftId = (route as { params: { draftId: string } }).params.draftId;
           },
           selectActionInput: async () => { throw new Error('No preparation is requested'); },
-        }, { entries: [], linkEntry: { entryRef, display: TESTKIT_LINK_DISPLAY, sourceInstance: configured.instance },
-          promptText: scenario === 'docked-investigate' ? 'Investigate this entry'
-            : scenario === 'docked-add-instructions' ? 'Add instructions for this entry' : 'Fix this entry', profileId: null, checkoutIntent: 'none', placement: null, candidates: [] }))
+        }, authoring))
           .toEqual({ status: 'seeded' });
       }
       expect(invocations).toEqual([]);
@@ -851,7 +886,20 @@ describe('useCreateNewSession (ACP mode seeding)', () => {
         wrapper: ({ children }: React.PropsWithChildren) => React.createElement(NewSessionEmbeddedHostProvider, { host, children }),
       } : undefined);
       try {
+        nativeSpawnReview.respond = reviewCopy !== undefined;
         await act(async () => { await hook.getCurrent().handleCreateSession(docked && !startsAnother ? { afterSend: 'open' } : undefined); });
+        if (reviewCopy) {
+          expect(modalShowSpy).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            chrome: expect.objectContaining({ testID: 'actions.confirmation-review.modal',
+              title: reviewCopy.title, subtitle: expect.stringContaining(reviewCopy.body) }),
+            props: expect.objectContaining({ confirmLabel: 'sessionGettingStarted.steps.createSession.copyLabel' }),
+          }));
+          // A dismissed review never creates a Session or consumes the draft's post-create link.
+          expect(sessionSpawnNewRpcSpy).not.toHaveBeenCalled();
+          expect(invocations).toEqual([]);
+          expect(readNewSessionDraftFromRepository({ scope: draftScope, draftId })?.postCreateAction).toEqual(postCreateAction);
+          return;
+        }
         expect(sessionSpawnNewRpcSpy).toHaveBeenCalledTimes(1);
         if (docked) expect(presentedWithInvocationCounts).toEqual([plain ? 0 : 1]);
         if (plain) expect(actionOperationGetRpcSpy).toHaveBeenCalledWith({ operationId, waitForTerminal: true });

@@ -19,6 +19,23 @@ export function triageActionDefaultSeedV1(action: TriageActionV1): TriageNewSess
         label: action.label, launchMode: readTriageActionLaunchModeV1(action) };
 }
 
+/** Read the launch already resolved for this press, before the draft can edit Next time. */
+export function triageSessionCreationReviewV1(action: TriageActionV1): TriageNewSessionSeedV1['creationReview'] {
+    const label = action.label.trim();
+    if (!label) return undefined;
+    if (readTriageActionLaunchModeV1(action) === 'start') {
+        return { title: label, body: { key: 'plugins.triage.approval.configured.start', fallback: 'Start a new Session' } };
+    }
+    return {
+        title: { key: 'happier.plugin-ui.agentAction.addInstructions', fallback: 'Add instructions' },
+        body: {
+            key: 'plugins.triage.approval.configured.createWithInstructions',
+            fallback: 'Create a Session for {action} with the instructions from this draft.',
+            params: { action: label },
+        },
+    };
+}
+
 type AuthoringEntry = Pick<TriageEntrySessionStartRequestV1, 'entryRef' | 'sourceInstance' | 'presentation' | 'lastKnownLocator' | 'reviewWorkspace'>;
 
 /** A prepared PR checkout has one source revision and one working directory. */
@@ -45,6 +62,7 @@ export async function requestTriageNewSessionAuthoringV1(
         entries: readonly AuthoringEntry[];
         linkEntry?: Pick<TriageEntrySessionStartRequestV1, 'entryRef' | 'sourceInstance' | 'display'>;
         actionDefault?: TriageNewSessionSeedV1['actionDefault'];
+        creationReview?: TriageNewSessionSeedV1['creationReview'];
         attachments?: readonly TriageEntryAttachmentDraftV1[];
         promptText: string | null;
         profileId: string | null;
@@ -103,6 +121,7 @@ export async function requestTriageNewSessionAuthoringV1(
             } }),
             ...(delivery.kind === 'compose' && delivery.text !== undefined ? { prompt: delivery.text } : {}),
             ...(input.actionDefault === undefined ? {} : { actionDefault: input.actionDefault }),
+            ...(input.creationReview === undefined ? {} : { creationReview: input.creationReview }),
             ...(input.profileId === null ? {} : { profileId: input.profileId }),
             ...(input.agentTarget === undefined ? {} : { agentTarget: input.agentTarget }),
             ...(input.teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId: input.teamModelFromSessionId }),

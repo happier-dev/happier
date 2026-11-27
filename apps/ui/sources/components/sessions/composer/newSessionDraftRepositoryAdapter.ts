@@ -32,7 +32,7 @@ import {
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { PluginUiNewSessionActionDefaultV1Schema, PluginUiNewSessionSeedV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionActionDefaultV1Schema, PluginUiNewSessionCreationReviewV1Schema, PluginUiNewSessionSeedV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { readSessionInstructionsAuthoringDraft } from '@/sync/domains/state/sessionInstructionsDraft';
 import { ManagedMachineAcquisitionDraftReadSchema, ManagedMachineSelectionDraftReadSchema } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getSessionDraftAuthoringFieldValues } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
@@ -127,6 +127,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
     const postCreateAction = localState?.postCreateAction === undefined
         ? undefined : storedPostCreateActionSchema.safeParse(localState.postCreateAction);
     const actionDefault = createStoredReadSchema(PluginUiNewSessionActionDefaultV1Schema).safeParse(localState?.actionDefault);
+    const creationReview = PluginUiNewSessionCreationReviewV1Schema.safeParse(localState?.creationReview);
     const spaceMembership = nullable(SessionSpaceMembershipTargetV1Schema).safeParse(localState?.spaceMembership);
     const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(localState?.managedMachineSelection);
     const managedMachineAcquisition = nullable(ManagedMachineAcquisitionDraftReadSchema).safeParse(localState?.managedMachineAcquisition);
@@ -150,6 +151,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             : '',
         ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
         ...(actionDefault.success ? { actionDefault: actionDefault.data } : {}),
+        ...(creationReview.success ? { creationReview: creationReview.data } : {}),
         ...(postCreateAction?.success ? { postCreateAction: postCreateAction.data } : {}),
         ...(spaceMembership.success ? { spaceMembership: spaceMembership.data } : {}),
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
@@ -315,6 +317,7 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
         composerAttachmentSeeds: live?.composerAttachmentSeeds,
         // Action name and launch edits are committed by their leaf control.
         actionDefault: live?.actionDefault ?? input.draft.actionDefault,
+        creationReview: live?.creationReview,
         // The post-create checkpoint consumes this seed field. Autosave cannot restore it.
         postCreateAction: live?.postCreateAction,
         ...(input.preserveLiveSessionName && live ? {

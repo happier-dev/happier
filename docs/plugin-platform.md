@@ -9953,6 +9953,14 @@ callers preserve the result without opening another draft. Health investigation
 seeds carry the selected Agent/profile, exact Machine and managed-directory
 intent into that same draft.
 
+A 0.3 development `openNewSession` seed can carry optional
+`creationReview.title` and `creationReview.body` for the effective press.
+The device-local draft retains this copy across edits and reopen. When the
+Session Action asks for confirmation, the native presenter uses that title
+and shows the body alongside the Action's own consequence and review facts.
+The Action still supplies the confirmation verb. Triage supplies its
+effective press separately from the saved defaults the draft can edit.
+
 In 0.3 development source, a mounted plugin can declare one optional
 `postCreateAction` on `openNewSession`. The declaration contains a qualified
 `action`, an `input` JSON object and the `sessionIdPath` in that object.
