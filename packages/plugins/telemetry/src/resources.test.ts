@@ -373,6 +373,11 @@ describe('capture demanded Resource through real public Actions', () => {
                 runtime: createCaptureResourceRuntime({ subscribe: owner.subscribe }),
             } } });
         const host = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
+        const refusal = {
+            ok: false, errorCode: 'plugin_service_unavailable', error: 'Action transport unavailable',
+            details: { reason: 'collector_restarting' },
+            failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null },
+        } as const;
         let transportRefused = false;
         const options: PluginDynamicResourceInvocationOptionsV1 = { signal: consumer.signal, requesterAccount: { accountId: 'account' },
             context: { kind: 'surface', mountInstanceKey: 'selected', launchInput: { view: 'query', input: { source, id: 'older' } } },
@@ -383,7 +388,7 @@ describe('capture demanded Resource through real public Actions', () => {
                 expect(ref.pluginId).toBe(plugin.manifest.id);
                 expect(ref.localId).toBe(database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1));
                 // Remote refusal is a transport boundary; testkit surface selection does not authorize requests.
-                if (transportRefused) return { ok: false, errorCode: 'plugin_service_unavailable', error: 'Action transport unavailable' };
+                if (transportRefused) return refusal;
                 try { return { ok: true, result: await host.invokeAction(ref.localId, input, { signal: invocation?.signal, surface: 'plugin' }) }; }
                 catch (error: unknown) {
                     if (!(error instanceof PluginError)) throw error;
@@ -411,7 +416,10 @@ describe('capture demanded Resource through real public Actions', () => {
             expect(invalidations).toBe(1);
             // A typed remote refusal closes this subscription. Source ACL proof awaits ACCESS.
             transportRefused = true;
-            await expect(producer.read(options)).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+            await expect(producer.read(options)).rejects.toMatchObject({ data: {
+                code: refusal.errorCode, message: refusal.error,
+                details: refusal.details, failureCause: refusal.failureCause,
+            } });
             await runtime.store.write([{ id: 'older', worktree: partition, kind: 'query', source: 'wire', at: 1, detail: { value: 'refused' } }]);
             expect(invalidations).toBe(1);
             consumer.abort();

@@ -23,7 +23,13 @@ async function readCaptureAction(context: ResourceContext, actionId: database.Da
     signal: AbortSignal): Promise<unknown> {
     const outcome = await context.readAction({ pluginId: database.DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId,
         localId: database.databaseActionLocalIdV1(actionId) }, input, { signal });
-    if (!outcome.ok) throw new PluginError({ code: outcome.errorCode, message: outcome.error });
+    if (!outcome.ok) throw new PluginError({
+        code: outcome.errorCode,
+        message: outcome.error,
+        details: outcome.details === undefined ? undefined : projectNativeJsonValueForTransport(outcome.details),
+        failureCause: outcome.failureCause,
+        effectAttempted: outcome.effectAttempted,
+    });
     return outcome.result;
 }
 
