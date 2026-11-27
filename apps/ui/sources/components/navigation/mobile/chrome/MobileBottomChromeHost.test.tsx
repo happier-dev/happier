@@ -214,6 +214,34 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         const nativeShell = await renderScreen(<Harness sites={['shell', 'route']} workspaceActive />);
         expect(hostSites(nativeShell)).toEqual(['route']);
     });
+    it('presents Voice before the lazy route commits and retains it when the route arrives', async () => {
+        route.pathname = '/session/session-1'; enableCockpit();
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
+        const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+        const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+        const { resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+        primeServerFeaturesSnapshot({ snapshot: { status: 'ready',
+            features: createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } }) } });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true,
+            featureToggles: { ...state.settings.featureToggles, voice: true, 'voice.agent': true, 'execution.runs': true },
+            voice: voiceSettingsParse({ providerId: 'local_conversation', providers: {
+                local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
+            } }),
+        }, localSettings: { ...state.localSettings, voicePresenceContainer: 'island' } }));
+        registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
+        setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'cold-shell', status: 'connected', mode: 'listening', canStop: true });
+        try {
+            const screen = await renderScreen(<Harness sites={['shell']} workspaceActive />);
+            expect(screen.findAllHostsByTestId('voice-presence-app-shell-root')).toHaveLength(1);
+            await screen.update(<Harness sites={['shell', 'route']} workspaceActive />);
+            expect(screen.findAllHostsByTestId('voice-presence-app-shell-root')).toHaveLength(1);
+        } finally {
+            resetVoiceSessionStoreForTests();
+            registerVoiceAdapters([]);
+        }
+    });
     // FIN N4: one bottom chrome at a time; the page's own bar wins and the shell's bar comes back after it.
     it('gives the bottom to a page\'s own pinned bar and takes it back when the bar leaves', async () => {
         const screen = await renderScreen(<Harness pageBar />);

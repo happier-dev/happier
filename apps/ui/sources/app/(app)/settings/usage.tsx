@@ -1,21 +1,13 @@
 import React from 'react';
-import { Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { UsageWidgetPage } from '@/components/settings/usage/UsageWidgetPage';
 import { buildUsageRouteParams, resolveUsagePageInitialFilters } from '@/components/settings/usage/usageRouteParams';
-import { resolveFloatingTabBarBottomPadding } from '@/components/ui/navigation/floatingTabBarBottomInset';
-
-// Clears the floating bottom nav (its pill height above its own bottom padding)
-// so the usage footer is never overlapped on the full-page route (D-R2-10).
-const FLOATING_TAB_BAR_PILL_CLEARANCE = 64;
+import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 export function UsageSettingsScreen() {
     const params = useLocalSearchParams() as Record<string, string | string[] | undefined>;
     const router = useRouter();
-    const insets = useSafeAreaInsets();
-    const contentBottomInset = resolveFloatingTabBarBottomPadding(insets.bottom, Platform.OS === 'ios')
-        + FLOATING_TAB_BAR_PILL_CLEARANCE;
+    const contentBottomInset = useSessionCockpitPageBottomClearance();
     const initialFilters = React.useMemo(() => resolveUsagePageInitialFilters(params), [
         params.period,
         params.metric,

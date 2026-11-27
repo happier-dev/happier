@@ -11,7 +11,6 @@ import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
 import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
 import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
-import { VoicePresenceAppShellMount } from '@/components/voice/presence/VoicePresenceAppShellMount';
 import { VoiceKeyboardRuntime } from '@/components/voice/attempt/VoiceKeyboardRuntime';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -112,7 +111,6 @@ function AppWideRuntimeMounts(props: Readonly<{ isAuthenticated: boolean; isDesk
     const floatingCompanions = (
         <>
             <PetAppShellCompanionMount />
-            <VoicePresenceAppShellMount />
         </>
     );
     return (
