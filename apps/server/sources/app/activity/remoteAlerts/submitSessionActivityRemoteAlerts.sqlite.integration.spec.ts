@@ -547,8 +547,8 @@ describe("Home remote alert submission (SQLite)", () => {
         ["soft", "happier_soft.wav", "happier.default.soft.v1"],
         ["urgent", "happier_urgent.wav", "happier.default.urgent.v1"],
         ["none", undefined, "happier.default.silent.v1"],
-        ["custom:private-file", undefined, "happier.default.silent.v1"],
-    ] as const)("preserves %s sound policy at the Expo boundary", async (soundId, sound, channelId) => {
+        ["custom:private-file", "happier_soft.wav", "happier.default.soft.v1"],
+    ] as const)("resolves %s sound policy at the Expo boundary", async (soundId, sound, channelId) => {
         const { follower, session } = await fixture();
         await enrollRemoteAlerts(follower.id, accountSettingsWithRemoteAlerts({
             sounds: { defaultSoundId: soundId, eventSoundIds: {}, volume: 1 },
