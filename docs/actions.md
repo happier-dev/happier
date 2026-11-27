@@ -4332,6 +4332,8 @@ The optional host-only `includeCoach` clause controls Coach evaluation over
 those facts: omitted preserves direct Action behavior, while builtin widgets
 enable it only for Coach. Accounting and Session-evidence HTTP requests omit
 this projection clause, so it does not change private-evidence admission.
+Mounted Usage Actions that include Coach wait for the requested query’s Coach
+evidence and preferences, and preserve typed failures and Session refusals.
 The optional host-only `includeQuota` clause controls allowance and pool
 acquisition and projection. Omitted preserves direct Action demand; builtin
 Capacity, Projections, Resets, Plan fit and Coach request it explicitly. Capacity

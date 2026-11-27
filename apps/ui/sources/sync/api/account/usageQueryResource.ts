@@ -1734,18 +1734,28 @@ export async function readUiUsageQueryBatch(
     let quota: OpenedQuotaRead = quotaQueries.length ? readOpenedQuota(context, quotaQueries, previous) : { status: 'not_loaded' };
     let pools: readonly UsagePoolSourceSnapshot[] = quotaQueries.length ? readOpenedUsagePools(context, quotaQueries) : [];
     const priorSlices = new Map(previous?.results.map(slice => [slice.key, slice]));
-    const coachQueryKeys = evidenceQueries.filter(query => query.includeCoach !== false).map(getUsageQueryKey);
-    const priorCoachPhases = new Map(coachQueryKeys.flatMap(key => {
+    const coachQueries = evidenceQueries.filter(query => query.includeCoach !== false)
+        .map(query => ({ query, key: getUsageQueryKey(query) }));
+    const priorCoachPhases = new Map(coachQueries.flatMap(({ key }) => {
         const prior = priorSlices.get(key)?.sources.find(source => source.source === USAGE_COACH_PREFERENCES_READ_SOURCE);
         return prior ? [[key, prior] as const] : [];
     }));
     let coachSuppression: UsageQuerySourceState | null | undefined;
+    const needsCoachCatalog = (query: UsageQuery, snapshot: HowYouWorkReadSnapshot | undefined) =>
+        query.includeCoach !== false && !!snapshot?.detail?.coach?.detail?.mcpUsage?.length;
     const projectCurrentDetailPhases = () => {
-        if (coachSuppression === null || !coachSuppression && priorCoachPhases.size === 0) return howYouWorkSourcesByQuery;
+        if (!coachQueries.length) return howYouWorkSourcesByQuery;
         const phases = new Map(howYouWorkSourcesByQuery);
-        for (const key of coachQueryKeys) {
-            const coach = coachSuppression ?? priorCoachPhases.get(key);
-            if (coach) phases.set(key, [...(phases.get(key) ?? []), coach]);
+        for (const { query, key } of coachQueries) {
+            // Coach settles on the Activity, optional catalog and preferences
+            // this evaluation used. Both readers consume this one source.
+            const pending = !settledHowYouWorkQueries.has(key) || coachSuppression === undefined
+                || (!mcpCatalog && needsCoachCatalog(query, howYouWorkByQuery.get(key)));
+            const failure = coachSuppression === undefined ? priorCoachPhases.get(key) : coachSuppression;
+            const coach: UsageQuerySourceState = { source: USAGE_COACH_PREFERENCES_READ_SOURCE,
+                status: pending ? 'pending' : failure?.errorCode ? 'error' : 'available',
+                ...(failure?.errorCode === undefined ? {} : { errorCode: failure.errorCode }) };
+            phases.set(key, [...(phases.get(key) ?? []), coach]);
         }
         return phases;
     };
@@ -1910,7 +1920,7 @@ export async function readUiUsageQueryBatch(
         await Promise.all([
         settleAccounting(),
         (async () => {
-            if (coachQueryKeys.length === 0) return;
+            if (coachQueries.length === 0) return;
             const priorSuppressions = accountOwner.coachSuppressions;
             let errorCode: string | undefined;
             try {
@@ -1929,7 +1939,7 @@ export async function readUiUsageQueryBatch(
             }
             coachSuppression = errorCode === undefined ? null
                 : { source: USAGE_COACH_PREFERENCES_READ_SOURCE, status: 'error', errorCode };
-            if (coachQueryKeys.some(key => priorCoachPhases.get(key)?.errorCode !== errorCode)
+            if (coachQueries.some(({ key }) => settledHowYouWorkQueries.has(key) || priorCoachPhases.get(key)?.errorCode !== errorCode)
                 || !sameStrictJsonValue(priorSuppressions, accountOwner.coachSuppressions)) publish();
         })(),
         ...queries.map(async (query, index) => {
@@ -2023,7 +2033,7 @@ export async function readUiUsageQueryBatch(
             // Binding advice and its catalog admission are one private-evidence
             // result. Unrelated quota/history reads must not hold them back.
             const admittedSnapshot = snapshots[0]!;
-            if (query.includeCoach !== false && admittedSnapshot.detail?.coach?.detail?.mcpUsage?.length) {
+            if (needsCoachCatalog(query, admittedSnapshot)) {
                 mcpCatalogRead ??= import('./apiMcpServerCatalog').then(({ readMcpServerCatalog }) =>
                     readMcpServerCatalog(context.accountLifetime.scope, signal, () => requireCurrent(context, signal)));
                 mcpCatalog = await mcpCatalogRead;
@@ -2127,6 +2137,7 @@ type UsageEntryAcquisition = Readonly<{
     evidenceCompletion?: Promise<ResourceContent>;
     signal?: AbortSignal;
     workAwaitingOwnRead?: boolean;
+    needsCoachEvidence?: boolean;
     getEvidenceContent(): ResourceContent | undefined;
 }>;
 
@@ -2208,9 +2219,24 @@ function withExplicitAllowanceRefresh(store: ReturnType<typeof createPluginUiRes
                         }
                     }
                     const joined = read;
+                    const coachKeys = typeof reference !== 'string' && 'hostRead' in reference
+                        ? normalizeUsageQueryBatchInput(reference.input).queries.filter(query =>
+                            query.includeAccounting && query.includeSessionEvidence
+                                && (query.includeCoach !== false || context.usageQueryReadiness === 'coach_evidence')).map(getUsageQueryKey)
+                        : [];
                     return { accounting: joined.accounting, evidenceCompletion: joined.completion,
                         signal: joined.signal, workAwaitingOwnRead: admitted.workAwaitingOwnRead,
-                        getEvidenceContent: () => joined.projected && readAdmission(reference, joined.projected).currentContent };
+                        needsCoachEvidence: coachKeys.length > 0,
+                        getEvidenceContent() {
+                            if (!joined.projected) return undefined;
+                            if (coachKeys.length && decodeUsageQueryResource(joined.projected).results.some(slice =>
+                                coachKeys.includes(slice.key) && (slice.requestedQuery.includeCoach !== false
+                                    ? hasPendingCoachEvidence(slice)
+                                    : slice.sources.some(source => source.source === 'how_you_work'
+                                        && (source.status === 'pending' || source.status === 'not_loaded')))))
+                                return undefined;
+                            return readAdmission(reference, joined.projected).currentContent;
+                        } };
                 },
                 isAllowanceReadPending: () => entry.getSnapshot().pending !== 'idle' && isAllowanceReadPending(reference),
                 isPresentationReady: () => (presentationReady ??= createPresentationReadiness(reference, entry))(),
@@ -2261,6 +2287,10 @@ function canReadActivityWithoutRefusedAccounting(query: UsageQuery): boolean {
     // still ask Home for each explicit subject unless its selection needs Accounting.
     return query.includeSessionEvidence && readUsageSessionScope(query.session).length > 1
         && selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [] }).length > 0;
+}
+
+function hasPendingCoachEvidence(slice: UsageQueryResultSlice) {
+    return slice.sources.some(source => source.source === USAGE_COACH_PREFERENCES_READ_SOURCE && source.status === 'pending');
 }
 
 function withdrawUsageQuerySlice(slice: UsageQueryResultSlice, errorCode: UsageAccountingSliceRefusal['code']): UsageQueryResultSlice {
@@ -2825,8 +2855,24 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const replacement = { ...value, results: value.results.map(slice => matches(slice.requestedQuery)
                     ? withdrawUsageQuerySlice(slice, errorCode) : slice) };
                 const next = createUsageQueryResourceContent(replacement);
+                // The stripped publication belongs to the refusal's Accounting
+                // admission. Advance no identity for a slice whose facts survive.
+                const fullyWithdrawn = new Set(replacement.results.filter(slice => matches(slice.requestedQuery)
+                    && !canReadActivityWithoutRefusedAccounting(slice.requestedQuery)).map(slice => slice.key));
+                const hasReadableEvidence = replacement.results.some(slice => !fullyWithdrawn.has(slice.key)
+                    && (slice.requestedQuery.includeSessionEvidence || slice.requestedQuery.includeTranscriptEvidence
+                        || slice.requestedQuery.includeWorkEvidence));
+                const queryOffset = (admission?.inputs.length ?? 0) - replacement.results.length;
+                const inputs = admission?.inputs.map((identity, index) => {
+                    if (queryOffset > 1 && index === 1 && !hasReadableEvidence) return sessionEvidenceInputs;
+                    const slice = replacement.results[index - queryOffset];
+                    return slice && fullyWithdrawn.has(slice.key)
+                        ? accountingInputs.get(accountingInputKey(slice.requestedQuery))?.identity ?? identity : identity;
+                });
                 decodedValues.set(next, { value: replacement,
-                    admission: admission && { ...admission, reusable: false } });
+                    admission: admission && inputs && { ...admission, inputs, reusable: false,
+                        workMachineInputs: admission.workMachineInputs.filter(input => !fullyWithdrawn.has(input.queryKey)),
+                    } });
                 return next;
             });
         },
@@ -3084,8 +3130,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // keys and Session facts; retryable failures recover on reopen.
                     // The final requested sources can publish before a private
                     // Action releases its consumer and the producer tears down.
-                    const settled = settledRead || value.results.every(slice => !slice.pending
-                        && !slice.sources.some(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)));
+                    const settled = settledRead || value.results.every(slice => !slice.pending && !hasPendingCoachEvidence(slice));
                     // A masked sibling may settle this read without disclosing facts,
                     // but only a direct refusal can satisfy another acquisition.
                     const reusable = settled && value.results.every(slice => !slice.pending
@@ -3163,9 +3208,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                                 }
                             }
                             custodyChanged ||= slice !== shown;
-                            return !slice.pending ? slice : { ...slice, pending: false,
+                            return !slice.pending && !hasPendingCoachEvidence(slice) ? slice : { ...slice, pending: false,
                                 sources: slice.sources.map(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)
-                                    ? { ...source, status: 'error' as const, errorCode: failureCode } : source) };
+                                    ? { ...source, status: 'error' as const, errorCode: source.source === USAGE_COACH_PREFERENCES_READ_SOURCE
+                                        ? source.errorCode ?? failureCode : failureCode } : source) };
                         });
                         if (results.some((slice, index) => slice !== batch.results[index])) batch = { ...batch, results };
                         if (custodyChanged) reproject = undefined;
@@ -3294,7 +3340,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 // an explicit refresh or coalesced acquisition always wins.
                 const missedProjectionOnly = readDemand.length === 0 && retained.sourcesCurrent && admission?.reusable
                     && readResourceInputChanges(admission.inputs[0]!, readInputs[0]!)?.length === 0;
-                if (previousReproject && !retained.changedWorkTargets && (!admission || quotaClockCurrent)
+                if (previousReproject && !previous?.results.some(hasPendingCoachEvidence) && !retained.changedWorkTargets && (!admission || quotaClockCurrent)
                     && (missedProjectionOnly || readDemand.length > 0 && readDemand.every(demand => demand.projectionOnly))) {
                     projectionIsCurrent = () => readDemand.length > 0
                         ? readDemand.every(demand => demand.isCurrent()) : retainedCurrentness.isCurrent();

@@ -7,6 +7,7 @@ import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness'
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { standardCleanup } from '@/dev/testkit';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -26,7 +27,7 @@ import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCreden
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import { updateProviderAccountUsageCacheEntries } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
-import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
 
 const clipboard = vi.hoisted(() => ({ image: vi.fn(async (_base64: string) => {}) }));
 // The operating-system clipboard is the boundary; captured Account, Action admission,
@@ -649,15 +650,21 @@ describe('recap export through the real captured UI Account Action', () => {
     }
   });
 
-  it('keeps a withdrawn Session out of an already-settled Accounting handoff while detail is held', async () => {
+  it.each([false, true])('hands off a withdrawn Session while detail is held (includeCoach: %s)', async includeCoach => {
     const detail = createDeferred<Response>();
     const detailStarted = createDeferred<void>();
+    const releasePreferences = createDeferred<void>();
     const sessionId = 'handoff-withdrawal';
     const original = normalizeUsageQuery({ period: { startMs: 1000, endMs: 2000 }, session: [sessionId],
-      includeComparison: false, includeQuota: false, includeCoach: false, includeWorkEvidence: false,
+      includeComparison: false, includeQuota: false, includeCoach, includeWorkEvidence: false,
       includeSessionEvidence: true, includeTranscriptEvidence: false });
     const refusal = normalizeUsageQuery({ ...original, period: { startMs: 3000, endMs: 4000 }, includeSessionEvidence: false });
-    const caller = await context(false, request => {
+    const kv = createAccountKvHttpFixture();
+    const caller = await context(false, async request => {
+      if (request.path === '/v1/kv/bulk' && request.accountId !== null) {
+        await releasePreferences.promise;
+        return (await kv.handleFetch(request.url, { method: request.method, body: JSON.stringify(request.body) })) ?? undefined;
+      }
       if (request.path === '/v2/usage/query-batch') {
         const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
         return Response.json({ v: 1, results: queries.map(query => query.dateRange?.startMs === 3000
@@ -678,20 +685,158 @@ describe('recap export through the real captured UI Account Action', () => {
     const release = entry.subscribe(() => {}, true);
     const executor = createDefaultActionExecutor();
     const withdrawn = { sources: expect.arrayContaining([expect.objectContaining({ source: 'accounting', errorCode: 'denied' })]) };
+    const abort = new AbortController();
+    let action: Promise<ActionExecuteResult> | undefined;
     try {
       await detailStarted.promise;
-      expect(await executor.execute('usage.query', first, caller)).toMatchObject({ ok: true,
-        result: { results: [{ accounting: { totals: { eventCount: 1 } } }] } });
+      await vi.waitFor(() => expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals.eventCount).toBe(1));
       expect(await executor.execute('usage.query', { queries: [refusal] }, caller)).toMatchObject({ ok: true,
         result: { results: [withdrawn] } });
       const page = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
       expect(page).toMatchObject(withdrawn);
       expect(page.accounting).toBeUndefined();
-      const reply = await executor.execute('usage.query', first, caller);
-      expect(reply).toMatchObject({ ok: true, result: { results: [withdrawn] } });
-      if (reply.ok) expect(UsageQueryBatchResultSchema.parse(reply.result).results[0]?.accounting).toBeUndefined();
+      let reply: ActionExecuteResult | undefined;
+      action = executor.execute('usage.query', first, { ...caller, signal: abort.signal }).then(result => { reply = result; return result; });
+      await vi.waitFor(() => expect(reply).toMatchObject({ ok: true, result: { results: [withdrawn] } }));
+      const settled = await action;
+      if (settled.ok) expect(UsageQueryBatchResultSchema.parse(settled.result).results[0]?.accounting).toBeUndefined();
     } finally {
+      abort.abort();
       detail.resolve(Response.json({ error: 'unavailable' }, { status: 503 }));
+      releasePreferences.resolve();
+      await action?.catch(error => { if (error?.name !== 'AbortError') throw error; });
+      release();
+    }
+  });
+
+  it.each([
+    { includeCoach: true, preferences: 'immediate' },
+    { includeCoach: undefined, preferences: 'immediate' },
+    { includeCoach: true, preferences: 'held success' },
+    { includeCoach: true, preferences: 'held failure' },
+  ] as const)('uses settled same-window Coach evidence ($includeCoach, preferences: $preferences)', async ({ includeCoach, preferences }) => {
+    const sessionId = 'coach-approval-pairs';
+    const period = { startMs: 1000, endMs: 2000 };
+    const query = normalizeUsageQuery({ period, session: sessionId, includeCoach, includeComparison: false,
+      includeQuota: false, includeWorkEvidence: false, includeSessionEvidence: true, includeTranscriptEvidence: true });
+    const transcriptStarted = createDeferred<void>();
+    const releaseTranscript = createDeferred<void>();
+    const preferencesStarted = createDeferred<void>();
+    const releasePreferences = createDeferred<void>();
+    const kv = createAccountKvHttpFixture();
+    const caller = await context(false, async request => {
+      if (request.path === '/v2/usage/query-batch') {
+        const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+        return Response.json({ v: 1, results: queries.map(query => ({ query, value: accounting })) });
+      }
+      if (request.path === '/v1/kv/bulk' && request.accountId !== null) {
+        preferencesStarted.resolve();
+        if (preferences !== 'immediate') await releasePreferences.promise;
+        if (preferences === 'held failure') return Response.json({ error: 'unavailable' }, { status: 503 });
+        return (await kv.handleFetch(request.url, { method: request.method, body: JSON.stringify(request.body) })) ?? undefined;
+      }
+      if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const { requests } = UsageSessionEvidenceRequestSchema.parse(request.body);
+      const transcripts = requests.some(demand => demand.query.includeTranscriptEvidence);
+      if (transcripts) {
+        transcriptStarted.resolve();
+        await releaseTranscript.promise;
+      }
+      return Response.json({ requests: requests.map(({ query }) => ({ query, sessionIds: [sessionId] })),
+        results: [{
+          sessionId,
+          detail: { status: 200, body: { session: createPlainSessionWithDisplayRecordFixture({
+            id: sessionId, seq: 1, createdAt: 1100, updatedAt: 1900, active: true,
+          }) } },
+          turns: { status: 200, body: { v: 1, sessionId, updatedAt: 1900, turns: [] } },
+          stateEvidence: { waits: [], permissions: (transcripts ? [1200, 1400] : [1200]).map(requestedAtMs => ({
+            requestId: String(requestedAtMs), workId: JSON.stringify([sessionId, null]), requestedAtMs,
+            decidedAtMs: requestedAtMs + 100, toolId: 'Bash', answeringClientCategory: null,
+          })) },
+          ...(transcripts ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+        }],
+      } satisfies UsageSessionEvidenceResponse);
+    });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home!.homes.a!.serverUrl))!;
+    const demand = { queries: [query] };
+    const entry = getUsageQueryResourceStore(captureUiUsageQueryAccountContext(credentials)!)
+      .getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(demand) });
+    const pageSlice = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+    const { createElement } = await import('react');
+    const { renderScreen } = await import('@/dev/testkit');
+    const { createMountedCurrentUiContextWrapper } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+    const { UsageCoachWidget } = await import('@/components/settings/usage/widgets/UsageCoachWidget');
+    const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
+    const wrapper = await createMountedCurrentUiContextWrapper();
+    const widget = () => {
+      const slice = pageSlice();
+      return createElement(UsageCoachWidget, { id: 'usage_coach', testID: 'mounted-coach', query, slice,
+        serverId: caller.serverId, model: { refresh: async () => { await entry.refresh(); } } });
+    };
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    const release = entry.subscribe(() => {}, true);
+    const abort = new AbortController();
+    let reply: ActionExecuteResult | undefined;
+    const action = createDefaultActionExecutor().execute('usage.query', demand, { ...caller, signal: abort.signal })
+      .then(result => { reply = result; return result; });
+    try {
+      await transcriptStarted.promise;
+      await vi.waitFor(() => expect(pageSlice()).toMatchObject({ requestedQuery: { period }, pending: true,
+        accounting: { totals: { eventCount: 1 } },
+        howYouWork: { permissions: { pairedDecisionCount: 1 } },
+        sources: expect.arrayContaining([expect.objectContaining({ source: 'how_you_work:transcripts', status: 'pending' })]),
+      }));
+      await flushHookEffects({ cycles: 15 });
+      expect.soft(reply, 'the Action must wait for the Coach evidence for this window').toBeUndefined();
+      releaseTranscript.resolve();
+      if (preferences !== 'immediate') {
+        await preferencesStarted.promise;
+        await vi.waitFor(() => expect(pageSlice()).toMatchObject({
+          howYouWork: { permissions: { pairedDecisionCount: 2 } },
+          sources: expect.arrayContaining([expect.objectContaining({ source: 'how_you_work:transcripts', status: 'available' })]),
+        }));
+        await flushHookEffects({ cycles: 15 });
+        expect.soft(reply, 'settled transcripts do not settle the Coach preference read').toBeUndefined();
+        screen = await renderScreen(widget(), { wrapper });
+        expect.soft(Boolean(screen.findHostByTestId('mounted-coach.loading')), 'widget shows Reading').toBe(true);
+        expect.soft(Boolean(screen.findHostByTestId('mounted-coach.unavailable')), 'widget does not claim unavailability').toBe(false);
+      }
+      releasePreferences.resolve();
+      const result = await action;
+      await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
+      if (preferences === 'held failure') {
+        const failure = expect.objectContaining({ source: 'how_you_work:coach', status: 'error', errorCode: 'http_error' });
+        expect(pageSlice().sources).toContainEqual(failure);
+        await screen!.update(widget());
+        const coverage = screen!.findAllByType(SurfaceFreshnessLine)
+          .filter(line => line.props.testID === 'mounted-coach.coverage')
+          .map(line => ({ tone: line.props.tone, retry: typeof line.props.action?.onPress === 'function' }));
+        expect.soft(coverage, 'widget shows the Coach failure with Retry').toEqual([{ tone: 'warning', retry: true }]);
+        expect(result).toMatchObject({ ok: true, result: { results: [{
+          howYouWork: { permissions: { pairedDecisionCount: 2 } }, sources: expect.arrayContaining([failure]),
+        }] } });
+        return;
+      }
+      expect(result).toMatchObject({ ok: true, result: { results: [{
+        requestedQuery: { period }, pending: false, howYouWork: { permissions: { pairedDecisionCount: 2 } },
+        coach: { findings: expect.arrayContaining([expect.objectContaining({ detectorId: 'approval_friction',
+          measurements: expect.arrayContaining([expect.objectContaining({ metric: 'permission_requests', value: 2 })]),
+        })]) },
+      }] } });
+      if (result.ok) expect(UsageQueryBatchResultSchema.parse(result.result).results[0]?.coach).toEqual(pageSlice().coach);
+      if (screen) {
+        await screen.update(widget());
+        expect(Boolean(screen.findHostByTestId('mounted-coach.loading'))).toBe(false);
+        expect(Boolean(screen.findHostByTestId('mounted-coach.unavailable'))).toBe(false);
+      }
+    } finally {
+      await screen?.unmount();
+      abort.abort();
+      releaseTranscript.resolve();
+      releasePreferences.resolve();
+      await action.catch(() => undefined);
       release();
     }
   });
@@ -735,8 +880,9 @@ describe('recap export through the real captured UI Account Action', () => {
         .then(result => { evidenceResult = result; });
       try {
         await privateRead.promise;
-        const early = await executor.execute('usage.query', input, caller);
-        expect(early).toMatchObject({ ok: true, result: { results: [{ accounting: { totals: { eventCount: 1 } }, pending: true }] } });
+        await vi.waitFor(() => expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]).toMatchObject({
+          pending: true, accounting: { totals: { eventCount: 1 } },
+        }));
         expect(evidenceResult).toBeUndefined();
         const progress = entry.getSnapshot().value;
         detail.resolve(Response.json({ requests: [], results: [] }));
@@ -889,7 +1035,7 @@ describe('recap export through the real captured UI Account Action', () => {
     }
   });
 
-  it('returns the one-shot query snapshot without harvesting held private evidence', async () => {
+  it('returns Accounting for a non-Coach query while Session evidence is held', async () => {
     const privateSession = createDeferred<Response>();
     const caller = await context(false, request => request.path === '/v2/usage/query'
       ? Response.json({ ...accounting, contributions: [{ id: 'cost', observedAtMs: 500, sessionId: 'work-session',
@@ -899,7 +1045,7 @@ describe('recap export through the real captured UI Account Action', () => {
         : request.path === '/v1/account/encryption/currentness' ? Response.json({ mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }) : undefined);
     const settled: ActionExecuteResult[] = [];
-    const pending = createDefaultActionExecutor().execute('usage.query', { queries: [input.query] }, caller)
+    const pending = createDefaultActionExecutor().execute('usage.query', { queries: [normalizeUsageQuery({ ...input.query, includeCoach: false })] }, caller)
       .then(result => { settled.push(result); });
     try {
       await vi.waitFor(() => expect(settled[0]?.ok).toBe(true));

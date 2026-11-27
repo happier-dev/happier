@@ -58,7 +58,7 @@ import {
   type UsageCoachController,
   type UsageCoachSnapshot,
 } from './usageCoachController';
-import { projectUsageCoachFindings, projectUsageCoachTrend, readUsageCoachFailureMessage, readUsageCoachState } from './usageCoachPresentation';
+import { projectUsageCoachFindings, projectUsageCoachTrend, readUsageCoachFailureMessage, readUsageCoachState, USAGE_COACH_COVERAGE_SOURCES } from './usageCoachPresentation';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useUsageDisclosureCommand } from './usageMountedControls';
 
@@ -324,14 +324,15 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   if (!coach)
     return (
       <View style={styles.body}>
-          <UsageBodyInsufficient
-            testID={`${props.testID}.unavailable`}
-            title={t('usage.board.coach.unavailableTitle')}
-          />
+          {reading ? <UsageBodyReading testID={`${props.testID}.loading`} {...(strip ? { shape: { kind: 'strip' as const } } : {})} /> :
+            <UsageBodyInsufficient
+              testID={`${props.testID}.unavailable`}
+              title={t('usage.board.coach.unavailableTitle')}
+            />}
           {configuration}
           <UsageCoverageLine
             slice={props.slice}
-            sources={['how_you_work', 'accounting']}
+            sources={USAGE_COACH_COVERAGE_SOURCES}
             onRetry={refresh}
             testID={`${props.testID}.coverage`}
           />
@@ -468,7 +469,7 @@ export function UsageCoachWidget(props: UsageBodyProps) {
         {glance ? null : configuration}
         <UsageCoverageLine
           slice={props.slice}
-          sources={['how_you_work', 'accounting']}
+          sources={USAGE_COACH_COVERAGE_SOURCES}
           onRetry={refresh}
           testID={`${props.testID}.coverage`}
         />

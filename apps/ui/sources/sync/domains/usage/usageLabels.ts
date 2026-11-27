@@ -1,5 +1,6 @@
 import type { UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { getAgentStaticModels } from '@happier-dev/agents';
+import { USAGE_COACH_PREFERENCES_READ_SOURCE } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { isUnattributedUsageAgentId } from '@happier-dev/protocol/usage/usageFormatting';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -17,6 +18,7 @@ const SOURCE_LABEL_KEYS = {
     quota: 'usage.board.page.sourceQuota',
     work: 'usage.board.page.sourceWork',
     how_you_work: 'usage.board.page.sourceHowYouWork',
+    [USAGE_COACH_PREFERENCES_READ_SOURCE]: 'widgets.usage_coach',
     comparison: 'usage.board.page.sourceComparison',
     legacy: 'usage.board.page.sourceAccounting',
     legacy_usage_report: 'usage.board.page.sourceAccounting',

@@ -2,7 +2,7 @@ import { isUsageCoachUndoActionIdV1 } from '@happier-dev/protocol/usage/usageAct
 import type { UsageCoachFinding } from '@happier-dev/protocol/usage/coach/coachFinding';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { UsageCoachSnapshot } from './usageCoachController';
-import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readUsageCoverageGaps } from './usageBodyKit';
 
 export function readUsageCoachFailureMessage(error: NonNullable<UsageCoachSnapshot['error']>): 'usage.board.coach.undoConflict' | 'usage.board.coach.actionFailed' {
@@ -12,12 +12,17 @@ export function readUsageCoachFailureMessage(error: NonNullable<UsageCoachSnapsh
     ? 'usage.board.coach.undoConflict' : 'usage.board.coach.actionFailed';
 }
 
+export const USAGE_COACH_COVERAGE_SOURCES = ['accounting', 'how_you_work', USAGE_COACH_PREFERENCES_READ_SOURCE] as const;
+
 /** Evidence activity is independent of whether a previous evaluation is retained as stale. */
 export function readUsageCoachState(slice: UsageQueryResultSlice): 'reading' | 'ready' | 'unavailable' {
-  const sources = slice.shownQuery.includeSessionEvidence ? ['accounting', 'how_you_work'] : ['accounting'];
-  if (readUsageCoverageGaps(slice, sources).some(source => source.status === 'pending' || source.status === 'not_loaded'))
-    return 'reading';
-  return slice.coach ? 'ready' : 'unavailable';
+  const settlement = slice.sources.find(source => source.source === USAGE_COACH_PREFERENCES_READ_SOURCE);
+  // Some hosts can show an initial Activity projection before the first
+  // Resource publication. Its base coverage still describes that first frame.
+  const reading = settlement ? settlement.status === 'pending'
+    : readUsageCoverageGaps(slice, slice.shownQuery.includeSessionEvidence ? USAGE_COACH_COVERAGE_SOURCES : ['accounting'])
+      .some(source => source.status === 'pending' || source.status === 'not_loaded');
+  return reading ? 'reading' : slice.coach ? 'ready' : 'unavailable';
 }
 
 /** Project the mounted rows from finding state and acknowledged Action receipts. */

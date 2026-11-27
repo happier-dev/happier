@@ -10,7 +10,8 @@ export function usagePageReadFamily(source: string): string {
 
 export function isUsageCoverageFailure(source: CoverageStatus): boolean {
     return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed'
-        || source.status === 'stale' && source.errorCode !== undefined && usagePageReadFamily(source.source) === 'quota';
+        || source.status === 'stale' && source.errorCode !== undefined && usagePageReadFamily(source.source) === 'quota'
+        || source.source === USAGE_COACH_PREFERENCES_READ_SOURCE && source.status === 'pending' && source.errorCode !== undefined;
 }
 
 export function needsNewerServer(gap: Pick<UsageQuerySourceState, 'status' | 'updateRequired'>): boolean {

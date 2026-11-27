@@ -126,12 +126,9 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
       account.assertCurrent();
       let release: (() => void) | undefined;
       try {
-        // A one-shot Action returns its current truthful snapshot; it does not
-        // harvest every optional source. This exact Resource also belongs to
-        // mounted consumers, whose subscriptions own subsequent progression.
         const entry = getUsageQueryResourceStore(account).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
         const joined = entry.acquire(context);
-        const needsEvidence = joined.workAwaitingOwnRead || context.usageQueryReadiness === 'coach_evidence'
+        const needsEvidence = joined.workAwaitingOwnRead || joined.needsCoachEvidence
           || context.usageQueryReadiness === 'public_profile';
         const result = await new Promise<UsageQueryBatchResult>((resolve, reject) => {
           let accounting: UsageQueryBatchResult | undefined;
@@ -151,10 +148,6 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
               const content = joined.getEvidenceContent();
               if (!content) return;
               const batch = decodeUsageQueryResource(content);
-              // Coach and public profile explicitly request this private evidence.
-              if (context.usageQueryReadiness === 'coach_evidence' && batch.results.some(slice =>
-                slice.requestedQuery.includeSessionEvidence && slice.sources.some(source =>
-                  source.source === 'how_you_work' && ['pending', 'not_loaded'].includes(source.status)))) return;
               if (context.usageQueryReadiness === 'public_profile' && batch.results.some(slice => slice.sources.some(source =>
                 (source.source === 'how_you_work' && slice.requestedQuery.includeSessionEvidence
                   || source.source === 'work' && slice.requestedQuery.includeWorkEvidence)

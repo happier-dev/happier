@@ -2833,7 +2833,7 @@ describe('usage query captured Resource adapter', () => {
       return undefined;
     });
     const summary = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeActivity: true,
-      includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false });
+      includeWorkEvidence: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeCoach: false });
     const detail = normalizeUsageQuery({ ...summary, includeSessionEvidence: true });
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [summary, detail] }) });
@@ -4268,6 +4268,7 @@ describe('usage query captured Resource adapter', () => {
       const suppressionPhase = (slice: ReturnType<typeof current>) =>
         slice.sources.filter(source => source.source === 'how_you_work:coach');
       const suppressionFailure = [{ source: 'how_you_work:coach', status: 'error', errorCode: 'http_error' }];
+      const pendingSuppressionFailure = suppressionFailure.map(source => ({ ...source, status: 'pending' }));
       if (scenario === 'cold malformed suppression' || unopenableSuppression) {
         expect(acquired.error).toBeUndefined();
         const slice = current(exact);
@@ -4292,9 +4293,9 @@ describe('usage query captured Resource adapter', () => {
         expect(suppressionPhase(current(exact))).toEqual(suppressionFailure);
         holdSuppression = true;
         activityUnavailable = true;
-        const notices: unknown[] = [];
+        const notices: string[][] = [];
         const stopObserving = exact.subscribe(() => {
-          if (exact.getSnapshot().value) notices.push(suppressionPhase(current(exact)));
+          if (exact.getSnapshot().value) notices.push(suppressionPhase(current(exact)).flatMap(source => source.errorCode ?? []));
         }, false);
         try {
           publishHomeAccountChange(captured.accountLifetime.scope.serverId, [secondary], { changeKinds: ['session'], usageQueryAffects: true });
@@ -4303,11 +4304,14 @@ describe('usage query captured Resource adapter', () => {
           await vi.waitFor(() => expect(current(exact).sources).toContainEqual(expect.objectContaining({
             source: 'how_you_work', status: 'stale', errorCode: 'http_error',
           })));
-          expect(suppressionPhase(current(exact))).toEqual(suppressionFailure);
+          expect(suppressionPhase(current(exact))).toEqual(pendingSuppressionFailure);
+          const { readUsagePageFailure } = await import('@/components/settings/usage/widgets/usageBodyKit');
+          expect(readUsagePageFailure([current(exact)])).toMatchObject({ retryable: true, quiet: false });
           finishSuppression.resolve();
           expect((await retry).error).toBeUndefined();
           expect(notices.length).toBeGreaterThan(0);
-          expect(notices.every(phase => JSON.stringify(phase) === JSON.stringify(suppressionFailure))).toBe(true);
+          expect(notices).toEqual(notices.map(() => ['http_error']));
+          expect(suppressionPhase(current(exact))).toEqual(suppressionFailure);
         } finally { stopObserving(); }
         return;
       }
@@ -4317,7 +4321,7 @@ describe('usage query captured Resource adapter', () => {
         publishHomeAccountChange(captured.accountLifetime.scope.serverId, [secondary], { changeKinds: ['session'], usageQueryAffects: true });
         const replacement = exact.refresh();
         await activityEntered.promise;
-        await vi.waitFor(() => expect(suppressionPhase(current(exact))).toEqual(suppressionFailure));
+        await vi.waitFor(() => expect(suppressionPhase(current(exact))).toEqual(pendingSuppressionFailure));
         const pending = current(exact);
         expect(pending.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'pending' }));
         expect(pending.accounting?.totals.tokens.total).toBe(15);
@@ -4356,7 +4360,7 @@ describe('usage query captured Resource adapter', () => {
         if (suppressionUnavailable) {
           expect(suppressionPhase(retained)).toEqual(suppressionFailure);
           expect(readUsagePageFailure([retained])).toMatchObject({ retryable: true, quiet: false });
-        } else expect(suppressionPhase(retained)).toEqual([]);
+        } else expect(suppressionPhase(retained)).toEqual([{ source: 'how_you_work:coach', status: 'available' }]);
         expect(retained.coach?.findings.find(row => row.evidenceKey === dismissed.evidenceKey)?.state.dismissed)
           .toBe(suppressionUnavailable);
         return;
