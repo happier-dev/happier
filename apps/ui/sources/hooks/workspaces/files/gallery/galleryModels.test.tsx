@@ -7,6 +7,7 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { publishSessionMessageChanges } from '@/sync/store/sessionMessageChanges';
+import type { WorkspaceTreeNode } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { useFolderGalleryModel } from './useFolderGalleryModel';
 import { useSessionMediaModel } from './useSessionMediaModel';
 import { createGalleryStageItems } from './galleryStage';
@@ -47,7 +48,7 @@ async function installListings(reply: (action: ListingAction, input: ListingInpu
         respond,
     };
 }
-const node = (name: string, modified: number, children?: ReturnType<typeof leaf>[]) => ({
+const node = (name: string, modified: number, children?: readonly WorkspaceTreeNode[]): WorkspaceTreeNode => ({
     ...leaf(name, modified), type: 'directory' as const, children,
 });
 const listEntry = (name: string, modified: number) => ({ name, type: 'file' as const, modified, size: 100 });
