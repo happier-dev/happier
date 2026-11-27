@@ -1,22 +1,11 @@
 import { io, type Socket } from 'socket.io-client';
-import {
-    ConnectedServiceIdSchema,
-    CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD,
-    TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD,
-} from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
 
 import type { ManagedConnectionTransport, TransportDisconnectEvent } from '@happier-dev/connection-supervisor';
 import { readComputerUiFocusState, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import { applyUiClientUpgradeRequired } from '@/sync/runtime/clientCompatibility/uiClientUpgradeRequired';
-import {
-    readSessionLiveTranscriptInterestSessionIds,
-    subscribeToSessionLiveTranscriptInterestChanges,
-} from '@/sync/runtime/sessionLiveConsumption';
 
 type SyncSocket = Socket;
-
-/** Interests change in bursts while surfaces mount, unmount or switch; one declaration per burst. */
-const TRANSCRIPT_INTEREST_DEBOUNCE_MS = 250;
 
 function isSocketActive(socket: SyncSocket): boolean {
     return (socket as unknown as { active?: boolean }).active === true;
@@ -46,8 +35,6 @@ export function createSyncSocketTransport(params: Readonly<{
             token: params.token,
             clientType: 'user-scoped' as const,
             clientPurpose: 'sync' as const,
-            // Live transcripts arrive only for the sessions declared at runtime through `transcript-interest:set`.
-            [TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD]: true,
         },
         ...(params.transports ? { transports: params.transports } : null),
         // Explicitly disable cookies/credentialed requests for cross-origin polling transport.
@@ -74,37 +61,8 @@ export function createSyncSocketTransport(params: Readonly<{
     };
     const stopUiFocus = subscribeToRuntimeActiveChange(publishUiFocus, { includeWindowFocus: true });
 
-    // The server holds no interest for a fresh connection and drops it on disconnect, so this is the
-    // set the live connection is known to hold; it is reset on every connect.
-    let declaredTranscriptInterest: string[] = [];
-    let transcriptInterestTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const publishTranscriptInterest = () => {
-        transcriptInterestTimer = null;
-        // Volatile: never buffered across a disconnect; the next connect resends the current set.
-        if (socket.connected !== true) return;
-        const sessionIds = readSessionLiveTranscriptInterestSessionIds();
-        if (sessionIds.length === declaredTranscriptInterest.length
-            && sessionIds.every((sessionId, index) => sessionId === declaredTranscriptInterest[index])) {
-            return;
-        }
-        socket.emit('transcript-interest:set', { sessionIds }, (response: { ok?: boolean; error?: string } | null) => {
-            if (response?.ok === false) {
-                console.warn('[syncSocket] Transcript interest declaration was refused', response.error);
-            }
-        });
-        declaredTranscriptInterest = sessionIds;
-    };
-    const scheduleTranscriptInterestPublish = () => {
-        if (transcriptInterestTimer !== null) return;
-        transcriptInterestTimer = setTimeout(publishTranscriptInterest, TRANSCRIPT_INTEREST_DEBOUNCE_MS);
-    };
-    const stopTranscriptInterest = subscribeToSessionLiveTranscriptInterestChanges(scheduleTranscriptInterestPublish);
-
     socket.on('connect', () => {
         publishUiFocus();
-        declaredTranscriptInterest = [];
-        publishTranscriptInterest();
         connectedListeners.forEach((listener) => listener());
     });
 
@@ -151,11 +109,6 @@ export function createSyncSocketTransport(params: Readonly<{
         },
         async destroy(): Promise<void> {
             stopUiFocus();
-            stopTranscriptInterest();
-            if (transcriptInterestTimer !== null) {
-                clearTimeout(transcriptInterestTimer);
-                transcriptInterestTimer = null;
-            }
             intentionalDisconnect = false;
             connectedListeners.clear();
             disconnectedListeners.clear();

@@ -11,26 +11,11 @@ type SessionRealtimeScmScopeState = Readonly<{
 }>;
 
 type MountedScmConsumerResetListener = () => void;
-type MountedScmConsumerChangeListener = () => void;
 
 let nextConsumerId = 1;
 const mountedScmConsumerScopes = new Map<number, SessionRealtimeScmScope>();
 const mountedScmConsumerResetListeners = new Set<MountedScmConsumerResetListener>();
-const mountedScmConsumerChangeListeners = new Set<MountedScmConsumerChangeListener>();
 let mountedScmConsumerResetVersion = 0;
-
-function hasMountedScmConsumerScopeForSession(sessionId: string): boolean {
-    for (const scope of mountedScmConsumerScopes.values()) {
-        if (scope.sessionId === sessionId) return true;
-    }
-    return false;
-}
-
-function notifyMountedScmConsumerScopeChange(): void {
-    for (const listener of mountedScmConsumerChangeListeners) {
-        listener();
-    }
-}
 
 function normalizeText(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -107,18 +92,12 @@ export function resolveSessionRealtimeScmScopeForMountedConsumers(
 export function registerSessionRealtimeScmConsumerScope(scope: SessionRealtimeScmScope): () => void {
     const consumerId = nextConsumerId;
     nextConsumerId += 1;
-    const sessionId = scope.sessionId;
-    const wasConsumed = sessionId ? hasMountedScmConsumerScopeForSession(sessionId) : false;
     mountedScmConsumerScopes.set(consumerId, {
         ...scope,
         needsMutationTranscript: true,
     });
-    if (sessionId && !wasConsumed) notifyMountedScmConsumerScopeChange();
     return () => {
         mountedScmConsumerScopes.delete(consumerId);
-        if (sessionId && !hasMountedScmConsumerScopeForSession(sessionId)) {
-            notifyMountedScmConsumerScopeChange();
-        }
     };
 }
 
@@ -139,20 +118,8 @@ export function subscribeMountedSessionRealtimeScmConsumerScopeResets(
     };
 }
 
-/** Notifies when a session id enters or leaves the mounted SCM consumer scopes (register, release or clear). */
-export function subscribeMountedSessionRealtimeScmConsumerScopeChanges(
-    listener: MountedScmConsumerChangeListener,
-): () => void {
-    mountedScmConsumerChangeListeners.add(listener);
-    return () => {
-        mountedScmConsumerChangeListeners.delete(listener);
-    };
-}
-
 export function clearMountedSessionRealtimeScmConsumerScopes(): void {
-    const hadConsumerScopes = mountedScmConsumerScopes.size > 0;
     mountedScmConsumerScopes.clear();
-    if (hadConsumerScopes) notifyMountedScmConsumerScopeChange();
     mountedScmConsumerResetVersion += 1;
     for (const listener of mountedScmConsumerResetListeners) {
         listener();

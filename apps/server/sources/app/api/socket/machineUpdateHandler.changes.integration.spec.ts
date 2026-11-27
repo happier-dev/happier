@@ -317,7 +317,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
             userId: "u1",
             payload,
-            recipientFilter: { type: "transcript-interested-in-session", sessionId: "sess-1" },
+            recipientFilter: { type: "all-interested-in-session", sessionId: "sess-1" },
         }));
     });
 

@@ -34,17 +34,8 @@ type ActiveViewingSessionResetState = {
     listeners: Set<() => void>;
 };
 
-/**
- * Notifies when a session id enters or leaves the visible set. Separate from the reset listeners:
- * those re-register mounted surfaces, while these only re-read the visible set.
- */
-type ActiveViewingSessionVisibilityState = {
-    listeners: Set<() => void>;
-};
-
 const activeViewingSessionStateKey = '__HAPPIER_ACTIVE_VIEWING_SESSION_STATE__';
 const activeViewingSessionResetStateKey = '__HAPPIER_ACTIVE_VIEWING_SESSION_RESET_STATE__';
-const activeViewingSessionVisibilityStateKey = '__HAPPIER_ACTIVE_VIEWING_SESSION_VISIBILITY_STATE__';
 
 function createActiveViewingSessionState(): ActiveViewingSessionState {
     return {
@@ -74,14 +65,6 @@ function getActiveViewingSessionResetState(): ActiveViewingSessionResetState {
     return host[activeViewingSessionResetStateKey];
 }
 
-function getActiveViewingSessionVisibilityState(): ActiveViewingSessionVisibilityState {
-    const host = globalThis as typeof globalThis & {
-        [activeViewingSessionVisibilityStateKey]?: ActiveViewingSessionVisibilityState;
-    };
-    host[activeViewingSessionVisibilityStateKey] ??= { listeners: new Set<() => void>() };
-    return host[activeViewingSessionVisibilityStateKey];
-}
-
 const activeViewingSessionState = getActiveViewingSessionState();
 const visibleSessionRefCounts = activeViewingSessionState.visibleSessionRefCounts;
 const visibleSessionScopedRefCounts = activeViewingSessionState.visibleSessionScopedRefCounts;
@@ -89,31 +72,12 @@ const visibleScopedSessionKeysBySessionId = activeViewingSessionState.visibleSco
 const visibleScopedSessionServerIdsBySessionId = activeViewingSessionState.visibleScopedSessionServerIdsBySessionId;
 const visibleScopedSessionServerIdBySessionKey = activeViewingSessionState.visibleScopedSessionServerIdBySessionKey;
 const activeViewingSessionResetState = getActiveViewingSessionResetState();
-const activeViewingSessionVisibilityState = getActiveViewingSessionVisibilityState();
 
 export function subscribeActiveViewingSessionReset(listener: () => void): () => void {
     activeViewingSessionResetState.listeners.add(listener);
     return () => {
         activeViewingSessionResetState.listeners.delete(listener);
     };
-}
-
-export function subscribeActiveViewingSessionVisibilityChanges(listener: () => void): () => void {
-    activeViewingSessionVisibilityState.listeners.add(listener);
-    return () => {
-        activeViewingSessionVisibilityState.listeners.delete(listener);
-    };
-}
-
-function hasVisibleSession(sessionId: string): boolean {
-    return visibleSessionRefCounts.has(sessionId)
-        || (visibleScopedSessionKeysBySessionId.get(sessionId)?.size ?? 0) > 0;
-}
-
-function notifyActiveViewingSessionVisibilityChange(): void {
-    for (const listener of activeViewingSessionVisibilityState.listeners) {
-        listener();
-    }
 }
 
 export function getActiveViewingSessionResetVersion(): number {
@@ -283,14 +247,12 @@ export const clearActiveViewingSessionId = (
 };
 
 function clearActiveViewingSessions(options: Readonly<{ notifyMountedSurfaces: boolean }>): void {
-    const hadVisibleSessions = visibleSessionRefCounts.size > 0 || visibleScopedSessionKeysBySessionId.size > 0;
     activeViewingSessionState.activeViewingSessionEntries = [];
     visibleSessionRefCounts.clear();
     visibleSessionScopedRefCounts.clear();
     visibleScopedSessionKeysBySessionId.clear();
     visibleScopedSessionServerIdsBySessionId.clear();
     visibleScopedSessionServerIdBySessionKey.clear();
-    if (hadVisibleSessions) notifyActiveViewingSessionVisibilityChange();
     if (!options.notifyMountedSurfaces) return;
     activeViewingSessionResetState.version += 1;
     for (const listener of activeViewingSessionResetState.listeners) {
@@ -324,19 +286,17 @@ export const clearActiveViewingSessionsForNonSessionRoute = (pathname: string | 
 export const markSessionVisible = (sessionId: string, serverId?: string | null): void => {
     const identity = resolveVisibleSessionIdentity(sessionId, serverId);
     if (!identity.sessionId) return;
-    const wasVisible = hasVisibleSession(identity.sessionId);
 
     visibleSessionRefCounts.set(identity.sessionId, (visibleSessionRefCounts.get(identity.sessionId) ?? 0) + 1);
-    if (identity.sessionKey) {
-        visibleSessionScopedRefCounts.set(
-            identity.sessionKey,
-            (visibleSessionScopedRefCounts.get(identity.sessionKey) ?? 0) + 1,
-        );
-        if (identity.serverId) {
-            addVisibleScopedSessionKey(identity.sessionId, identity.sessionKey, identity.serverId);
-        }
+    if (!identity.sessionKey) return;
+
+    visibleSessionScopedRefCounts.set(
+        identity.sessionKey,
+        (visibleSessionScopedRefCounts.get(identity.sessionKey) ?? 0) + 1,
+    );
+    if (identity.serverId) {
+        addVisibleScopedSessionKey(identity.sessionId, identity.sessionKey, identity.serverId);
     }
-    if (!wasVisible) notifyActiveViewingSessionVisibilityChange();
 };
 
 export const registerSessionVisibleSurface = (sessionId: string, serverId?: string | null): (() => void) => {
@@ -374,7 +334,6 @@ function decrementVisibleScopedSession(identity: Readonly<{
 export const markSessionHidden = (sessionId: string, serverId?: string | null): void => {
     const identity = resolveVisibleSessionIdentity(sessionId, serverId);
     if (!identity.sessionId) return;
-    const wasVisible = hasVisibleSession(identity.sessionId);
     const current = visibleSessionRefCounts.get(identity.sessionId) ?? 0;
     if (current <= 1) {
         visibleSessionRefCounts.delete(identity.sessionId);
@@ -382,7 +341,6 @@ export const markSessionHidden = (sessionId: string, serverId?: string | null): 
         visibleSessionRefCounts.set(identity.sessionId, current - 1);
     }
     decrementVisibleScopedSession(identity);
-    if (wasVisible && !hasVisibleSession(identity.sessionId)) notifyActiveViewingSessionVisibilityChange();
 };
 
 export const getVisibleSessionIds = (): string[] => Array.from(new Set([

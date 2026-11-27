@@ -53,29 +53,6 @@ function notifyTranscriptConsumerReleased(sessionId: string): void {
     }
 }
 
-type TranscriptConsumerChangeListener = () => void;
-
-function getTranscriptConsumerChangeListeners(): Set<TranscriptConsumerChangeListener> {
-    const host = globalThis as typeof globalThis & {
-        __HAPPIER_TRANSCRIPT_CONSUMER_CHANGE_LISTENERS__?: Set<TranscriptConsumerChangeListener>;
-    };
-    host.__HAPPIER_TRANSCRIPT_CONSUMER_CHANGE_LISTENERS__ ??= new Set<TranscriptConsumerChangeListener>();
-    return host.__HAPPIER_TRANSCRIPT_CONSUMER_CHANGE_LISTENERS__;
-}
-
-function isRealtimeTranscriptConsumerSession(sessionId: string): boolean {
-    for (const entry of mountedTranscriptConsumerIdentitiesByConsumerId.values()) {
-        if (!entry.retentionOnly && entry.sessionId === sessionId) return true;
-    }
-    return false;
-}
-
-function notifyTranscriptConsumerChange(): void {
-    for (const listener of getTranscriptConsumerChangeListeners()) {
-        listener();
-    }
-}
-
 function normalizeSessionId(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -122,19 +99,14 @@ function registerMountedTranscriptConsumer(
     }
     const consumerId = nextConsumerId;
     nextConsumerId += 1;
-    const wasConsumer = retentionOnly || isRealtimeTranscriptConsumerSession(normalizedSessionId);
     mountedTranscriptConsumerIdentitiesByConsumerId.set(consumerId, {
         sessionId: normalizedSessionId,
         serverId: resolveRegisteredServerId(normalizedSessionId, serverId),
         retentionOnly,
     });
-    if (!wasConsumer) notifyTranscriptConsumerChange();
     return () => {
         if (mountedTranscriptConsumerIdentitiesByConsumerId.delete(consumerId)) {
             notifyTranscriptConsumerReleased(normalizedSessionId);
-            if (!retentionOnly && !isRealtimeTranscriptConsumerSession(normalizedSessionId)) {
-                notifyTranscriptConsumerChange();
-            }
         }
     };
 }
@@ -205,21 +177,6 @@ export function subscribeSessionTranscriptConsumerReleases(listener: TranscriptC
     };
 }
 
-/**
- * Notifies when a session id enters or leaves the realtime full-content consumer set
- * (mounted, unmounted or cleared). Retention-only holds never change that set.
- */
-export function subscribeSessionRealtimeTranscriptConsumerChanges(listener: TranscriptConsumerChangeListener): () => void {
-    const listeners = getTranscriptConsumerChangeListeners();
-    listeners.add(listener);
-    return () => {
-        listeners.delete(listener);
-    };
-}
-
 export function clearMountedSessionRealtimeTranscriptConsumers(): void {
-    const hadRealtimeConsumers = Array.from(mountedTranscriptConsumerIdentitiesByConsumerId.values())
-        .some((entry) => !entry.retentionOnly);
     mountedTranscriptConsumerIdentitiesByConsumerId.clear();
-    if (hadRealtimeConsumers) notifyTranscriptConsumerChange();
 }

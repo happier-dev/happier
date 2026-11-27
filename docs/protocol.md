@@ -48,7 +48,7 @@ auth: {
   sessionId?: "<session id>",
   machineId?: "<machine id>",
   sessionUpdateInterest?: "<session id>",
-  transcriptInterestDeclared?: true
+  liveTranscriptDisabled?: true
 }
 ```
 
@@ -70,12 +70,13 @@ Omitted or malformed declarations keep the broad audience, and older relays
 ignore the optional field. During a rolling relay upgrade, older publishers can
 still send the broad audience the pre-upgrade payloads.
 
-In 0.2 development, a `user-scoped` connection that renders live transcripts (the
-UI sync socket) declares `transcriptInterestDeclared: true`. The relay then keeps
-live transcript streams off that connection until the client names the Sessions it
-consumes through `transcript-interest:set`; session updates and other account
-events are unaffected. Older relays ignore the optional field and keep delivering
-the broad audience.
+In 0.2 development, user-scoped RPC and concurrent-server cache connections send
+`liveTranscriptDisabled: true` because they do not consume live transcript frames.
+The relay excludes these connections from hosted stream segments and deltas and
+Direct transcript deltas. Durable session updates and other ephemeral events
+still follow their existing routes. The main UI sync connection omits the field.
+Missing or malformed values preserve the usual audience. Older relays ignore the
+field, and older publishers can still send frames during a rolling relay upgrade.
 
 ### Server -> client events
 The server emits two event types:
@@ -226,12 +227,6 @@ from this current-work projection.
 - `access-key-get`
   - `{ sessionId, machineId }`
   - Response: `{ ok: true, accessKey? }` or `{ ok: false, error }`
-
-- `transcript-interest:set`
-  - `{ sessionIds: string[] }`
-  - Only a `user-scoped` connection that declared `transcriptInterestDeclared` may send it.
-  - Response: `{ ok: true }` or `{ ok: false, error: "not-allowed" | "invalid-payload" | "apply-failed" }`
-  - Replaces the whole set of Sessions whose live transcript stream this connection receives. Blank ids are dropped and the rest are trimmed and de-duplicated; a malformed payload changes nothing. The set lives on the connection only: nothing is buffered, so a reconnected client starts with an empty set and resends its current one.
 
 - `rpc-register`
   - `{ method }` -> server emits `rpc-registered`

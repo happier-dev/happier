@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
 import type {
     ManagedConnectionTransport,
     TransportDisconnectEvent,
@@ -25,8 +25,8 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
             token: params.token,
             clientType: 'user-scoped' as const,
             clientPurpose: 'concurrent-server-cache' as const,
-            // Cache-sync socket: it never renders live transcript streams, so declare an empty transcript interest.
-            [TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD]: true,
+            // This connection does not consume live transcript frames.
+            [LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD]: true,
         },
         ...(transports ? { transports } : null),
         withCredentials: false,

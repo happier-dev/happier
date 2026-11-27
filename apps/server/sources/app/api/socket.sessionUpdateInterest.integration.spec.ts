@@ -41,7 +41,7 @@ async function startSocketHarness() {
     startSocket(app as AppFastify);
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
     const makeSocket = (handshake: {
-        clientType: string; sessionId?: string; machineId?: string; clientPurpose?: string; sessionUpdateInterest?: unknown; transcriptInterestDeclared?: unknown;
+        clientType: string; sessionId?: string; machineId?: string; clientPurpose?: string; sessionUpdateInterest?: unknown; liveTranscriptDisabled?: unknown;
     }) => {
         const socket = io(address, {
             path: '/v1/updates', transports: ['websocket'], forceNew: true, autoConnect: false, reconnection: false,
@@ -55,6 +55,8 @@ async function startSocketHarness() {
             if (value.body?.t === 'update-account' && value.body?.settingsV2) events.push('settings');
         });
         socket.on('ephemeral', (value) => {
+            if (value.type === 'activity') events.push(`activity:${value.id}`);
+            if (value.type === 'transcript-stream-segment') events.push(`segment:${value.sessionId}`);
             if (value.type === 'transcript-stream-segment-delta') events.push(`delta:${value.sessionId}`);
             if (value.type === 'direct-session-transcript-delta') events.push(`direct:${value.sessionId}`);
         });
@@ -162,18 +164,25 @@ it('only delivers matching session updates to runners that declare session inter
     }
 });
 
-it('keeps transcript streams away from user-scoped sockets that declare no transcript interest', async () => {
-    const { userId, sockets, makeSocket, close } = await startSocketHarness();
+it('excludes opted-out sockets from live transcripts while delivering durable session updates and activity', async () => {
+    const { userId, makeSocket, close } = await startSocketHarness();
     try {
-        const declared = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync', transcriptInterestDeclared: true });
+        const sessionId = randomUUID();
+        const cache = makeSocket({ clientType: 'user-scoped', clientPurpose: 'concurrent-server-cache', liveTranscriptDisabled: true });
+        const rpc = makeSocket({ clientType: 'user-scoped', clientPurpose: 'scoped-rpc', liveTranscriptDisabled: true });
+        const narrowed = makeSocket({ clientType: 'user-scoped', sessionUpdateInterest: sessionId, liveTranscriptDisabled: true });
+        const optsOut = [cache, rpc, narrowed];
         const legacy = makeSocket({ clientType: 'user-scoped' });
+        const main = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync' });
+        const malformed = makeSocket({ clientType: 'user-scoped', liveTranscriptDisabled: 'true' });
+        const receivesTranscript = [legacy, main, malformed];
+        const accountSockets = [...optsOut, ...receivesTranscript];
         const machineId = randomUUID();
         await db.machine.create({ data: { id: machineId, accountId: userId, metadata: '{}' } });
         const machine = makeSocket({ clientType: 'machine-scoped', machineId });
-        await Promise.all([open(declared.socket), open(legacy.socket), open(machine.socket)]);
-        const sessionId = randomUUID();
-        const messages = Array.from({ length: 4 }, () => `message:${sessionId}`);
-        const transcript = Array.from({ length: 4 }, () => [`message:${sessionId}`, `delta:${sessionId}`]).flat();
+        await Promise.all([...accountSockets, machine].map(({ socket }) => open(socket)));
+        const sessionUpdates = [`message:${sessionId}`, `activity:${sessionId}`];
+        const transcript = [`direct:${sessionId}`, `message:${sessionId}`, `segment:${sessionId}`, `delta:${sessionId}`, `activity:${sessionId}`];
         let phase = 0;
         const burst = async () => {
             // A machine daemon's direct transcript delta is relayed on its own round trip, so wait for the
@@ -192,7 +201,7 @@ it('keeps transcript streams away from user-scoped sockets that declare no trans
             await directReceived;
             const nextPhase = ++phase;
             // Machine sockets do not join the account room, so only user-facing sockets can observe the barrier.
-            const barriers = [declared, legacy].map(({ socket }) => new Promise<void>(resolve => {
+            const barriers = accountSockets.map(({ socket }) => new Promise<void>(resolve => {
                 const receive = (value: { id: string }) => {
                     if (value.id !== `barrier-${nextPhase}`) return;
                     socket.off('update', receive);
@@ -200,107 +209,34 @@ it('keeps transcript streams away from user-scoped sockets that declare no trans
                 };
                 socket.on('update', receive);
             }));
-            for (let seq = 1; seq <= 4; seq++) {
-                eventRouter.emitUpdate({ userId, recipientFilter: { type: 'all-interested-in-session', sessionId }, payload: buildNewMessageUpdate({
-                    id: `msg${seq}`, seq, localId: null, createdAt: new Date(0), updatedAt: new Date(0),
-                    content: { t: 'encrypted', c: 'message' },
-                }, sessionId, seq, `update${seq}`) });
-                eventRouter.emitEphemeral({ userId, recipientFilter: { type: 'transcript-interested-in-session', sessionId }, payload: {
-                    type: 'transcript-stream-segment-delta', sessionId,
-                    message: { localId: `stream${seq}`, content: { t: 'encrypted', c: 'delta' }, tick: seq, baseLength: 0, createdAt: 0, updatedAt: 0 },
-                } });
-            }
+            const recipientFilter = { type: 'all-interested-in-session', sessionId } as const;
+            const content = { t: 'encrypted', c: 'message' } as const;
+            eventRouter.emitUpdate({ userId, recipientFilter, payload: buildNewMessageUpdate({
+                id: `msg${nextPhase}`, seq: nextPhase, localId: null, createdAt: new Date(0), updatedAt: new Date(0), content,
+            }, sessionId, nextPhase, `update${nextPhase}`) });
+            const message = { localId: 'stream', content, tick: nextPhase, createdAt: 0, updatedAt: 0 };
+            eventRouter.emitEphemeral({ userId, recipientFilter, payload: { type: 'transcript-stream-segment', sessionId, message } });
+            eventRouter.emitEphemeral({ userId, recipientFilter, payload: {
+                type: 'transcript-stream-segment-delta', sessionId, message: { ...message, baseLength: 0 },
+            } });
+            eventRouter.emitEphemeral({ userId, recipientFilter, payload: { type: 'activity', id: sessionId, active: true, activeAt: 1 } });
             eventRouter.emitUpdate({ userId, payload: buildAccountSettingsChangedUpdate(nextPhase, 99, `barrier-${nextPhase}`), recipientFilter: { type: 'all-user-authenticated-connections' } });
             await Promise.all(barriers);
         };
         await burst();
-        expect(declared.events).toEqual(messages);
-        expect(legacy.events).toEqual([`direct:${sessionId}`, ...transcript]);
+        for (const { events } of optsOut) expect(events.splice(0)).toEqual(sessionUpdates);
+        for (const { events } of receivesTranscript) expect(events.splice(0)).toEqual(transcript);
+
+        cache.socket.disconnect();
+        await open(cache.socket);
+        await burst();
+        for (const { events } of optsOut) expect(events.splice(0)).toEqual(sessionUpdates);
+        for (const { events } of receivesTranscript) expect(events.splice(0)).toEqual(transcript);
 
         eventRouter.clearIo();
         await burst();
-        expect(declared.events).toEqual([...messages, ...messages]);
-        expect(legacy.events).toEqual([`direct:${sessionId}`, ...transcript, `direct:${sessionId}`, ...transcript]);
-    } finally {
-        await close();
-    }
-});
-
-it('delivers live transcripts to declared sockets only for the sessions in their runtime interest set', async () => {
-    const { userId, makeSocket, close } = await startSocketHarness();
-    try {
-        const declared = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync', transcriptInterestDeclared: true });
-        await open(declared.socket);
-        const setInterest = (socket: Socket, payload: unknown) => new Promise<unknown>((resolve) => {
-            socket.timeout(2_000).emit('transcript-interest:set', payload, (error: Error | null, response: unknown) => {
-                resolve(error ? `ack-error:${error.message}` : response);
-            });
-        });
-        let phase = 0;
-        const receivedDuring = async (sessionId: string) => {
-            const nextPhase = ++phase;
-            const barrier = new Promise<void>((resolve) => {
-                const receive = (value: { id: string }) => {
-                    if (value.id !== `barrier-${nextPhase}`) return;
-                    declared.socket.off('update', receive);
-                    resolve();
-                };
-                declared.socket.on('update', receive);
-            });
-            for (let seq = 1; seq <= 2; seq++) {
-                eventRouter.emitUpdate({ userId, recipientFilter: { type: 'all-interested-in-session', sessionId }, payload: buildNewMessageUpdate({
-                    id: `msg${seq}`, seq, localId: null, createdAt: new Date(0), updatedAt: new Date(0),
-                    content: { t: 'encrypted', c: 'message' },
-                }, sessionId, seq, `update${seq}`) });
-                eventRouter.emitEphemeral({ userId, recipientFilter: { type: 'transcript-interested-in-session', sessionId }, payload: {
-                    type: 'transcript-stream-segment-delta', sessionId,
-                    message: { localId: `stream${seq}`, content: { t: 'encrypted', c: 'delta' }, tick: seq, baseLength: 0, createdAt: 0, updatedAt: 0 },
-                } });
-            }
-            eventRouter.emitUpdate({ userId, payload: buildAccountSettingsChangedUpdate(nextPhase, 99, `barrier-${nextPhase}`), recipientFilter: { type: 'all-user-authenticated-connections' } });
-            await barrier;
-            return declared.events.splice(0);
-        };
-        const messages = (sessionId: string) => Array.from({ length: 2 }, () => `message:${sessionId}`);
-        const transcript = (sessionId: string) => Array.from({ length: 2 }, () => [`message:${sessionId}`, `delta:${sessionId}`]).flat();
-        const sessionA = randomUUID();
-        const sessionB = randomUUID();
-
-        // The handshake marker alone declares an empty set: session updates still arrive, streams do not.
-        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
-        expect(await setInterest(declared.socket, { sessionIds: [sessionA] })).toEqual({ ok: true });
-        expect(await receivedDuring(sessionA)).toEqual(transcript(sessionA));
-        expect(await receivedDuring(sessionB)).toEqual(messages(sessionB));
-
-        // A set replaces the whole previous set.
-        expect(await setInterest(declared.socket, { sessionIds: [sessionB] })).toEqual({ ok: true });
-        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
-        expect(await receivedDuring(sessionB)).toEqual(transcript(sessionB));
-
-        // Malformed sets are refused and leave the current membership untouched.
-        for (const payload of [{ sessionIds: [sessionA, 7] }, { sessionIds: sessionA }, { sessionIds: [sessionA], extra: true }, null]) {
-            expect(await setInterest(declared.socket, payload)).toEqual({ ok: false, error: 'invalid-payload' });
-        }
-        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
-        expect(await receivedDuring(sessionB)).toEqual(transcript(sessionB));
-
-        // Blank ids are dropped and the rest are trimmed and de-duplicated.
-        expect(await setInterest(declared.socket, { sessionIds: ['', '   ', ` ${sessionA} `, sessionA] })).toEqual({ ok: true });
-        expect(await receivedDuring(sessionA)).toEqual(transcript(sessionA));
-        expect(await receivedDuring(sessionB)).toEqual(messages(sessionB));
-        expect(await setInterest(declared.socket, { sessionIds: [] })).toEqual({ ok: true });
-        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
-
-        // Interest is not buffered server-side: a reconnected socket is back to the empty handshake set.
-        declared.socket.disconnect();
-        await open(declared.socket);
-        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
-        expect(await setInterest(declared.socket, { sessionIds: [sessionA] })).toEqual({ ok: true });
-        expect(await receivedDuring(sessionA)).toEqual(transcript(sessionA));
-
-        const undeclared = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync' });
-        await open(undeclared.socket);
-        expect(await setInterest(undeclared.socket, { sessionIds: [sessionA] })).toEqual({ ok: false, error: 'not-allowed' });
+        for (const { events } of optsOut) expect(events).toEqual(sessionUpdates);
+        for (const { events } of receivesTranscript) expect(events).toEqual(transcript);
     } finally {
         await close();
     }

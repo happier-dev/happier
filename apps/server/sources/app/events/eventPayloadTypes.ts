@@ -26,7 +26,7 @@ export interface UserScopedConnection {
     socket: Socket;
     userId: string;
     sessionUpdateInterest?: string;
-    transcriptInterestDeclared?: true;
+    liveTranscriptDisabled?: true;
 }
 
 export interface MachineScopedConnection {
@@ -42,8 +42,6 @@ export type ClientConnection = SessionScopedConnection | UserScopedConnection | 
 
 export type RecipientFilter =
     | { type: 'all-interested-in-session'; sessionId: string }
-    // Live transcript streams only: account sockets that declared an empty transcript interest are excluded.
-    | { type: 'transcript-interested-in-session'; sessionId: string }
     | { type: 'user-scoped-only' }
     // Note: despite the name, this intentionally includes the user's `user-scoped:*` room as well as their per-account
     // machine room. This avoids relying on the global `user:*` room for machine-daemon connections.

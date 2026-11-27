@@ -19,7 +19,7 @@ import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
-import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport, SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD, TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD } from "@happier-dev/protocol";
+import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport, SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD, LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD } from "@happier-dev/protocol";
 import {
     SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES,
     SOCKET_RPC_PING_INTERVAL_MS,
@@ -40,7 +40,6 @@ import { describeLoggableError } from "@/utils/logging/describeLoggableError";
 import { registerSessionRuntimeActivitySnapshotSocketEvent } from "@/app/session/runtimeActivity/socketEvents";
 import { publishSessionPublisherLifecycleUpdate } from "@/app/session/runtimeActivity/publishPublisherLifecycleUpdate";
 import { registerUiFocusSocketEvent } from "./socket/registerUiFocusSocketEvent";
-import { registerTranscriptInterestSocketEvent } from "./socket/registerTranscriptInterestSocketEvent";
 import { readHappierSocketData } from "./socket/socketData";
 import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
 
@@ -239,8 +238,6 @@ export function startSocket(app: Fastify) {
         socketData.sessionId = sessionId;
         socketData.machineId = machineId;
         socketData.connectedServiceIds = readConnectedServiceReaderSupport(socket.handshake.auth[CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD]);
-        socketData.transcriptInterestDeclared = clientType === 'user-scoped'
-            && socket.handshake.auth[TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD] === true;
         return next();
     };
 
@@ -331,7 +328,9 @@ export function startSocket(app: Fastify) {
                 ...(clientType === 'user-scoped' && typeof interest === 'string' && interest.trim() && interest === interest.trim()
                     ? { sessionUpdateInterest: interest }
                     : {}),
-                ...(socketData.transcriptInterestDeclared ? { transcriptInterestDeclared: true as const } : {}),
+                ...(clientType === 'user-scoped' && socket.handshake.auth[LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD] === true
+                    ? { liveTranscriptDisabled: true }
+                    : {}),
             };
         }
         eventRouter.addConnection(userId, connection);
@@ -467,7 +466,6 @@ export function startSocket(app: Fastify) {
         );
         if (connection.connectionType === "user-scoped") {
             registerUiFocusSocketEvent(socket);
-            registerTranscriptInterestSocketEvent(socket);
             registerReleasedUiV021SessionEndSocketEvent({
                 socket,
                 accountId: userId,

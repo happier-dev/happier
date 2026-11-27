@@ -81,7 +81,7 @@ describe('createConcurrentServerSocketTransport', () => {
                     token: 'token-a',
                     clientType: 'user-scoped',
                     clientPurpose: 'concurrent-server-cache',
-                    transcriptInterestDeclared: true,
+                    liveTranscriptDisabled: true,
                 }),
                 forceNew: true,
                 multiplex: false,

@@ -151,7 +151,7 @@ describe('serverScopedRpcSocketPool', () => {
                 auth: expect.objectContaining({
                     token: 'token-a',
                     connectedServiceIds: ConnectedServiceIdSchema.options,
-                    transcriptInterestDeclared: true,
+                    liveTranscriptDisabled: true,
                 }),
                 withCredentials: false,
             }),

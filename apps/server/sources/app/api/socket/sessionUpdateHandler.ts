@@ -674,7 +674,7 @@ export function sessionUpdateHandler(
                 eventRouter.emitEphemeral({
                     userId: participantUserId,
                     payload,
-                    recipientFilter: { type: 'transcript-interested-in-session', sessionId: sid },
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
                     skipSenderConnection: participantUserId === userId ? connection : undefined,
                 });
             }
@@ -713,7 +713,7 @@ export function sessionUpdateHandler(
                 eventRouter.emitEphemeral({
                     userId: participantUserId,
                     payload,
-                    recipientFilter: { type: 'transcript-interested-in-session', sessionId: sid },
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
                     skipSenderConnection: participantUserId === userId ? connection : undefined,
                 });
             }

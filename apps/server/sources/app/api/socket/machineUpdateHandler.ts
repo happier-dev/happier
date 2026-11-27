@@ -149,7 +149,7 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
             eventRouter.emitEphemeral({
                 userId,
                 payload: parsed.data,
-                recipientFilter: { type: 'transcript-interested-in-session', sessionId: parsed.data.sessionId },
+                recipientFilter: { type: 'all-interested-in-session', sessionId: parsed.data.sessionId },
             });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in direct-session-transcript-delta handler: ${error}`);

@@ -29,39 +29,27 @@ function accountSocketSessionInterestRoom(userId: string, sessionId: string): st
     return `account-socket-session-interest:${sessionId}:${userId}`;
 }
 
-/** Exclusion cohort: this connection never consumes live transcript streams. */
-export function transcriptInterestDeclaredRoom(userId: string): string {
-    return `transcript-interest-declared:${userId}`;
-}
-
-/** Reachable only once a runtime interest set names the session; the marker alone joins nothing here. */
-export function transcriptInterestRoom(userId: string, sessionId: string): string {
-    return `transcript-interest:${sessionId}:${userId}`;
+function liveTranscriptDisabledRoom(userId: string): string {
+    return `live-transcript-disabled:${userId}`;
 }
 
 export interface SocketFanoutTarget {
     rooms: string[];
-    except?: string | readonly string[];
+    except?: string | string[];
 }
 
-export function getSessionUpdateTargets(userId: string, sessionId: string): ReadonlyArray<SocketFanoutTarget> {
+export function getSessionUpdateTargets(
+    userId: string,
+    sessionId: string,
+    excludeLiveTranscriptDisabled: boolean,
+): ReadonlyArray<SocketFanoutTarget> {
     // Keep the released rooms reachable during mixed relay-worker deployments.
     // Narrowed account sockets are excluded from the first send and can only match the second.
+    const narrow = narrowerSessionInterestRoom(userId);
+    const passive = excludeLiveTranscriptDisabled ? liveTranscriptDisabledRoom(userId) : undefined;
     return [
-        { rooms: [sessionUpdateRoom(userId, sessionId), userScopedRoom(userId)], except: narrowerSessionInterestRoom(userId) },
-        { rooms: [accountSocketSessionInterestRoom(userId, sessionId)] },
-    ];
-}
-
-export function getTranscriptStreamTargets(userId: string, sessionId: string): ReadonlyArray<SocketFanoutTarget> {
-    // Both exclusions are required: without the narrow marker a narrowed runner falls back to the full stream.
-    // A socket that only declares transcript interest stays excluded until it joins the session interest room.
-    return [
-        {
-            rooms: [sessionUpdateRoom(userId, sessionId), userScopedRoom(userId)],
-            except: [narrowerSessionInterestRoom(userId), transcriptInterestDeclaredRoom(userId)],
-        },
-        { rooms: [transcriptInterestRoom(userId, sessionId)] },
+        { rooms: [sessionUpdateRoom(userId, sessionId), userScopedRoom(userId)], except: passive ? [narrow, passive] : narrow },
+        { rooms: [accountSocketSessionInterestRoom(userId, sessionId)], except: passive },
     ];
 }
 
@@ -70,7 +58,7 @@ export function getSocketRooms(params: {
     clientType: SocketClientType;
     sessionId?: string | undefined;
     sessionUpdateInterest?: string | undefined;
-    transcriptInterestDeclared?: boolean | undefined;
+    liveTranscriptDisabled?: boolean | undefined;
     machineId?: string | undefined;
     connectedServiceIds?: unknown;
 }): string[] {
@@ -87,8 +75,8 @@ export function getSocketRooms(params: {
             rooms.push(narrowerSessionInterestRoom(params.userId));
             rooms.push(accountSocketSessionInterestRoom(params.userId, params.sessionUpdateInterest));
         }
-        if (params.transcriptInterestDeclared) {
-            rooms.push(transcriptInterestDeclaredRoom(params.userId));
+        if (params.liveTranscriptDisabled) {
+            rooms.push(liveTranscriptDisabledRoom(params.userId));
         }
     }
 

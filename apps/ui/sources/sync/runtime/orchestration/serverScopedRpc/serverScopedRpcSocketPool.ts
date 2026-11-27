@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
 
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
@@ -175,8 +175,8 @@ export function createServerScopedRpcSocketPool(overrides?: Partial<Deps>): Read
                     token: params.token,
                     clientType: 'user-scoped' as const,
                     clientPurpose: 'scoped-rpc' as const,
-                    // RPC-only socket: it never renders live transcript streams, so declare an empty transcript interest.
-                    [TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD]: true,
+                    // This connection does not consume live transcript frames.
+                    [LIVE_TRANSCRIPT_DISABLED_SOCKET_AUTH_FIELD]: true,
                 },
                 forceNew: true,
                 ...(transports ? { transports } : null),
