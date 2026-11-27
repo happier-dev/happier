@@ -607,6 +607,38 @@ describe('Account trigger reads through real Action and Automation owners', () =
         expect(renders).toBe(before); expect(home.requests.filter(request => request.path.startsWith('/v3/automations'))).toHaveLength(reads);
     });
 
+    it.each(['hidden', 'null'] as const)('does no addressed trigger work on an Account wake while %s', async mode => {
+        home.answer(serverId, '/v3/automations', { body: { automations: [], nextCursor: null } });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected a real Account lifetime');
+        const hook = await renderHook((presented: boolean) => useWorkflowTriggerSets(
+            presented || mode === 'hidden' ? { scope: 'account_all' } : null, lifetime,
+            { demanded: presented || mode === 'null' },
+        ), { initialProps: true });
+        const reads = () => home.requestsFor('/v3/automations/query').length;
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        expect(reads()).toBe(1);
+        await hook.rerender(false);
+        const changed = automation('trigger-a');
+        home.answer(serverId, '/v3/automations', { body: { automations: [listed(changed)], nextCursor: null } });
+        home.answer(serverId, '/v3/automations/trigger-a', { body: changed });
+        const wakeRenders = vi.fn();
+        const unsubscribe = hook.subscribe(wakeRenders);
+        try {
+            await act(async () => publishHomeAccountChange(serverId, ['trigger-a'], { source: 'socket', changeKinds: ['automation'] }));
+            const hiddenRenders = wakeRenders.mock.calls.length;
+            expect(reads()).toBe(1);
+            await hook.rerender(true);
+            await waitForHomeGovernance(() => expect(hook.getCurrent().sets.map(set => set.automationId)).toEqual(['trigger-a']));
+            expect(reads()).toBe(2);
+            expect(hiddenRenders).toBe(0);
+        } finally {
+            unsubscribe();
+            await hook.unmount();
+        }
+    });
+
     it('keeps addressed trigger demand through unrelated Home wakes and refreshes relevant, unknown and reconnect wakes', async () => {
         const pending = createDeferred<void>();
         home.answer(serverId, '/v3/automations', { body: { automations: [], nextCursor: null }, respondAfter: pending.promise });

@@ -17,8 +17,8 @@ const noRetry = () => {};
 
 /**
  * Read lifecycle only; the existing Account Automation projection remains the row owner.
- * `demanded: false` keeps the held sets and their change observation but issues no read; demand
- * returning reads again only when a change arrived meanwhile or the last read did not settle.
+ * Hidden addressed queries retain their rows and release Home wake observation.
+ * Returning demand reads again to reconcile the interval without observation.
  */
 export type AttachedTriggerPage = Readonly<Omit<WorkflowAttachedTriggerPageV1, 'attached'> & {
     attached: Readonly<WorkflowAttachedTriggerPageV1['attached']>;
@@ -65,6 +65,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
         && areServerProfileIdentifiersEquivalent(activeLifetime.scope.serverId, scope.serverId));
     // The semantic query, not a caller's object allocation, owns the read lifetime.
     const readRequest = React.useMemo(() => workflowTriggerRequestForQueryKey(queryKey), [queryKey]);
+    const readDemanded = demanded && readRequest !== null;
     const identity = React.useMemo(() => ({}), [queryKey, scopeKey, lifetime]);
     const committedIdentity = React.useRef(identity);
     React.useLayoutEffect(() => { committedIdentity.current = identity; }, [identity]);
@@ -114,18 +115,27 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const [attempt, setAttempt] = React.useState<Readonly<{ revision: number; cursor?: string; identity?: object }>>({ revision: 0 });
     const retryRead = React.useCallback(() => setAttempt(current => ({ revision: current.revision + 1 })), []);
     const retry = unavailableAccount ? unavailableAccount.retry ?? noRetry : retryRead;
-    // The read inputs the last settled answer covered. Demand returning with the same inputs reads nothing.
+    // The last settled answer covers the read inputs while the addressed query has demand.
     const settledRead = React.useRef<readonly unknown[] | null>(null);
     const readNotCurrent = React.useRef(false);
     readNotCurrent.current = state.identity !== identity || state.status !== 'ready';
-    React.useEffect(() => !accountLifetime ? undefined : subscribeHomeAccountChange(event => {
-        if (!areServerProfileIdentifiersEquivalent(event.serverId, accountLifetime.scope.serverId)) return;
-        // Consume the producer's admitted source/definition decision, including mixed pages.
-        if (event.workflowTriggersAffect === false) return;
-        retry();
-    }, { reconnect: { readNotCurrent: () => readNotCurrent.current } }), [accountLifetime, retry]);
     React.useEffect(() => {
-        if (!demanded || readRequest === null || (addressed && !accountLifetime?.isCurrent())) return;
+        if (!readDemanded || !accountLifetime?.isCurrent()) return;
+        const unsubscribe = subscribeHomeAccountChange(event => {
+            if (!areServerProfileIdentifiersEquivalent(event.serverId, accountLifetime.scope.serverId)) return;
+            // Consume the producer's admitted source/definition decision, including mixed pages.
+            if (event.workflowTriggersAffect === false) return;
+            retry();
+        }, { reconnect: { readNotCurrent: () => readNotCurrent.current } });
+        const retirement = accountLifetime.onRetire(unsubscribe);
+        return () => { retirement.dispose(); unsubscribe(); };
+    }, [readDemanded, accountLifetime, retry]);
+    React.useEffect(() => {
+        if (!readDemanded) {
+            if (addressed) settledRead.current = null;
+            return;
+        }
+        if (addressed && !accountLifetime?.isCurrent()) return;
         const inputs = [attempt, changeSignal, identity, readRequest, accountLifetime, lifetime, context];
         const covered = settledRead.current;
         if (covered && covered.length === inputs.length && covered.every((value, index) => value === inputs[index])) return;
@@ -202,7 +212,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             controller.abort(); retirement.dispose();
             if (pendingRead.current === pending) pendingRead.current = null;
         };
-    }, [attempt, changeSignal, demanded, identity, readRequest, addressed, accountLifetime, lifetime, selected, health, context, retainFocusedSettlement]);
+    }, [attempt, changeSignal, readDemanded, identity, readRequest, addressed, accountLifetime, lifetime, selected, health, context, retainFocusedSettlement]);
     // A settled failure stays actionable even while realtime reconnects. Home recovery
     // still retries the read automatically without turning its failed answer into loading.
     const homeSettling = useActiveHomeSettling() && !addressed;
