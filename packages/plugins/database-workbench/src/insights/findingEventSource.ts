@@ -7,7 +7,7 @@ import type { OpenAutomationEventRequest } from '@happier-dev/plugin-sdk/ui';
 export const DATABASE_FINDING_EVENT_REF = { pluginId: 'happier.database', localId: 'finding-observed' } as const;
 
 export const DatabaseFindingEventSourceV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1), subject: AutomationDatabaseSubjectV1ProtocolSchema,
+    v: defineProtocolLiteral(1), subject: AutomationDatabaseSubjectV1ProtocolSchema.optional(),
     sourceScope: DatabaseFindingSourceScopeV1ProtocolSchema,
 }, { policy: 'closed' });
 export type DatabaseFindingEventSourceV1 = ReturnType<typeof DatabaseFindingEventSourceV1Schema.parse>;

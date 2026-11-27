@@ -59,15 +59,39 @@ describe('native completed observation admission', () => {
     it.each([false, true])('admits a completed native stats read through AE (held demand: %s) without database content', async held => {
         const admissions: unknown[] = [];
         const source = { v: 1, subject: { kind: 'database', serverId: 'server', target }, sourceScope: { serverId: 'server', machineId: 'machine' } } as const;
+        const setup = await createPluginTestkit({ manifest: nativePlugin.manifest, module: nativePlugin });
+        const definitions = await (async () => {
+            try {
+                const neighbor = { ...source, subject: { ...source.subject, target: { ...target, savedSecretId: 'other-database' } } };
+                const sources = [
+                    ['exact', source, '22222222-2222-4222-8222-222222222222'],
+                    ['other-exact', neighbor, '33333333-3333-4333-8333-333333333333'],
+                    ['any', { v: 1, sourceScope: source.sourceScope }, '44444444-4444-4444-8444-444444444444'],
+                ] as const;
+                return await Promise.all(sources.map(async ([triggerId, setupInput, sourceSelectorId]) => {
+                    const { sourceInstanceId, sourceContractVersion, sourceConfig } = await setup.invokeAction(
+                        DATABASE_FINDING_SETUP_LOCAL_ID, setupInput, invocation,
+                    ) as { sourceInstanceId: string; sourceContractVersion: number; sourceConfig: unknown };
+                    expect(sourceConfig).toEqual(setupInput);
+                    return {
+                        sourceInstanceId, sourceContractVersion, sourceConfig,
+                        automationId: '11111111-1111-4111-8111-111111111111', triggerId, triggerRevision: 1,
+                        eventRef: DATABASE_FINDING_EVENT_REF, sourceSelectorId,
+                        observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: { pluginId: 'happier.database', machineId: 'machine', materializationId: 'fixture' } },
+                        filter: null, maximumObservationAgeMs: null,
+                    };
+                }));
+            } finally {
+                await setup.dispose();
+            }
+        })();
         // Host Action transport is the system boundary; native SQL, projections and AE admission remain real.
         const actions = { async execute(actionId: string, input: unknown) {
-            if (actionId === 'automation.event.sources.list') return { kind: 'page', revision: '1', nextCursor: null, definitions: [{
-                automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'trigger-1', triggerRevision: 1,
-                eventRef: DATABASE_FINDING_EVENT_REF, sourceInstanceId: databaseFindingEventSourceInstanceId(source),
-                sourceSelectorId: '22222222-2222-4222-8222-222222222222', sourceContractVersion: 1, sourceConfig: source,
-                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: { pluginId: 'happier.database', machineId: 'machine', materializationId: 'fixture' } },
-                filter: null, maximumObservationAgeMs: null,
-            }] };
+            if (actionId === 'automation.event.sources.list') {
+                const { source } = input as { source: { sourceInstanceId: string } };
+                return { kind: 'page', revision: '1', nextCursor: null,
+                    definitions: definitions.filter(definition => definition.sourceInstanceId === source.sourceInstanceId) };
+            }
             if (actionId === 'automation.event.admit') { admissions.push(input); return { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'run-1' }] }; }
             if (actionId === 'automation.event.source.status.report') return {};
             throw new Error(`Unexpected host Action ${actionId}`);
@@ -79,7 +103,11 @@ describe('native completed observation admission', () => {
                 { operation: 'stats.read', target, ...(held ? { subscriptionId: 'fixture' } : {}),
                     request: { kind: 'stats.read', group: 'tables', selection: { schema: 'main', page: { rows: 20 } } } }, invocation))
                 .toMatchObject({ ok: true, observation: { status: 'available', group: 'tables' } });
-            expect(admissions).toHaveLength(1);
+            expect(admissions).toEqual(expect.arrayContaining([
+                expect.objectContaining({ definitions: [expect.objectContaining({ triggerId: 'exact' })] }),
+                expect.objectContaining({ definitions: [expect.objectContaining({ triggerId: 'any' })] }),
+            ]));
+            expect(admissions).toHaveLength(2);
             expect(native.sqlReads()).toBe(1); // Emission consumes completed evidence; it performs no second SQL read.
             expect(JSON.stringify(admissions)).not.toContain('first');
             expect(JSON.stringify(admissions)).not.toContain('CREATE');
@@ -90,7 +118,7 @@ describe('native completed observation admission', () => {
                 { operation: 'stats.read', target, ...(held ? { subscriptionId: 'fixture' } : {}),
                     request: { kind: 'stats.read', group: 'statements', selection: { page: { rows: 20 }, order: 'calls' } } }, invocation))
                 .toMatchObject({ ok: true, observation: { status: 'unavailable' } });
-            expect(admissions).toHaveLength(1);
+            expect(admissions).toHaveLength(2);
             expect(native.sqlReads()).toBe(1);
         } finally { await kit.dispose(); await native.dispose(); }
     });

@@ -11032,6 +11032,12 @@ as `items[].deploymentApp`. Follow the App Environment to list its Domains and
 submit the person's chosen public HTTPS Domain. Home uses the same App
 enrollment owner for discovery and Save. The wire schema is unchanged.
 
+Database finding setup with `{ v: 1, sourceScope: { serverId, machineId } }`
+observes completed findings for accessible Databases on that Home and Machine.
+A setup that supplies a Database subject retains its exact source identity.
+Re-run setup without a subject when replacing an earlier Any trigger that saved
+an exact Database source.
+
 In unreleased 0.3, the Database finding brief build Action accepts a
 selected finding with an optional baseline. Omitting it uses the completed
 selected observation as the baseline. Explicit baselines preserve the

@@ -221,7 +221,8 @@ describe('semantic database Action runtime', () => {
                         selection: { order: 'totalTime', page: { rows: 50, offset: 0 } } } }, invocation))
                         .toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'available' } });
                 }
-                expect(readSourceCatalog).toHaveBeenCalledTimes(6);
+                // Each completed stats read addresses the Machine-wide and exact Database sources.
+                expect(readSourceCatalog).toHaveBeenCalledTimes(12);
                 expect(readSourceCatalog).toHaveBeenLastCalledWith('automation.event.sources.list',
                     expect.objectContaining({ transport: { kind: 'checkpointedPull' } }), expect.anything());
             } finally { await kit.dispose(); }

@@ -2,7 +2,7 @@ import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput,
 import { AutomationDatabaseSubjectV1ProtocolSchema, automationSubjectKeyV1, projectAutomationDatabaseSubjectV1,
     type AutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema,
-    type PluginEventDispositionV1 } from '@happier-dev/plugin-sdk/events';
+    type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
     DatabaseFindingObservationV1ProtocolSchema,
@@ -21,13 +21,14 @@ export const DatabaseFindingEventPayloadV1Schema = defineProtocolObject({
 /** A source identifies this Machine's observations, not a global database incident. */
 export function databaseFindingEventSourceInstanceId(source: DatabaseFindingEventSourceV1): string {
     return computeCanonicalDomainSeparatedDigest('happier.database.finding-source.v1', [
-        automationSubjectKeyV1(source.subject), createCanonicalJsonSigningInput(source.sourceScope),
+        source.subject === undefined ? '' : automationSubjectKeyV1(source.subject),
+        createCanonicalJsonSigningInput(source.sourceScope),
     ]);
 }
 
 /** Arming observes future completed reads; setup performs no database operation. */
 export const databaseFindingEventSetupAction = {
-    title: 'When this database is sampled', execution: { target: 'daemon' as const },
+    title: 'Observe database findings', execution: { target: 'daemon' as const },
     scopes: ['global', 'machine'] as const, surfaces: ['plugin', 'ui', 'cli', 'agent', 'mcp'] as const,
     dangerLevel: 'safe' as const, readOnly: true,
     inputSchema: DatabaseFindingEventSourceV1Schema,
@@ -61,12 +62,12 @@ export async function emitDatabaseFindingObservation(input: Readonly<{
     /** The producer retains this fact when replaying the same evidence. */
     observationReceivedAt: number;
     observedDelta: 0 | 1;
-}>, context: PluginInvocationContext): Promise<PluginEventDispositionV1> {
+}>, context: PluginInvocationContext): Promise<void> {
     const subject = projectAutomationDatabaseSubjectV1(input.subject);
     const observation = input.observation;
     const source = { v: 1 as const, subject, sourceScope: observation.sourceScope };
-    return admitCheckpointedPluginEventObservationV1({
-        eventRef: DATABASE_FINDING_EVENT_REF, sourceInstanceId: databaseFindingEventSourceInstanceId(source),
+    const evidence: Omit<PluginEventObservationV1, 'sourceInstanceId'> = {
+        eventRef: DATABASE_FINDING_EVENT_REF,
         sourceContractVersion: DATABASE_FINDING_SOURCE_CONTRACT_VERSION,
         occurrenceId: computeCanonicalDomainSeparatedDigest('happier.database.finding-evidence.v1', [
             createCanonicalJsonSigningInput(observation.sourceRef), observation.evidenceIdentity,
@@ -75,5 +76,10 @@ export async function emitDatabaseFindingObservation(input: Readonly<{
         observationReceivedAt: input.observationReceivedAt, observedDelta: input.observedDelta,
         payload: DatabaseFindingEventPayloadV1Schema.parse({ subject, observation }),
         subjectContexts: [{ role: 'operand', subject }],
-    }, context);
+    };
+    // One completed read supplies the Machine-wide source and its exact Database source.
+    await Promise.all([
+        databaseFindingEventSourceInstanceId({ v: 1, sourceScope: observation.sourceScope }),
+        databaseFindingEventSourceInstanceId(source),
+    ].map(sourceInstanceId => admitCheckpointedPluginEventObservationV1({ ...evidence, sourceInstanceId }, context)));
 }
