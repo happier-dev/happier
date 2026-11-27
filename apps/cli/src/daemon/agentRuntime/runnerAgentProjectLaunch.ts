@@ -133,7 +133,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
     };
     const ingress: RpcHandlerContext = input.ingress ?? { signal: input.signal,
         ...(input.requester ? { requesterSessionBootstrap: input.requester.bootstrap } : {}) };
-    const prepare: HostAgentNativeLaunchPreparation = async (signal, cwd, environment) => {
+    const prepare: HostAgentNativeLaunchPreparation = async (signal, cwd, environment, readMemberProjectPaths) => {
         await assertCurrent();
         if (!owner) {
             const installedAccount = !ingress.requesterSessionBootstrap && !ingress.callerInputAuthorization && !ingress.machineAdmission;
@@ -246,15 +246,15 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 },
             });
         }
-        const prepared = await observe('project_preparation', () => owner!.prepare(signal, cwd, environment));
+        const prepared = await observe('project_preparation', () => owner!.prepare(signal, cwd, environment, readMemberProjectPaths));
         return { ...prepared, gitIdentity: readGitIdentity?.() };
     };
     // One original occurrence owns one setup reservation and review producer.
     // Multiple qualified children keep their own tuples, but cannot overwrite
     // that occurrence's pending setup or race the lazy owner construction.
     let preparation = Promise.resolve();
-    const prepareAgentNativeLaunch: HostAgentNativeLaunchPreparation = (signal, cwd, environment) => {
-        const next = preparation.then(() => (() => prepare(signal, cwd, environment))());
+    const prepareAgentNativeLaunch: HostAgentNativeLaunchPreparation = (...args) => {
+        const next = preparation.then(() => (() => prepare(...args))());
         preparation = next.then(() => undefined, () => undefined);
         return next;
     };

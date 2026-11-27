@@ -2867,8 +2867,9 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                 const preparationSignal = signal
                     ? AbortSignal.any([invocation.controller.signal, signal]) : invocation.controller.signal;
                 const prepareAgentNativeLaunch: HostAgentNativeLaunchPreparation | undefined = nativeLaunch
-                    ? async (nativeSignal, nativeCwd, nativeEnvironment) => {
-                        const prepared = await invocation.prepareAgentNativeLaunch?.(nativeSignal, nativeCwd, nativeEnvironment);
+                    ? async (...args) => {
+                        const [nativeSignal] = args;
+                        const prepared = await invocation.prepareAgentNativeLaunch?.(...args);
                         requireInvocation(sessionId, runner, retainedAgent, operation, dispatchInput);
                         if (nativeSignal.aborted) return fail('plugin_exec_aborted', 'Process operation was aborted');
                         return prepared;

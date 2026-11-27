@@ -1,6 +1,9 @@
 import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { mkdir, writeFile } from 'node:fs/promises';
+import * as fs from 'node:fs';
+import * as nativeProcess from '@happier-dev/cli-common/process';
+import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
@@ -49,7 +52,27 @@ import { accountSettingsParse } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof fs>();
+  return { ...actual, realpathSync: Object.assign(vi.fn(actual.realpathSync), { native: actual.realpathSync.native }) };
+});
+
+vi.mock('@happier-dev/cli-common/process', async importOriginal => {
+  const actual = await importOriginal<typeof nativeProcess>();
+  return { ...actual, execFileWithDeadline: vi.fn(actual.execFileWithDeadline) };
+});
+
+afterEach(() => {
+  vi.mocked(fs.realpathSync).mockReset();
+  vi.mocked(nativeProcess.execFileWithDeadline).mockReset();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean; trusted?: boolean; boundRequester?: boolean;
   projectSecret?: 'saved' | 'missing' | 'stale' | 'overlay' | 'profile'; publishUnrelatedPreference?: boolean;
@@ -80,6 +103,7 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
   await writeFile(join(cwd, '.happier/project.json'), JSON.stringify(manifest));
   await writeFile(join(cwd, 'mise.toml'), '[env]\nNATIVE = "active"\n');
   let projectKey = 'project';
+  let workspaceAssociated = true;
   let rowRevision = 1;
   let trust: ProjectTrustContentV1 | null = null;
   let trustWrites = 0;
@@ -127,7 +151,7 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
       return { status: 200, data: { status: 'updated', revision: 1, cursor: 1 } };
     }
     if (String(url).endsWith('/project-rows/list')) {
-      if (homeServerIdentityId && body.serverId === homeServerIdentityId) {
+      if (!workspaceAssociated || homeServerIdentityId && body.serverId === homeServerIdentityId) {
         return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [] } };
       }
       const key = { kind: 'workspace-ref', serverId: 'session-home', id: 'workspace' };
@@ -243,8 +267,10 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
   const service = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
     resolveExecutable: async () => ({ command: '/installed/agent', args: ['installed-agent'] }), resolvePath: async () => cwd,
     prepareAgentNativeLaunch: invocation.prepareAgentNativeLaunch });
-  const launch = () => authorizePluginExecLaunchForHost(service, { executable, cwd, args: ['--resume'], env: { ORIGINAL: 'host' } },
-    { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(service) });
+  const launch = (childCwd = cwd, agentIsolation: HostAgentIsolationLaunchContext | null = null) =>
+    authorizePluginExecLaunchForHost(service, { executable, cwd: childCwd, args: ['--resume'], env: { ORIGINAL: 'host' } },
+      { agentIsolation, nativeLaunch: issueAgentNativeLaunchQualifierForHost(service, () => agentIsolation
+        ? { v: 1, socketPath: join(f.directory, 'mcp.sock'), bearerToken: 'fixture-token' } : undefined) });
   const missingCustody = createRunnerAgentProjectLaunchInvocation({ cwd, signal, isCurrent: () => true,
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => missingCustody.disposeProjectAgentLaunch());
@@ -322,6 +348,7 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
     clearTrust: () => { trust = null; },
     async changeSetup() { await writeFile(join(cwd, '.happier/project.json'), JSON.stringify({ ...manifest,
       workspace: { setup: [{ kind: 'command', command: 'printf changed' }] } })); },
+    removeWorkspaceAssociation() { workspaceAssociated = false; },
     reassignProject() { projectKey = 'replacement-project'; rowRevision++; },
     retireRunner: () => { runnerCurrent = false; },
     publishedUnrelatedPreference: () => publishedUnrelatedPreference,
@@ -482,6 +509,55 @@ it('prepares a fresh zero-step native Project through installed Session custody 
     expect(launch.env).not.toHaveProperty('ORIGINAL');
     expect(h.nativeEffects()).toBe(1);
   } finally { await launch.release(); }
+});
+
+it.skipIf(process.platform !== 'linux')('confines an isolated native launch with requester-owned Project path facts', async () => {
+  const h = await harness();
+  const control = await h.launch();
+  await control.release();
+  // The C30 Session opens a Git checkout directly, without a retained Project association.
+  h.removeWorkspaceAssociation();
+  const home = join(h.cwd, '..');
+  const sibling = h.cwd + '-sibling';
+  await mkdir(sibling);
+  const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
+    requester: { serverId: 'session-home', machineId: 'machine', accountId: 'requester', installationId: 'installation' } };
+  const member = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'session-home' }),
+    home, workspaceRoot: home, agentUid: 997, agentGid: 997 };
+  const sessionMcpContext = { v: 1 as const, socketPath: join(home, 'mcp.sock'), bearerToken: 'fixture-token' };
+  const isolation: HostAgentIsolationLaunchContext = { requesterIdentity, read: () => ({
+    enabled: true, status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [home], memberIdentity: member,
+    localTransport: { agentUid: member.agentUid, agentGid: member.agentGid },
+    launch: { managedHappierBinaryPath: '/managed/happier', runtimeHome: join(home, 'runtime'),
+      selectedEnvironmentKeys: [], selectedMaterials: [], sessionMcpContext },
+  }) };
+  const { realpathSync } = await vi.importActual<typeof fs>('node:fs');
+  vi.mocked(fs.realpathSync).mockImplementation(path => {
+    if (String(path) === h.cwd || String(path) === sibling) throw Object.assign(new Error('daemon cannot traverse member home'), { code: 'EACCES' });
+    return realpathSync(path);
+  });
+  const { execFileWithDeadline } = await vi.importActual<typeof nativeProcess>('@happier-dev/cli-common/process');
+  vi.mocked(nativeProcess.execFileWithDeadline).mockImplementation(async (...request) => {
+    const [command, args, options] = request;
+    if (command === 'sudo' && args?.includes('/managed/happier') && options?.inputBytes) {
+      const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }), undefined, true);
+      if ('action' in frame && frame.action === 'resolve_cwd' && frame.cwd === join(h.cwd, 'missing')) {
+        return { stdout: JSON.stringify({ status: 'unavailable', reason: 'cwd_unavailable' }), stderr: '' };
+      }
+      const result = await runAgentIsolationMemberReadinessBoundary({ request, nativeHome: { path: home, uid: member.agentUid } });
+      if (result) return result;
+    }
+    return execFileWithDeadline(...request);
+  });
+
+  await expect(h.launch(sibling, isolation)).rejects.toMatchObject({ code: 'outside_root' });
+  const launch = await h.launch(h.cwd, isolation);
+  try {
+    const payload = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false }));
+    expect(payload).toMatchObject({ cwd: h.cwd, nativeIdentity: { agentUid: member.agentUid }, args: ['installed-agent', '--resume'] });
+  } finally { await launch.release(); }
+  await expect(h.launch(join(h.cwd, 'missing'), isolation)).rejects.toMatchObject({ code: 'outside_root' });
+  expect(h.nativeEffects()).toBe(1);
 });
 
 const guestGitIdentity = { name: 'Guest Person', email: 'guest@example.test' };

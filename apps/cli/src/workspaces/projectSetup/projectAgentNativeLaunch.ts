@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
-import type { HostProjectNativeLaunchAdmission } from '@/plugins/runtime/invocation/services/exec';
+import type { HostAgentNativeLaunchPreparation, HostProjectNativeLaunchAdmission } from '@/plugins/runtime/invocation/services/exec';
 import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { prepareProjectAgentLaunch, type ProjectAgentLaunchPreparation, type ProjectAgentLaunchPreparationInput } from './projectAgentLaunch';
 import { createProjectNativeInvocationCustody, createProjectNativeLaunchAdmission, executeProjectSetup,
@@ -12,6 +12,7 @@ import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/work
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { confineWorkspaceTargetPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import type { ProjectDotenvPreparation } from './projectDotenv';
 import { createProjectRuntimeDotenvPreparation } from './projectSetupReadiness';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
@@ -59,7 +60,8 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 abortReason: reason instanceof Error ? reason.name === 'AbortError' ? 'abort'
                     : reason.name === 'TimeoutError' ? 'timeout' : 'error' : 'other' } : {}) };
         },
-        async prepare(signal: AbortSignal, cwd?: string, environment?: Readonly<Record<string, string>>) {
+        async prepare(signal: AbortSignal, cwd?: string, environment?: Readonly<Record<string, string>>,
+            readMemberProjectPaths?: Parameters<HostAgentNativeLaunchPreparation>[3]) {
             const dotenvPreparations = new Map<string, ProjectDotenvPreparation>();
             const runtimeEnvironments = new Map<string, Readonly<Record<string, string>>>();
             const originalEnvironment = Object.freeze({ ...(environment ?? runtime.hostEnvironment ?? process.env) });
@@ -69,7 +71,15 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
             await assertCurrent(signal);
             // The host invocation selects the Project. A native child may use a
             // contained cwd, but cannot select another Project by changing cwd.
-            if (cwd && !validatePath(cwd.replaceAll('\\', '/'), input.cwd).valid) fail('outside_root');
+            if (cwd) {
+                const targetPath = cwd.replaceAll('\\', '/');
+                const validation = readMemberProjectPaths
+                    ? await confineWorkspaceTargetPath({ targetPath, rootPath: input.cwd, platform: process.platform,
+                        resolvePaths: (target, root) => readMemberProjectPaths(target, root, signal) })
+                    : validatePath(targetPath, input.cwd);
+                signal.throwIfAborted();
+                if (!validation.valid) fail('outside_root');
+            }
             const read = (presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>) => prepareProjectAgentLaunch({
                 onPhase: phase => { pendingPhase = phase; },
                 cwd: input.cwd, machineId: runtime.machineId, serverId: runtime.serverId,

@@ -56,7 +56,7 @@ import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type Lin
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { logger } from '@/ui/logger';
-import { admitAgentIsolationLaunchForHost, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, createMemberProjectPathReader, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 import { selectRequiredAgentLaunchFiles } from '@/daemon/agentIsolation/requiredLaunchFiles';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
@@ -149,6 +149,7 @@ export type HostAgentNativeLaunchPreparation = (
     signal: AbortSignal,
     cwd?: string,
     environment?: Readonly<Record<string, string>>,
+    readMemberProjectPaths?: ReturnType<typeof createMemberProjectPathReader>,
 ) => Promise<Readonly<{
     projectLaunch?: HostProjectNativeLaunchAdmission;
     nativeExecutableOwner?: ExecService;
@@ -1220,7 +1221,10 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
         requesterIdentity = await resolveExecRequesterIdentity(input);
         assertCurrent();
         if (!projectLaunch && input.prepareAgentNativeLaunch) {
-            const prepared = await input.prepareAgentNativeLaunch(input.signal, input.launch.cwd, input.launch.env);
+            const prepared = await input.prepareAgentNativeLaunch(input.signal, input.launch.cwd, input.launch.env,
+                createMemberProjectPathReader({ context: input.agentIsolation, requesterIdentity,
+                    personBreakGlass: input.executionKind === 'person_break_glass', agentNativeLaunch: input.agentNativeLaunch,
+                    sessionMcpContext: input.sessionMcpContext, mcpLaunchMaterial: input.mcpLaunchMaterial }));
             assertCurrent();
             projectLaunch = prepared?.projectLaunch;
             nativeExecutableOwner = prepared?.nativeExecutableOwner;
@@ -1960,11 +1964,17 @@ export function createStablePluginExecService(params: Readonly<{
             ...(request.env ?? {}),
         };
         const signal = options?.signal ? AbortSignal.any([lifetime?.signal ?? params.signal, options.signal]) : lifetime?.signal ?? params.signal;
+        const isolationContext = hostAgentIsolation ?? params.agentIsolation;
+        const readNativeMaterial = () => nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
+            mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : undefined;
         let gitIdentity: NonNullable<Awaited<ReturnType<HostAgentNativeLaunchPreparation>>>['gitIdentity'];
         try {
             const prepare = prepareAgentNativeLaunch ?? (agentNativeLaunch ? params.prepareAgentNativeLaunch : undefined);
             if (prepare && !projectLaunch) {
-                const prepared = await prepare(signal, cwd, environment);
+                const prepared = await prepare(signal, cwd, environment, createMemberProjectPathReader({
+                    context: isolationContext, requesterIdentity, personBreakGlass: params.executionKind === 'person_break_glass',
+                    agentNativeLaunch, ...readNativeMaterial(),
+                }));
                 assertCurrent();
                 projectLaunch = prepared?.projectLaunch;
                 nativeExecutableOwner = prepared?.nativeExecutableOwner;
@@ -1987,10 +1997,9 @@ export function createStablePluginExecService(params: Readonly<{
             gitIdentity,
             ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
             ...(deferDaemonCwd ? { resolveDaemonCwd } : {}),
-            agentIsolation: hostAgentIsolation ?? params.agentIsolation,
+            agentIsolation: isolationContext,
             agentNativeLaunch,
-            ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),
-                mcpLaunchMaterial: INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch)?.() } : {}),
+            ...readNativeMaterial(),
             agentLaunchKind: params.agentLaunchKind,
             executionKind: params.executionKind,
             requesterIdentity,

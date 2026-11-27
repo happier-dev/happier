@@ -138,16 +138,19 @@ async function resolveRealPathForAuthorizationAsync(pathValue: string, platform:
 export async function confineWorkspaceTargetPath(input: Readonly<{
   targetPath: string;
   rootPath: string;
-  facts: WorkspacePathFacts;
   platform: NodeJS.Platform;
-}>): Promise<FilesystemPathAuthorizationResult> {
+}> & (Readonly<{ facts: WorkspacePathFacts }> | Readonly<{
+  resolvePaths(target: string, root: string): Promise<readonly [target: string, root: string]>;
+}>)): Promise<FilesystemPathAuthorizationResult> {
   const resolved = resolveFilesystemTargetPath({ targetPath: input.targetPath, defaultDirectory: input.rootPath, platform: input.platform });
   if (!resolved.valid) return resolved;
   try {
-    const [target, root] = await Promise.all([
-      resolveRealPathForAuthorizationAsync(resolved.resolvedPath, input.platform, input.facts),
-      resolveRealPathForAuthorizationAsync(input.rootPath, input.platform, input.facts),
-    ]);
+    const [target, root] = 'resolvePaths' in input
+      ? await input.resolvePaths(resolved.resolvedPath, input.rootPath)
+      : await Promise.all([
+        resolveRealPathForAuthorizationAsync(resolved.resolvedPath, input.platform, input.facts),
+        resolveRealPathForAuthorizationAsync(input.rootPath, input.platform, input.facts),
+      ]);
     if (isWithinResolvedRoot(filesystemPathComparisonKey(target, input.platform),
       filesystemPathComparisonKey(root, input.platform), input.platform)) return resolved;
   } catch {

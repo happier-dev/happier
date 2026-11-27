@@ -513,6 +513,36 @@ export async function resolveHostRequesterExecutionIdentityForLaunch(input: Read
     return identity;
 }
 
+function resolveMemberLaunchCwd(managedBinary: string, member: AgentIsolationMemberNativeIdentity,
+    cwd: string, workspaceRoots: string[], signal?: AbortSignal) {
+    return resolveUnixAgentLaunchCwd(managedBinary, {
+        v: 1, action: 'resolve_cwd', cwd, workspaceRoots,
+        nativeIdentity: { username: member.username, agentUid: member.agentUid, agentGid: member.agentGid, home: member.home },
+    }, signal);
+}
+
+type MemberProjectPathReader = (cwd: string, root: string, signal: AbortSignal) =>
+    Promise<readonly [cwd: string, root: string]>;
+
+/** Read Project path facts under the same retained member binding as the eventual launch. */
+export function createMemberProjectPathReader(input: Readonly<{
+    context?: HostAgentIsolationLaunchContext;
+    personBreakGlass?: boolean;
+}> & Omit<Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0], 'signal'>): MemberProjectPathReader | undefined {
+    if (input.personBreakGlass || !input.context) return undefined;
+    const context = input.context;
+    const held = context.read();
+    if (!held?.enabled || !held.memberIdentity) return undefined;
+    return async (cwd, root, signal) => {
+        const prepared = context.prepareLaunch ? await context.prepareLaunch({ ...input, signal }) : context;
+        const snapshot = prepared.read();
+        if (!snapshot?.memberIdentity || !snapshot.launch || !snapshot.localTransport) throw new Error('Member path reader unavailable');
+        const result = await resolveMemberLaunchCwd(snapshot.launch.managedHappierBinaryPath, snapshot.memberIdentity, cwd, [root], signal);
+        if (result.status === 'unavailable') throw new Error('Member Project path unavailable');
+        return [result.cwd, result.workspaceRoots[0]!];
+    };
+}
+
 /** Called only by the shared Exec tuple finalizer, after executable admission. */
 export async function admitAgentIsolationLaunchForHost(input: Readonly<{
     context?: HostAgentIsolationLaunchContext;
@@ -597,10 +627,8 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
         const workspaceRoots = snapshot.workspaceRoots.filter(root => isAbsolute(root) && !root.includes('\0')
             && (isCanonicalAbsolutePathInsideRoot(member.home, root)
                 || isCanonicalAbsolutePathInsideRoot(member.workspaceRoot, root)));
-        const result = await resolveUnixAgentLaunchCwd(snapshot.launch.managedHappierBinaryPath, {
-            v: 1, action: 'resolve_cwd', cwd: launchCwd, workspaceRoots,
-            nativeIdentity: { username: member.username, agentUid: member.agentUid, agentGid: member.agentGid, home: member.home },
-        }, input.signal).catch(() => {
+        const result = await resolveMemberLaunchCwd(snapshot.launch.managedHappierBinaryPath, member, launchCwd,
+            workspaceRoots, input.signal).catch(() => {
             input.signal?.throwIfAborted();
             return refuse('launch_probe_failed');
         });
