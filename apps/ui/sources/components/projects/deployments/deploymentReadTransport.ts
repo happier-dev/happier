@@ -12,7 +12,7 @@ import {
 } from '@happier-dev/plugin-sdk/automations';
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentDataSizeResultV1Schema,
-    DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
+    DeploymentReceiptGetResultV1Schema, decodeDeploymentReceiptHistoryPageV1,
     DeploymentDomainListResultV1Schema, DeploymentDomainPageResultV1Schema, DeploymentDataPageResultV1Schema,
     type DeploymentDataPageSuccessV1, hasDeploymentReceiptContentV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -244,12 +244,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         query: Parameters<DeploymentReadTransportV1['listHistory']>[2] & Readonly<{ limit?: number }>,
         options: DeploymentReadOptionsV1) => {
         try {
-            const parsed = DeploymentReceiptListResultV1Schema.safeParse(await execute(DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1,
-                { ...home, environmentId, ...query }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const page = parsed.data;
+            const page = decodeDeploymentReceiptHistoryPageV1(await execute(DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1,
+                { ...home, environmentId, ...query }, { signal: options.signal }), environmentId);
             if (!page.ok) return failure(page.error);
-            if (!page.items.every(row => row.environmentId === environmentId)) return failure('invalid_response');
             return { ok: true as const, value: page };
         } catch (error) {
             return failureFromError(error);

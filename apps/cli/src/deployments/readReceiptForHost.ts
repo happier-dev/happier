@@ -4,7 +4,7 @@ import type { ActionExecutorContext, DeploymentReceiptGetResultV1Schema } from '
 import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
 import { type DeploymentReceiptDetailV1, type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1, projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
-import { DeploymentReceiptListResultV1Schema, hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { decodeDeploymentReceiptHistoryPageV1, hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 
 /** Home's live-reference fact for archive retirement, collected across every history page.
@@ -26,7 +26,7 @@ export async function* readDeploymentReceiptHistoryHeadersForHost(input: Receipt
     let cursor: string | undefined;
     let liveReferencesOnEveryPage = true;
     for (;;) {
-        const page = DeploymentReceiptListResultV1Schema.parse(await input.readPage(cursor));
+        const page = decodeDeploymentReceiptHistoryPageV1(await input.readPage(cursor), input.environmentId);
         if (!page.ok) throw createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error });
         if (input.liveReferences) {
             if (page.liveReferencedDeploymentIds === undefined) liveReferencesOnEveryPage = false;
@@ -34,7 +34,7 @@ export async function* readDeploymentReceiptHistoryHeadersForHost(input: Receipt
             if (!page.nextCursor) input.liveReferences.complete = liveReferencesOnEveryPage;
         }
         for (const deployment of page.items) {
-            if (deployment.environmentId !== input.environmentId || input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
+            if (input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
             yield deployment;
         }
         if (!page.nextCursor) return;

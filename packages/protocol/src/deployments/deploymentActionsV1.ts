@@ -695,6 +695,18 @@ export const DeploymentReceiptListResultV1Schema = lazyZodSchema(() => z.union([
   liveReferencedDeploymentIds: z.optional(z.array(DeploymentIdentifierV1Schema)) }),
   DeploymentActionFailureV1Schema,
 ]));
+
+/** Admit an entire Home history page before a reader consumes any of its rows. */
+export function decodeDeploymentReceiptHistoryPageV1(value: unknown, environmentId: string) {
+  const parsed = DeploymentReceiptListResultV1Schema.safeParse(value);
+  if (!parsed.success) return { ok: false, error: 'invalid_response' } as const;
+  const page = parsed.data;
+  if (page.ok && page.items.some(row => row.environmentId !== environmentId)) {
+    return { ok: false, error: 'deployment_invalid' } as const;
+  }
+  return page;
+}
+
 /** One admitted Account page; private Artifact content remains opaque on the Home. */
 export const DeploymentDomainPageInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, projectSourceId: z.optional(DeploymentIdentifierV1Schema),

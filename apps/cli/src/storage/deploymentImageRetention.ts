@@ -5,7 +5,7 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readMachineDeploymentReferencesV1, MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentEnvironmentGetResultV1Schema, decodeDeploymentReceiptHistoryPageV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
@@ -67,9 +67,8 @@ export function createStorageDeploymentImageRetention(input: Readonly<{
                 const loaded = await atHome(() => storage('deployments.receipts.list', { serverId: homeId,
                     environmentId, ...(cursor ? { cursor } : {}) }, context));
                 if ('errorCode' in loaded) return refuse(loaded.errorCode);
-                const page = DeploymentReceiptListResultV1Schema.parse(loaded);
+                const page = decodeDeploymentReceiptHistoryPageV1(loaded, environmentId);
                 if (!page.ok) return refuse(page.error);
-                if (page.items.some(receipt => receipt.environmentId !== environmentId)) return refuse('target_mismatch');
                 receipts.push(...page.items);
                 cursor = page.nextCursor ?? undefined;
             } while (cursor);

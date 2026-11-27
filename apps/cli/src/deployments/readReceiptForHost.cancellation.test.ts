@@ -1,7 +1,16 @@
 import { expect, it } from 'vitest';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
-import { openDeploymentReceiptForHost } from './readReceiptForHost';
+import { openDeploymentReceiptForHost, readDeploymentReceiptHistoryHeadersForHost } from './readReceiptForHost';
+
+it('refuses a foreign Environment receipt before yielding any row from its page', async () => {
+    const { deployment } = createDeploymentReceiptDetailV1();
+    const readPage = async () => ({ ok: true, items: [deployment, {
+        ...deployment, id: 'foreign-receipt', environmentId: 'foreign-environment',
+    }], nextCursor: null });
+    const history = readDeploymentReceiptHistoryHeadersForHost({ environmentId: deployment.environmentId, readPage });
+    await expect(history.next()).rejects.toMatchObject({ code: 'deployment_invalid' });
+});
 
 it('carries the observed stopped incumbent through the canonical private receipt read until recovery', async () => {
     const fixture = createDeploymentReceiptDetailV1();

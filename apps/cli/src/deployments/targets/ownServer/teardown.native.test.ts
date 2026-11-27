@@ -358,8 +358,8 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     return readDeploymentReceiptHistoryHeadersForHost({ environmentId, ...(liveReferences ? { liveReferences } : {}),
                         lineage: targetLinkId === undefined ? undefined : new Set([targetLinkId]),
                         async readPage(cursor) {
-                            return cursor ? { ok: true, items: [...retained, ...(promoted ? [pinnedOrigin] : []),
-                                otherEnvironment], nextCursor: null, liveReferencedDeploymentIds: promoted ? [pinnedOrigin.id] : [] }
+                            return cursor ? { ok: true, items: promoted ? [...retained, pinnedOrigin] : retained,
+                                nextCursor: null, liveReferencedDeploymentIds: promoted ? [pinnedOrigin.id] : [] }
                                 : { ok: true, items: [receipt.deployment, otherLineage], nextCursor: 'next-page', liveReferencedDeploymentIds: [] };
                         },
                     });

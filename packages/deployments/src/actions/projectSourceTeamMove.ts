@@ -6,7 +6,7 @@ import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executo
 import { ProjectSourcesMoveToTeamInputV1Schema, type ProjectSourcesFailureV1,
     type ProjectSourcesMoveToTeamInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
-    DeploymentReceiptListResultV1Schema, deploymentInProgressStates,
+    decodeDeploymentReceiptHistoryPageV1, deploymentInProgressStates,
     type DeploymentEnvironmentHeaderV1, type DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ProjectDeploymentDefaultsOutputV1 } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
 import { evaluateApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -92,9 +92,8 @@ async function readProjectSourceTeamMoveInventory(account: ProjectSourceTeamMove
                 environmentId: header.id, ...(receiptCursor ? { cursor: receiptCursor } : {}) }, context);
             const failure = readActionFailureEnvelope(response);
             if (failure) throw new ProjectSourceTeamMoveReadFailure(failure);
-            const page = DeploymentReceiptListResultV1Schema.parse(response);
+            const page = decodeDeploymentReceiptHistoryPageV1(response, header.id);
             if (!page.ok) return refuse(page.error);
-            if (page.items.some(receipt => receipt.environmentId !== header.id)) return refuse('deployment_invalid');
             receipts.push(...page.items);
             receiptCursor = page.nextCursor ?? undefined;
         } while (receiptCursor);

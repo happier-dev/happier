@@ -8,6 +8,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, compu
     DeploymentActionInputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptListResultV1Schema,
     deriveBoxPublicKeyFromSeed, sealEncryptedDataKeyEnvelopeV1,
     type ActionExecutorContext } from '@happier-dev/protocol';
+import { AUTH_TOKEN_KIND_AUTHORITIES } from '@happier-dev/protocol/auth/authToken';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
@@ -24,6 +25,7 @@ import {
 import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
+import { createStorageDeploymentImageRetention } from './deploymentImageRetention';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createDaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
@@ -56,6 +58,8 @@ async function fixture(run: (value: Readonly<{
     ids: Readonly<Record<'active' | 'retained' | 'dangling' | 'foreign' | 'unowned' | 'running' | 'owned', string>>;
     engineId: string;
     bindMarker: string;
+    readRetention: ReturnType<typeof createStorageDeploymentImageRetention>;
+    addForeignReceipt(): void;
     setPending(pending: boolean): void;
     changeOnHeaderRecheck(kind: 'environment' | 'receipt'): void;
     retire(): void;
@@ -80,7 +84,8 @@ async function fixture(run: (value: Readonly<{
             endpoints: [{ kind: 'https', url: profile.serverUrl }],
         } });
         configuration.activeServerId = profile.id;
-        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const tokenClaims = { sub: 'owner', provenance: { v: 1, kind: 'terminal', authority: AUTH_TOKEN_KIND_AUTHORITIES.terminal } };
+        const token = `e30.${Buffer.from(JSON.stringify(tokenClaims)).toString('base64url')}.signature`;
         const machineKey = new Uint8Array(randomBytes(32));
         const publicKey = deriveBoxPublicKeyFromSeed(machineKey);
         const machineContentKey = new Uint8Array(randomBytes(32));
@@ -151,6 +156,7 @@ async function fixture(run: (value: Readonly<{
         const bindMarker = join(root, 'bind-marker');
         await writeFile(bindMarker, 'retained bind data');
         let pending = false;
+        let foreignReceipt = false;
         let changeOnRecheck: 'environment' | 'receipt' | undefined;
         const storageRoute = (actionId: 'deployments.environments.get' | 'deployments.receipts.list') => {
             const spec = getActionSpec(actionId);
@@ -205,6 +211,7 @@ async function fixture(run: (value: Readonly<{
                 const items = current.map(row => headerReads.receipts > 1 && changeOnRecheck === 'receipt'
                     && row.deployment.id === 'dangling' ? { ...row.deployment, revision: row.deployment.revision + 1 } : row.deployment);
                 if (headerReads.receipts > 1 && changeOnRecheck === 'receipt') changeOnRecheck = undefined;
+                if (foreignReceipt) items.push(createDeploymentReceiptHeaderV1({ environmentId: 'foreign-environment' }));
                 return { status: 200, data: DeploymentReceiptListResultV1Schema.parse({ ok: true, items, nextCursor: null }) };
             }
             const id = path.startsWith('/v1/artifacts/') ? decodeURIComponent(path.slice('/v1/artifacts/'.length)) : undefined;
@@ -322,7 +329,11 @@ async function fixture(run: (value: Readonly<{
             return HappierStorageSummaryV1Schema.parse(outcome.result);
         };
         await run({ invoke, summary, docker, ids, engineId, bindMarker, setPending(value) { pending = value; }, retire() { active = false; },
-            changeOnHeaderRecheck(kind) { changeOnRecheck = kind; } });
+            changeOnHeaderRecheck(kind) { changeOnRecheck = kind; },
+            addForeignReceipt() { foreignReceipt = true; },
+            readRetention: createStorageDeploymentImageRetention({ credentials, serverId: profile.id,
+                serverHttpBaseUrl: profile.serverUrl, machineId: target.machineId, installationId: 'installation-a', assertCurrent: async () => {} }),
+        });
     } finally {
         socketBoundary.create = undefined;
         routes?.dispose();
@@ -459,6 +470,14 @@ it('refuses unknown receipt custody and colliding engine work, then permits clea
                 keys: [{ kind: 'dockerEngine', dockerEndpoint: `${engineId}-other` }] }, async () => {});
         } finally { release(); await build; }
         expect(await invoke()).toMatchObject({ kind: 'completed' });
+    });
+});
+
+it('refuses an entire foreign Environment receipt page in image retention', async () => {
+    await fixture(async ({ addForeignReceipt, readRetention }) => {
+        expect(await readRetention({})).toMatchObject({ status: 'complete' });
+        addForeignReceipt();
+        await expect(readRetention({})).rejects.toMatchObject({ code: 'deployment_invalid' });
     });
 });
 

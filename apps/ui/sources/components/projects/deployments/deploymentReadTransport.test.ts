@@ -1190,11 +1190,21 @@ describe('deployment scoped read transport', () => {
         ] } });
         expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(beforeShared).map(request => request.input))
             .toEqual([{ artifactIds: [environmentHeader.contentArtifactId] }]);
-        homes.answer(serverId, `${root}/${environmentHeader.id}/deployments`, { body: { ok: true,
-            items: [badReceipt, receiptHeader, { ...otherReceipt, contentBodyVersion: 2 }], nextCursor: 'next-history-page' } });
+        const historyPath = `${root}/${environmentHeader.id}/deployments`;
+        const historyPage = { body: { ok: true,
+            items: [badReceipt, receiptHeader, { ...otherReceipt, contentBodyVersion: 2 }], nextCursor: 'next-history-page' } };
+        homes.answer(serverId, historyPath, historyPage);
         const partialHistory = await transport.listHistory(scope, environmentHeader.id, {}, options);
         expect(partialHistory).toMatchObject({ ok: true, value: { items: [{ id: receiptHeader.id }], coverage: 'partial', nextCursor: 'next-history-page' } });
         expect(pageItems(partialHistory)).toHaveLength(1);
+        homes.answer(serverId, historyPath, { body: { ok: true,
+            items: [receiptHeader, { ...otherReceipt, environmentId: 'foreign-environment' }], nextCursor: null } });
+        const beforeInvalidHistory = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
+        expect(await transport.listHistory(scope, environmentHeader.id, {}, options)).toMatchObject({
+            ok: false, failure: { code: 'deployment_invalid', retryable: false },
+        });
+        expect(homes.requests.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(beforeInvalidHistory);
+        homes.answer(serverId, historyPath, historyPage);
         const domain = { v: 1, id: 'valid-domain', environmentId: environmentHeader.id, targetLinkId: targetHeader.id,
             revision: 1, state: 'active', contentArtifactId: 'domain-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
             createdByAccountId: 'account-owner', createdAtMs: 1000, updatedAtMs: 1000 };

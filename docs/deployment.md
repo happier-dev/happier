@@ -2788,7 +2788,10 @@ the exact selected runtime. Receipt history uses request time and id for stable
 newest-first pagination. Settled history can reuse its listed header while opening
 only the receipt bodies needed to resolve member versions; live or uncertain
 receipts retain the canonical fresh read. Explicit Retry can supersede a stalled
-read without losing the last admitted presentation.
+read without losing the last admitted presentation. The UI, daemon native host,
+image retention and Source Move share a page decoder. It rejects a page with a
+receipt from another Environment as `deployment_invalid` before any row on that
+page can be opened or used.
 
 Development collection readers preserve valid siblings when an individual stored
 header or private Artifact cannot be projected. Environment and target inventories

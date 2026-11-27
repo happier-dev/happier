@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
@@ -78,6 +78,39 @@ it.each([
     expect(await preparation.prepareHostReviewedChildren({
         actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, input, context: {},
     })).toEqual(expected);
+});
+
+it('refuses a foreign Environment receipt before reading Artifacts for Source Move', async () => {
+    const accountId = 'account';
+    const input = { serverId: 'home', sourceId: 'source', teamId: 'team', expectedRevision: 2, requestKey: 'source-move' };
+    const environment = createDeploymentEnvironmentHeaderV1({ serverId: input.serverId, projectSourceId: input.sourceId });
+    const unexpectedRead = async (): Promise<never> => { throw new Error('Read after history refusal'); };
+    const preparation = createProjectSourceTeamMovePreparationV1({
+        accountId, credentialAuthorityKind: 'account', assertCurrent: () => {},
+    }, {
+        projectSourcesRead: async () => ProjectSourcesReadOutputV1Schema.parse({
+            ok: true, canManage: true, source: {
+                id: input.sourceId, revision: input.expectedRevision, name: 'Source',
+                owner: { kind: 'account', accountId }, audience: [], createdByAccountId: accountId,
+            },
+        }),
+        deploymentAction: async actionId => {
+            if (actionId === 'deployments.environments.list') return { ok: true, items: [environment], nextCursor: null };
+            if (actionId === 'deployments.environments.get') return {
+                ok: true, environment, targetLinks: [], retainedTargetLinkCleanupCompleteIds: [],
+            };
+            if (actionId === 'deployments.receipts.list') return { ok: true, items: [
+                createDeploymentReceiptHeaderV1({ environmentId: environment.id }),
+                createDeploymentReceiptHeaderV1({ id: 'foreign-receipt', environmentId: 'foreign-environment' }),
+            ], nextCursor: null };
+            return unexpectedRead();
+        },
+        workflowAction: unexpectedRead, machineAccessAction: unexpectedRead, readApiTokens: unexpectedRead,
+        readDefaults: unexpectedRead, readArtifactContents: unexpectedRead, isSameHome: (left, right) => left === right,
+    });
+    expect(await preparation.prepareHostReviewedChildren({
+        actionId: PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, input, context: {},
+    })).toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
 });
 
 it.each(['Machine access', 'Workflows'] as const)('preserves the typed %s inventory refusal during Source Move review', async (port) => {
