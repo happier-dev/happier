@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, open, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { LocalHistoryItemsSchema, type LocalHistoryRpcRequest, type LocalHistoryRpcResponse } from '@happier-dev/protocol';
+import { LocalHistoryItemsSchema, lazySchema, type LocalHistoryRpcRequest, type LocalHistoryRpcResponse } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { configuration } from '@/configuration';
@@ -17,14 +17,14 @@ import { resolveClaudeDirectSessionFile } from './resolveClaudeDirectSessionFile
 
 const DAY_MS = 86_400_000;
 const NOTICE_MS = 7 * DAY_MS;
-const KeptSchema = z.array(LocalHistoryItemsSchema.element.extend({
+const KeptSchema = lazySchema(() => z.array(LocalHistoryItemsSchema.element.extend({
   projectId: LocalHistoryItemsSchema.element.shape.remoteSessionId,
   agentId: z.literal('claude').optional(),
   sourceKey: z.string().optional(),
   activityMs: z.number(),
   keptMs: z.number().optional(),
   touchedMtimeMs: z.number(),
-}));
+})));
 type Kept = z.infer<typeof KeptSchema>[number];
 
 let pendingRecordOperation: Promise<unknown> = Promise.resolve();
