@@ -1428,9 +1428,8 @@ describe('the mounted PRs & Issues surface', () => {
             { subPath: `tasks,${audience}` });
         await settleWindow('view', shell);
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
-        // Inline Status is exposed through the row's accessible label, so the
-        // semantic text query intentionally omits its duplicate child text.
-        expect(document.body.textContent).toContain('Ready');
+        // This linked Session reports its completed turn through the Task row's Agent state.
+        expect(document.body.textContent).toContain('Finished');
         const relationReads = harness.actionCalls.filter(action => action === TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1).length;
         if (audience === 'everyone') {
             await expect(shell.getByText('Unlinked maintenance task')).resolves.toBeDefined();
@@ -1438,7 +1437,7 @@ describe('the mounted PRs & Issues surface', () => {
             await settleWindow('view', shell);
         }
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
-        expect(document.body.textContent).toContain('Ready');
+        expect(document.body.textContent).toContain('Finished');
         await expect(shell.queryByText('Unlinked maintenance task')).resolves.toBeUndefined();
         await expect(shell.getByText('1 other source needs attention')).resolves.toBeDefined();
         expect([...document.querySelectorAll('[role="status"]')]
