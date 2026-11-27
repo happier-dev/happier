@@ -56,6 +56,10 @@ export {
   type CollectionProps, type CollectionLoadingRowsProps,
   type CollectionTableCell, type CollectionTableColumnResize,
 } from './Collection.js';
+export {
+  CaptureList, CaptureMoreButton, CaptureQueries, CaptureTimeMeta,
+  type CaptureListDetail, type CapturePageMore,
+} from './capture/CaptureQueries.js';
 export { CollectionRowNeedsYouHighlight, useCollectionRowNeedsYouHighlight,
   type CollectionRowNeedsYouHighlightProps } from './CollectionRowNeedsYouHighlight.js';
 export * from './CollectionSavedViewsStrip.js';

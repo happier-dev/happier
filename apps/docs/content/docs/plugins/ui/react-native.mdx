@@ -2919,6 +2919,14 @@ panel controller owns state and reads; unknown or inactive lists/items and
 exhausted pages return `unavailable`. This development seam changes in place
 and requires matching Triage/source packages; it is not a released SDK contract.
 
+### Render captured database queries (0.3 development)
+
+Import `CaptureQueries` from `@happier-dev/plugin-ui/components` to render a list of
+`DatabaseCaptureSummaryV1` values for your selected target. Supply the capture
+read result, loading state, and locale. Pass `more` when a next page is available
+and `detail` to control the selected row and supply its detail renderer. Your
+surface owns the capture reads and target selection.
+
 ## Accessibility and offline snapshots
 
 Use the semantic package's accessibility-aware controls and preserve a logical

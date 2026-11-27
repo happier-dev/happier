@@ -21,7 +21,7 @@ import {
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { Button, ErrorState, Item, ItemGroup, Stack, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
-import { CaptureQueries } from '@happier-dev/plugins-telemetry/capture-views';
+import { CaptureQueries } from '@happier-dev/plugin-ui/components';
 import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
 
 const limit = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;

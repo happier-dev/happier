@@ -10,10 +10,9 @@ import {
     type DatabaseCaptureSourceV1,
     type DatabaseCaptureTraceGetResultV1,
 } from '@happier-dev/database-protocol';
-import type { DatabaseFindingObservationV1 } from '@happier-dev/plugin-sdk/database';
+import { captureSummaryFailed, type DatabaseFindingObservationV1 } from '@happier-dev/plugin-sdk/database';
 import type { CaptureSummary } from '../store/capture.js';
 import type { RepeatedQueryEvidence } from './requests.js';
-import { captureSummaryFailed } from './requestFailure.js';
 
 export const captureFindingSource = { pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: 'capture-findings' } as const;
 

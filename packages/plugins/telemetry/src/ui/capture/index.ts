@@ -2,16 +2,14 @@
  * The capture views every capture reader draws (the Environment's Telemetry tab, a worktree's local capture,
  * the exception detail's request): one component set over the `capture/*` read answers.
  */
+export { CaptureQueries, type CaptureListDetail, type CapturePageMore } from '@happier-dev/plugin-ui/components';
 export {
   CaptureAppLlmCalls,
   CaptureEndpoints,
   CaptureLogs,
-  CaptureQueries,
   CaptureTraces,
   type CaptureAppLlmCallV1,
   type CaptureEndpointAction,
-  type CaptureListDetail,
-  type CapturePageMore,
 } from './CaptureViews.js';
 export {
   CapturedLogLines,

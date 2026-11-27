@@ -30,6 +30,13 @@ export const DatabaseCaptureConfigureInputV1ProtocolSchema: ProtocolComposableSc
 export const DatabaseCaptureConfigureResultV1ProtocolSchema: ProtocolComposableSchema<SchemaInput<'databaseCaptureConfigureResultV1'>, DatabaseCaptureConfigureResultV1 & ProtocolJsonValue> = native.DatabaseCaptureConfigureResultV1ProtocolSchema;
 export const DatabaseCaptureResourceInputV1ProtocolSchema: ProtocolComposableSchema<SchemaInput<'databaseCaptureResourceInputV1'>, DatabaseCaptureResourceInputV1 & ProtocolJsonValue> = native.DatabaseCaptureResourceInputV1ProtocolSchema;
 export const DatabaseCaptureResourceSnapshotV1ProtocolSchema: ProtocolComposableSchema<SchemaInput<'databaseCaptureResourceSnapshotV1'>, DatabaseCaptureResourceSnapshotV1 & ProtocolJsonValue> = native.DatabaseCaptureResourceSnapshotV1ProtocolSchema;
+/** The capture list and finding detail use the same request failure definition. */
+export function captureSummaryFailed(
+    summary: Readonly<{ httpStatusCode?: number | null; outcome?: string | null }>,
+): boolean {
+    return (summary.httpStatusCode ?? 0) >= 500 || summary.outcome === 'error';
+}
+
 export const readProductionCaptureFindingGroupKeyV1: (finding: DatabaseCaptureFindingDetailV1) => string | undefined = native.readProductionCaptureFindingGroupKeyV1;
 export type {
     DatabaseCaptureResourceInputV1,

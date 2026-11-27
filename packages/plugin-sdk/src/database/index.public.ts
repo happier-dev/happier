@@ -228,6 +228,7 @@ export {
     DatabaseCaptureConfigureResultV1ProtocolSchema as DatabaseCaptureConfigureResultV1Schema,
     DatabaseCaptureResourceInputV1ProtocolSchema as DatabaseCaptureResourceInputV1Schema,
     DatabaseCaptureResourceSnapshotV1ProtocolSchema as DatabaseCaptureResourceSnapshotV1Schema,
+    captureSummaryFailed,
     readProductionCaptureFindingGroupKeyV1,
 } from './captureProjections.js';
 export type {

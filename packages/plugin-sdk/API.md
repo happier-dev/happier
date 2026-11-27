@@ -2052,6 +2052,7 @@
 | `./database` | `UI_DATABASE_DRAFT_READ_ACTION_ID_V1` | value | any |
 | `./database` | `UI_DATABASE_NAVIGATE_ACTION_ID_V1` | value | any |
 | `./database` | `UI_DATABASE_OPEN_ACTION_ID_V1` | value | any |
+| `./database` | `captureSummaryFailed` | value | any |
 | `./database` | `projectTelemetryMetricsActionReadResultV1` | value | any |
 | `./database` | `readProductionCaptureFindingGroupKeyV1` | value | any |
 | `./deployment-targets` | `DeploymentTargetOwnedVariableV1` | type | any |

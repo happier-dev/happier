@@ -7,7 +7,7 @@
 import type {
   DatabaseCaptureEndpointV1,
 } from '@happier-dev/database-protocol';
-export { captureSummaryFailed } from '../../analysis/requestFailure.js';
+export { captureSummaryFailed } from '@happier-dev/plugin-sdk/database';
 
 /** One route's observed window: requests, errors and time, as the capture store counted them (D27 #9). */
 export type CaptureEndpointView = Readonly<{
