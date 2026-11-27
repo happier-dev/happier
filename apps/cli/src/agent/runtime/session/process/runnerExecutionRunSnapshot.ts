@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { configuration } from '@/configuration';
@@ -122,7 +123,11 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
         });
         if (!source) return unavailable();
       } else if (backendTarget) return unavailable();
-      if (snapshot.runnerAgent) {
+      // Both roles can select the same admitted Agent. Its existing source
+      // serves both roles; registering it twice makes the catalog reject it.
+      if (snapshot.runnerAgent && (!snapshot.agent || !areSameAgentRoutingIdentity(
+        snapshot.agent.descriptor.agentId, snapshot.runnerAgent.descriptor.agentId,
+      ))) {
         runnerSource = await createRunnerAgentSessionRuntimeSource({
           happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
           authorityFilePath: path, expectedSessionId: input.sessionId,
