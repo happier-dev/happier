@@ -1,6 +1,6 @@
 FROM node:24-bookworm
 
-ENV container=docker
+ENV container=docker SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=info
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \

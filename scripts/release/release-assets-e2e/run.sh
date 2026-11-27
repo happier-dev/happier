@@ -1041,8 +1041,13 @@ if [[ "$with_any_remote" == "1" ]]; then
 
     if [[ $status -ne 0 ]]; then
       echo "[npm-e2e-smoke] remote server smoke failed (exit $status)" >&2
+      echo "[npm-e2e-smoke] remote-server1 container state:" >&2
+      "${compose_remote[@]}" --env-file "$env_file" ps -a remote-server1 >&2 || true
       echo "[npm-e2e-smoke] remote-server1 logs:" >&2
       "${compose_remote[@]}" --env-file "$env_file" logs --no-color remote-server1 >&2 || true
+      echo "[npm-e2e-smoke] remote-server1 ssh diagnostics:" >&2
+      "${compose_remote[@]}" --env-file "$env_file" exec -T remote-server1 bash -lc \
+        'systemctl --no-pager status ssh.service sshd.service; journalctl --no-pager -u ssh.service -u sshd.service -n 60; /usr/sbin/sshd -t' >&2 || true
       if [[ "$remote_server_db" == "postgres" ]]; then
         echo "[npm-e2e-smoke] postgres logs:" >&2
         "${compose_remote[@]}" --env-file "$env_file" logs --no-color postgres >&2 || true
