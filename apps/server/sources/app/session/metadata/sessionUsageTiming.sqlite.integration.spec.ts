@@ -102,6 +102,9 @@ describe('Session timing grants the content CAS', () => {
             agentState: { ciphertext: state(1), expectedVersion: 0 }, usageTimingV1: timing };
         expect(await updateSessionMetadataEnvelopeTuple(ownerPatch)).toMatchObject({ ok: true });
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).usageTimingV1).toEqual(timing);
+        expect((await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+            accountId: owner.id, kind: 'session', entityId: session.id,
+        } } })).hint).toMatchObject({ memoryLocalityChanged: false, transcriptSeq: 0 });
         await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: editor.id,
             accessLevel: 'edit', canApprovePermissions: false } });
         await db.accountSessionFollow.create({ data: { accountId: editor.id, sessionId: session.id } });

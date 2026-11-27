@@ -188,12 +188,13 @@ export async function createMemoryIndexer(params: Readonly<{
   const resolveSessionCryptoContext = async (
     sessionId: string,
     signal?: AbortSignal,
+    cryptoInputs?: MemorySessionInventoryObservation['cryptoInputs'],
   ): Promise<SessionStoredContentCryptoContext | null> => {
     signal?.throwIfAborted();
     const cached = sessionCryptoContextCache.get(sessionId);
     if (cached) return cached;
 
-    const raw = await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId, signal });
+    const raw = cryptoInputs ?? await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId, signal });
     signal?.throwIfAborted();
     if (!raw) return null;
 
@@ -206,6 +207,9 @@ export async function createMemoryIndexer(params: Readonly<{
 
     const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
     if (!ctx) {
+      // The ordinary read path owns reporting unavailable material. A failed
+      // prefill leaves the cache empty and the path can fetch current inputs.
+      if (cryptoInputs) return null;
       throw new AccountEncryptionMaterialUnavailableError();
     }
     const resolved = { mode, ctx } as const;
@@ -1220,6 +1224,11 @@ export async function createMemoryIndexer(params: Readonly<{
       const sessionIds = [...observedSeqBySessionId.keys()].filter(id => included.has(id));
       await observeSessions(sessionIds, operationSignal);
       operationSignal.throwIfAborted();
+      for (const { sessionId, eligibility, cryptoInputs } of observations) {
+        if (eligibility && cryptoInputs && included.has(sessionId) && observedSeqBySessionId.has(sessionId)) {
+          await resolveSessionCryptoContext(sessionId, operationSignal, cryptoInputs);
+        }
+      }
       await syncEligibleSessions({ sessionIds, indexingSessionIds: included, observedSeqBySessionId,
         allowInitialBackfillSessionIds, signal: operationSignal });
     };

@@ -833,7 +833,16 @@ describe('Memory process placement composition', () => {
       deep: { ...DEFAULT_MEMORY_SETTINGS.deep, minChunkMessages: 1 } });
     const { connection, projected: initial, boundary } = state;
     expect(initial).toBeUndefined();
-    await connection.inventory(undefined, [{ sessionId: session.id, eligibility }]);
+    const cryptoInputs = {
+      encryptionMode: session.encryptionMode,
+      dataEncryptionKey: session.dataEncryptionKey,
+      effectiveAccess: session.effectiveAccess,
+      share: session.share,
+      metadataLayoutVersion: session.metadataLayoutVersion,
+      metadata: session.metadata,
+    };
+    const admitted = { sessionId: session.id, eligibility, cryptoInputs };
+    await connection.inventory(undefined, [admitted]);
     expect(boundary.children).toHaveLength(1);
     expect(reads).not.toContain('/v2/sessions');
     const { openDeepIndexReader } = await import('./deepIndex/deepIndexDb');
@@ -847,7 +856,7 @@ describe('Memory process placement composition', () => {
     seq = 2;
     await connection.inventory(undefined, [{ sessionId: session.id, eligibility: { ...eligibility!, observedSeq: seq } }]);
     expect(search('secondadmittedmarker')).toHaveLength(1);
-    expect(reads.filter(path => path === `/v2/sessions/${session.id}`)).toHaveLength(1);
+    expect(reads.filter(path => path === `/v2/sessions/${session.id}`)).toHaveLength(0);
     await expireChildGrace();
     // The next child receives the exact removal too; it must not mistake the
     // empty addressed projection for a request to enumerate the Account.

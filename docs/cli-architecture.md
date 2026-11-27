@@ -721,6 +721,14 @@ succeeds; unrelated changes or settings reload cannot clear it. Searchable index
 still require retained-access and archive-policy qualification. Shutdown cancels
 and joins the worker's work before releasing its process and observations.
 
+When the daemon admits an exact Session for indexing, it forwards the Session's
+wrapping inputs with that observation on its existing local Memory process
+channel. The indexer opens them with its scoped credentials and can skip a
+duplicate Session detail read. When inputs are missing or cannot be opened,
+the existing indexer read path resolves current material. V1 metadata tuple
+commits also publish a Memory locality proof when the owner envelope is
+unchanged, allowing the existing cursor consumer to reuse its prior admission.
+
 In 0.3 development, `persistence.ts` also owns device-local Home usage in
 `server-profile-observations.json` beneath the CLI home, keyed by profile id.
 Profile APIs, server/relay commands, Doctor and bug-report diagnostics project

@@ -5102,6 +5102,9 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
         ...(publication?.publishCurrentView ? { currentViewPublication: { kind: 'envelope_tuple_v1', sessionOwnerId: access.sessionOwnerId } } as const : {}),
         followSourceChanged: agentStateChanged,
         usageAccountingChanged: false,
+        // The tuple CAS fences the existing owner envelope. Shared metadata
+        // and Agent state cannot change V1 Memory locality.
+        ...(!ownerMetadataChanged ? { memoryLocalityChanged: false as const } : {}),
     });
     return toMetadataEnvelopeTupleSuccess(
         nextTuple,

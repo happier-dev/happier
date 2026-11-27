@@ -4,15 +4,23 @@ import type { MemoryIndexSourceStatusV1, MemoryWorkerStatusV1 } from '@happier-d
 import type { SessionSummaryShardV1, SessionSynopsisV1 } from '@happier-dev/protocol';
 
 import type { MemorySettingsV1 } from '@/settings/memorySettings';
+import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import type { DeepIndexDocumentEntry, DeepIndexDocumentIdentity } from './deepIndex/deepIndexDb';
 import type { OperationalMemoryEmbeddingsDiagnostics } from './resolveOperationalMemoryEmbeddingsSettings';
 import type { MemoryExternalTranscriptSourcesSnapshot } from './externalTranscriptObservation';
 import type { MemoryInventorySessionEligibility } from './inventory/refreshMemoryInventory';
 
+// Forward the already admitted wrapping basis. Unwrapping stays with the
+// existing credential-bound resolver in the Memory child.
+export type MemorySessionCryptoInputs = Pick<RawSessionListRow,
+  'encryptionMode' | 'dataEncryptionKey' | 'effectiveAccess' | 'share' | 'metadataLayoutVersion' | 'metadata'
+>;
+
 /** An exact Session observation already authorized and admitted by the daemon. */
 export type MemorySessionInventoryObservation = Readonly<{
   sessionId: string;
   eligibility: MemoryInventorySessionEligibility | null;
+  cryptoInputs?: MemorySessionCryptoInputs;
 }>;
 
 /** Volatile indexer facts; SQLite remains the authority for retained progress. */

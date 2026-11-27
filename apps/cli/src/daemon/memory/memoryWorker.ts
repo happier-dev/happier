@@ -151,6 +151,7 @@ export async function prepareMemoryWorker(params: Readonly<{
   const pendingRevisions = new Map<string, Readonly<{
     sessionId: string; seq: number; messageId?: string; revised?: boolean;
     eligibility?: MemorySessionInventoryObservation['eligibility'];
+    cryptoInputs?: MemorySessionInventoryObservation['cryptoInputs'];
   }>>();
   const observation = createMemoryExternalTranscriptObservation({ credentials: params.credentials,
     onChange: (refresh, cause) => {
@@ -281,7 +282,7 @@ export async function prepareMemoryWorker(params: Readonly<{
     call(async (indexer, operationSignal) => {
       const revisions = new Map(pendingRevisions);
       const observations = [...revisions.values()].flatMap(change => change.eligibility !== undefined
-        ? [{ sessionId: change.sessionId, eligibility: change.eligibility }] : []);
+        ? [{ sessionId: change.sessionId, eligibility: change.eligibility, cryptoInputs: change.cryptoInputs }] : []);
       await Promise.all([
         ...[...revisions.values()].filter(change => change.revised).map(({ sessionId, seq, messageId }) =>
           indexer.revise({ sessionId, seq, ...(messageId ? { messageId } : {}) }, operationSignal)),
@@ -495,7 +496,7 @@ export async function prepareMemoryWorker(params: Readonly<{
     pushedAdmissions.clear();
     for (const [id, change] of pendingRevisions) {
       if (change.revised) {
-        const { eligibility: _eligibility, ...revision } = change;
+        const { eligibility: _eligibility, cryptoInputs: _cryptoInputs, ...revision } = change;
         pendingRevisions.set(id, revision);
       } else pendingRevisions.delete(id);
     }
@@ -635,7 +636,7 @@ export async function prepareMemoryWorker(params: Readonly<{
         const eligibility = session && isMemorySessionOnMachine({ ...params, session, accountEncryptionMode: currentness.mode })
           ? resolveMemoryInventorySessionEligibility({ session, backfillPolicy: basis.backfillPolicy,
             includeArchivedSessions: basis.includeArchivedSessions, enabledAtMs: basis.enabledAtMs ?? 0, nowMs: Date.now() }) : null;
-        if (!eligibility) {
+        if (!session || !eligibility) {
           // This ineligible read cannot write; only other admitted work needs removal.
           pushedAdmissions.delete(change.sessionId);
           activeSessionRequests.delete(request);
@@ -669,7 +670,11 @@ export async function prepareMemoryWorker(params: Readonly<{
           if (stopped || desired !== basis || request.removed || indexable.messages.length === 0) return;
         }
         pendingRevisions.set(change.sessionId, { ...pending, sessionId: change.sessionId,
-          seq: Math.max(pending?.seq ?? 0, eligibility.observedSeq), eligibility });
+          seq: Math.max(pending?.seq ?? 0, eligibility.observedSeq), eligibility,
+          cryptoInputs: { encryptionMode: session.encryptionMode, dataEncryptionKey: session.dataEncryptionKey,
+            effectiveAccess: session.effectiveAccess, share: session.share,
+            metadataLayoutVersion: session.metadataLayoutVersion, metadata: session.metadata },
+        });
         admit();
         // Do not hold the change carrier behind transcript/index IO.
         workLoop?.trigger();
