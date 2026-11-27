@@ -16,7 +16,7 @@ type CommittedProjectionBinding = Readonly<{
     acquireCandidates?: (pluginId: string) => () => void;
     translationRuntime?: PluginUiTranslationRuntime;
     getVoiceProviderActivation?: (providerId: string) => Promise<void> | null;
-    readDeclarationsPending?: (input: AppShellPluginUiProjectionRead) => boolean;
+    readDeclarationsPending?: (input: AppShellPluginUiProjectionRead, accountProjection?: PluginUiProjectionModel) => boolean;
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean;
     readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean;
     clientActionAdmission?: PluginUiClientActionAdmissionSource;
@@ -72,8 +72,8 @@ export function readCurrentAppShellPluginUiExecutionOriginSelectionPending(plugi
 }
 
 /** Whether the current Account is still establishing its contributed UI declarations. */
-export function readCurrentAppShellDeclarationsPending(input: AppShellPluginUiProjectionRead): boolean {
-    return committed?.readDeclarationsPending?.(input) ?? false;
+export function readCurrentAppShellDeclarationsPending(input: AppShellPluginUiProjectionRead, accountProjection?: PluginUiProjectionModel): boolean {
+    return committed?.readDeclarationsPending?.(input, accountProjection) ?? false;
 }
 
 /** The publication's fact that a registry source may still arrive; without a published app shell nothing will. */
@@ -107,7 +107,7 @@ export function publishCommittedAppShellPluginUiProjection(
     readRegistrySourcesPending?: (input?: AppShellPluginUiProjectionRead) => boolean,
     acquireCandidates?: (pluginId: string) => () => void,
     readExecutionOriginSelectionPending?: (pluginId: string, input: AppShellPluginUiProjectionRead) => boolean,
-    readDeclarationsPending?: (input: AppShellPluginUiProjectionRead) => boolean,
+    readDeclarationsPending?: CommittedProjectionBinding['readDeclarationsPending'],
     clientActionAdmission?: PluginUiClientActionAdmissionSource,
 ): () => void {
     let unsubscribe: (() => void) | undefined;

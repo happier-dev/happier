@@ -2,6 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -9,9 +12,12 @@ import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProvid
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { readWorkspacePackages, resolveWorkspaceSource } from '../../../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 const packaged = vi.hoisted(() => ({ bytes: new Uint8Array(), githubBytes: new Uint8Array(), githubAccountBytes: new Uint8Array(),
-    channelsAccountBytes: new Uint8Array(), detailBytes: new Uint8Array(), pageBytes: new Uint8Array(), sessionEntriesBytes: new Uint8Array(), mountedBytes: new Uint8Array(), machineRpc: vi.fn() }));
+    channelsAccountBytes: new Uint8Array(), detailBytes: new Uint8Array(), pageBytes: new Uint8Array(), sessionEntriesBytes: new Uint8Array(), mountedBytes: new Uint8Array(),
+    machineRpc: vi.fn(), readTriageDeclarationBytes: vi.fn(async () => {}), investigationHostModules: [] as string[] }));
 
 // Only packaged-asset IO is substituted. Compile the current authored Account
 // entry with its production compiler; admission, activation and dispatch stay real.
@@ -80,6 +86,7 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
             ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
     });
     packaged.mountedBytes = mountedCompiled.bytes;
+    packaged.investigationHostModules = [...new Set([...compiled.externalSpecifiers, ...mountedCompiled.externalSpecifiers])];
     const mountedPath = 'react-native/triage-mounted-ui-action-native/entry.cjs.bundle';
     const mountedArtifact = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: mountedCompiled.artifactId, tier: 'reactNative',
         entry: mountedPath, digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: mountedPath, bytes: mountedCompiled.bytes }]),
@@ -102,6 +109,8 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         collectionContracts,
         entriesById: projectPluginPortableUiDeclarationsV1(manifest, [artifact, detailArtifact, pageArtifact, mountedArtifact, sessionEntriesArtifact]),
         declaredExecution: { daemonActions: true, contributionPoints: true } };
+    const { projectBundledPluginUiFirstPaintDeclaration } = await import('../../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs');
+    const triageFirstPaint = await projectBundledPluginUiFirstPaintDeclaration(uiDeclaration);
     const githubManifestSource = '../../../../../../../packages/plugins/scm-github/src/manifest';
     const githubModule = await vi.importActual<Readonly<{ PLUGIN_MANIFEST: unknown }>>(githubManifestSource);
     const githubManifest = PluginPortableReleaseManifestV1Schema.parse(githubModule.PLUGIN_MANIFEST);
@@ -158,10 +167,14 @@ vi.mock('./generatedBundledPluginUiArtifacts', async () => {
         }),
         entriesById: projectPluginPortableUiDeclarationsV1(channelsManifest, [channelsArtifact]),
         declaredExecution: { daemonActions: true, contributionPoints: true } };
-    return { BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [uiDeclaration, githubDeclaration, channelsDeclaration].map(declaration => ({
+    return { BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [{ ...triageFirstPaint, async loadDeclaration() {
+        await packaged.readTriageDeclarationBytes();
+        return uiDeclaration;
+    } },
+        ...[githubDeclaration, channelsDeclaration].map(declaration => ({
         ...declaration, normalizedManifest: undefined, presentationManifest: declaration.normalizedManifest,
         loadDeclaration: async () => declaration,
-    })),
+    }))],
         BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [{ pluginId: manifest.id, releaseVersion: manifest.version,
         artifactId: artifact.artifactId, tier: artifact.tier, digest: artifact.digest, artifactGraph: artifact,
         files: [{ relativePath, asset: 1 }] }, { pluginId: githubManifest.id, releaseVersion: githubManifest.version,
@@ -253,6 +266,68 @@ const { Modal } = await import('@/modal');
 const kvMutationsSchema = z.strictObject({ mutations: z.array(z.strictObject({
     key: z.string(), value: z.nullable(z.string()), version: z.number(),
 })) });
+
+it('retries Triage Investigate on a retained failed Run after a cold declaration read fails', async () => {
+    await account.restore({ machines: [], features: createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
+        ui: { enabled: true, reactNativeBundles: { enabled: true } } } } }) });
+    const { scope } = captureActiveServerAccountScopeLifetime()!;
+    const declaration = BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0]!;
+    const { readFailureActionsBinding } = await import('@/hooks/inbox/failureActionsBinding');
+    const catalogPath = `/v1/account/plugin-storage/${encodeURIComponent(declaration.pluginId)}`;
+    account.home.answer(account.serverId, `GET ${catalogPath}`, { body: { status: 'absent' } });
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, snapshots: [], materializations: [],
+        intentReads: [{ pluginId: declaration.pluginId, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({
+            availabilityCursor: 1, hostingCapability: { enabled: false }, release: null, packageAssets: [], uiArtifacts: [],
+            intent: { pluginId: declaration.pluginId, desiredVersion: null, enabled: true,
+                offlineUiHosting: 'disabled', writableCollections: declaration.collectionContracts, revision: 'failed-run' },
+        }) }] } });
+    const availability = readPluginAccountAvailability(scope);
+    expect(availability.readCurrentAccountExecution(declaration.pluginId)).toMatchObject({ kind: 'unavailable', code: 'plugin_ui_declaration_pending' });
+    const projected = availability.readAccountUiProjection();
+    const binding = Object.values(projected?.surfacePlacementsById ?? {}).find(entry => entry.failureActions)?.failureActions;
+    if (!binding) throw new Error('The first-paint surface must declare the investigation binding');
+    expect(createPluginUiProjectedActionResolver(availability.readAccountUiProjection()?.actionsById)({
+        pluginId: declaration.pluginId, localId: binding.action,
+    })).toBeNull();
+    const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
+    const { WorkflowRunFailureAgentActions } = await import('@/components/workflows/run/WorkflowRunFailureAgentActions');
+    const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+    const subject = { kind: 'workflowRun', serverId: scope.serverId, runId: '00000000-0000-4000-8000-000000000053' } as const;
+    // Metro's call-time require shares the real Vite namespace in this host
+    // fixture so React Native stays behind the test runtime's platform shim.
+    const packages = await readWorkspacePackages(resolve(process.cwd(), '../..'));
+    const require = createRequire(import.meta.url);
+    const bridges = await Promise.all(packaged.investigationHostModules
+        .filter(specifier => /^@happier-dev\/(?:plugin-sdk|plugin-ui|protocol)(?:\/|$)/u.test(specifier))
+        .map(specifier => loadVitestModuleForNodeRequire(pathToFileURL(require.resolve(specifier)),
+            () => import(pathToFileURL(resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] })).href))));
+    packaged.readTriageDeclarationBytes.mockRejectedValueOnce(new Error('Bundled declaration fetch failed'));
+    let screen: Awaited<ReturnType<typeof renderMountedCurrentUiContext>> | undefined;
+    try {
+        const run = screen = await renderMountedCurrentUiContext(<AccountNoticeInvestigationBoundary>
+            <WorkflowRunFailureAgentActions subject={subject} testIDPrefix="retained-failed-run" />
+        </AccountNoticeInvestigationBoundary>, { withAppShellActions: true });
+        const unavailable = 'investigation.agentActions.unavailable';
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(run.findByTestId(unavailable)).not.toBeNull();
+        });
+        expect(packaged.readTriageDeclarationBytes).toHaveBeenCalledTimes(1);
+        expect(readFailureActionsBinding(scope)?.action).toBe(binding.action);
+        expect(account.home.requestsFor(catalogPath)).toHaveLength(0);
+        await run.pressByTestIdAsync(`${unavailable}-action`);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(run.findAllByType(AgentActionButton)).toHaveLength(1);
+        });
+        expect(packaged.readTriageDeclarationBytes).toHaveBeenCalledTimes(2);
+        expect(account.home.requestsFor(catalogPath).filter(request => request.method === 'GET')).toHaveLength(1);
+        expect(packaged.machineRpc).not.toHaveBeenCalled();
+    } finally {
+        await screen?.unmount();
+        for (const bridge of bridges) bridge.dispose();
+    }
+});
 
 it.each(['own', 'foreign', 'missing-purpose'] as const)('opens the E2EE GitHub source Account sheet: %s', async ownership => {
     await account.restore({ accountId: 'source-owner', machines: [], e2eeSecret: new Uint8Array(32).fill(9),

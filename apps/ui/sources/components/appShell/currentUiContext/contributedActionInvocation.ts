@@ -63,19 +63,35 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     const readAction = () => createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(input.identity);
     const readExpectedAction = (action: PluginUiActionProjection | null) => input.expectedAction
         ? resolvePluginUiExecutionDeclaration(input.expectedAction, { current: action }) : action;
-    const resolved = resolveDeclaredContributedAction(readExpectedAction(readAction()));
+    const declaration = readAction();
+    const resolved = resolveDeclaredContributedAction(readExpectedAction(declaration));
     if (resolved) return resolved;
     const source = input.admission;
     const owner = source?.read()?.accountLifetime;
     if (!source || !owner || !owner.isCurrent()
         || input.scope && !areServerAccountScopesEqual(input.scope, owner.scope)) return null;
     const isCurrent = () => !input.signal?.aborted && input.isCurrent() && owner.isCurrent();
+    const availability = !declaration && input.scope && (!input.expectedAction || input.waitForExpectedDeclaration)
+        ? (await import('@/sync/domains/plugins/availability/projection')).readPluginAccountAvailability(owner.scope) : null;
+    if (availability && !input.expectedAction && isCurrent()) {
+        // First-paint bindings can name a Client Action whose declaration is
+        // lazy. Waiting for registration alone cannot start that load.
+        await availability.ensureCurrentAccountExecution(input.identity.pluginId);
+    }
+    if (!isCurrent()) return null;
     const isPending = () => {
         const admission = source.read();
         if (!isPluginUiClientExecutableAccountCurrent(admission?.accountLifetime, owner)) return false;
         const currentAction = readAction();
         const action = readExpectedAction(currentAction);
         const projectionScope = { scope: owner.scope, declarationsOnly: true } as const;
+        // Availability can publish the exact declaration before the AppShell
+        // commit that starts its registration.
+        if (!currentAction && availability) {
+            const accountProjection = availability.readAccountUiProjection();
+            if (accountProjection && readExpectedAction(createPluginUiProjectedActionResolver(accountProjection.actionsById)(input.identity))
+                && readCurrentAppShellDeclarationsPending(projectionScope, accountProjection)) return true;
+        }
         if (input.expectedAction && !action) {
             return input.waitForExpectedDeclaration === true && !currentAction
                 && readCurrentAppShellDeclarationsPending(projectionScope);
@@ -96,6 +112,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
     let unsubscribeAdmission: (() => void) | undefined;
     let unsubscribeRegistration: (() => void) | undefined;
     let unsubscribeProjection: (() => void) | undefined;
+    let unsubscribeAvailability: (() => void) | undefined;
     const retirement = owner.onRetire(settlement.notify);
     const callerRetirement = input.callerLifetime !== owner ? input.callerLifetime?.onRetire(settlement.notify) : undefined;
     try {
@@ -104,6 +121,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
             unsubscribeAdmission = source.subscribe(settlement.notify);
             unsubscribeRegistration = getInstalledPluginUiClientExecutableComposition().subscribe(settlement.notify);
             unsubscribeProjection = subscribeCommittedAppShellPluginUiProjection(settlement.notify);
+            unsubscribeAvailability = availability?.subscribe(settlement.notify, input.identity.pluginId);
             // Close the read/subscribe gap through the same push-driven waiter.
             settlement.notify();
             await pending;
@@ -116,6 +134,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
         unsubscribeAdmission?.();
         unsubscribeRegistration?.();
         unsubscribeProjection?.();
+        unsubscribeAvailability?.();
         callerRetirement?.dispose();
         retirement.dispose();
         settlement.dispose();

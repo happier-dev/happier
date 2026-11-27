@@ -14652,6 +14652,10 @@ the binding. An ambiguous binding is unavailable.
 
 The host admits the Account and notice identity, invokes the contributed Action
 through the existing Action front door, and renders its generic failure outcome.
+When a first-paint binding names a Client Action whose declaration has yet to
+load, scoped Action acquisition requests that plugin's full declaration from
+Account Availability and awaits AppShell registration. Retrying after a failed
+declaration read requests it again through the same owner.
 The plugin owns catalog selection, domain-result parsing, editor navigation, and
 continuation custody in the existing generation-bound ephemeral shared scope.
 Triage supplies the current binding and normalizes its configured Session

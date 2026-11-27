@@ -187,6 +187,7 @@ export type AppShellPluginUiProjectionPublication = Readonly<{
         release: () => void;
     }> | null>;
     readExecutionOriginCandidates(pluginId: string): PluginUiExecutionOriginCandidateFacts | null;
+    isAccountUiProjectionPending(projection: PluginUiProjectionModel): boolean;
     getSnapshot(): AppShellPluginUiProjectionSnapshot;
     /** The published Home, read without deriving pending origin reports. */
     readActiveServerId(): AppShellPluginUiProjectionSnapshot['activeServerId'];
@@ -884,6 +885,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             derivePendingReports(true);
             return snapshot.executionOriginPluginIds.includes(pluginId) ? candidates.read(pluginId) : null;
         },
+        isAccountUiProjectionPending: projection =>
+            sources?.hostBundledUiEnabled === true && snapshot.accountUiProjection !== projection,
         getSnapshot: () => {
             if (!sources || !isCurrent(sources.accountLifetime)) return EMPTY_SNAPSHOT;
             derivePendingReports(true);

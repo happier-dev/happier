@@ -300,7 +300,8 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
     value: AppShellPluginUiProjectionValue;
     declarationReady?: boolean;
     publication?: Pick<AppShellPluginUiProjectionPublication, 'getSnapshot' | 'subscribe'>
-        & Partial<Pick<AppShellPluginUiProjectionPublication, 'publishMountedActions' | 'acquireExecutionOriginDemand' | 'readExecutionOriginCandidates'>>;
+        & Partial<Pick<AppShellPluginUiProjectionPublication, 'publishMountedActions' | 'acquireExecutionOriginDemand'
+            | 'readExecutionOriginCandidates' | 'isAccountUiProjectionPending'>>;
     children: React.ReactNode;
 }>): React.ReactElement {
     // Subscribe to the fields a consumer uses. Machine/source reports must not
@@ -405,8 +406,9 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
             const snapshot = props.publication.getSnapshot();
             return snapshot.accountLifetime !== lifetime || snapshot.registrySourcesPending;
         };
-        const readDeclarationsPending = (input: AppShellPluginUiProjectionRead) => {
+        const readDeclarationsPending = (input: AppShellPluginUiProjectionRead, accountProjection?: PluginUiProjectionModel) => {
             if (!lifetime?.isCurrent() || !areServerAccountScopesEqual(input.scope, lifetime.scope)) return false;
+            if (accountProjection) return props.publication?.isAccountUiProjectionPending?.(accountProjection) ?? false;
             if (!props.publication) return standaloneDeclarationReady === false;
             const snapshot = props.publication.getSnapshot();
             return snapshot.accountLifetime !== lifetime || snapshot.accountCensusPending
