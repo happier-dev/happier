@@ -646,6 +646,7 @@ export type ActionSpecWithoutApproval = Readonly<{
   approval: ParsedActionSpec['approval'];
   approvalPolicy?: ParsedActionSpec['approvalPolicy'];
   hostReviewedChildren?: ParsedActionSpec['hostReviewedChildren'];
+  executionChildEffects?: ParsedActionSpec['executionChildEffects'];
   deploymentPreparationScope?: ParsedActionSpec['deploymentPreparationScope'];
   deploymentReadScope?: ParsedActionSpec['deploymentReadScope'];
   machineRuntimeDemandForInput?: ParsedActionSpec['machineRuntimeDemandForInput'];
