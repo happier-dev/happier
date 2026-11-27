@@ -19,7 +19,7 @@ function createWorkspaceSyncActionSpecs() {
     id: 'workspace.sync.relationship.create', executionPlacement: 'machine', sideEffectClass: 'danger', approval: {result: 'required',flow: 'deferred'},
     workspaceWrite: true,
     originalExecution: { accountRoot: 'allowed' },
-    bindings: { rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE },
+    bindings: { mcpToolName: 'workspace_sync_relationship_create', rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE },
     operation: {
       version: 1,
       visibility: 'activity',

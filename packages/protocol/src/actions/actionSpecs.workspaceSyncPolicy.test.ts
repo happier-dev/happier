@@ -6,6 +6,11 @@ import { getActionSpec } from './actionSpecs.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 
 describe('workspace sync relationship policy discovery', () => {
+  it('publishes the relationship creation MCP binding alongside its RPC binding', () => {
+    expect(getActionSpec('workspace.sync.relationship.create').bindings).toMatchObject({
+      mcpToolName: 'workspace_sync_relationship_create',
+    });
+  });
   it('gives Agent and UI callers complete digest-bearing policy choices', async () => {
     const field = getActionSpec('workspace.sync.relationship.create').inputHints?.fields
       .find((candidate) => candidate.path === 'contentPolicy');
