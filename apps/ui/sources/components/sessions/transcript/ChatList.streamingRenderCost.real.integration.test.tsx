@@ -96,7 +96,10 @@ async function settle() {
 }
 
 describe('streaming transcript render cost', () => {
-    it('muse.experience.pc8 keeps 1,000 finished rows and the permission card quiet through 100 deltas', async () => {
+    it.each([
+        { title: 'renders one row for a message arriving after 500 committed messages', messageCount: 500 },
+        { title: 'muse.experience.pc8 keeps 1,000 finished rows and the permission card quiet through 100 deltas', messageCount: 1_000 },
+    ])('$title', async ({ messageCount }) => {
         await homes.reset();
         let requestPhase = 'bootstrap';
         const accountRequestTraces = new Map<(typeof homes.requests)[number], { phase: string; caller: string }>();
@@ -141,12 +144,25 @@ describe('streaming transcript render cost', () => {
         vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => 4000);
         Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, writable: true, value: () => undefined });
 
+        if (messageCount === 500) storage.setState(state => ({
+            settings: { ...state.settings, transcriptGroupingMode: 'linear' },
+        }));
         const finished: Message[] = [];
-        for (let turn = 0; turn < 500; turn++) {
+        for (let turn = 0; turn < messageCount / 2; turn++) {
             finished.push({ kind: 'user-text', id: `user-${turn}`, seq: turn * 2 + 1, localId: null, createdAt: 10 + turn * 2,
                 text: `Question ${turn}` });
             finished.push({ kind: 'agent-text', id: `agent-${turn}`, seq: turn * 2 + 2, localId: null, createdAt: 11 + turn * 2,
                 text: `## Answer ${turn}\n\nSome **markdown** with \`code\` and a list:\n\n- one\n- two` });
+        }
+        if (messageCount === 500) {
+            // Keep a prior event and its ready boundary inside the loaded tail so
+            // the emphasis producer has real per-row output before the append.
+            const priorEvent = finished[messageCount - 4]!;
+            const ready = finished[messageCount - 3]!;
+            finished[messageCount - 4] = { kind: 'agent-event', id: priorEvent.id, seq: priorEvent.seq,
+                localId: null, createdAt: priorEvent.createdAt, event: { type: 'message', message: 'Earlier event' } };
+            finished[messageCount - 3] = { kind: 'agent-event', id: ready.id, seq: ready.seq,
+                localId: null, createdAt: ready.createdAt, event: { type: 'ready' } };
         }
         const session = createSessionFixture({ id: 'streamui-session', serverId, active: true, activeAt: Date.now(), thinking: true });
         storage.setState({ sessions: { [session.id]: session }, sessionMessages: { [session.id]: createSessionMessagesFixture({
@@ -154,14 +170,14 @@ describe('streaming transcript render cost', () => {
             messagesById: Object.fromEntries(finished.map((message) => [message.id, message])), isLoaded: true,
         }) }, profileScope: { serverId, accountId: 'streamui-account' } });
         expect(storage.getState().sessionMessages[session.id]).toMatchObject({ isLoaded: true });
-        expect(storage.getState().sessionMessages[session.id]!.messageIdsOldestFirst).toHaveLength(1_000);
+        expect(storage.getState().sessionMessages[session.id]!.messageIdsOldestFirst).toHaveLength(messageCount);
         const finishedIds = new Set(finished.map((message) => message.id));
-        storage.getState().applyMessages(session.id, [streamChunk('Starting', 2)]);
+        if (messageCount === 1_000) storage.getState().applyMessages(session.id, [streamChunk('Starting', 2)]);
         const streamingIds = Object.keys(storage.getState().sessionMessages[session.id]!.messagesById)
             .filter(id => !finishedIds.has(id));
-        expect(streamingIds).toHaveLength(1);
+        expect(streamingIds).toHaveLength(messageCount === 500 ? 0 : 1);
         const streamingMessageId = streamingIds[0]!;
-        expect(storage.getState().sessionMessages[session.id]!.messagesById[streamingMessageId])
+        if (messageCount === 1_000) expect(storage.getState().sessionMessages[session.id]!.messagesById[streamingMessageId])
             .toMatchObject({ kind: 'agent-text', localId: 'stream-segment', text: 'Starting' });
 
         container = document.createElement('div');
@@ -185,6 +201,29 @@ describe('streaming transcript render cost', () => {
         });
         await settle();
         expect(container.querySelector('[data-testid^="transcript-message-agent-"]')).not.toBeNull();
+        if (messageCount === 500) {
+            expect(container.querySelectorAll('[data-testid^="transcript-message-"]').length).toBeGreaterThan(1);
+            const priorEvent = finished[messageCount - 4]!;
+            expect(container.querySelector(`[data-testid="transcript-message-${priorEvent.id}"]`)?.textContent).toContain('Earlier event');
+            counts.start();
+            await act(async () => storage.getState().applyMessages(session.id, [{
+                id: 'arriving-reply', seq: messageCount + 1, createdAt: messageCount + 11, localId: null,
+                isSidechain: false, role: 'agent',
+                content: [{ type: 'text', text: 'A new response', uuid: 'arriving-reply', parentUUID: null }],
+            }]));
+            await settle();
+            counts.stop();
+            const added = Object.keys(storage.getState().sessionMessages[session.id]!.messagesById)
+                .filter(id => !finishedIds.has(id));
+            expect(added).toHaveLength(1);
+            expect(container.querySelector(`[data-testid="transcript-message-${added[0]}"]`)).not.toBeNull();
+            const measured = counts.read();
+            const mounts = measured.mounts.get('ChatListMessageRow') ?? 0;
+            const rerenders = measured.rendersFor(ChatListMessageRow);
+            expect(mounts + rerenders, JSON.stringify({ mounts, rerenders, changedProps: [...measured.changedProps] })).toBe(1);
+            expect([...measured.renderedMessageIds].filter(([id]) => finishedIds.has(id))).toEqual([]);
+            return;
+        }
         const accountReadsBeforePermissionArrival = accountReads();
         requestPhase = 'permission-arrival';
         await act(async () => { root?.render(scene(true)); });
