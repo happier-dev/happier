@@ -159,7 +159,10 @@ export async function listSessionPersonalEventRecipientsInTx(tx: Tx, params: Ses
  * witness is current. Persisting the source reference is the accepted Inbox
  * effect; returned winners are ephemeral transport input, never replay proof.
  */
-export async function acceptSessionPersonalEventOnceInTx(tx: Tx, params: SessionPersonalEventRecipientsInput): Promise<readonly string[]> {
+export async function acceptSessionPersonalEventOnceInTx(
+    tx: Tx,
+    params: SessionPersonalEventRecipientsInput & Readonly<{ publisherClosedWithWake?: true }>,
+): Promise<readonly string[]> {
     if (!await isServerFeatureEnabledForHome('sessions.following', { tx })) return [];
     const occurrence = params.onceOccurrence;
     if (!occurrence) return [];
@@ -179,6 +182,7 @@ export async function acceptSessionPersonalEventOnceInTx(tx: Tx, params: Session
     for (const candidate of armed) {
         if (candidate.once && await acceptAccountSessionFollowOnceDeliveryInTx(tx, {
             accountId: candidate.accountId, sessionId: params.sessionId, ...candidate.once,
+            ...(params.publisherClosedWithWake ? { publisherClosedWithWake: true } : {}),
         })) accepted.push(candidate.accountId);
     }
     return accepted;

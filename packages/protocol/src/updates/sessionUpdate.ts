@@ -4,7 +4,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { SessionViewerProjectionV1Schema } from '../sessions/personal/viewer.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
 import { TurnIdSchema } from '../sessions/idsV1.js';
-import { SessionRuntimeActivityStateSchema } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
+import { SessionRuntimeScheduledWakeSchema, SessionRuntimeActivityStateSchema } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { SessionOwnerMetadataEnvelopeV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 
 const timestamp = () => z.number().check(z.int(), z.nonnegative());
@@ -37,6 +37,7 @@ export const SessionUpdateBodySchema = lazyZodSchema(() => {
     lifecycleStateReason: z.optional(MachineDeletedSessionLifecycleReasonSchema),
     lastRuntimeIssue: z.optional(z.nullable(SessionRuntimeIssueV1Schema)),
     runtimeActivityState: z.optional(SessionRuntimeActivityStateSchema),
+    runtimeActivityScheduledWake: z.optional(SessionRuntimeScheduledWakeSchema),
     runtimeActivityActiveCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     runtimeActivityObservedAt: z.optional(z.nullable(timestamp())),
     runtimeActivityRevision: z.optional(z.number().check(z.int(), z.nonnegative())),

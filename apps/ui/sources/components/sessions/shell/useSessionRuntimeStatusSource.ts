@@ -25,6 +25,7 @@ type SessionRuntimeStatusFields = Pick<
     | 'latestTurnStatusObservedAt'
     | 'runtimeActivityState'
     | 'runtimeActivityActiveCount'
+    | 'runtimeActivityScheduledWake'
     | 'runtimeActivityObservedAt'
     | 'runtimeActivityRevision'
     | 'lastRuntimeIssue'
@@ -61,6 +62,7 @@ function selectSessionRuntimeStatusFields(
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
         runtimeActivityState: session.runtimeActivityState,
         runtimeActivityActiveCount: session.runtimeActivityActiveCount,
+        runtimeActivityScheduledWake: session.runtimeActivityScheduledWake,
         runtimeActivityObservedAt: session.runtimeActivityObservedAt,
         runtimeActivityRevision: session.runtimeActivityRevision,
         lastRuntimeIssue: session.lastRuntimeIssue,

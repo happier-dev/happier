@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import {
     projectUiSessionRuntimeAwareness,
@@ -26,6 +27,7 @@ export type SessionListRuntimePriorityRow = Readonly<{
     latestTurnStatusObservedAt?: number | null;
     runtimeActivityState?: 'active' | 'idle' | 'unknown' | null;
     runtimeActivityActiveCount?: number | null;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt?: number | null;
     runtimeActivityRevision?: number | null;
     pendingRequestObservedAt?: number | null;
@@ -57,6 +59,7 @@ function buildSessionListRuntimePriorityPresentationInput(
         latestTurnStatusObservedAt: row.latestTurnStatusObservedAt,
         runtimeActivityState: row.runtimeActivityState,
         runtimeActivityActiveCount: row.runtimeActivityActiveCount,
+        runtimeActivityScheduledWake: row.runtimeActivityScheduledWake,
         runtimeActivityObservedAt: row.runtimeActivityObservedAt,
         runtimeActivityRevision: row.runtimeActivityRevision,
         hasPendingPermissionRequests: row.hasPendingPermissionRequests,

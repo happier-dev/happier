@@ -29,6 +29,20 @@ function project(row: Parameters<typeof createSessionRecordFixture>[0], nowMs = 
 }
 
 describe('projectCliSessionAwarenessV1', () => {
+  it('holds Ready until a wake in the V2 Session row expires, without adding active jobs', () => {
+    const row = {
+      id: 'sleeping', encryptionMode: 'plain' as const, metadata: '{}', active: true, activeAt: NOW_MS,
+      latestTurnStatus: 'completed' as const, latestTurnStatusObservedAt: NOW_MS,
+      runtimeActivityState: 'idle' as const, runtimeActivityActiveCount: 0, runtimeActivityObservedAt: NOW_MS,
+      runtimeActivityRevision: 1, runtimeActivityScheduledWake: { pendingUntil: NOW_MS + 1_000 },
+    };
+    const whilePending = project(row, NOW_MS);
+    expect(whilePending.operational.reasons).toContain('background_activity');
+    expect(whilePending.operational.reasons).not.toContain('ready');
+    expect(whilePending.runningWorkCount).toBeUndefined();
+    expect(project(row, NOW_MS + 1_000).operational.primary).toBe('ready');
+  });
+
   it('shows the current blocking usage issue specifically with recovery disabled', () => {
     expect(project({ id: 'usage-limited', encryptionMode: 'plain', metadata: '{}', active: true, activeAt: NOW_MS,
       latestTurnStatus: 'failed', latestTurnStatusObservedAt: NOW_MS,

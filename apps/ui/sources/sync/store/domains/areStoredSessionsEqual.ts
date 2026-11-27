@@ -107,6 +107,7 @@ export function areStoredSessionsEqual(
         && (previous.latestTurnStatusObservedAt ?? null) === (next.latestTurnStatusObservedAt ?? null)
         && (previous.runtimeActivityState ?? null) === (next.runtimeActivityState ?? null)
         && (previous.runtimeActivityActiveCount ?? null) === (next.runtimeActivityActiveCount ?? null)
+        && previous.runtimeActivityScheduledWake?.pendingUntil === next.runtimeActivityScheduledWake?.pendingUntil
         && (previous.runtimeActivityObservedAt ?? null) === (next.runtimeActivityObservedAt ?? null)
         && (previous.runtimeActivityRevision ?? null) === (next.runtimeActivityRevision ?? null)
         && areSessionValueEqual(previous.rollbackEligibleTurnStarts ?? null, next.rollbackEligibleTurnStarts ?? null)

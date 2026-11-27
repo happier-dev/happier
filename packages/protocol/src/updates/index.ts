@@ -550,6 +550,11 @@ export const SessionBroadcastBodySchema = lazyZodSchema(() => z.discriminatedUni
     t: z.literal('session-changed'),
     sessionId: z.string(),
   }),
+  z.looseObject({
+    t: z.literal('session-finished'),
+    sessionId: z.string(),
+    turnId: z.string().check(z.minLength(1)),
+  }),
 ]));
 
 export type SessionBroadcastBody = z.infer<typeof SessionBroadcastBodySchema>;

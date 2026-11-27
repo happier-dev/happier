@@ -7,7 +7,7 @@ import { AnyClientUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCo
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SESSION_LIST_PAGE_MAX_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
-import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { SESSION_DETAIL_FINISHED_TURN_PROJECTION, SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
@@ -51,7 +51,7 @@ import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentic
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
 import { loadPendingActivationPublicationsInTx } from '@/app/session/pending/publishPendingMutation';
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
-import { projectSessionManagerForRowsInTx } from "@/app/session/awareness/sessionManagerProjection";
+import { projectSessionManagerForRowsInTx, readSessionFinishedTurnInTx, SESSION_FINISHED_TURN_SELECT } from "@/app/session/awareness/sessionManagerProjection";
 import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { readAcceptedSessionTeamCredentialProviderModelBindingsInTx } from '@/app/teams/credentials/sessionBinding';
 import { readSessionManagedSubtreeSessionIdsInTx, projectSessionRuntimeManagedSubtreeAccess } from '@/app/session/follow/sessionManagerSubtree';
@@ -147,6 +147,7 @@ type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAcce
      * the viewer's personal facts and the owner's launch/activation facts are neither loaded nor sent.
      */
     runtimeSnapshot?: boolean;
+    finishedTurn?: boolean;
     /** Internal evidence authority from the existing recipient projector, never a wire field. */
     onUsageStateAdmission?: (sessionId: string, admitted: boolean) => void;
     /**
@@ -270,6 +271,13 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                     runs.push(target.runId);
                     pendingRuns.set(target.sessionId, runs);
                 }
+                const finishedCandidates = input.finishedTurn
+                    ? await tx.session.findMany({ where: { id: { in: ownerIds } }, select: SESSION_FINISHED_TURN_SELECT })
+                    : [];
+                const finishedTurnIds = new Map<string, string | null>();
+                for (const candidate of finishedCandidates) {
+                    finishedTurnIds.set(candidate.id, await readSessionFinishedTurnInTx(tx, candidate, Date.now(), { recoverFromSnapshot: true }));
+                }
                 const launchFactIds = input.runtimeSnapshot ? [] : ownerIds;
                 const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, launchFactIds);
                 const activations = await loadPendingActivationPublicationsInTx(tx, launchFactIds);
@@ -290,6 +298,7 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                             : { session: assembleProjectedSessionRecord(owners.has(session.id) ? { ...session,
                                 ...(input.runtimeSnapshot ? {} : { acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
                                     primaryTeamId: teamContexts.get(session.id) ?? null }),
+                                ...(finishedTurnIds.has(session.id) ? { finishedTurnId: finishedTurnIds.get(session.id) } : {}),
                                 pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
                             } : { ...session, ...(computerBindings.has(session.id)
                                 ? { computerMachineBinding: computerBindings.get(session.id) } : {}) }) };
@@ -476,7 +485,8 @@ export function registerSessionListingRoutes(app: Fastify) {
             }),
             querystring: z.optional(z.object({
                 accessProjectionVersion: z.optional(z.coerce.number().check(z.int(), z.positive())),
-                projection: z.optional(z.literal(SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION)),
+                projection: z.optional(z.union([z.literal(SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION),
+                    z.literal(SESSION_DETAIL_FINISHED_TURN_PROJECTION)])),
             })),
             response: {
                 200: V2SessionByIdResponseSchema,
@@ -496,7 +506,9 @@ export function registerSessionListingRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         const result = await readSessionDetail({ userId: request.userId, sessionId: request.params.sessionId, authentication: readSessionAccessAuthenticationFromRequest(request), accessProjectionVersion: request.query?.accessProjectionVersion, storedContentCompatibility: readAccountStoredContentCompatibilityForHttpRequest(request),
-            ...(request.query?.projection === SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION ? { runtimeSnapshot: true } : {}) });
+            ...(request.query?.projection === SESSION_DETAIL_FINISHED_TURN_PROJECTION
+                ? { runtimeSnapshot: true, finishedTurn: true }
+                : request.query?.projection === SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION ? { runtimeSnapshot: true } : {}) });
         // readSessionDetails admitted this body with the same response schema.
         if (result.status === 200) return reply.serializer(JSON.stringify).code(200).send(result.body);
         return reply.code(result.status).send(result.body);

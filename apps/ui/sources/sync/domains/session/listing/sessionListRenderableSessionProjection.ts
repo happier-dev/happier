@@ -260,6 +260,7 @@ export function createSessionListPresentationSource(
         pendingBlockedCount: row.pendingBlockedCount, pendingActivationAuthorization: row.pendingActivationAuthorization,
         pendingActivationFailureDetails: row.pendingActivationFailureDetails,
         runtimeActivityState: row.runtimeActivityState, runtimeActivityActiveCount: row.runtimeActivityActiveCount,
+        runtimeActivityScheduledWake: row.runtimeActivityScheduledWake,
         runtimeActivityObservedAt: row.runtimeActivityObservedAt, runtimeActivityRevision: row.runtimeActivityRevision,
     });
     const basePending = baseSession ? readPendingRequestFactsFromSession(baseSession) : undefined;
@@ -443,6 +444,7 @@ export function buildSessionFromListRenderable(
         lifecycleStateReason: renderable.lifecycleStateReason,
         runtimeActivityState: renderable.runtimeActivityState ?? 'unknown',
         runtimeActivityActiveCount: renderable.runtimeActivityActiveCount ?? null,
+        runtimeActivityScheduledWake: renderable.runtimeActivityScheduledWake,
         runtimeActivityObservedAt: renderable.runtimeActivityObservedAt ?? null,
         runtimeActivityRevision: renderable.runtimeActivityRevision ?? null,
         lastRuntimeIssue: renderable.lastRuntimeIssue ?? null,

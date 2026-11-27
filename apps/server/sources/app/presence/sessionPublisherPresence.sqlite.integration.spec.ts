@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { setAccountSessionFollow } from '@/app/session/follow/accountFollowService';
+import { parsePersistedPersonalFollowOnceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 import type { Server, Socket } from "socket.io";
 import {
@@ -910,6 +912,57 @@ describe("session publisher presence on SQLite", () => {
             lastActiveAt: successor.committedFence,
             runtimeActivityState: "idle",
         });
+    });
+
+    it.each(['pending', 'elapsed', 'presence-expired'] as const)("publishes Stopped once on explicit publisher exit with an unconsumed %s wake", async (wake) => {
+        vi.stubEnv('HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED', 'true');
+        const { binding } = await seed();
+        const { accountId, sessionId } = binding;
+        const now = Date.now();
+        let clock = new Date(now);
+        const presence = createSessionPublisherPresence({ now: () => clock });
+        const socket = {};
+        const pendingUntil = now + 120_000;
+        expect(await presence.registerPublisher({ socket, binding,
+            completeActivitySnapshot: { state: 'idle', activeCount: 0, scheduledWake: { pendingUntil } },
+        })).toMatchObject({ status: 'registered' });
+        const turn = { v: 1 as const, sessionId, turnId: 'wake-turn' };
+        expect(await applySessionTurnMutation({ actorUserId: accountId, authentication,
+            mutation: { ...turn, action: 'begin', observedAt: now, mutationId: randomUUID() },
+        })).toMatchObject({ ok: true, didApply: true });
+        await setAccountSessionFollow({ accountId, sessionId, authentication,
+            preferences: { policy: { preset: 'everything' }, once: { kind: 'turn_finished', sourceTurnId: turn.turnId } },
+        });
+        const readOnce = async () => parsePersistedPersonalFollowOnceV1(
+            (await db.accountSessionFollow.findUniqueOrThrow({ where: { accountId_sessionId: { accountId, sessionId } } })).notifyOnce);
+        const terminalBroadcast = vi.spyOn(eventRouter, 'emitSessionBroadcast');
+        const personalEvent = vi.spyOn(eventRouter, 'emitEphemeral');
+        try {
+            expect(await applySessionTurnMutation({ actorUserId: accountId, authentication,
+                mutation: { ...turn, action: 'complete', observedAt: now + 1, mutationId: randomUUID() },
+            })).toMatchObject({ ok: true, didApply: true });
+            expect(await readOnce()).toMatchObject({ state: 'armed' });
+            if (wake === 'elapsed') clock = new Date(pendingUntil + 1);
+            if (wake === 'presence-expired') {
+                const { lastActiveAt: observedFence } = await db.session.findUniqueOrThrow({
+                    where: { id: sessionId }, select: { lastActiveAt: true },
+                });
+                expect(await expireSessionPublisherCandidates({ candidates: [{ sessionId, observedFence }] }))
+                    .toMatchObject([{ status: 'expired' }]);
+                expect(await readOnce()).toMatchObject({ state: 'armed' });
+            }
+            await expect(presence.closePublisher({ socket })).resolves.toMatchObject({ status: 'closed' });
+            expect(await readOnce()).toMatchObject({ state: 'fulfilled', occurrence: { event: 'cancelled', turnId: turn.turnId } });
+            await expect(presence.closePublisher({ socket })).resolves.toMatchObject({ status: 'closed_replay' });
+            expect(personalEvent.mock.calls.filter(([publication]) => publication.userId === accountId
+                && publication.payload.type === 'session-personal-event' && publication.payload.sessionId === sessionId
+                && publication.payload.event === 'cancelled')).toHaveLength(1);
+            expect(terminalBroadcast.mock.calls.filter(([publication]) =>
+                publication.sessionId === sessionId && publication.payload.body.t === 'session-finished')).toHaveLength(0);
+        } finally {
+            personalEvent.mockRestore();
+            terminalBroadcast.mockRestore();
+        }
     });
 
     it("does not report badge attention changes for reachability-only register and close transactions", async () => {

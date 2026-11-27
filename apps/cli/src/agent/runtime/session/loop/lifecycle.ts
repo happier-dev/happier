@@ -1439,6 +1439,23 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         sendReadyWithPushNotificationFn,
       });
 
+  let releaseFinishedObservation: (() => void) | undefined;
+  const sendReadyAfterSettlement = async (context?: ReadyNotificationTurnContext): Promise<void> => {
+    if (!context?.completedTurn) {
+      await createSendReady(context);
+      return;
+    }
+    releaseFinishedObservation?.();
+    let published = false;
+    releaseFinishedObservation = params.session.observeFinishedTurn?.(context.completedTurn.turnId, () => {
+      if (published) return;
+      published = true;
+      void Promise.resolve().then(() => createSendReady(context)).catch(error => {
+        logger.debug(`${params.config.uiLogPrefix} Finished notification could not be committed`, { error });
+      });
+    });
+  };
+
   // Opaque Agent identity: presence gates the strict-resume path below, and
   // the value itself reaches the prompt loop byte for byte.
   const initialResumeId = readNonBlankOpaqueIdentifier(params.initialResumeId) ?? '';
@@ -1652,12 +1669,13 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       getAbortSignal: () => abortController.signal,
       keepAlive: () => publishKeepAlive(),
       setThinking: setThinkingState,
-      sendReady: createSendReady,
+      sendReady: sendReadyAfterSettlement,
       currentPermissionModeUpdatedAt: params.permissionModeState.getCurrentPermissionModeUpdatedAt(),
       setCurrentPermissionMode: params.permissionModeState.setCurrentPermissionMode,
       setCurrentPermissionModeUpdatedAt: params.permissionModeState.setCurrentPermissionModeUpdatedAt,
       registerProviderAcceptedEffect,
       onBeforeTurnBegin: (input, snapshotScope) => {
+        releaseFinishedObservation?.();
         const capture: HostReadyCapture = { turnId: null, snapshotScope };
         hostReadyCapture = capture;
         const contextOnly = input.hostContextOnly;
@@ -1838,6 +1856,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     closeFailedSession = true;
     throw error;
   } finally {
+    releaseFinishedObservation?.();
     disposeHandoverSave();
     terminationHandlers.dispose();
     shouldExit = true;

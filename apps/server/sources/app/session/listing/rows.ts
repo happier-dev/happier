@@ -108,6 +108,7 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
     lastRuntimeIssue: true,
     runtimeActivityState: true,
     runtimeActivityActiveCount: true,
+    runtimeActivityScheduledWake: true,
     runtimeActivityObservedAt: true,
     runtimeActivityRevision: true,
     latestReadyEventSeq: true,
@@ -323,10 +324,11 @@ function readRuntimeActivityInteger(value: unknown): number | null {
 }
 
 function readRuntimeActivityProjection(row: V2SessionRowCompat): Partial<Pick<V2SessionRecord,
-    'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'>> {
+    'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityScheduledWake' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'>> {
     const parsed = parseSessionRuntimeActivityProjectionFields({
         runtimeActivityState: row.runtimeActivityState,
         runtimeActivityActiveCount: readRuntimeActivityInteger(row.runtimeActivityActiveCount),
+        runtimeActivityScheduledWake: row.runtimeActivityScheduledWake ?? undefined,
         runtimeActivityObservedAt: row.runtimeActivityObservedAt === null
             ? null
             : readRuntimeActivityInteger(row.runtimeActivityObservedAt),
@@ -339,6 +341,7 @@ function readRuntimeActivityProjection(row: V2SessionRowCompat): Partial<Pick<V2
     return {
         runtimeActivityState: parsed.projection.state,
         runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityScheduledWake: parsed.projection.scheduledWake,
         runtimeActivityObservedAt: parsed.projection.observedAt,
         runtimeActivityRevision: parsed.projection.revision,
     };

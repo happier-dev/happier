@@ -66,9 +66,15 @@ describe('host ready after a provider successor starts', () => {
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, failure: 'native' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, failure: 'prompt' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, failure: 'strict_resume' },
-  ])('preserves host results across preview retirement=$retirePreview, receipt omission=$omitReceipt and eager startup=$eagerStartup/$hostAnswer (combined card=$combinedCard, reject Diff=$rejectDiff, failure=$failure)', async (scenario) => {
+    { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'jobs' },
+    { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'wake' },
+    { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'workers' },
+    { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'failed_lead', failure: 'native' },
+  ])('preserves host results across preview retirement=$retirePreview, receipt omission=$omitReceipt and eager startup=$eagerStartup/$hostAnswer (combined card=$combinedCard, reject Diff=$rejectDiff, failure=$failure, Finished hold=$finishedHold)', async (scenario) => {
     const { hostAnswer, eagerStartup, retirePreview, omitReceipt, combinedCard, rejectDiff } = scenario;
     const failure = 'failure' in scenario && scenario.failure;
+    const finishedHold = 'finishedHold' in scenario && scenario.finishedHold;
+    const scheduledWake = { pendingUntil: Date.now() + 120_000 };
     const checkpointRoot = combinedCard ? await mkdtemp(join(tmpdir(), 'happier-host-turn-card-')) : null;
     if (checkpointRoot) {
       const git = promisify(execFileCallback);
@@ -125,6 +131,8 @@ describe('host ready after a provider successor starts', () => {
     const sentNotifications: unknown[][] = [];
     setActiveAccountSettingsSnapshot(createNotificationAccountSnapshotFixture());
     let providerDispatchCount = 0;
+    let releaseSettledTurn: (() => void) | undefined;
+    let prematureReadyCount: number | undefined;
     const secondHostAnswer = hostAnswer === null ? 'SECOND_HOST_ANSWER' : null;
     const committedMessages: unknown[] = [];
     const agentMessages: ACPMessageData[] = [];
@@ -168,10 +176,15 @@ describe('host ready after a provider successor starts', () => {
           await writeFile(join(checkpointRoot, 'tracked.txt'), 'changed\n');
           emit({ kind: 'tool-result', turnId: request.delivery.turnId, toolCallId: 'edit', output: { status: 'completed' } });
         }
+        if (finishedHold === 'jobs' || finishedHold === 'wake') {
+          emit({ kind: 'runtime-activity-snapshot', ...(finishedHold === 'jobs' ? { state: 'active', activeCount: 1 }
+            : { state: 'idle', activeCount: 0, scheduledWake }) });
+        }
         if (answer) emit({ kind: 'message-delta', turnId: request.delivery.turnId, channel: 'assistant', text: answer });
         emit(failure ? { kind: 'turn-failed', turnId: request.delivery.turnId,
           diagnostic: { code: 'empty_failure', severity: 'error', message: 'Failed before any assistant output' } }
           : { kind: 'turn-complete', turnId: request.delivery.turnId });
+        if (finishedHold) return { status: 'admitted' };
         const successorTurnId = `provider-successor-${providerDispatchCount}`;
         emit({ kind: 'turn-start', turnId: successorTurnId, startedBy: 'provider' });
         emit({ kind: 'transcript-message-committed', turnId: successorTurnId, messageId: `successor-answer-${providerDispatchCount}`,
@@ -207,6 +220,13 @@ describe('host ready after a provider successor starts', () => {
         readyOriginals.push(sourceMessage);
         return { persisted: true, delivered: true, localId: sourceMessage.localId, committedSequence: sourceMessage.seq,
           personalFollow: { sourceSessionId: sessionId, sourceMessage: { ...sourceMessage, policies: [{ preset: 'everything' as const }] } } };
+      },
+      observeFinishedTurn: (turnId: string, onFinished: () => void) => {
+        if (terminalMutations.some(mutation => mutation.action === 'complete' && mutation.turnId === turnId)) {
+          if (finishedHold) releaseSettledTurn = onFinished;
+          else onFinished();
+        }
+        return () => { releaseSettledTurn = undefined; };
       },
       turnAssistantTextSnapshotStore: snapshots,
       getTurnAssistantTextSnapshotStore: () => snapshots,
@@ -257,11 +277,13 @@ describe('host ready after a provider successor starts', () => {
     const inputBinding = createSessionProviderInputOutcomeBinding({ getTarget: () => ({ sessionId,
       hasPendingProviderInput: () => true,
       observeProviderInputSettlement: outcome => new Promise<void>(resolve => {
-        pendingReceipts.set(outcome.localId, () => {
+        const settle = () => {
           const seq = outcome.localId === 'host-input' ? 1 : secondHostSeq;
           if (seq !== null) acceptedUserSeqs.set(outcome.localId, seq);
           resolve();
-        });
+        };
+        if (finishedHold) settle();
+        else pendingReceipts.set(outcome.localId, settle);
       }),
     }) });
     // These are the real host launch owners, installed before the Session loop.
@@ -290,8 +312,9 @@ describe('host ready after a provider successor starts', () => {
       api: { push: () => ({
         fetchSessionNotificationContext: async (id: string) => {
           const source = createSessionNotificationContextFixture(id);
-          return { ...source, viewer: { ...source.viewer!, follow: { follows: true, notificationLevel: 'important' as const,
-            policy: { preset: 'quiet' as const } } } };
+          return { ...source, viewer: { ...source.viewer!, follow: { follows: true,
+            notificationLevel: finishedHold ? 'all_messages' as const : 'important' as const,
+            policy: finishedHold ? { preset: 'everything' as const } : { preset: 'quiet' as const } } } };
         }, readAccountSessionDeliveryMutedScopes: async () => [],
         async sendToAllDevicesAsync(...args: unknown[]) { sentNotifications.push(args); return true; },
         sendToAllDevices(...args: unknown[]) { sentNotifications.push(args); },
@@ -315,11 +338,50 @@ describe('host ready after a provider successor starts', () => {
       transitionModelSelection: async selection => ({ ok: true, status: 'already_active', activeSelection: selection }),
       initialResumeId: failure === 'strict_resume' ? 'unavailable-native-session' : '',
       deps: {
-        runPermissionModePromptLoopFn: input => runPermissionModePromptLoop({ ...input, shouldExit: () => ready, getAbortSignal: () => controller.signal }),
+        runPermissionModePromptLoopFn: input => runPermissionModePromptLoop({ ...input,
+          shouldExit: () => ready, getAbortSignal: () => controller.signal,
+          onPromptFailure: async (...args) => {
+            await input.onPromptFailure?.(...args);
+            if (failure === 'prompt') {
+              ready = true;
+              controller.abort();
+            }
+          },
+          onAfterLoopBoundary: async boundary => {
+            await input.onAfterLoopBoundary?.(boundary);
+            if (finishedHold && boundary.reason === 'turn_completed') {
+              setImmediate(() => {
+                prematureReadyCount = readyEvents.length;
+                if (finishedHold === 'failed_lead') {
+                  ready = true;
+                  controller.abort();
+                  return;
+                }
+                releaseSettledTurn?.();
+                releaseSettledTurn?.();
+                ready = true;
+                controller.abort();
+              });
+            }
+            if (boundary.reason !== 'turn_completed' || finishedHold) return;
+            if (failure || rejectDiff) {
+              ready = true;
+              controller.abort();
+            } else if (omitReceipt && terminalMutations.some(mutation => mutation.action === 'fail' && mutation.turnId === hostTurnIds[0])
+                && providerDispatchCount === 1 && secondHostSeq === null) {
+              emit({ kind: 'turn-complete', turnId: 'provider-successor-1' });
+              secondHostSeq = ++observedSeq;
+              queue.push({ text: 'second host input', localId: 'host-input-2', userMessageSeq: secondHostSeq }, { permissionMode: 'default' });
+            }
+          },
+        }),
         sendReadyWithPushNotificationFn: async input => {
+          if (finishedHold) {
+            await sendReadyWithPushNotification(input);
+            return;
+          }
           readyPreviews.push(input.assistantPreviewText);
-          expect(input.completedTurn).toEqual(failure || ((omitReceipt || rejectDiff) && readyPreviews.length === 1) ? undefined
-            : { turnId: hostTurnIds[readyPreviews.length - 1] });
+          expect(input.completedTurn).toEqual({ turnId: hostTurnIds[omitReceipt ? 1 : readyPreviews.length - 1] });
           await sendReadyWithPushNotification(input);
           thinkingAtReady.push(runtimeState.thinking);
           if (providerDispatchCount > 0) emit({ kind: 'turn-complete', turnId: `provider-successor-${providerDispatchCount}` });
@@ -328,7 +390,7 @@ describe('host ready after a provider successor starts', () => {
             controller.abort();
             return;
           }
-          if (readyPreviews.length === 1) {
+          if (readyPreviews.length === 1 && !omitReceipt) {
             secondHostSeq = ++observedSeq;
             queue.push({ text: 'second host input', localId: 'host-input-2', userMessageSeq: secondHostSeq }, { permissionMode: 'default' });
           } else {
@@ -358,6 +420,18 @@ describe('host ready after a provider successor starts', () => {
       const running = runSessionLoopLifecycle({ ...params, runtime: runtimeForLoop });
       if (failure === 'strict_resume') await expect(running).rejects.toThrow('Native resume startup failed');
       else await running;
+      if (finishedHold) {
+        expect(terminalMutations).toContainEqual(expect.objectContaining({
+          action: finishedHold === 'failed_lead' ? 'fail' : 'complete', turnId: hostTurnIds[0],
+        }));
+        expect(prematureReadyCount).toBe(0);
+        expect(readyEvents).toEqual(finishedHold === 'failed_lead' ? [] : [{
+          type: 'ready', completedTurnId: hostTurnIds[0], ownerActivityDelivery: 'rich_sender',
+        }]);
+        if (finishedHold === 'failed_lead') expect(sentNotifications).toEqual([]);
+        else await vi.waitFor(() => expect(sentNotifications).toHaveLength(1));
+        return;
+      }
       if (failure) {
         const failed = terminalMutations.find(mutation => mutation.action === 'fail');
         expect(failed).toBeDefined();
@@ -367,6 +441,7 @@ describe('host ready after a provider successor starts', () => {
         expect(terminalMutations).toContainEqual(expect.objectContaining({ action: 'fail', turnId }));
         expect(inputAnchors.get(turnId)).toMatchObject({ endSeqInclusive: failureSeq, finalAssistantMessageSeq: null });
         expect(agentMessages.filter(body => body.type === 'turn_failed')).toHaveLength(1);
+        expect(readyEvents).toEqual([]);
         if (failure === 'native') {
           expect(inputAnchors.get(turnId)).toMatchObject({ startUserMessageSeq: 1 });
           expect(failureSeq).toBeLessThan(committedAssistantSeqs.get('SUCCESSOR_ANSWER')!);
@@ -425,16 +500,16 @@ describe('host ready after a provider successor starts', () => {
         expect(stored?.index.lifecycle).toBe('completed');
         expect(stored?.progress.result).toBe(hostAnswer);
       } else expect(classified).toMatchObject({ kind: 'needs_attention', code: 'session_input_result_unavailable' });
-      expect.soft(readyPreviews).toEqual(retirePreview || omitReceipt ? [null, null] : [hostAnswer, secondHostAnswer]);
+      expect.soft(readyPreviews).toEqual(omitReceipt ? [null] : retirePreview ? [null, null] : [hostAnswer, secondHostAnswer]);
       await vi.waitFor(() => expect(sentNotifications).toHaveLength(omitReceipt ? 1 : 2));
-      expect(readyEvents).toEqual(hostTurnIds.map((completedTurnId, index) => ({ type: 'ready', ownerActivityDelivery: 'rich_sender',
-        ...(omitReceipt && index === 0 ? {} : { completedTurnId }) })));
-      const notifiedOriginals = omitReceipt ? readyOriginals.slice(1) : readyOriginals;
-      expect(sentNotifications.map(notification => notification[2])).toEqual(notifiedOriginals.map(original => ({
+      expect(readyEvents).toEqual(hostTurnIds.slice(omitReceipt ? 1 : 0).map(completedTurnId => ({
+        type: 'ready', ownerActivityDelivery: 'rich_sender', completedTurnId,
+      })));
+      expect(sentNotifications.map(notification => notification[2])).toEqual(readyOriginals.map(original => ({
         sessionId, activityEventLocalId: original.localId,
         activityEvent: { type: 'ready', sequenceDomain: 'session_transcript', messageSeq: original.seq },
       })));
-      expect.soft(thinkingAtReady).toEqual([true, true]);
+      expect.soft(thinkingAtReady).toEqual(omitReceipt ? [true] : [true, true]);
       expect(runtimeState.thinking).toBe(false);
       expect(listeners.size).toBe(0);
       if (eagerStartup) {

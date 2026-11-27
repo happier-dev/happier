@@ -7,7 +7,7 @@ import { SESSION_PERMISSION_MODES } from '../metadata/sessionPermissionModes.js'
 import { TurnIdSchema } from '../idsV1.js';
 import { PendingActivationAuthorizationV1Schema } from '../pending/pendingActivationAuthorizationV1.js';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from './runtimeIssueV1.js';
-import { SessionRuntimeActivityStateSchema, refineRuntimeActivityProjectionFields } from '../runtime/activity/sessionRuntimeActivity.js';
+import { SessionRuntimeScheduledWakeSchema, SessionRuntimeActivityStateSchema, refineRuntimeActivityProjectionFields } from '../runtime/activity/sessionRuntimeActivity.js';
 import { SessionBotV1Schema, readSessionBotV1 } from '../identity/sessionBotV1.js';
 import { SessionBotFaceV1Schema, readSessionBotFaceV1 } from '../identity/sessionBotFaceV1.js';
 
@@ -49,6 +49,7 @@ export const SessionSummarySchema = lazyZodSchema(() => z.looseObject({
   latestTurnStatusObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
   lastRuntimeIssue: z.optional(z.nullable(SessionRuntimeIssueV1Schema)),
   runtimeActivityState: z.optional(SessionRuntimeActivityStateSchema),
+  runtimeActivityScheduledWake: z.optional(SessionRuntimeScheduledWakeSchema),
   runtimeActivityActiveCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   runtimeActivityObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
   runtimeActivityRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -68,7 +69,7 @@ export function projectSessionSummaryIdentityV1(
 
 type SessionSummarySourceFieldsV1 = 'archivedAt' | 'pendingCount' | 'pendingBlockedCount' | 'effectiveAccess' | 'share'
     | 'encryptionMode' | 'latestTurnId' | 'latestTurnStatus' | 'latestTurnStatusObservedAt' | 'lastRuntimeIssue'
-    | 'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'
+    | 'runtimeActivityState' | 'runtimeActivityActiveCount' | 'runtimeActivityScheduledWake' | 'runtimeActivityObservedAt' | 'runtimeActivityRevision'
     | 'pendingActivationAuthorization' | 'manager' | 'managedSessions';
 type SessionSummarySourceV1 = Pick<SessionSummary, 'id' | 'createdAt' | 'updatedAt' | 'active' | 'activeAt'> & {
   readonly [Key in SessionSummarySourceFieldsV1]?: SessionSummary[Key] | null;
@@ -114,6 +115,7 @@ export function projectSessionSummaryV1(input: Readonly<{
     ...(nullableTimestamp(row.latestTurnStatusObservedAt) ? { latestTurnStatusObservedAt: row.latestTurnStatusObservedAt } : {}),
     ...(row.lastRuntimeIssue != null ? { lastRuntimeIssue: row.lastRuntimeIssue } : {}),
     ...(row.runtimeActivityState != null ? { runtimeActivityState: row.runtimeActivityState } : {}),
+    ...(row.runtimeActivityScheduledWake != null ? { runtimeActivityScheduledWake: row.runtimeActivityScheduledWake } : {}),
     ...(timestamp(row.runtimeActivityActiveCount) ? { runtimeActivityActiveCount: row.runtimeActivityActiveCount } : {}),
     ...(nullableTimestamp(row.runtimeActivityObservedAt) ? { runtimeActivityObservedAt: row.runtimeActivityObservedAt } : {}),
     ...(timestamp(row.runtimeActivityRevision) ? { runtimeActivityRevision: row.runtimeActivityRevision } : {}),

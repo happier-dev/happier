@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
     projectSessionAwarenessV1,
     readSessionAwarenessWorkStatusV1,
@@ -55,6 +55,65 @@ describe("Manager listing (SQLite)", () => {
             audiences: [], tagIds: [], limit: 50, underSessionId,
         } },
         rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
+    });
+
+    it('includes the same reported wake in a Session detail and its manager projection', async () => {
+        const { owner, lead, create } = await fixture();
+        const worker = await create();
+        const now = Date.now();
+        const wake = { pendingUntil: now + 60_000 };
+        await db.sessionFollowEdge.create({ data: managerEdgeData(worker.id, lead.id) });
+        await db.session.update({ where: { id: worker.id }, data: {
+            active: true, latestTurnStatus: 'completed', latestTurnStatusObservedAt: BigInt(now),
+            runtimeActivityState: 'idle', runtimeActivityActiveCount: 0,
+            runtimeActivityObservedAt: BigInt(now), runtimeActivityRevision: 1n, runtimeActivityScheduledWake: wake,
+        } });
+        await withAuthenticatedTestApp(registerSessionListingRoutes, async app => {
+            const headers = { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' };
+            const workerDetail = await app.inject({ method: 'GET',
+                url: `/v2/sessions/${worker.id}?accessProjectionVersion=1`, headers });
+            expect(workerDetail.statusCode).toBe(200);
+            const leadDetail = await app.inject({ method: 'GET',
+                url: `/v2/sessions/${lead.id}?accessProjectionVersion=1`, headers });
+            expect(leadDetail.statusCode).toBe(200);
+            expect(leadDetail.json().session.managedSessions).toMatchObject({ total: 1, working: 1, finished: 0 });
+            expect(workerDetail.json().session).toMatchObject({
+                runtimeActivityState: 'idle', runtimeActivityActiveCount: 0, runtimeActivityScheduledWake: wake,
+            });
+        });
+    });
+
+    it('excludes a silently elapsed wake from Working without issuing a Finished recovery verdict', async () => {
+        const { owner, lead, create } = await fixture();
+        const worker = await create();
+        const now = Date.now();
+        await db.sessionFollowEdge.create({ data: managerEdgeData(worker.id, lead.id) });
+        for (const session of [lead, worker]) {
+            await db.session.update({ where: { id: session.id }, data: {
+                active: true, latestTurnId: 'finished-turn', latestTurnStatus: 'completed',
+                latestTurnStatusObservedAt: BigInt(now), runtimeActivityState: 'idle', runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: BigInt(now), runtimeActivityRevision: 1n,
+                ...(session === worker ? { runtimeActivityScheduledWake: { pendingUntil: now + 60_000 } } : {}),
+            } });
+        }
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(now + 60_001);
+        try {
+            await withAuthenticatedTestApp(registerSessionListingRoutes, async app => {
+                const headers = { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' };
+                for (const session of [lead, worker]) {
+                    const detail = await app.inject({ method: 'GET',
+                        url: `/v2/sessions/${session.id}?accessProjectionVersion=1&projection=finished-turn`, headers });
+                    expect(detail.statusCode).toBe(200);
+                    expect(detail.json().session.finishedTurnId).toBeNull();
+                    if (session === lead) {
+                        expect(detail.json().session.managedSessions).toMatchObject({ working: 0, finished: 1 });
+                    }
+                }
+            });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('retains only accessible worker context through the coordinator filter', async () => {

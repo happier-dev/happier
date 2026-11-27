@@ -586,6 +586,8 @@ export function createSessionClientInteractionApi(
         maybeScheduleUserSocketDisconnect: () => void;
         handleSessionScopedUpdate: (data: Update) => void;
         onSessionFollowInvalidated?: () => void;
+        onSessionFinished?: (turnId: string) => void;
+        onSessionFinishedReconnect?: () => void;
         deliverMaterializedUserMessageToAgentQueue?: (
             message: UserMessage,
             providerAction: PendingQueueMaterializedMessage['providerAction'],
@@ -1170,6 +1172,7 @@ export function createSessionClientInteractionApi(
             const isCurrentSocket = () => !deps.getClosed() && deps.getSocket() === socket;
             socket.on('connect', () => {
                 if (!isCurrentSocket()) return;
+                deps.onSessionFinishedReconnect?.();
                 socket.emit(SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT, {
                     v: 1, sessionIds: [deps.sessionId], pendingMessageEdits: [],
                 }, (raw) => {
@@ -1226,12 +1229,12 @@ export function createSessionClientInteractionApi(
             });
             socket.on('update', (data: Update) => deps.handleSessionScopedUpdate(data));
             socket.on('session', (raw: unknown) => {
-                if (!deps.onSessionFollowInvalidated) return;
+                if (!isCurrentSocket()) return;
                 const parsed = SessionBroadcastContainerSchema.safeParse(raw);
-                if (!parsed.success) return;
-                if (parsed.data.body.t !== 'session-changed') return;
-                if (parsed.data.body.sessionId !== deps.sessionId) return;
-                deps.onSessionFollowInvalidated();
+                if (!parsed.success || parsed.data.body.sessionId !== deps.sessionId) return;
+                const body = parsed.data.body;
+                if (body.t === 'session-finished') deps.onSessionFinished?.(body.turnId);
+                else deps.onSessionFollowInvalidated?.();
             });
             socket.on('error', (error) => {
                 logger.debug('[API] Socket error:', {

@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { eventRouter } from '@/app/events/eventRouter';
+import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
 import { decodeSessionStoredContent, encodeSessionStoredContent, sessionStoredContentWhere, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { prepareSessionMessageToolOutputForWrite, SessionMessageToolOutputInvalidError } from '@/storage/sessionMessageToolOutput';
@@ -35,6 +37,7 @@ import { log, warn } from "@/utils/logging/log";
 import type { Prisma } from "@prisma/client";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { scheduleSessionPersonalEvent } from "@/app/session/personal/publishPersonalEvent";
+import { readSessionFinishedTurnInTx, SESSION_FINISHED_TURN_SELECT } from './awareness/sessionManagerProjection';
 import { acceptSessionPersonalEventOnceInTx, canSessionFollowEventSelectAnyCandidate } from '@/app/session/personal/eventEligibility';
 import { readSessionFollowCandidatesInTx } from '@/app/session/personal/followFacts';
 import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT, agentEventLocalIdAttentionImpact, buildAgentEventLocalId, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
@@ -2338,6 +2341,7 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
 export async function writeSessionRuntimeActivityObserverLossInTx(params: {
     tx: Tx;
     sessionId: string;
+    clearScheduledWake?: true;
 }): Promise<SessionRuntimeActivityProjectionInTxResult> {
     const current = await params.tx.session.findUnique({
         where: { id: params.sessionId },
@@ -2352,12 +2356,14 @@ export async function writeSessionRuntimeActivityObserverLossInTx(params: {
     if (!current) return { status: "rejected", reason: "not_found" };
     const normalized = parseStoredRuntimeActivityProjection(current);
     if (!normalized) return { status: "rejected", reason: "invalid_storage" };
-    if (normalized.runtimeActivityState === "idle") {
+    const idle = normalized.runtimeActivityState === "idle";
+    if (idle && (!params.clearScheduledWake || normalized.runtimeActivityScheduledWake === undefined)) {
         return { status: "unchanged", projection: normalized };
     }
     return await writeSessionRuntimeActivityProjectionInTx({
-        ...params,
-        state: "unknown",
+        tx: params.tx,
+        sessionId: params.sessionId,
+        state: idle ? "idle" : "unknown",
         activeCount: 0,
     });
 }
@@ -2429,6 +2435,9 @@ export async function updateSessionRuntimeActivityProjection(params: SessionRunt
         });
         if (activity.status === "rejected") return activity;
         if (activity.status === "unchanged") return { ...activity, recipientCursors: [] };
+        if (activity.projection.runtimeActivityState === "idle") {
+            await publishSettledSessionFinishedInTx({ tx, sessionId: params.sessionId });
+        }
         const recipientCursors = await markSessionProjectionRecipientsChanged({
             tx,
             sessionId: params.sessionId,
@@ -3151,6 +3160,95 @@ function createSessionTurnAppliedResult(params: {
         : { ...result, recipientCursors: [] };
 }
 
+/** Publish one Home verdict to the runtime and the personal one-shot. */
+export async function publishSettledSessionFinishedInTx(params: Readonly<{
+    tx: Tx;
+    sessionId: string;
+    completedTurn?: SessionTurnApplicationRow;
+    runtimeComposition?: SubmitSessionActivityRemoteAlertsParams["runtimeComposition"];
+}>): Promise<void> {
+    const { tx, sessionId } = params;
+    const sessions = await tx.session.findMany({
+        where: {
+            latestTurnStatus: "completed",
+            archivedAt: null,
+            OR: [{ id: sessionId }, { followDestinationEdges: { some: { relation: "manager", sourceSessionId: sessionId } } }],
+        },
+        select: { ...SESSION_FINISHED_TURN_SELECT, agentStateVersion: true },
+    });
+    const nowMs = Date.now();
+    for (const session of sessions) {
+        if (!session.active && params.completedTurn?.sessionId !== session.id) continue;
+        const turnId = await readSessionFinishedTurnInTx(tx, session, nowMs);
+        if (turnId === null) continue;
+        if (session.active) {
+            const payload = { id: randomKeyNaked(12), createdAt: nowMs, body: {
+                t: 'session-finished' as const, sessionId: session.id, turnId,
+            } };
+            afterTx(tx, () => { void eventRouter.emitSessionBroadcast({ userId: session.accountId, sessionId: session.id, payload }); });
+        }
+        const onceOccurrence = { event: "ready" as const, turnId, agentStateVersion: session.agentStateVersion, transcriptSeq: session.seq };
+        const acceptedOnceAccountIds = await acceptSessionPersonalEventOnceInTx(tx, {
+            sessionId: session.id, event: "ready", onceOccurrence,
+        });
+        if (acceptedOnceAccountIds.length === 0) continue;
+        const turn = params.completedTurn?.sessionId === session.id && params.completedTurn.turnId === turnId
+            ? params.completedTurn
+            : await tx.sessionTurn.findUnique({
+                where: { sessionId_turnId: { sessionId: session.id, turnId } },
+                select: { transcriptAnchorsJson: true },
+            });
+        const finalSeq = parseStoredSessionTurnTranscriptAnchors(turn?.transcriptAnchorsJson)?.finalAssistantMessageSeq;
+        afterTx(tx, () => scheduleSessionActivityRemoteAlerts({
+            sessionId: session.id, event: "ready", committedTurnId: turnId,
+            onceOnly: true, onceOccurrence, acceptedOnceAccountIds,
+            ...(typeof finalSeq === "number" ? { committedMessage: { domain: "session_transcript", seq: finalSeq } } : {}),
+            ...(session.id === sessionId && params.runtimeComposition ? { runtimeComposition: params.runtimeComposition } : {}),
+        }));
+    }
+}
+
+/** Use the same interruption delivery for a turn mutation and a confirmed publisher exit. */
+async function publishSessionTurnInterruptionInTx(tx: Tx, input: Readonly<{
+    sessionId: string;
+    event: "failed" | "cancelled";
+    turnId: string;
+    eventId: string;
+    agentStateVersion: number;
+    transcriptSeq: number;
+    recipientAccountIds: readonly string[];
+    publisherClosedWithWake?: true;
+    runtimeComposition?: SubmitSessionActivityRemoteAlertsParams["runtimeComposition"];
+}>): Promise<void> {
+    const { sessionId, event, turnId, eventId, agentStateVersion, transcriptSeq } = input;
+    const onceOccurrence = { event, turnId, agentStateVersion, transcriptSeq };
+    const acceptedOnceAccountIds = await acceptSessionPersonalEventOnceInTx(tx, {
+        sessionId, event, onceOccurrence, publisherClosedWithWake: input.publisherClosedWithWake,
+    });
+    for (const recipientAccountId of input.recipientAccountIds) {
+        scheduleSessionPersonalEvent(tx, recipientAccountId, { type: "session-personal-event", sessionId, eventId, event, turnId });
+    }
+    afterTx(tx, () => scheduleSessionActivityRemoteAlerts({
+        sessionId, event, committedTurnId: turnId, onceOccurrence, acceptedOnceAccountIds,
+        ...(input.runtimeComposition ? { runtimeComposition: input.runtimeComposition } : {}),
+    }));
+}
+
+export async function publishSessionWakeStoppedInTx(tx: Tx, input: Readonly<{
+    sessionId: string;
+    eventId: string;
+    turnId: string;
+    agentStateVersion: number;
+    transcriptSeq: number;
+}>): Promise<void> {
+    await publishSessionTurnInterruptionInTx(tx, {
+        ...input,
+        event: "cancelled",
+        publisherClosedWithWake: true,
+        recipientAccountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: input.sessionId }),
+    });
+}
+
 async function applySessionTurnMutationWithOwnerAccessInTx(params: {
     archiveWaitingTurn?: true;
     tx: Tx;
@@ -3495,52 +3593,17 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 sourceSessionId: params.turnMutation.sessionId,
                 sourceTurnId: targetTurnId,
             });
-            if (lifecycleEvent === "parentTurnCompleted") {
-                // A ready transcript marker is not terminal truth. This owner
-                // accepts the exact completed turn, including no-output turns;
-                // transport may use only the original validated final anchor.
-                const finalAssistantMessageSeq = params.turnMutation.action === "complete"
-                    ? params.turnMutation.transcriptAnchors?.finalAssistantMessageSeq
-                    : undefined;
-                const onceOccurrence = {
-                    event: "ready" as const, turnId: targetTurnId,
-                    agentStateVersion: session.agentStateVersion, transcriptSeq: session.seq,
-                };
-                const acceptedOnceAccountIds = await acceptSessionPersonalEventOnceInTx(tx, {
-                    sessionId: params.turnMutation.sessionId, event: "ready", onceOccurrence,
-                });
-                afterTx(tx, () => scheduleSessionActivityRemoteAlerts({
-                    sessionId: params.turnMutation.sessionId,
-                    event: "ready",
-                    committedTurnId: targetTurnId,
-                    onceOnly: true,
-                    onceOccurrence,
-                    acceptedOnceAccountIds,
-                    ...(typeof finalAssistantMessageSeq === "number"
-                        ? { committedMessage: { domain: "session_transcript", seq: finalAssistantMessageSeq } } : {}),
-                    ...(params.runtimeComposition ? { runtimeComposition: params.runtimeComposition } : {}),
-                }));
-            }
             if (lifecycleEvent === "parentTurnFailed" || lifecycleEvent === "parentTurnCancelled") {
-                const event = lifecycleEvent === "parentTurnFailed" ? "failed" : "cancelled";
-                const onceOccurrence = { event, turnId: targetTurnId, agentStateVersion: session.agentStateVersion, transcriptSeq: session.seq } as const;
-                const acceptedOnceAccountIds = await acceptSessionPersonalEventOnceInTx(tx, {
-                    sessionId: params.turnMutation.sessionId, event, onceOccurrence,
+                await publishSessionTurnInterruptionInTx(tx, {
+                    sessionId,
+                    event: lifecycleEvent === "parentTurnFailed" ? "failed" : "cancelled",
+                    turnId: targetTurnId,
+                    eventId: params.turnMutation.mutationId,
+                    agentStateVersion: session.agentStateVersion,
+                    transcriptSeq: session.seq,
+                    recipientAccountIds: access.recipientAccountIds,
+                    runtimeComposition: params.runtimeComposition,
                 });
-                for (const recipientAccountId of access.recipientAccountIds) {
-                    scheduleSessionPersonalEvent(tx, recipientAccountId, {
-                        type: "session-personal-event", sessionId: params.turnMutation.sessionId,
-                        eventId: params.turnMutation.mutationId, event, turnId: targetTurnId,
-                    });
-                }
-                afterTx(tx, () => scheduleSessionActivityRemoteAlerts({
-                    sessionId: params.turnMutation.sessionId,
-                    event,
-                    committedTurnId: targetTurnId,
-                    onceOccurrence,
-                    acceptedOnceAccountIds,
-                    ...(params.runtimeComposition ? { runtimeComposition: params.runtimeComposition } : {}),
-                }));
             }
         }
 
@@ -3570,6 +3633,13 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             } : { updatedAt: new Date() },
         });
 
+        if (shouldMaterialize && lifecycleEvent !== null && lifecycleEvent !== "parentTurnStarted" && !params.archiveWaitingTurn) {
+            await publishSettledSessionFinishedInTx({
+                tx, sessionId,
+                ...(lifecycleEvent === "parentTurnCompleted" ? { completedTurn: appliedTurn } : {}),
+                runtimeComposition: params.runtimeComposition,
+            });
+        }
         const receipt = await updateSessionTurnMutationReceipt(tx, params.turnMutation, "applied", targetTurnId);
 
         const updatesRecipientProjection = shouldMaterialize || updatesRollbackFacet;

@@ -620,8 +620,16 @@ completed turn or admit another input. Unknown calls, foreign threads and
 duplicate completions cannot introduce another tool effect.
 
 Session awareness keeps a completed foreground Turn separate from continuing background work.
-`projectSessionAwarenessOperationalV1` suppresses operational readiness while the runtime still
-reports background activity; `readSessionAwarenessWorkStatusV1` maps that activity to Working.
+`projectSessionAwarenessOperationalV1` suppresses operational readiness while the Session has
+runtime jobs, working managed Sessions or a provider-reported scheduled wake before its deadline.
+The runtime activity revision carries the scheduled wake with the same tuple on Session detail,
+list and live updates. `readSessionAwarenessWorkStatusV1` maps held work to Working.
+
+Home uses the same operational verdict to settle Follow-once and to let the owner runtime publish
+the Finished marker for the exact successful Turn. A failed Turn follows the failure path even
+while managed Sessions continue. A scheduled wake that silently expires stops counting toward
+Working when the status is read. Delivery waits for a lifecycle observation. Confirmed publisher
+exit with a retained wake delivers Stopped and preserves the completed foreground Turn in history.
 The Session-list presentation owner composes these facts with the Account's
 `sessionListBackgroundWorkAttentionModeV1`: show a blue center dot on the working indicator for unread replies
 (default), show unread status within Working, or temporarily move unread replies to Needs

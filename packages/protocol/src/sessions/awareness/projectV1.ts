@@ -173,6 +173,14 @@ function normalizeAwarenessWorkspaceV1(
   };
 }
 
+/** Successful terminal work is Finished only when its operational projection can say Ready. */
+export function isSessionAwarenessTurnFinishedV1(
+  latestTurnStatus: SessionLifecycleAwarenessInputV1['latestTurnStatus'],
+  operational: SessionAwarenessOperationalV1,
+): boolean {
+  return latestTurnStatus === 'completed' && operational.reasons.includes('ready');
+}
+
 /** Operational semantics for consumers of runtime facts without private content acquisition. */
 export function projectSessionAwarenessOperationalV1(input: Readonly<{
   runtime: SessionAwarenessRuntimeFactsV1;

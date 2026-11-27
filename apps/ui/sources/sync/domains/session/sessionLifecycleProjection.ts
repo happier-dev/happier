@@ -9,7 +9,7 @@ export const sessionLifecycleProjectionFields = [
     'latestTurnId', 'latestTurnStatus', 'latestTurnStatusObservedAt', 'lifecycleStateReason',
     'pendingVersion', 'pendingCount', 'pendingBlockedCount', 'pendingActivationAuthorization', 'pendingActivationFailureDetails',
     'latestReadyEventSeq', 'latestReadyEventAt',
-    'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
+    'runtimeActivityState', 'runtimeActivityActiveCount', 'runtimeActivityScheduledWake', 'runtimeActivityObservedAt', 'runtimeActivityRevision',
 ] as const satisfies readonly (keyof Session)[];
 
 export type SessionLifecycleProjection = Pick<Session, typeof sessionLifecycleProjectionFields[number]>;

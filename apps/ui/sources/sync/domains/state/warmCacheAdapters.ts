@@ -70,6 +70,7 @@ function readCompleteRuntimeActivityProjection(
     SessionListRenderableSession,
     'runtimeActivityState'
     | 'runtimeActivityActiveCount'
+    | 'runtimeActivityScheduledWake'
     | 'runtimeActivityObservedAt'
     | 'runtimeActivityRevision'
 >> {
@@ -78,6 +79,7 @@ function readCompleteRuntimeActivityProjection(
     return {
         runtimeActivityState: parsed.projection.state,
         runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityScheduledWake: parsed.projection.scheduledWake,
         runtimeActivityObservedAt: parsed.projection.observedAt,
         runtimeActivityRevision: parsed.projection.revision,
     };
@@ -142,6 +144,7 @@ function areSessionListCacheEntriesEqual(
         && (nextEntry.latestTurnStatusObservedAt ?? null) === (previousEntry.latestTurnStatusObservedAt ?? null)
         && areCacheJsonValuesEqual(nextEntry.lastRuntimeIssue ?? null, previousEntry.lastRuntimeIssue ?? null)
         && (nextEntry.runtimeActivityActiveCount ?? null) === (previousEntry.runtimeActivityActiveCount ?? null)
+        && nextEntry.runtimeActivityScheduledWake?.pendingUntil === previousEntry.runtimeActivityScheduledWake?.pendingUntil
         && (nextEntry.runtimeActivityObservedAt ?? null) === (previousEntry.runtimeActivityObservedAt ?? null)
         && (nextEntry.runtimeActivityRevision ?? null) === (previousEntry.runtimeActivityRevision ?? null)
         && areCacheJsonValuesEqual(nextEntry.rollbackEligibleTurnStarts ?? null, previousEntry.rollbackEligibleTurnStarts ?? null)
@@ -275,6 +278,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         ...(entry.runtimeActivityState != null ? {
             runtimeActivityState: entry.runtimeActivityState,
             runtimeActivityActiveCount: entry.runtimeActivityActiveCount,
+            runtimeActivityScheduledWake: entry.runtimeActivityScheduledWake,
             runtimeActivityObservedAt: entry.runtimeActivityObservedAt,
             runtimeActivityRevision: entry.runtimeActivityRevision,
         } : {}),

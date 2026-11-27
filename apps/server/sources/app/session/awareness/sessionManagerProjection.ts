@@ -2,7 +2,7 @@ import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/
 import type { Prisma } from '@prisma/client';
 import { isProjectedSessionStalledV1, projectSessionAwarenessRuntimeV1, resolveSessionAwarenessLifecycleV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
-import { projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
+import { isSessionAwarenessTurnFinishedV1, projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import { readSessionAwarenessWorkStatusV1, readSessionAwarenessPresentationRankV1, type SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { type SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { resolveInboxItemAttentionV1, resolveSessionInboxAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -43,6 +43,7 @@ const REPORT_SESSION_SELECT = {
     id: true,
     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     archivedAt: true,
+    latestTurnId: true,
     latestTurnStatus: true,
     latestTurnStatusObservedAt: true,
     latestReadyEventSeq: true,
@@ -58,6 +59,7 @@ const REPORT_SESSION_SELECT = {
     runtimeActivityObservedAt: true,
     runtimeActivityRevision: true,
     pendingPermissionRequestCount: true,
+    pendingSharedActionConfirmationCount: true,
     pendingUserActionRequestCount: true,
     pendingRequestObservedAt: true,
     pendingCount: true,
@@ -70,10 +72,9 @@ function createReportSessionSelect(accountId: string) {
 
 type ReportSessionRow = Prisma.SessionGetPayload<{ select: ReturnType<typeof createReportSessionSelect> }>;
 
-function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
-    accountId: string; nowMs: number; latestFailureSeq: number | null; qualifiedTeamIds?: ReadonlySet<string>;
-}>) {
-    const { nowMs } = input;
+type ReportOperationalRow = Prisma.SessionGetPayload<{ select: typeof REPORT_SESSION_SELECT }>;
+
+function projectReportOperational(row: ReportOperationalRow, nowMs: number, managedWorkingCount = 0) {
     const liveFacts = hasSessionTranscriptPublicationLiveFacts(row);
     const lifecycle = {
         archivedAtMs: row.archivedAt?.getTime() ?? null,
@@ -94,6 +95,7 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
     const runtime = projectSessionAwarenessRuntimeV1({
         nowMs,
         lifecycle,
+        managedWorkingCount,
         runtime: {
             presence: 'unknown',
             active: liveFacts && row.active,
@@ -112,11 +114,20 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
             blockedInputCount: row.pendingBlockedCount,
         } : {},
     });
+    const operational = projectSessionAwarenessOperationalV1({ runtime, lifecycle });
+    const stalled = liveFacts && !runtime.archived
+        && isProjectedSessionStalledV1({ active: row.active, latestTurnStatus: lifecycle.latestTurnStatus });
+    return { lifecycle, runtime, operational, liveFacts, stalled };
+}
+
+function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
+    accountId: string; nowMs: number; latestFailureSeq: number | null; qualifiedTeamIds?: ReadonlySet<string>;
+}>) {
+    const { lifecycle, runtime, operational, liveFacts, stalled } = projectReportOperational(row, input.nowMs);
     const attention = projectSessionViewerAttention({ row, latestFailureSeq: input.latestFailureSeq,
         viewerAccountId: input.accountId, discussion: QUIET_SESSION_PERSONAL_DISCUSSION_FACTS,
-        qualifiedTeamIds: input.qualifiedTeamIds, now: nowMs });
-    const operational = projectSessionAwarenessOperationalV1({ runtime, lifecycle });
-    const finished = lifecycle.latestTurnStatus === 'completed' && operational.reasons.includes('ready');
+        qualifiedTeamIds: input.qualifiedTeamIds, now: input.nowMs });
+    const finished = isSessionAwarenessTurnFinishedV1(lifecycle.latestTurnStatus, operational);
     const status = readSessionAwarenessWorkStatusV1({ awareness: {
         runtime: runtime.runtime,
         freshness: runtime.freshness,
@@ -134,9 +145,41 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
         finished,
         needsYou: inboxAttention.section !== null && inboxAttention.type !== null && resolveInboxItemAttentionV1(inboxAttention.type).interrupt,
         // The existing presence publisher/timeout owns Session.active; only its own turn can stall it.
-        stalled: liveFacts && !runtime.archived && isProjectedSessionStalledV1({ active: row.active, latestTurnStatus: lifecycle.latestTurnStatus }),
+        stalled,
     };
 }
+
+/**
+ * This is a source-side decision. A managed report can hold its manager's work
+ * independently of any particular notification recipient's transcript access.
+ */
+export async function readSessionFinishedTurnInTx(
+    tx: Tx,
+    session: ReportOperationalRow,
+    nowMs: number,
+    options?: Readonly<{ recoverFromSnapshot: true }>,
+) {
+    const recovering = options?.recoverFromSnapshot === true;
+    const turnId = session.latestTurnId;
+    // A read can show an expired wake as idle without authorizing delivery.
+    if (!turnId || (recovering && (!session.active || session.runtimeActivityScheduledWake !== null))) return null;
+    const primary = projectReportOperational(session, nowMs);
+    if (!isSessionAwarenessTurnFinishedV1(primary.lifecycle.latestTurnStatus, primary.operational)) return null;
+
+    const workers = await tx.session.findMany({
+        where: { followSourceEdges: { some: { relation: 'manager', destinationSessionId: session.id } } },
+        select: REPORT_SESSION_SELECT,
+    });
+    const managedWorkingCount = workers.filter(worker => {
+        if (recovering && worker.active && worker.runtimeActivityScheduledWake !== null) return true;
+        const projected = projectReportOperational(worker, nowMs);
+        return !projected.stalled && (projected.runtime.working || projected.runtime.backgroundActive);
+    }).length;
+    const { lifecycle, operational } = projectReportOperational(session, nowMs, managedWorkingCount);
+    return isSessionAwarenessTurnFinishedV1(lifecycle.latestTurnStatus, operational) ? turnId : null;
+}
+
+export const SESSION_FINISHED_TURN_SELECT = REPORT_SESSION_SELECT;
 
 type SessionManagerContribution = Readonly<{
     sessionId: string; managerSessionId: string; working: boolean; needsYou: boolean; stalled: boolean; archived: boolean;

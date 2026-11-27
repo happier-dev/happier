@@ -136,6 +136,7 @@ function readRuntimeActivityProjectionFields(
     V2SessionRecord,
     'runtimeActivityState'
     | 'runtimeActivityActiveCount'
+    | 'runtimeActivityScheduledWake'
     | 'runtimeActivityObservedAt'
     | 'runtimeActivityRevision'
 > | null {
@@ -144,6 +145,7 @@ function readRuntimeActivityProjectionFields(
     return {
         runtimeActivityState: parsed.projection.state,
         runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityScheduledWake: parsed.projection.scheduledWake,
         runtimeActivityObservedAt: parsed.projection.observedAt,
         runtimeActivityRevision: parsed.projection.revision,
     };

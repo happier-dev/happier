@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
+import { eventRouter } from "@/app/events/eventRouter";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import * as lifecycleAdmission from "@/app/automations/automationSessionLifecycleAdmission";
-import { applySessionTurnMutation, updateSessionAgentState, updateSessionMetadataEnvelopeTuple } from "./sessionWriteService";
+import { applySessionTurnMutation, updateSessionAgentState, updateSessionMetadataEnvelopeTuple, updateSessionRuntimeActivityProjection } from "./sessionWriteService";
 import { createPlainSessionOwnerMetadataEnvelopeV1, encodeSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { setAccountSessionFollow } from './follow/accountFollowService';
+import { sourceKeyForSessionFollowSourceV1 } from './follow/sessionFollowSourceIdentity';
 import { parsePersistedPersonalFollowOnceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 
 function holdPostCommitSessionReads() {
@@ -189,6 +191,86 @@ describe("Host-stamped SessionTurn facts (SQLite integration)", () => {
         }
         expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(0);
     });
+
+    it.each(['jobs', 'workers', 'wake', 'failed_lead'] as const)(
+        'gates the Everything Finished one-shot at the Home turn publisher (%s)',
+        async scenario => {
+            vi.stubEnv('HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED', 'true');
+            const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+            const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}', daemonState: '{}' } });
+            const fence = new Date();
+            const sessionData = { accountId: account.id, metadata: '{}', encryptionMode: 'plain' as const, active: true,
+                lastActiveAt: fence, publisherGenerationLastActiveAt: fence };
+            const session = await db.session.create({ data: { ...sessionData, tag: randomUUID() } });
+            const idle = { accountId: account.id, machineId: machine.id, sessionId: session.id,
+                boundCommittedFence: fence, state: 'idle', activeCount: 0 };
+            if (scenario === 'jobs' || scenario === 'wake') {
+                expect(await updateSessionRuntimeActivityProjection(scenario === 'jobs'
+                    ? { ...idle, state: 'active', activeCount: 1 }
+                    : { ...idle, scheduledWake: { pendingUntil: Date.now() + 120_000 } }))
+                    .toMatchObject({ status: 'applied' });
+            }
+            const now = Date.now();
+            const mutate = (mutation: Parameters<typeof applySessionTurnMutation>[0]['mutation']) =>
+                applySessionTurnMutation({ actorUserId: account.id, authentication, mutation });
+            const workers: Array<{ sessionId: string; turnId: string }> = [];
+            if (scenario === 'workers' || scenario === 'failed_lead') {
+                for (const workerIndex of [1, 2, 3]) {
+                    const worker = await db.session.create({ data: { ...sessionData, tag: randomUUID() } });
+                    await db.sessionFollowEdge.create({ data: {
+                        sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: worker.id }),
+                        sourceSessionId: worker.id, managerSourceSessionId: worker.id,
+                        destinationSessionId: session.id, relation: 'manager', policyJson: '{"preset":"important"}',
+                    } });
+                    const report = { sessionId: worker.id, turnId: `worker-${workerIndex}` };
+                    workers.push(report);
+                    expect(await mutate({ v: 1, ...report, action: 'begin',
+                        mutationId: randomUUID(), observedAt: now })).toMatchObject({ ok: true, didApply: true });
+                }
+            }
+
+            const turn = { v: 1 as const, sessionId: session.id, turnId: 'lead-turn' };
+            expect(await mutate({ ...turn, action: 'begin', mutationId: randomUUID(), observedAt: now }))
+                .toMatchObject({ ok: true, didApply: true });
+            await setAccountSessionFollow({ accountId: account.id, sessionId: session.id, authentication,
+                preferences: { policy: { preset: 'everything' }, once: { kind: 'turn_finished', sourceTurnId: turn.turnId } } });
+            const where = { accountId_sessionId: { accountId: account.id, sessionId: session.id } };
+            const readOnce = async () => parsePersistedPersonalFollowOnceV1(
+                (await db.accountSessionFollow.findUniqueOrThrow({ where })).notifyOnce);
+            expect(await readOnce()).toMatchObject({ state: 'armed' });
+
+            const publish = vi.spyOn(eventRouter, 'emitSessionBroadcast');
+            const terminal = { ...turn, mutationId: randomUUID(), observedAt: now + 1 };
+            expect(await mutate(scenario === 'failed_lead'
+                ? { ...terminal, action: 'fail', issue: { v: 1, scope: 'primary_session', status: 'failed',
+                    code: 'test_failure', source: 'unknown', occurredAt: now + 1 } }
+                : { ...terminal, action: 'complete' })).toMatchObject({ ok: true, didApply: true });
+
+            const completedPublicationCount = () => publish.mock.calls.filter(([publication]) =>
+                publication.sessionId === session.id && publication.payload.body.t === 'session-finished').length;
+            const fulfilled = (event: 'ready' | 'failed') => ({ state: 'fulfilled', occurrence: { event, turnId: turn.turnId } });
+            const held = scenario === 'failed_lead' ? fulfilled('failed') : { state: 'armed' };
+            expect(await readOnce()).toMatchObject(held);
+            expect(completedPublicationCount()).toBe(0);
+            for (const [index, worker] of workers.entries()) {
+                expect(await mutate({ v: 1, ...worker, action: 'complete',
+                    mutationId: randomUUID(), observedAt: now + index + 2 })).toMatchObject({ ok: true, didApply: true });
+                if (index < workers.length - 1) {
+                    expect(await readOnce()).toMatchObject(held);
+                    expect(completedPublicationCount()).toBe(0);
+                }
+            }
+            if (scenario === 'jobs' || scenario === 'wake') {
+                expect(await updateSessionRuntimeActivityProjection(idle)).toMatchObject({ status: 'applied' });
+                const receipt = await readOnce();
+                expect(receipt).toMatchObject(fulfilled('ready'));
+                expect(await updateSessionRuntimeActivityProjection(idle)).toMatchObject({ status: 'unchanged' });
+                expect(await readOnce()).toEqual(receipt);
+            }
+            expect(await readOnce()).toMatchObject(fulfilled(scenario === 'failed_lead' ? 'failed' : 'ready'));
+            expect(completedPublicationCount()).toBe(scenario === 'failed_lead' ? 0 : 1);
+        },
+    );
 
     it.each(["user", "agent_session", "host", "workflow"] as const)(
         "persists %s facts unchanged and exposes them to both lifecycle admissions",

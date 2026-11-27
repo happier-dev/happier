@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { TranscriptAccountActorMetadata } from "@happier-dev/session-core/messages";
 import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
@@ -101,6 +102,7 @@ export interface Session {
     latestReadyEventAt?: number | null,
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
     runtimeActivityActiveCount?: number | null,
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityState?: 'active' | 'idle' | 'unknown' | null,
     runtimeActivityObservedAt?: number | null,
     runtimeActivityRevision?: number | null,

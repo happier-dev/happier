@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import {
     mergeSessionRuntimeActivityProjection,
     parseSessionRuntimeActivityProjectionFields,
@@ -8,6 +9,7 @@ import {
 export type SessionRuntimeActivityProjectionBase = Readonly<{
     runtimeActivityState?: SessionRuntimeActivityState | null;
     runtimeActivityActiveCount?: number | null;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt?: number | null;
     runtimeActivityRevision?: number | null;
 }>;
@@ -15,6 +17,7 @@ export type SessionRuntimeActivityProjectionBase = Readonly<{
 export type SessionRuntimeActivityProjectionFields = Readonly<{
     runtimeActivityState: SessionRuntimeActivityState;
     runtimeActivityActiveCount: number;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt: number | null;
     runtimeActivityRevision: number;
 }>;
@@ -103,6 +106,7 @@ function toStoredFields(
     return {
         runtimeActivityState: projection.state,
         runtimeActivityActiveCount: projection.activeCount,
+        runtimeActivityScheduledWake: projection.scheduledWake,
         runtimeActivityObservedAt: projection.observedAt,
         runtimeActivityRevision: projection.revision,
     };

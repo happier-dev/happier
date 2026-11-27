@@ -88,6 +88,7 @@ import {
 import {
   refineRuntimeActivityProjectionFields,
   SessionRuntimeActivityStateSchema,
+  SessionRuntimeScheduledWakeSchema,
 } from '../runtime/activity/sessionRuntimeActivity.js';
 export {
   ExactSessionTurnEndMutationV1Schema,
@@ -480,11 +481,14 @@ export const V2SessionRecordSchema = lazyZodSchema(() => z.looseObject({
     /** Safe audience-existence signal; never a roster or authorization input. */
     hasOtherNamedCollaborator: z.optional(z.boolean()),
     latestTurnId: z.optional(z.nullable(TurnIdSchema)),
+    /** Home's Finished verdict on the exact current turn, requested by the runtime publisher. */
+    finishedTurnId: z.optional(z.nullable(TurnIdSchema)),
     latestTurnStatus: z.optional(z.nullable(PrimaryTurnStatusV1Schema)),
     latestTurnStatusObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     lastRuntimeIssue: z.optional(z.nullable(SessionRuntimeIssueV1Schema)),
     runtimeActivityState: z.optional(SessionRuntimeActivityStateSchema),
     lifecycleStateReason: z.optional(MachineDeletedSessionLifecycleReasonSchema),
+    runtimeActivityScheduledWake: z.optional(SessionRuntimeScheduledWakeSchema),
     runtimeActivityActiveCount: z.optional(z.number().check(z.int(), z.nonnegative())),
     runtimeActivityObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     runtimeActivityRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -655,6 +659,7 @@ export type V2SessionByIdResponse = z.infer<typeof V2SessionByIdResponseSchema>;
  * owner's accepted Team credential binding and pending activation authorization.
  */
 export const SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION = 'runtime-snapshot';
+export const SESSION_DETAIL_FINISHED_TURN_PROJECTION = 'finished-turn';
 
 export const V2SessionByIdNotFoundSchema = lazyZodSchema(() => z.strictObject({
   error: z.literal('Session not found'),

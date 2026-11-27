@@ -6,7 +6,7 @@ import { SESSION_AWARENESS_OPTIMISTIC_PENDING_INPUT_MS, SESSION_AWARENESS_RUNTIM
 import { normalizeAwarenessTimestampV1 } from '@happier-dev/protocol/sessions/awareness/inputV1';
 import { projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import type { SessionRuntimeActivityState } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import type { SessionRuntimeActivityState, SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { readSessionRuntimeObservation } from '../sessionRuntimeObservation';
 
 /**
@@ -84,6 +84,7 @@ export type SessionRuntimePresentationInput = Readonly<{
     latestTurnStatusObservedAt?: number | null;
     runtimeActivityState?: SessionRuntimeActivityState | null;
     runtimeActivityActiveCount?: number | null;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt?: number | null;
     runtimeActivityRevision?: number | null;
     meaningfulActivityAt?: number | null;
@@ -195,6 +196,7 @@ export function toAwarenessRuntimeInput(input: SessionRuntimePresentationInput) 
             optimisticThinkingAtMs: input.optimisticThinkingAt,
             activityState: input.runtimeActivityState,
             activityActiveCount: input.runtimeActivityActiveCount,
+            scheduledWake: input.runtimeActivityScheduledWake,
         },
         pending: {
             hasPendingPermissionRequests: input.hasPendingPermissionRequests,

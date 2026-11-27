@@ -5,7 +5,7 @@ import { ArtifactCoarseKindV1Schema } from '@happier-dev/protocol/artifacts/arti
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 import { MachineKindFromLegacyProjectionSchema } from '@happier-dev/protocol/machines/machineKind';
 import { CompatibleLinkedExternalSessionV1Schema } from '@happier-dev/protocol/sessions/external/linked-metadata';
-import { parseSessionRuntimeActivityProjectionFields, SessionRuntimeActivityStateSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { parseSessionRuntimeActivityProjectionFields, SessionRuntimeActivityStateSchema, SessionRuntimeScheduledWakeSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionAccessAccountSummaryV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
@@ -367,6 +367,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     lastRuntimeIssue: zMini.optional(zMini.nullable(SessionRuntimeIssueV1Schema)),
     runtimeActivityActiveCount: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     runtimeActivityState: zMini.optional(zMini.nullable(SessionRuntimeActivityStateSchema)),
+    runtimeActivityScheduledWake: zMini.optional(SessionRuntimeScheduledWakeSchema),
     runtimeActivityObservedAt: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     runtimeActivityRevision: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
     runtimeActivitySourceClass: z.optional(z.never()),

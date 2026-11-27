@@ -31,6 +31,8 @@ import {
     type SessionRuntimeActivityProjectionUpdate,
     type SessionRuntimeActivityProjectionInTxResult,
     applyLatestSessionTurnEndInTx,
+    publishSessionWakeStoppedInTx,
+    publishSettledSessionFinishedInTx,
 } from "@/app/session/sessionWriteService";
 import { readExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -419,6 +421,10 @@ async function closeSessionPublisherBindingInTx(
             publisherGeneration: true,
             publisherGenerationLastActiveAt: true,
             runtimeMachineTarget: true,
+            latestTurnId: true,
+            seq: true,
+            agentStateVersion: true,
+            runtimeActivityScheduledWake: true,
         }),
     }).then(decodeSessionStoredContent);
     if (!session) return { status: "rejected", reason: "not_found" };
@@ -463,7 +469,9 @@ async function closeSessionPublisherBindingInTx(
             return { status: "already_inactive" };
         }
     }
-    if (!session.active && !retiredPlacement) {
+    const closesInactiveWake = params.authority.kind !== 'legacy-heartbeat'
+        && session.publisherGenerationLastActiveAt !== null && session.runtimeActivityScheduledWake !== null;
+    if (!session.active && !retiredPlacement && !closesInactiveWake) {
         if (
             params.authority.kind !== "legacy-heartbeat"
             && session.publisherGenerationLastActiveAt !== null
@@ -527,12 +535,26 @@ async function closeSessionPublisherBindingInTx(
     if (turnResult && !turnResult.ok) {
         throw new Error(`Failed to settle publisher-close turn: ${turnResult.error}`);
     }
+    if (session.latestTurnStatus === "completed" && session.latestTurnId && session.runtimeActivityScheduledWake !== null) {
+        await publishSessionWakeStoppedInTx(tx, {
+            sessionId: params.binding.sessionId,
+            eventId: params.mutationId,
+            turnId: session.latestTurnId,
+            agentStateVersion: session.agentStateVersion,
+            transcriptSeq: session.seq,
+        });
+    }
     const activity = await writeSessionRuntimeActivityObserverLossInTx({
         tx,
         sessionId: params.binding.sessionId,
+        clearScheduledWake: true,
     });
     if (activity.status === "rejected") {
         throw new Error(`Failed to record Runtime Activity observer loss: ${activity.reason}`);
+    }
+    if (activity.status === 'applied' || !turnResult?.didApply) {
+        // The closed publisher cannot finish, but its manager can settle after the Activity tuple is cleared.
+        await publishSettledSessionFinishedInTx({ tx, sessionId: params.binding.sessionId });
     }
     const recipientCursors = await markSessionProjectionRecipientsChanged({
         tx,

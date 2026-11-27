@@ -288,6 +288,7 @@ function readCompleteRuntimeActivityProjection(
     SessionListRenderableSession,
     'runtimeActivityState'
     | 'runtimeActivityActiveCount'
+    | 'runtimeActivityScheduledWake'
     | 'runtimeActivityObservedAt'
     | 'runtimeActivityRevision'
 >> {
@@ -296,6 +297,7 @@ function readCompleteRuntimeActivityProjection(
     return {
         runtimeActivityState: parsed.projection.state,
         runtimeActivityActiveCount: parsed.projection.activeCount,
+        runtimeActivityScheduledWake: parsed.projection.scheduledWake,
         runtimeActivityObservedAt: parsed.projection.observedAt,
         runtimeActivityRevision: parsed.projection.revision,
     };

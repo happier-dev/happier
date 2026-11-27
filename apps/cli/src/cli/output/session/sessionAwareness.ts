@@ -140,6 +140,7 @@ function buildCliSessionAwarenessInputFromPresentationV1(
     thinkingAtMs: readNumber(row.thinkingAt),
     activityState: row.runtimeActivityState ?? null,
     activityActiveCount: readNumber(row.runtimeActivityActiveCount),
+    scheduledWake: row.runtimeActivityScheduledWake,
     controlServiceability: controlServiceability === 'unknown' ? null : controlServiceability,
   } as const;
   const updatedAtMs = readNumber(row.updatedAt);

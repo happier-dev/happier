@@ -89,6 +89,8 @@ export interface SessionClientPort {
   readQuestionSessionSnapshot?(sessionId: string): Promise<QuestionSessionSnapshot | null>;
   yieldQuestionTurn?(sourceTurnId: string): Promise<boolean>;
   readQuestionWaitTurnId?(): string | null;
+  /** Re-evaluates one completed-turn candidate on Home publication or reconnect. */
+  observeFinishedTurn?(turnId: string, onFinished: () => void): () => void;
   clearQuestionWaitTurn?(sourceTurnIds?: readonly string[]): void | Promise<void>;
 
   enqueueSessionEventCommitted?(

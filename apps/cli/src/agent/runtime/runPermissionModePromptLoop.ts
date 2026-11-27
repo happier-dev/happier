@@ -2106,7 +2106,8 @@ export async function runPermissionModePromptLoop(opts: {
         opts.keepAlive();
         await opts.onAfterLoopBoundary?.({ reason: 'turn_completed' });
         if (shouldSendReady) {
-          await opts.sendReady(readReadyTurnContext?.());
+          const ready = readReadyTurnContext?.();
+          if (ready?.completedTurn || !readReadyTurnContext) await opts.sendReady(ready);
         }
         completeAssistantTextSnapshotTurnScope(opts.session, assistantTextSnapshotScope);
       } else if (handledPreTurnFailure || inputWithdrawnBeforeTurn) {

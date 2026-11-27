@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
@@ -774,6 +775,7 @@ export type SessionTranscriptPublicationRealtimeProjection = Readonly<{
     rollbackEligibleTurnStarts?: readonly number[];
     runtimeActivityState?: "active" | "idle" | "unknown";
     runtimeActivityActiveCount?: number;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityObservedAt?: number | null;
     runtimeActivityRevision?: number;
     meaningfulActivityAt?: number;

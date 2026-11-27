@@ -259,6 +259,7 @@ import type {
     UserMessageLocalConsumptionQuery,
 } from './sessionClientPort';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import { SESSION_DETAIL_FINISHED_TURN_PROJECTION } from '@happier-dev/protocol/sessions/control/contract';
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { holdSessionProjectAccountRows, isProjectAccountRowsAccountWake, type SessionProjectAccountRowsHold } from '@/workspaces/projectAccountRows';
@@ -704,6 +705,8 @@ export class ApiSessionClient extends EventEmitter {
         'takeWorkerUpdate' | 'waitForWorkerUpdateChange' | 'prepareWorkerUpdates' | 'setWorkerUpdatePublisher'> | null = null;
     private readonly pendingRequestSettlementAdmissions = new Set<Promise<void>>();
     private readonly pendingSessionTurnMutationUpdates = new Set<Promise<void>>();
+    private lastFinishedTurnId: string | null = null;
+    private finishedTurnObservation: Readonly<{ turnId: string; onFinished: () => void }> | null = null;
     /** This runner's own Turn begins by Turn id: the readiness event an accepted settlement waits on. */
     private readonly ownTurnBeginUpdates = new Map<string, Promise<void>>();
     private readonly ownTurnBeginWaiters = new Map<string, Set<() => void>>();
@@ -2026,6 +2029,8 @@ export class ApiSessionClient extends EventEmitter {
             handleSessionScopedUpdate: (data) => this.updateRuntime.handleUpdate(data, {
                 source: 'session-scoped',
             }),
+            onSessionFinished: turnId => this.acceptFinishedTurn(turnId),
+            onSessionFinishedReconnect: () => { void this.refreshFinishedTurn(); },
             onSessionFollowInvalidated: () => {
                 // A `session-changed` relation push can change responsibility for notifications.
                 this.notificationFactsHold?.invalidate('session');
@@ -2684,6 +2689,39 @@ export class ApiSessionClient extends EventEmitter {
             };
         } catch {
             return null;
+        }
+    }
+
+    observeFinishedTurn(turnId: string, onFinished: () => void): () => void {
+        const observation = { turnId, onFinished };
+        this.finishedTurnObservation = observation;
+        if (this.lastFinishedTurnId === turnId) this.acceptFinishedTurn(turnId);
+        else void this.refreshFinishedTurn();
+        return () => {
+            if (this.finishedTurnObservation === observation) this.finishedTurnObservation = null;
+        };
+    }
+
+    private acceptFinishedTurn(turnId: string): void {
+        this.lastFinishedTurnId = turnId;
+        const observation = this.finishedTurnObservation;
+        if (observation?.turnId !== turnId) return;
+        this.finishedTurnObservation = null;
+        observation.onFinished();
+    }
+
+    private async refreshFinishedTurn(): Promise<void> {
+        const observation = this.finishedTurnObservation;
+        if (!observation || this.closed || !this.socket?.connected) return;
+        try {
+            const session = await this.runSessionRequest(() => fetchSessionByIdCompat({
+                token: this.token, sessionId: this.sessionId, reason: 'primaryTurnRuntimeState', projection: SESSION_DETAIL_FINISHED_TURN_PROJECTION,
+            }));
+            if (this.finishedTurnObservation === observation && session?.finishedTurnId === observation.turnId) {
+                this.acceptFinishedTurn(session.finishedTurnId);
+            }
+        } catch (error) {
+            logger.debug('[API] Failed to read the Session Finished verdict', { error: serializeAxiosErrorForLog(error) });
         }
     }
 

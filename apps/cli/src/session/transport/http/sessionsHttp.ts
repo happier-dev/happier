@@ -15,7 +15,7 @@ import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2Sess
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionStopOutcomeSchema, type SessionStopOutcome } from '@happier-dev/protocol/sessions/control/contract';
 import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionTranscriptSurfaceItemReferenceInputV1Schema, type SessionTranscriptSurfaceItemReferenceInputV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, SessionExternalIdentityClaimConflictV1Schema, SessionExternalIdentityClaimRequestV1Schema, SessionExternalIdentityClaimResponseV1Schema, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema, type SessionExternalIdentityClaimConflictV1, type SessionExternalIdentityClaimResponseV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { SESSION_DETAIL_FINISHED_TURN_PROJECTION, SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, SessionExternalIdentityClaimConflictV1Schema, SessionExternalIdentityClaimRequestV1Schema, SessionExternalIdentityClaimResponseV1Schema, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema, type SessionExternalIdentityClaimConflictV1, type SessionExternalIdentityClaimResponseV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { buildSessionOrganizationAssignmentSnapshotHttpRequestV1, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
@@ -345,7 +345,7 @@ async function getSessionByIdResponse(params: Readonly<{
   signal?: AbortSignal;
   deadlineAtMs?: number;
   accessProjectionVersion: 1 | undefined;
-  projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION;
+  projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION | typeof SESSION_DETAIL_FINISHED_TURN_PROJECTION;
 }>): Promise<SessionByIdHttpResponse> {
   const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
@@ -444,7 +444,7 @@ export async function fetchSessionById(params: Readonly<{
   /** Exact Home snapshot already owned by the caller's runtime/connection; never fetched here. */
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
   /** The Session runner's snapshot reads only shared Session state. */
-  projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION;
+  projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION | typeof SESSION_DETAIL_FINISHED_TURN_PROJECTION;
 }>): Promise<RawSessionRecord | null> {
   const accessProjectionVersion = resolveRequestedSessionDetailAccessProjectionVersion(params);
   const response = await getSessionByIdResponse({ ...params, accessProjectionVersion });

@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import { ExternalSessionStorageStateV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
@@ -272,6 +273,7 @@ export function buildUpdateSessionUpdate(
         rollbackEligibleTurnStarts?: readonly number[];
         runtimeActivityState?: 'active' | 'idle' | 'unknown';
         runtimeActivityActiveCount?: number;
+        runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
         runtimeActivityObservedAt?: number | null;
         runtimeActivityRevision?: number;
         meaningfulActivityAt?: number;
@@ -286,6 +288,7 @@ export function buildUpdateSessionUpdate(
         ? {
             runtimeActivityState: runtimeActivity.projection.state,
             runtimeActivityActiveCount: runtimeActivity.projection.activeCount,
+            runtimeActivityScheduledWake: runtimeActivity.projection.scheduledWake,
             runtimeActivityObservedAt: runtimeActivity.projection.observedAt,
             runtimeActivityRevision: runtimeActivity.projection.revision,
         }

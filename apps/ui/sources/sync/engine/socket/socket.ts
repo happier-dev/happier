@@ -1027,6 +1027,7 @@ function shouldApplyCacheOnlySessionUpdateProjectionPatchImmediately(params: Rea
         || patchNullableFieldChanged(renderable, patch, 'archivedAt')
         || patchNullableFieldChanged(renderable, patch, 'lastRuntimeIssue')
         || patchNumberFieldChanged(renderable, patch, 'runtimeActivityActiveCount')
+        || (hasPatchField(patch, 'runtimeActivityScheduledWake') && renderable.runtimeActivityScheduledWake?.pendingUntil !== patch.runtimeActivityScheduledWake?.pendingUntil)
         || patchNullableFieldChanged(renderable, patch, 'runtimeActivityState')
         || patchNullableFieldChanged(renderable, patch, 'latestTurnStatus')
         || patchBooleanFieldChanged(renderable, patch, 'hasUnreadMessages')

@@ -658,12 +658,20 @@ export async function acceptAccountSessionFollowOnceDelivery(input: Readonly<{
 /** Caller owns recipient admission and Account publication locks in this transaction. */
 export async function acceptAccountSessionFollowOnceDeliveryInTx(tx: Tx, input: Readonly<{
     accountId: string; sessionId: string; expectedOnce: string; occurrence: PersonalFollowOnceOccurrenceV1;
+    publisherClosedWithWake?: true;
 }>): Promise<boolean> {
     const event = input.occurrence.event;
     if (event === 'permission_required' || event === 'user_action_required') {
         // A later encrypted state cannot prove the original request is live.
         const source = await tx.session.findUnique({ where: { id: input.sessionId }, select: { agentStateVersion: true } });
         if (source?.agentStateVersion !== input.occurrence.agentStateVersion) return false;
+    } else if (event === 'cancelled' && input.publisherClosedWithWake) {
+        // Confirmed process exit may end a wake that outlived the successfully completed Turn.
+        const session = await tx.session.findUnique({ where: { id: input.sessionId },
+            select: { active: true, latestTurnId: true, latestTurnStatus: true, runtimeActivityScheduledWake: true },
+        });
+        if (!session || session.active || session.latestTurnId !== input.occurrence.turnId
+            || session.latestTurnStatus !== 'completed' || session.runtimeActivityScheduledWake === null) return false;
     } else {
         if (!input.occurrence.turnId || event !== 'ready' && event !== 'failed' && event !== 'cancelled') return false;
         const turn = await tx.sessionTurn.findUnique({ where: { sessionId_turnId: {

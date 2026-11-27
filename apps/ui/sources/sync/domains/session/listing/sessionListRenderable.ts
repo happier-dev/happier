@@ -1,3 +1,4 @@
+import type { SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { MachineDeletedSessionLifecycleReason } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
 import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { classifySessionTupleApplyCurrentness, reconcileSessionRequestProjection, reconcileSessionTupleProjection, sessionTupleProjectionFields } from '../sessionTupleApplyCurrentness';
@@ -217,6 +218,7 @@ export interface SessionListRenderableSession {
     latestReadyEventAt?: number | null;
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
     runtimeActivityActiveCount?: number | null;
+    runtimeActivityScheduledWake?: SessionRuntimeScheduledWake;
     runtimeActivityState?: 'active' | 'idle' | 'unknown' | null;
     runtimeActivityObservedAt?: number | null;
     runtimeActivityRevision?: number | null;
@@ -788,6 +790,7 @@ export function buildSessionListRenderableFromSession(
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         runtimeActivityState: session.runtimeActivityState ?? 'unknown',
         runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityScheduledWake: session.runtimeActivityScheduledWake,
         runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
         runtimeActivityRevision: session.runtimeActivityRevision ?? null,
         lastTurnCompletedAt: session.lastTurnCompletedAt ?? null,
@@ -1152,6 +1155,7 @@ export function areSessionListRenderablesEqual(
         && JSON.stringify(previous.lastRuntimeIssue ?? null) === JSON.stringify(next.lastRuntimeIssue ?? null)
         && (previous.runtimeActivityState ?? null) === (next.runtimeActivityState ?? null)
         && (previous.runtimeActivityActiveCount ?? null) === (next.runtimeActivityActiveCount ?? null)
+        && previous.runtimeActivityScheduledWake?.pendingUntil === next.runtimeActivityScheduledWake?.pendingUntil
         && (previous.runtimeActivityObservedAt ?? null) === (next.runtimeActivityObservedAt ?? null)
         && (previous.runtimeActivityRevision ?? null) === (next.runtimeActivityRevision ?? null)
         && (previous.lastTurnCompletedAt ?? null) === (next.lastTurnCompletedAt ?? null)
@@ -1337,6 +1341,7 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if ((previous.latestTurnId ?? null) !== (next.latestTurnId ?? null)) return true;
     if ((previous.runtimeActivityState ?? null) !== (next.runtimeActivityState ?? null)) return true;
     if ((previous.runtimeActivityActiveCount ?? null) !== (next.runtimeActivityActiveCount ?? null)) return true;
+    if (previous.runtimeActivityScheduledWake?.pendingUntil !== next.runtimeActivityScheduledWake?.pendingUntil) return true;
     if ((previous.runtimeActivityObservedAt ?? null) !== (next.runtimeActivityObservedAt ?? null)) return true;
     if ((previous.runtimeActivityRevision ?? null) !== (next.runtimeActivityRevision ?? null)) return true;
     if ((previous.latestReadyEventSeq ?? null) !== (next.latestReadyEventSeq ?? null)) return true;
@@ -1404,6 +1409,7 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
     if ((previous.lastRuntimeIssue ?? null) !== (next.lastRuntimeIssue ?? null)) return false;
     if ((previous.runtimeActivityState ?? null) !== (next.runtimeActivityState ?? null)) return false;
     if ((previous.runtimeActivityActiveCount ?? null) !== (next.runtimeActivityActiveCount ?? null)) return false;
+    if (previous.runtimeActivityScheduledWake?.pendingUntil !== next.runtimeActivityScheduledWake?.pendingUntil) return false;
     if ((previous.runtimeActivityObservedAt ?? null) !== (next.runtimeActivityObservedAt ?? null)) return false;
     if ((previous.runtimeActivityRevision ?? null) !== (next.runtimeActivityRevision ?? null)) return false;
     if (!areRollbackEligibleTurnStartsEqual(previous.rollbackEligibleTurnStarts, next.rollbackEligibleTurnStarts)) return false;
