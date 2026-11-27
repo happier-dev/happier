@@ -234,8 +234,18 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       if (!logs.ok) throw new Error(`F7 selected logs read refused (${logs.code})`);
       const ordersLog = logs.items.find(row => row.traceId === traceId);
       expect(ordersLog).toMatchObject({ source: 'otlp', bodyPrefix: 'Orders query completed', serviceName });
-      const appWaterfall = DatabaseCaptureTraceGetResultV1Schema.parse(await capture(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
-        { source, traceId, page: { limit: 20 } }));
+      const traceAction = { pluginId, localId: databaseActionLocalIdV1(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1) };
+      const traceInvocation = { action: traceAction, input: { source, traceId, page: { limit: 20 } } };
+      const tracePlacement = { externalActionTarget: { kind: 'machine' as const, machineId: project.machineId } };
+      const delegatedTrace = await fixture.owner.executeReviewed('action.invoke', traceInvocation, {
+        ...tracePlacement, presentUserConfirmation: { actionId: 'action.invoke' },
+      });
+      expect(delegatedTrace).toMatchObject({ ok: false, errorCode: 'database_target_required' });
+      const personTrace = await fixture.owner.executeAsPerson('action.invoke', traceInvocation, tracePlacement,
+        { action: traceAction, machineId: project.machineId });
+      expect(personTrace.ok).toBe(true);
+      if (!personTrace.ok) throw new Error(`F7 Person trace read refused (${personTrace.errorCode})`);
+      const appWaterfall = DatabaseCaptureTraceGetResultV1Schema.parse(personTrace.result);
       expect(appWaterfall).toMatchObject({ ok: true, traceId,
         logCorrelations: expect.arrayContaining([expect.objectContaining({ logId: ordersLog?.id, traceId })]),
       });
