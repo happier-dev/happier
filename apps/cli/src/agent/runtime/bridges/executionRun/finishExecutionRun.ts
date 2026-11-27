@@ -29,7 +29,7 @@ import {
 } from './executionRunTranscriptPublisher';
 import { buildExecutionRunConnectedServicesCleanupReceipt } from './connectedServicesCleanupReceipt';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
-import { materializeReviewFindings } from './materializeReviewFindings';
+import { materializeReviewFindings, readExecutionRunWorkflowReviewContext } from './materializeReviewFindings';
 import { projectExecutionRunPublicState } from './publicState';
 import { projectExecutionRunError } from './errors';
 import { createExecutionRunOccurrenceWitnessRegistry, projectExecutionRunInputTurns } from './runOccurrenceWitness';
@@ -157,8 +157,7 @@ export async function finishExecutionRun(args: Readonly<{
     runId: args.runId, retained: existing.inputTurns, controller,
     reader: createExecutionRunOccurrenceWitnessRegistry(args.controllers).reader,
   });
-  const workflowRunId = controller?.kind === 'backend'
-    ? controller.workflowRunId ?? controller.workflowObservation?.workflowRunId : undefined;
+  const reviewContext = readExecutionRunWorkflowReviewContext(existing, controller?.kind === 'backend' ? controller : undefined);
   // Closing a retained runtime can settle the exact output already published by
   // its last turn. Reusing that host-owned object must not repeat comment writes.
   const reusesPublishedResult = next.status === 'succeeded' && toolResult.output !== undefined
@@ -168,9 +167,7 @@ export async function finishExecutionRun(args: Readonly<{
     : await materializeReviewFindings({ run: existing, toolResult, structuredMeta,
     expectFindings: next.status === 'succeeded' || (next.status === 'failed'
       && (inputStructuredMeta?.kind === 'review_findings.v2' || inputStructuredMeta?.kind === 'review_findings.v1')),
-    reviewComments: args.reviewComments, workflowRunId,
-    workflowScope: controller?.kind === 'backend' ? controller.workflowScope : undefined,
-    workflowRequester: controller?.kind === 'backend' ? controller.requesterSessionBootstrap : undefined });
+    reviewComments: args.reviewComments, ...reviewContext });
   const materialization = projected.materialization;
   toolResult = projected.toolResult;
   structuredMeta = projected.structuredMeta;
@@ -200,7 +197,7 @@ export async function finishExecutionRun(args: Readonly<{
     ...(existing.retentionPolicy === 'resumable' ? { resumeHandle } : {}),
   };
 
-  try { await args.reviewComments?.settleRound(updated); }
+  try { await args.reviewComments?.settleRound(updated, reviewContext.workflowRequester); }
   catch (error) { terminalizationError ??= error; }
   // Required comment and Review record writes precede terminal observation.
   args.runs.set(args.runId, updated);

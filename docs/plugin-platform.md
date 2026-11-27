@@ -15214,8 +15214,10 @@ there is no captured-checkout lifecycle or mid-run revalidation.
 Detached Review Runs publish findings to Home with the parent Workflow's
 admitted requester Account. The assigned Machine signs the finding effect.
 For a shared Machine, Home verifies the active Workflow's recorded installation
-before applying the requester's existing Review access. The Workflow settles
-its Review round after collecting the reviewers' results.
+before applying the requester's existing Review access. A Run that owns its
+round settles it through the Review record port using the same requester and
+Home. A composed Review Workflow settles after collecting its reviewers'
+results.
 
 ### Review source transcript delivery (0.3 development)
 

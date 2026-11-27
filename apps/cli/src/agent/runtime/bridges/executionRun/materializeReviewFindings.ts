@@ -2,6 +2,7 @@ import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/ru
 import { ReviewFindingsV1Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
+import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import type { ReviewRunCommentService, ReviewRunMaterialization } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
@@ -18,6 +19,16 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+/** Review effects consume the detached Run's admitted Workflow requester. */
+export function readExecutionRunWorkflowReviewContext(run: ExecutionRunState, controller?: ExecutionRunBackendController) {
+  const workflowRunId = controller?.workflowRunId ?? controller?.workflowObservation?.workflowRunId;
+  return {
+    workflowRunId,
+    workflowScope: controller?.workflowScope,
+    workflowRequester: run.sessionId === null && workflowRunId ? controller?.requesterSessionBootstrap : undefined,
+  };
+}
+
 /** Both bounded completion and retained turns persist through the incumbent ReviewComment owner. */
 export async function materializeReviewFindings(args: Readonly<{
   run: ExecutionRunState;
@@ -27,7 +38,7 @@ export async function materializeReviewFindings(args: Readonly<{
   reviewComments?: ReviewRunCommentService;
   workflowRunId?: string;
   workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
-  workflowRequester?: import('@/agent/executionRuns/controllers/types').ExecutionRunBackendController['requesterSessionBootstrap'];
+  workflowRequester?: ExecutionRunBackendController['requesterSessionBootstrap'];
 }>): Promise<MaterializedReviewFindings> {
   if (args.run.intent !== 'review' || args.structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
     || args.structuredMeta?.kind === 'review_follow_up.v1') {
@@ -58,8 +69,7 @@ export async function materializeReviewFindings(args: Readonly<{
   const materialization: ReviewRunMaterialization = args.reviewComments
     ? await args.reviewComments.materialize({ run: args.run, findings: parsed.data.findings, reviewedFingerprint,
       ...(args.workflowRunId ? { workflowRunId: args.workflowRunId } : {}),
-      ...(args.run.sessionId === null && args.workflowRunId && args.workflowRequester
-        ? { workflowRequester: args.workflowRequester } : {}),
+      ...(args.workflowRequester ? { workflowRequester: args.workflowRequester } : {}),
       ...(args.workflowScope ? { workflowScope: args.workflowScope } : {}) })
     : { engineId: args.run.backendId, status: parsed.data.findings.length ? 'failed' : 'materialized',
       commentIds: [], comments: [], failures: parsed.data.findings.map((finding) => ({ findingId: finding.id,

@@ -9,7 +9,7 @@ import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionRunTranscriptPublisher } from './executionRunTranscriptPublisher';
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
-import { materializeReviewFindings } from './materializeReviewFindings';
+import { materializeReviewFindings, readExecutionRunWorkflowReviewContext } from './materializeReviewFindings';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
 import { ScmDiffSummaryResultErrorCodeSchema, ScmDiffSummaryPublicationReceiptSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
@@ -62,14 +62,13 @@ export async function publishExecutionRunTurn(args: Readonly<{
     ? await profile.onTurnFailed?.({ ...params, diagnostic })
     : await profile.onTurnComplete?.(params);
   if (!completion || !current()) return false;
+  const reviewContext = readExecutionRunWorkflowReviewContext(run, args.controller);
   const projected = await materializeReviewFindings({ run,
     toolResult: { output: completion.toolResultOutput, meta: completion.toolResultMeta },
     structuredMeta: completion.structuredMeta, expectFindings: !args.started && (completion.status === 'succeeded'
       || completion.structuredMeta?.kind === 'review_findings.v2' || completion.structuredMeta?.kind === 'review_findings.v1'),
     reviewComments: args.reviewComments,
-    workflowRunId: args.controller.workflowRunId ?? args.controller.workflowObservation?.workflowRunId,
-    workflowScope: args.controller.workflowScope,
-    workflowRequester: args.controller.requesterSessionBootstrap,
+    ...reviewContext,
   });
   if (!current()) return false;
   completion = { ...completion, toolResultOutput: projected.toolResult.output,
@@ -77,7 +76,7 @@ export async function publishExecutionRunTurn(args: Readonly<{
   if (!args.started && (completion.status === 'succeeded' || completion.status === 'failed')) {
     await args.reviewComments?.settleRound({ ...run, status: completion.status, finishedAtMs: args.finishedAtMs,
       summary: completion.summary, latestToolResult: completion.toolResultOutput,
-      ...(completion.structuredMeta ? { structuredMeta: completion.structuredMeta } : {}) });
+      ...(completion.structuredMeta ? { structuredMeta: completion.structuredMeta } : {}) }, reviewContext.workflowRequester);
   }
   if (completion.nextInput && projected.structuredMeta?.kind === 'review_findings.v2') {
     const payload = ReviewFindingsV2Schema.safeParse(projected.structuredMeta.payload);

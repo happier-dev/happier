@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
@@ -17,7 +17,10 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import type { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import {
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
   createScmCapabilities,
+  decodePlainArtifactStoredContent,
+  encodePlainArtifactStoredContent,
   accountSettingsParse,
   FeaturesResponseSchema,
   SCM_OPERATION_ERROR_CODES,
@@ -64,6 +67,7 @@ import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMa
 import { ReviewCommentMutationBatchRequestV1Schema } from '@happier-dev/protocol/reviews/comments/transport';
 import { deriveReviewCommentStructuralMutationV1, ReviewCommentCommitMutationRequestV1Schema, ReviewCommentPrepareMutationRequestV1Schema } from '@happier-dev/protocol/reviews/comments/mutation';
 import { ReviewCommentPrincipalHeaderV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactBodyV1Schema, type ReviewArtifactBodyV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 
 type TestExecutionRunRuntimeFactory = (opts: Readonly<{
@@ -4109,9 +4113,33 @@ describe('installed Account Review custody for another Account Run on this Machi
     installationId: 'execution-run-installation', actionId: 'execution.run.start', requestId: 'review-custody-start',
     requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'execution-run-machine' } } as const;
 
-  it('materializes a detached Workflow Review with the admitted guest bearer', async ({ onTestFinished }) => {
-    const f = await createProjectSessionRuntimeFixture({ accountId: 'bob', serverId: 'srv_execution_run_test',
-      homeServerIdentityId: 'srv_workflow_home', machineAccess: { custodianAccountId: 'alice', role: 'use' } });
+  it.each([
+    { effect: 'publishes findings with the requester', roundAccess: undefined },
+    { effect: 'settles a round the requester owns', roundAccess: true },
+    { effect: 'surfaces Home refusal to settle a round', roundAccess: false },
+  ])('$effect for a detached Workflow Review', async ({ roundAccess }) => {
+    const reviewId = 'workflow-review';
+    const reviewPath = `/v1/artifacts/${reviewId}`;
+    let persistedReview: ReviewArtifactBodyV1 = { v: 1, rounds: [
+      { ordinal: 1, state: 'running', startedAt: 1, finishedAt: null, reviewerIds: ['reviewer'], runs: [] },
+    ] };
+    const f: Awaited<ReturnType<typeof createProjectSessionRuntimeFixture>> = await createProjectSessionRuntimeFixture({
+      accountId: 'bob', serverId: 'srv_execution_run_test', homeServerIdentityId: 'srv_workflow_home',
+      machineAccess: { custodianAccountId: 'alice', role: 'use' },
+      readAdditionalHttpResponse: async (url, request) => {
+        if (new URL(url).pathname !== reviewPath) return undefined;
+        expect(new URL(url).origin).toBe(f.bootstrap.serverHttpBaseUrl);
+        expect(request?.headers?.Authorization).toBe(`Bearer ${f.bootstrap.credentials.token}`);
+        if (roundAccess !== true) return { status: 404, data: { error: 'Artifact not found' } };
+        return { status: 200, data: {
+          id: reviewId, ownerAccountId: 'bob', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+          header: encodePlainArtifactStoredContent({ v: 1, kind: REVIEW_ARTIFACT_KIND_V1, reviewId, title: 'Workflow Review' }),
+          body: encodePlainArtifactStoredContent({ body: JSON.stringify(persistedReview) }),
+          dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        } };
+      },
+    });
     const { attribution, credentials, serverHttpBaseUrl } = f.bootstrap;
     const workflowRunId = '8c483aba-1105-40c8-845e-5cc75af71106';
     let stored: ReturnType<typeof deriveReviewCommentStructuralMutationV1>['records'][number] | undefined;
@@ -4119,6 +4147,15 @@ describe('installed Account Review custody for another Account Run on this Machi
       const path = new URL(String(url)).pathname;
       expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
       expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      if (path === reviewPath) {
+        expect(roundAccess).toBe(true);
+        expect(body.reviewMetadata).toMatchObject({ currentRoundOrdinal: 1, state: 'completed' });
+        const content = decodePlainArtifactStoredContent(body.body);
+        if (typeof content !== 'object' || content === null
+          || !('body' in content) || typeof content.body !== 'string') throw new Error('Missing Review body');
+        persistedReview = ReviewArtifactBodyV1Schema.parse(JSON.parse(content.body));
+        return { status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } };
+      }
       const [item] = ReviewCommentMutationBatchRequestV1Schema.parse(body).items;
       if (!item?.principalHeader) throw new Error('Missing Workflow Review principal');
       const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(item.principalHeader, 'base64url').toString('utf8')));
@@ -4138,9 +4175,12 @@ describe('installed Account Review custody for another Account Run on this Machi
         structural: stored?.structural, sensitiveEnvelope: record?.sensitiveEnvelope }], replayed: false, failed: [] } }] } };
     });
     onTestFinished(() => { mutations.mockRestore(); vi.unstubAllGlobals(); });
+    const nativeReview = roundAccess === undefined ? findings : JSON.stringify({
+      reviewOutcome: 'complete', summary: 'Clean', overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [],
+    });
     const client = createEncryptedRpcTestClientBase({ scopePrefix: 'machine', registerHandlers: rpc => {
       registerExecutionRunHandlers(rpc, { sessionId: null, cwd: process.cwd(), parentProvider: 'daemon.executionRuns',
-        runtimeAccountId: 'alice', machineId: attribution.machineId, createBackend: () => createStaticBackend(findings),
+        runtimeAccountId: 'alice', machineId: attribution.machineId, createBackend: () => createStaticBackend(nativeReview),
         resolveProjectLaunchContext: async context => {
           const bootstrap = context.requesterSessionBootstrap;
           return bootstrap ? { ingress: { ...context, signal: f.signal }, isCurrent: f.isHomeCurrent,
@@ -4168,6 +4208,9 @@ describe('installed Account Review custody for another Account Run on this Machi
       sessionId: null, intent: 'review', roleId: 'reviewer', modelSelection: null, connectedServices: null,
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+      ...(roundAccess === undefined ? {} : { intentInput: {
+        reviewRound: { reviewId, roundOrdinal: 1 }, reviewRoundSettlement: 'execution', reviewReviewerId: 'reviewer',
+      } }),
     }, { localActionContext: { ...actionContext, agentStartContext: {
       caller: { kind: 'originless', runId: workflowRunId, runDepth: 0 },
       baseline: { machineId: attribution.machineId, directory: defaultExecutionRunTestCwd },
@@ -4177,11 +4220,24 @@ describe('installed Account Review custody for another Account Run on this Machi
     if (!started || typeof started !== 'object' || !('runId' in started) || typeof started.runId !== 'string') throw new Error('Run start failed');
     const manager = executionRunTestManagers.at(-1)!;
     await manager.waitForTerminal(started.runId);
-    expect(manager.get(started.runId)).toMatchObject({ installedReviewCustody: 'refused', status: 'succeeded' });
-    expect(stored?.structural).toMatchObject({ accountId: 'bob', runId: started.runId });
-    expect(mutations.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
-      '/v1/reviews/comments/mutations/prepareBatch', '/v1/reviews/comments/mutations/commitBatch',
-    ]);
+    const run = manager.get(started.runId);
+    if (roundAccess === undefined) {
+      expect(run, run?.error?.message).toMatchObject({ installedReviewCustody: 'refused', status: 'succeeded' });
+      expect(stored?.structural).toMatchObject({ accountId: 'bob', runId: started.runId });
+      expect(mutations.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        '/v1/reviews/comments/mutations/prepareBatch', '/v1/reviews/comments/mutations/commitBatch',
+      ]);
+    } else if (roundAccess) {
+      expect(run, run?.error?.message).toMatchObject({ installedReviewCustody: 'refused', status: 'succeeded' });
+      expect(persistedReview.rounds).toMatchObject([
+        { state: 'completed', runs: [{ kind: 'execution', runId: started.runId }] },
+      ]);
+    } else {
+      expect(run).toMatchObject({
+        installedReviewCustody: 'refused', status: 'failed', error: { code: 'artifact_not_found' },
+      });
+      expect(persistedReview.rounds).toMatchObject([{ state: 'running', runs: [] }]);
+    }
   });
   it.each([
     { name: 'guest Machine admission', allowed: false, rpcContext: { verifyMachineAdmissionCurrent: async () => true,

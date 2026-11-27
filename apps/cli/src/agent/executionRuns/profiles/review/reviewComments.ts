@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { createReviewRecordPortV1, ReviewRoundBindingV1Schema, type ReviewRoundBindingV1, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { prepareReviewRoundV1 } from '@happier-dev/protocol/reviews/prepareReviewRoundV1';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
 import { ScmComparisonSourceSchema, type ScmComparison } from '@happier-dev/protocol/scm/comparison';
@@ -17,6 +17,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 import { createCliReviewCommentActionExecutorFromCredentials, resolveCliReviewCommentPrincipalSigningContext, type ReviewCommentActionExecutor, type ReviewCommentCreateBatchItem } from '@/agent/reviews/comments/executor';
+import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';
@@ -33,6 +34,8 @@ export type ReviewRunMaterialization = Readonly<{
 }>;
 
 export type ReviewRunCommentService = ReturnType<typeof createReviewRunCommentService>;
+
+type WorkflowReviewRequester = Pick<AdmittedRequesterSessionBootstrap, 'credentials' | 'serverHttpBaseUrl' | 'attribution'>;
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -111,20 +114,20 @@ export function createReviewRunCommentService(deps: Readonly<{
       if (!deps.reviewRecords) throw Object.assign(new Error('Review records are unavailable'), { code: 'review_record_unavailable' });
       await deps.reviewRecords.settle({ ...reviewRound, outcome: 'failed', finishedAt: Date.now(), runs: [] });
     },
-    async settleRound(run: ExecutionRunState): Promise<void> {
+    async settleRound(run: ExecutionRunState, requester?: WorkflowReviewRequester): Promise<void> {
       const input = record(run.intentInput);
       if (run.intent !== 'review' || input?.reviewRoundSettlement !== 'execution') return;
-      requireInstalledCustody(run);
+      if (!requester) requireInstalledCustody(run);
       const binding = ReviewRoundBindingV1Schema.safeParse(input.reviewRound);
       if (!binding.success) return;
-      if (!deps.reviewRecords || !deps.scope.workspace) {
+      if ((!requester && !deps.reviewRecords) || !deps.scope.workspace) {
         throw Object.assign(new Error('Artifact content is unavailable'), { code: 'artifact_content_unavailable' });
       }
       const evidence = ReviewPublicationEvidenceSchema.parse(record(run.structuredMeta?.payload) ?? record(run.latestToolResult) ?? {});
       const questionSummary = projectReviewQuestionSummaryV1(run.structuredMeta?.payload ?? run.latestToolResult);
       const outcome = run.status === 'cancelled' ? 'cancelled'
         : run.status === 'failed' || run.status === 'timeout' ? 'failed' : 'completed';
-      await deps.reviewRecords.settle({ ...binding.data,
+      const settlement = { ...binding.data,
         outcome,
         reviewerOutcomes: typeof input.reviewReviewerId === 'string' ? [{ key: input.reviewReviewerId, runId: run.runId,
           outcome, ...(questionSummary ? { questionSummary } : {}), reviewOutcome: evidence.reviewOutcome, quality: evidence.quality, materialization: evidence.materialization,
@@ -132,7 +135,15 @@ export function createReviewRunCommentService(deps: Readonly<{
         finishedAt: run.finishedAtMs ?? Date.now(), summary: run.summary,
         runs: [{ kind: 'execution', runId: run.runId, machineId: deps.scope.workspace.machineId,
           ...(run.sessionId ? { sessionId: run.sessionId } : {}) }],
-      });
+      } satisfies Parameters<ReviewRecordPortV1['settle']>[0];
+      if (requester) {
+        await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, async () => {
+          const store = createCredentialedAccountArtifactStore(requester.credentials);
+          await createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(store)).settle(settlement);
+        });
+      } else {
+        await deps.reviewRecords!.settle(settlement);
+      }
     },
     async materialize(params: Readonly<{
       findings: readonly ReviewFinding[];
@@ -141,7 +152,7 @@ export function createReviewRunCommentService(deps: Readonly<{
       review?: ReviewRoundBindingV1;
       workflowRunId?: string;
       workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
-      workflowRequester?: Pick<AdmittedRequesterSessionBootstrap, 'credentials' | 'serverHttpBaseUrl' | 'attribution'>;
+      workflowRequester?: WorkflowReviewRequester;
     }> & (Readonly<{ run: ExecutionRunState; session?: never }> | Readonly<{ run?: never; session: Readonly<{
       sessionId: string; localInputId: string; workflowRunId: string; stepId: string; invocationId: string;
       agentId: string; reviewerId: string; cwd?: string; intentInput?: unknown;
