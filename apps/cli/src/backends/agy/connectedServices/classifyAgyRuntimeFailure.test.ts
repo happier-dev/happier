@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { buildUsageLimitIssueFingerprint, type SessionRuntimeIssueV1 } from '@happier-dev/protocol';
@@ -13,7 +13,8 @@ import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/erro
 import { resetConnectedServiceRuntimeAuthFailureReportDedupeForTests } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { agent } from '../index';
 import { createAgyConnectedServiceRuntimeAuthAdapter } from './createAgyConnectedServiceRuntimeAuthAdapter';
-import { classifyAgyAssistantTurnFailure } from './classifyAgyRuntimeFailure';
+import { classifyAgyAssistantTurnFailure, reportAgyTurnFailure } from './classifyAgyRuntimeFailure';
+import { AGY_NATIVE_TOKEN_FILE_SEGMENTS, serializeAgyNativeCliCredential } from '../cloud/nativeCredentials';
 
 const daemonBoundary = vi.hoisted(() => ({ notify: vi.fn(), outboxRoot: '' }));
 vi.mock('@/daemon/controlClient', () => ({ notifyDaemonConnectedServiceRuntimeAuthFailure: daemonBoundary.notify }));
@@ -22,7 +23,7 @@ vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
   return { ...actual, configuration: Object.create(actual.configuration, { activeServerDir: { get: () => daemonBoundary.outboxRoot } }) };
 });
-afterEach(() => { vi.restoreAllMocks(); resetConnectedServiceRuntimeAuthFailureReportDedupeForTests(); daemonBoundary.notify.mockReset(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetConnectedServiceRuntimeAuthFailureReportDedupeForTests(); daemonBoundary.notify.mockReset(); });
 
 // Observed `agy acp` 1.5.18 rendering of a failed turn: one assistant chunk, then stopReason end_turn.
 const OBSERVED_API_KEY_FAILURE = '\n⚠ agent executor error: generating and executing: Error 400, Message: API key not valid. Please pass a valid API key., Status: INVALID_ARGUMENT, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[service:generativelanguage.googleapis.com] reason:API_KEY_INVALID]]\n';
@@ -130,5 +131,63 @@ describe('Antigravity native turn-failure classification', () => {
     backend.emit({ type: 'model-output', textDelta: text });
     await expect(runtime.sendPrompt('explain')).resolves.toBeUndefined();
     await runtime.flushTurn();
+  });
+});
+
+describe('Antigravity verification-required turn', () => {
+  const VERIFY_URL = 'https://accounts.google.com/signin/continue?sarp=1&continue=private-value';
+  const profileSelection = JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'unverified-profile', credentialRevision: 'csr_abcdefghijklmnopqrstuv' }]);
+
+  async function runVerificationFailure(params: Readonly<{ loadCodeAssist: () => Response; daemonResult?: unknown; reports?: number }>) {
+    const root = await mkdtemp(join(tmpdir(), 'agy-verification-'));
+    daemonBoundary.outboxRoot = root;
+    const home = join(root, 'gemini-home');
+    await mkdir(join(home, AGY_NATIVE_TOKEN_FILE_SEGMENTS[0]), { recursive: true });
+    await writeFile(join(home, ...AGY_NATIVE_TOKEN_FILE_SEGMENTS), JSON.stringify(serializeAgyNativeCliCredential({
+      accessToken: 'materialized-access-token', refreshToken: 'refresh', expiresAt: Date.now() + 3_600_000, email: null })));
+    daemonBoundary.notify.mockResolvedValue({ ok: true, result: params.daemonResult ?? { status: 'recovery_action_required',
+      action: { kind: 'profile_action_required', serviceId: 'antigravity', profileId: 'unverified-profile', groupId: null, reason: 'validation' } } });
+    const requests: Array<Readonly<{ url: string; authorization: string | null }>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      requests.push({ url, authorization: new Headers(init.headers).get('authorization') });
+      return params.loadCodeAssist();
+    }));
+    const messages: string[] = [];
+    const session = { sendSessionEvent: (event: { type: string; message?: string }) => { if (event.type === 'message' && event.message) messages.push(event.message); } };
+    try {
+      for (let index = 0; index < (params.reports ?? 1); index += 1) {
+        await reportAgyTurnFailure({ error: new Error('Verification required'), sessionId: 'agy-unverified', session: session as never,
+          processEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: profileSelection, GEMINI_HOME: home } });
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+    return { messages, requests };
+  }
+
+  it('posts Google\'s verification link once for the failed turn', async () => {
+    const { messages, requests } = await runVerificationFailure({ reports: 2, loadCodeAssist: () => Response.json({ allowedTiers: [{ id: 'free-tier' }],
+      ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', tierId: 'free-tier', validationUrl: VERIFY_URL, validationUrlLinkText: 'Verify' }] }) });
+    expect(messages).toEqual([expect.stringContaining(VERIFY_URL)]);
+    expect(messages[0]).toMatch(/verify this Antigravity account/u);
+    expect(requests).toEqual([{ url: 'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist', authorization: 'Bearer materialized-access-token' }]);
+  });
+
+  it.each([
+    ['a non-Google host', () => Response.json({ ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', validationUrl: 'https://accounts.google.com.example.net/verify' }] })],
+    ['a plain-http link', () => Response.json({ ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', validationUrl: 'http://accounts.google.com/verify' }] })],
+    ['a failed entitlement request', () => new Response('unavailable', { status: 503 })],
+  ])('posts the verification message without a link for %s', async (_label, loadCodeAssist) => {
+    const { messages } = await runVerificationFailure({ loadCodeAssist });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatch(/verify this Antigravity account/u);
+    expect(messages[0]).not.toMatch(/https?:/u);
+  });
+
+  it('keeps the account-switch message when the pool moved the session to another account', async () => {
+    const { messages, requests } = await runVerificationFailure({ daemonResult: { status: 'switch_attempted', result: { status: 'switched', activeProfileId: 'other', mode: 'restart_resume' } },
+      loadCodeAssist: () => Response.json({}) });
+    expect(messages).toEqual(['Connected-service account switched to other; restarting session.']);
+    expect(requests).toEqual([]);
   });
 });
