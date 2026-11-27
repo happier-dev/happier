@@ -256,9 +256,10 @@ function lastMatch(pattern: RegExp, text: string): RegExpExecArray | null {
   return last;
 }
 
-// Blank or vertical-only rows can be intentional paragraphs. A named session puts
-// its title between horizontal runs in the upper rule.
-const COMPOSER_BORDER_LINE = /^(?:[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*|[^\S\n]*[\u2500\u2501]{3,}[^\S\n]+\S.*[^\S\n]+[\u2500\u2501]{3,}[^\S\n]*)$/u;
+// Blank or vertical-only rows can be intentional paragraphs.
+const COMPOSER_BORDER_LINE = /^[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*$/u;
+// Claude puts the session title in the opening rule. Similar lines inside the draft are text.
+const COMPOSER_TITLED_OPENING_RULE = /^[^\S\n]*[\u2500\u2501]{3,}[^\S\n]+\S.*[^\S\n]+[\u2500\u2501]{3,}[^\S\n]*$/u;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[\u23f5\u2190\u23fa\u273b\u2736\u00B7]|\u26a0)/;
 
@@ -298,7 +299,8 @@ function hasComposerLeadingBorder(text: string, match: RegExpExecArray): boolean
   if (match.index === 0) return false;
   const previousLineEnd = match.index - 1;
   const previousLineStart = text.lastIndexOf('\n', previousLineEnd - 1) + 1;
-  return COMPOSER_BORDER_LINE.test(text.slice(previousLineStart, previousLineEnd));
+  const previousLine = text.slice(previousLineStart, previousLineEnd);
+  return COMPOSER_BORDER_LINE.test(previousLine) || COMPOSER_TITLED_OPENING_RULE.test(previousLine);
 }
 
 function findLastComposerMatch(text: string): RegExpExecArray | null {

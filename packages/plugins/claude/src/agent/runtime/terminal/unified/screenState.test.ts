@@ -724,6 +724,21 @@ describe('parseClaudeScreenState — effort default nudge (Claude Code 2.1.274, 
     expect(state.composerContent).toBe('first line of my draft\nsecond line of my draft');
   });
 
+  it('keeps a titled rule inside a draft between the opening and closing rules', () => {
+    const screen = [
+      '────── Work session ──────────',
+      '❯ 1. check the build',
+      '  ─── Build check ───',
+      '  then review the output',
+      '────────────────────',
+    ].join('\n');
+
+    expect(parseClaudeScreenState(screen)).toMatchObject({
+      composerContent: '1. check the build\n─── Build check ───\nthen review the output',
+      inputBoxInteractive: true,
+    });
+  });
+
   it('keeps a numbered draft interactive when the terminal host only supplies the screen text', () => {
     const state = parseClaudeScreenState([
       '────────────────────',
