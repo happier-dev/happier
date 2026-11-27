@@ -26,6 +26,7 @@ export const PUBLIC_PROFILE_ASSET_LABELS: PublicProfileAssetLabels = {
     brand: 'Happier', ...PUBLIC_PROFILE_STATE_LABELS, empty: 'Public profile',
     supporter: identity => {
         const copy = publicProfileSupporterLabels(identity);
+        if (identity.recurring && copy.tenure) return `${copy.label} · ${copy.tenure}`;
         return copy.tenure ?? copy.label;
     },
     period: period => formatUsageCalendarRange(period.startMs, period.endMs, period.timeZoneOffsetMinutes, PUBLIC_PROFILE_LOCALE),

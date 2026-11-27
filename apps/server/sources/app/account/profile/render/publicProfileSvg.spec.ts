@@ -6,6 +6,7 @@ import { loadSharp } from '@/storage/blob/sharpRuntime';
 import { publicProfileBadgeMessage, renderPublicProfileSvg, type PublicProfileSvgOptions } from './publicProfileSvg';
 import { renderPublicProfileOg } from './publicProfileOg';
 import { readPublicProfileFont } from './publicProfileFonts';
+import { PUBLIC_PROFILE_ASSET_LABELS } from './publicProfileLabels';
 import * as privacyKit from 'privacy-kit';
 
 const options: Omit<PublicProfileSvgOptions, 'kind'> = {
@@ -36,6 +37,14 @@ function published(tokens = true, name = 'Nadia Müller', tokensFromParts = fals
 }
 
 describe('fixed public profile assets', () => {
+    it('keeps the Supporter label beside recurring tenure on the fixed card', async () => {
+        const result = published();
+        if (result.kind !== 'published') throw new Error('Expected admitted fixture');
+        result.view.identity.supporter = { sinceYear: 2024, recurring: { sinceMonthMs: Date.UTC(2026, 3, 1), months: 7 } };
+        const card = await renderPublicProfileSvg(result, { ...options, kind: 'card', labels: PUBLIC_PROFILE_ASSET_LABELS });
+        expect(card.includes('Supporter · Supporting for 7 months · since April 2026')).toBe(true);
+    });
+
     it('marks disclosed token floors in badge messages and accessible card figures', async () => {
         const floor = published(true, 'Nadia Müller', true);
         expect(publicProfileBadgeMessage(floor, 'tokens', options.labels))
