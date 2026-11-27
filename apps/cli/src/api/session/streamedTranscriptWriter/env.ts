@@ -1,12 +1,7 @@
 const DEFAULT_INITIAL_CHECKPOINT_DELAY_MS = 500;
 const DEFAULT_CHECKPOINT_INTERVAL_MS = 2_000;
 const DEFAULT_CHECKPOINT_MIN_CHARS = 256;
-// Live deltas are per-window coalesced: appends that land inside this interval after the last
-// accepted emission share one delta frame. 40ms matched single-token streaming ticks almost
-// one-to-one, paying the encrypted-envelope overhead (id, tick, baseLength, sealing) per token;
-// 150ms batches a handful of ticks per frame while keeping perceived streaming latency well
-// inside token-generation cadence. Segment-terminal flushes are immediate and unaffected.
-const DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS = 150;
+const DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS = 100;
 const DEFAULT_LIVE_SNAPSHOT_MIN_CHARS = 1;
 const DEFAULT_LIVE_CHECKPOINT_INTERVAL_MS = 1_000;
 

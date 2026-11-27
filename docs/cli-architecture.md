@@ -212,6 +212,10 @@ convergence, after the replacement socket settles its Runtime Activity publisher
 registration on relays that support the publisher fence. The writer waits for
 any in-flight attempt, then retries with the original local id and terminal state.
 Pending input materialization becomes eligible once the replay attempt settles.
+
+The writer batches live appends on a 100 ms default interval. Set
+`HAPPIER_STREAM_LIVE_INTERVAL_MS` to tune it. Opening snapshots and terminal
+publications bypass the batching window.
 The subscription ends when the snapshots settle or the writer is discarded.
 Retention lasts for the lifetime of the session client in the current process.
 
