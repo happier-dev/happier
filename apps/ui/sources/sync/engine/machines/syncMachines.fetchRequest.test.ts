@@ -108,6 +108,24 @@ async function loadFetchAndApplyMachines() {
 }
 
 describe('fetchAndApplyMachines request override', () => {
+    it('settles a validated census without replaying rows over live Machine activity', async () => {
+        const fetchAndApplyMachines = await loadFetchAndApplyMachines();
+        const validator = 'W/"machine-census-v1-' + 'a'.repeat(64) + '"';
+        const applyMachines = vi.fn();
+        const onListComplete = vi.fn();
+        const options = {
+            credentials: legacyCredentials, encryption: null, machineDataKeys: new Map(),
+            censusValidator: validator, applyMachines, onListComplete, throwOnError: true,
+            request: async (_path: string, init: RequestInit) => {
+                if (new Headers(init.headers).get('If-None-Match') === validator) return new Response(null, { status: 304 });
+                return jsonResponse([]);
+            },
+        };
+        await fetchAndApplyMachines(options);
+        expect(applyMachines).not.toHaveBeenCalled();
+        expect(onListComplete).toHaveBeenCalledOnce();
+    });
+
     it('reads only changed Machines and preserves census recovery for withdrawn access', async () => {
         const { createCapturedServerReadTransport } = await import('@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport');
         const fetchAndApplyMachines = await loadFetchAndApplyMachines();

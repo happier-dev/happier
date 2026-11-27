@@ -16,7 +16,8 @@ import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 const selectedReads = createScopedBatchResolutionSingleFlight<MachinePublishedRowV1 | null>();
-const censusReads = createScopedResolutionSingleFlight<readonly FetchedMachineRow[]>();
+type MachineCensus = Readonly<{ rows: readonly FetchedMachineRow[] | null; validator: string | null }>;
+const censusReads = createScopedResolutionSingleFlight<MachineCensus>();
 const explicitReads = createScopedResolutionSingleFlight<unknown>();
 
 function machineRowTimeoutError() {
@@ -163,26 +164,29 @@ export async function readMachineCensus(params: Readonly<{
     headers: HeadersInit;
     signal?: AbortSignal;
     fresh?: boolean;
-}>): Promise<readonly FetchedMachineRow[]> {
+    validator?: string;
+}>): Promise<MachineCensus> {
     const path = '/v1/machines?includeRevoked=true';
-    const consume = async (response: Response) => {
+    const consume = async (response: Response): Promise<MachineCensus> => {
+        if (response.status === 304 && params.validator) return { rows: null, validator: params.validator };
         assertMachineReadResponse(response);
         // Incumbent census admission/opening validates these rows. This owner
         // shares only the physical observation, never a decrypted authority.
         const rows = await response.json() as FetchedMachineRow[];
-        return rows.map(row => {
+        return { validator: response.headers.get('ETag'), rows: rows.map(row => {
             const { presenceTransitions, ...machine } = row;
             if (presenceTransitions === undefined || presenceTransitions === null) return row;
             const parsed = MachinePresenceTransitionsV1Schema.safeParse(presenceTransitions);
             return parsed.success ? { ...machine, presenceTransitions: parsed.data } : machine;
-        });
+        }) };
     };
     const headers = new Headers(params.headers);
     headers.set('Accept', MACHINE_PRESENCE_EVENTS_PROJECTION_V1);
+    if (params.validator) headers.set('If-None-Match', params.validator);
     if (!params.readTransport) return consume(await params.request(path, { headers, signal: params.signal }));
     headers.delete('Authorization');
     const transportKey = params.readTransport.key;
-    return censusReads.run(JSON.stringify(['machine-census-include-revoked-v1', transportKey]), signal => params.readTransport!.read(path,
+    return censusReads.run(JSON.stringify(['machine-census-include-revoked-v1', transportKey, params.validator]), signal => params.readTransport!.read(path,
         { method: 'GET', headers, signal }, undefined, consume),
     { scope: params.readTransport.scope ?? transportKey, signal: params.signal, fresh: params.fresh });
 }

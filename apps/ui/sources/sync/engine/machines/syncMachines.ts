@@ -133,20 +133,28 @@ export async function fetchLiveOwnedMachineRows(params: Parameters<typeof fetchM
         isMachineRowOwnedBy(row, params.accountId) && !isMachineRetiredForKeyPreparationV1(row));
 }
 
-export async function fetchMachineRows(params: Readonly<{
+type MachineCensusRequest = Readonly<{
     credentials: AuthCredentials;
     request?: (path: string, init: RequestInit) => Promise<Response>;
     readTransport?: CapturedServerReadTransport;
     signal?: AbortSignal;
     fresh?: boolean;
-}>): Promise<readonly FetchedMachineRow[]> {
+}>;
+
+export async function fetchMachineRows(params: MachineCensusRequest): Promise<readonly FetchedMachineRow[]> {
+    const { rows } = await fetchMachineCensus(params);
+    if (!rows) throw new Error('Unconditional Machine census returned no rows');
+    return rows;
+}
+
+function fetchMachineCensus(params: MachineCensusRequest, validator?: string) {
     const request =
         params.request
         ?? ((path: string, init: RequestInit) =>
             serverFetch(path, init, { includeAuth: false }));
     // Sync also supplies retained Session/recent-path replacement identity. The
     // visible Machine selectors still exclude revoked rows from discovery.
-    return readMachineCensus({ request, readTransport: params.readTransport, signal: params.signal, fresh: params.fresh,
+    return readMachineCensus({ request, readTransport: params.readTransport, signal: params.signal, fresh: params.fresh, validator,
         headers: {
             'Authorization': `Bearer ${params.credentials.token}`,
             'Content-Type': 'application/json',
@@ -526,6 +534,9 @@ export async function fetchAndApplyMachines(params: {
     onListUnavailable?: (error: unknown) => void;
     /** Called after the complete list is published, including display-first hydration. */
     onListComplete?: () => void;
+    /** The active scope owns the validator for its successfully applied census. */
+    censusValidator?: string;
+    onCensusValidator?: (validator: string | null) => void;
     /**
      * When true, publish a complete inventory replacement only while its
      * captured membership is current; omission can mean withdrawn access.
@@ -561,6 +572,7 @@ export async function fetchAndApplyMachines(params: {
     let machines: readonly FetchedMachineRow[];
     let completeCensus = true;
     let expectedAccountMode = params.expectedAccountMode;
+    let nextValidator: string | null = null;
     try {
         // New/unknown discovery still uses the persistent-only census. Exact
         // selection also admits Session runners and must not broaden discovery.
@@ -579,12 +591,19 @@ export async function fetchAndApplyMachines(params: {
         // Only a complete current census owns withdrawal by omission. Keep that
         // recovery for an absent/inaccessible row; ordinary named changes patch.
         completeCensus = !params.exactSelection && (!selectedRows || selectedRows.length !== selected!.size);
-        machines = completeCensus ? await fetchMachineRows({
-            credentials,
-            ...(params.request ? { request: params.request } : {}),
-            readTransport: params.readTransport,
-            signal: params.signal,
-        }) : selectedRows ?? [];
+        if (completeCensus) {
+            const census = await fetchMachineCensus({ credentials, request: params.request,
+                readTransport: params.readTransport, signal: params.signal }, params.censusValidator);
+            if (!shouldContinue()) return;
+            if (!census.rows) {
+                params.onListComplete?.();
+                return;
+            }
+            // A full reply may only earn a validator after authoritative replacement.
+            params.onCensusValidator?.(null);
+            nextValidator = census.validator;
+            machines = census.rows;
+        } else machines = selectedRows ?? [];
         if (expectedAccountMode === undefined && params.readAccountMode && machines.some((machine) => machine.access === undefined)) {
             if (!shouldContinue()) return;
             expectedAccountMode = await params.readAccountMode();
@@ -1071,6 +1090,11 @@ export async function fetchAndApplyMachines(params: {
         const replace = completeCensus && (params.replace ?? false) && !hasOlderRows
             && isCensusMembershipCurrent() && machines.every((machine) => isMachineCurrent(machine.id));
         applyCurrentMachines(warmMachines, replace, displayEntries);
+        const complete = () => {
+            if (!shouldContinue()) return;
+            if (replace) params.onCensusValidator?.(nextValidator);
+            params.onListComplete?.();
+        };
         hydratingPublishedRows = true;
 
         const machinesNeedingHydration = machines
@@ -1111,14 +1135,12 @@ export async function fetchAndApplyMachines(params: {
                 if (decryptedMachine && isMachineCurrent(machine.id)) hydrationPublication.enqueue(decryptedMachine);
             })).then(() => {
                 hydrationPublication.flush();
-                if (shouldContinue()) params.onListComplete?.();
+                complete();
             }).catch((error) => {
                 console.error('[machinesSnapshot] Background hydration failed', error);
                 if (shouldContinue()) params.onListUnavailable?.(error);
             });
-        } else if (shouldContinue()) {
-            params.onListComplete?.();
-        }
+        } else complete();
 
         log.log(`🖥️ fetchMachines completed - rendered ${displayEntries.length} machine display rows and completed selective hydration`);
         return;
@@ -1131,7 +1153,11 @@ export async function fetchAndApplyMachines(params: {
     // Prefer incremental publication by default. Complete replacement also
     // rechecks omitted rows against the pre-request membership/sequence basis.
     if (!shouldContinue()) return;
-    applyCurrentMachines(decryptedMachines, completeCensus && (params.replace ?? false) && !hasOlderRows && machines.every((machine) => isMachineCurrent(machine.id)));
-    if (shouldContinue()) params.onListComplete?.();
+    const replace = completeCensus && (params.replace ?? false) && !hasOlderRows && machines.every((machine) => isMachineCurrent(machine.id));
+    applyCurrentMachines(decryptedMachines, replace);
+    if (shouldContinue()) {
+        if (replace) params.onCensusValidator?.(nextValidator);
+        params.onListComplete?.();
+    }
     log.log(`🖥️ fetchMachines completed - processed ${decryptedMachines.length} machines`);
 }

@@ -22,7 +22,9 @@ import { ProjectSessionDefaultsV1Schema, type ProjectSessionDefaultsV1 } from '@
 
 export type ProjectAccountRowsTransport = Readonly<{
     read(key: ProjectAccountRowKeyV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowReadResponseV1>;
-    list(options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowListResponseV1>;
+    list(options?: Readonly<{ signal?: AbortSignal; validator?: string }>): Promise<
+        (ProjectAccountRowListResponseV1 & { validator?: string }) | { status: 'not-modified' }
+    >;
     mutate(input: ProjectAccountRowMutationRequestV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowMutationResponseV1>;
 }>;
 type OpenedRow = Readonly<{ row: ProjectAccountRowV1; payload: ProjectAccountRowPayloadV1 | null }>;
@@ -53,6 +55,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         held = snapshot; if (source === 'census') censused = true;
         options.apply(snapshot, source, materialization);
     }
+    let censusValidator: string | undefined;
     let refreshInFlight: Promise<ProjectAccountRowsSnapshot> | null = null;
     let readRecency = options.readRecency;
     function assertCurrent() { if (!options.isCurrent()) throw failure('project_account_scope_retired'); }
@@ -123,13 +126,21 @@ export function createProjectAccountRowsSync(options: Readonly<{
         assertCurrent();
         if (refreshInFlight) return await refreshInFlight;
         const task = (async () => {
-            const result = await options.transport.list({ signal }); assertCurrent(); signal?.throwIfAborted();
+            const result = await options.transport.list({ signal, validator: censusValidator });
+            assertCurrent(); signal?.throwIfAborted();
+            if (result.status === 'not-modified' && held && censusValidator) {
+                notifyMaterialization();
+                return held;
+            }
             if (result.status !== 'listed') throw failure(`project_account_rows_${result.status}`);
-            return observe(result.rows, 'census');
+            const snapshot = observe(result.rows, 'census');
+            censusValidator = result.validator;
+            return snapshot;
         })();
         refreshInFlight = task;
         try { return await task; }
         catch (error: unknown) {
+            censusValidator = undefined;
             notifyMaterialization(error);
             if (options.isCurrent()) options.onRefreshFailure?.(error);
             throw error;

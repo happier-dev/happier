@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Fastify } from '@/app/api/types';
 import {
     PROJECT_ACCOUNT_ROWS_ROUTE_V1,
@@ -31,8 +32,18 @@ export function registerProjectAccountRowRoutes(app: Fastify): void {
         preHandler: app.authenticate, config,
         schema: { body: asServerProtocolZod(ProjectAccountRowListRequestV1Schema), response: { 200: asServerProtocolZod(ProjectAccountRowListResponseV1Schema), ...errors } },
     }, async (request, reply) => {
-        try { return reply.send(await inReadSnapshot(tx => listProjectAccountRowsInTx(tx, { accountId: request.userId, ...request.body }))); }
-        catch { return reply.code(500).send({ error: 'internal' }); }
+        try {
+            const { validator, ...selection } = request.body;
+            const result = await inReadSnapshot(tx => listProjectAccountRowsInTx(tx, { accountId: request.userId, ...selection }));
+            if (result.status === 'listed') {
+                const etag = `W/"project-rows-v1-${createHash('sha256').update(
+                    JSON.stringify([request.userId, selection, result]),
+                ).digest('hex')}"`;
+                reply.header('ETag', etag).header('Cache-Control', 'private, no-store');
+                if (validator === etag) return reply.code(204).send();
+            }
+            return reply.send(result);
+        } catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, {
         preHandler: app.authenticate, config,

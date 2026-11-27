@@ -24,6 +24,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { encryptWithDataKey, decryptWithDataKey } from '../../../../../../cli/src/api/encryption';
 import { prepareMachineAccessKeyEnvelopes } from '../../../../../../cli/src/api/machineAccessGrantEnvelopeHost';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { MACHINE_PRESENCE_EVENTS_PROJECTION_V1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import {
     computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1,
@@ -683,9 +684,11 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             const before = await app.inject({ method: 'GET', url: `${base}/data-key-envelopes`, headers: headers(owner.id) });
             expect(before.json()).toMatchObject({ kind: 'refused' });
             if (envelopeState === 'absent') {
-                const discovery = await app.inject({ method: 'GET', url: '/v1/machines?includeRevoked=true', headers: headers(owner.id) });
+                const censusHeaders = { ...headers(owner.id), accept: MACHINE_PRESENCE_EVENTS_PROJECTION_V1 };
+                const discovery = await app.inject({ method: 'GET', url: '/v1/machines?includeRevoked=true', headers: censusHeaders });
                 expect(discovery.json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: machine.id,
                     recipientWorkPending: true, recipientWorkCursor: expect.any(Number) })]));
+                expect(discovery.headers.etag).toBeUndefined();
                 const selected = await app.inject({ method: 'POST', url: '/v1/machines/read-batch', headers: headers(owner.id),
                     payload: { machineIds: [machine.id] } });
                 expect(selected.json()).toMatchObject({ results: [{ status: 'found', machine: { recipientWorkPending: true } }] });

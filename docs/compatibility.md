@@ -15845,3 +15845,23 @@ placement. It projects the optional `lifecycleStateReason` through the existing
 Session record and live update audiences, including when the metadata is E2EE.
 Older placement records and readers remain compatible. No migration or new
 audience is needed.
+
+## Warm Machine and Project Account row census revalidation
+
+Current v0.3 source can revalidate the existing in-memory Machine roster and
+Project Account row census after reconnect. Each authenticated list still
+evaluates current access and list selection before comparing its validator.
+
+The Machine presence-events projection of `GET /v1/machines` returns a private
+weak ETag. `If-None-Match` can produce a bodyless 304. Routine heartbeat
+timestamps and heartbeat-driven list order are excluded. Presence transitions
+and access or content changes still invalidate the census. Machine Activity
+continues through the existing push path. Census reads with pending recipient
+key work return full rows so the existing repair owner can retry.
+
+`POST /v1/account/project-rows/list` accepts an optional `validator` learned
+from the ETag of a previous successful full list for that Account and selection.
+A match returns a bodyless 204. A Home that rejects the field with
+`invalid-params` is retried with the same selection and the validator omitted.
+Requests that omit a validator get the existing full response on either route.
+Cold starts and retired Account scopes take full censuses.

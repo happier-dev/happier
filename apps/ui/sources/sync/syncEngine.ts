@@ -1548,6 +1548,7 @@ class Sync {
     private profileSync: InvalidateSync;
     private purchasesSync: ViewDemandSync;
     private machinesSync: InvalidateSync;
+    private machineCensusValidator: { value: string; isCurrent(): boolean } | null = null;
     // Selection belongs to the incumbent invalidation queue; null demands discovery.
     private machineRefreshIds: Set<string> | null = null;
     private nativeUpdateSync: ViewDemandSync;
@@ -10245,9 +10246,16 @@ class Sync {
             ...appliedTransportTarget, endpoint: appliedTransportTarget.serverUrl,
         });
 
+        const validator = this.machineCensusValidator;
+        const validatorIsCurrent = () => shouldContinue()
+            && this.credentials === credentials && recipientEncryptionLifetime.isCurrent();
         await fetchAndApplyMachines({
             credentials,
             machineIds,
+            censusValidator: !machineIds && validator?.isCurrent() ? validator.value : undefined,
+            onCensusValidator: value => {
+                if (validatorIsCurrent()) this.machineCensusValidator = value ? { value, isCurrent: validatorIsCurrent } : null;
+            },
             readAccountMode: async () => (await fetchAccountEncryptionMode(credentials, { request: this.createAppliedTransportRequest(appliedTransportTarget), usage: 'identity' })).mode,
             request: this.createAppliedTransportRequest(appliedTransportTarget),
             readTransport,

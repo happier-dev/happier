@@ -9,7 +9,7 @@ import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
@@ -963,9 +963,27 @@ export function machinesRoutes(app: Fastify) {
             return;
         }
 
-        return accessible.map(({ machine, projection }) => ({ ...projection,
+        const rows = accessible.map(({ machine, projection }) => ({ ...projection,
             ...(sharedWithTeamScopes?.has(machine.id) ? { sharedWithTeamScope: sharedWithTeamScopes.get(machine.id) } : {}),
         }));
+        // The present-user census also drives retries of pending key repair.
+        // Deliver the rows to that owner while repair still needs attention.
+        const hasPendingKeyRepair = rows.some(row => 'recipientWorkPending' in row && row.recipientWorkPending === true);
+        if (!isApiTokenCaller && projection !== 'hostFacts' && !hasPendingKeyRepair
+            && request.headers.accept === MACHINE_PRESENCE_EVENTS_PROJECTION_V1) {
+            const hash = createHash('sha256').update(JSON.stringify([userId, includeRevokedOwned, request.query.sharedWithTeamId]));
+            // The ordinary heartbeat only moves activeAt and census order. Keep
+            // presence transitions and the admitted access projection in the validator.
+            for (const { activeAt: _heartbeat, ...row } of rows.toSorted((a, b) => a.id.localeCompare(b.id))) {
+                hash.update(JSON.stringify(row));
+            }
+            const etag = `W/"machine-census-v1-${hash.digest('hex')}"`;
+            reply.header('ETag', etag).header('Cache-Control', 'private, no-store');
+            if (request.headers['if-none-match']?.split(',').some(value => value.trim() === etag)) {
+                return reply.code(304).send();
+            }
+        }
+        return rows;
     });
 
     app.post('/v1/machines/read-batch', {

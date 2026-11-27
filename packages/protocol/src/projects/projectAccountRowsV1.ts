@@ -160,6 +160,7 @@ export const ProjectAccountRowReadRequestV1Schema = lazyDefinition(() => z.stric
 export const ProjectAccountRowListRequestV1Schema = lazyDefinition(() => z.strictObject({
     kinds: z.optional(z.array(z.enum(PROJECT_ACCOUNT_ROW_KINDS_V1))), serverId: z.optional(IdSchema),
     includeAuthoringSession: z.optional(z.literal(true)),
+    validator: z.optional(z.string().check(z.regex(/^W\/"project-rows-v1-[a-f0-9]{64}"$/))),
 }));
 export type ProjectAccountRowListRequestV1 = z.infer<typeof ProjectAccountRowListRequestV1Schema>;
 export const ProjectAccountRowMutationRequestV1Schema = lazyDefinition(() => z.strictObject({

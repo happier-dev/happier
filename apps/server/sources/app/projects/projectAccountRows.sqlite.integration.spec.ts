@@ -29,6 +29,36 @@ describe('Project Account rows (SQLite integration)', () => {
     afterEach(async () => { await db.account.deleteMany(); });
     afterAll(async () => { await harness?.close(); });
 
+    it('conditionally lists the authorized projection while preserving legacy full reads', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await withAuthenticatedTestApp(registerProjectAccountRowRoutes, async app => {
+            const headers = { 'x-test-user-id': account.id };
+            const list = (payload: object) => app.inject({ method: 'POST', url: '/v1/account/project-rows/list', headers, payload });
+            const write = (expectedRevision: number | 'absent') => app.inject({ method: 'POST', url: '/v1/account/project-rows/mutate', headers,
+                payload: { mutations: [mutation(graphKey, expectedRevision, { relationships: [] })], expectedRefs: [], topologyChange: false } });
+            expect((await write('absent')).json()).toMatchObject({ status: 'updated' });
+
+            const full = await list({});
+            expect(full.json()).toMatchObject({ status: 'listed', rows: [{ key: graphKey, revision: 0 }] });
+            expect(full.headers.etag).toEqual(expect.any(String));
+            const validator = full.headers.etag;
+            const unchanged = await list({ validator });
+            expect(unchanged.statusCode).toBe(204);
+            expect(unchanged.body).toBe('');
+            expect((await list({})).json()).toEqual(full.json());
+
+            const differentSelection = await list({ kinds: ['workspace-ref'], validator });
+            expect(differentSelection.statusCode).toBe(200);
+            expect(differentSelection.json()).toMatchObject({ status: 'listed', rows: [] });
+
+            expect((await write(0)).json()).toMatchObject({ status: 'updated' });
+            const changed = await list({ validator });
+            expect(changed.statusCode).toBe(200);
+            expect(changed.headers.etag).not.toBe(validator);
+            expect(changed.json()).toMatchObject({ status: 'listed', rows: [{ key: graphKey, revision: 1 }] });
+        });
+    });
+
     it('requires the graph to replace an admitted managed checkout controller at the same path', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const key = refKey('managed-checkout');

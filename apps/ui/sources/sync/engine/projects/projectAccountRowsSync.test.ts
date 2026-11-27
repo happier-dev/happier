@@ -6,7 +6,7 @@ import { createProjectAccountRowsSync, type ProjectAccountRowsTransport } from '
 import type { ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
 import { buildProjectsListGroups } from '@/components/projects/projectsListGrouping';
 
-function harness(mode: 'plain' | 'e2ee' = 'plain') {
+function harness(mode: 'plain' | 'e2ee' = 'plain', listOverride?: ProjectAccountRowsTransport['list']) {
     const cipher = createProjectAccountRowCipherV1({ mode,
         material: mode === 'e2ee' ? { type: 'dataKey', machineKey: new Uint8Array(32).fill(3) } : null,
         randomBytes: length => new Uint8Array(length).fill(4) });
@@ -23,7 +23,7 @@ function harness(mode: 'plain' | 'e2ee' = 'plain') {
             const row = rows.get(buildProjectAccountRowPhysicalKeyV1(key));
             return row ? { status: 'present', row } : { status: 'absent' };
         },
-        list: async () => { listReads++; return { status: 'listed', rows: [...rows.values()], coverage: 'complete' }; },
+        list: listOverride ?? (async () => { listReads++; return { status: 'listed', rows: [...rows.values()], coverage: 'complete' }; }),
         mutate: async (input) => {
             requests.push(input);
             for (const item of [...input.expectedRefs, ...input.mutations]) {
@@ -52,6 +52,24 @@ function harness(mode: 'plain' | 'e2ee' = 'plain') {
 }
 
 describe('Project Account row sync owner', () => {
+    it('keeps the admitted census on a hit and refreshes it fully after a read failure', async () => {
+        const validator = 'W/"project-rows-v1-' + 'a'.repeat(64) + '"';
+        const requested: Array<string | undefined> = [];
+        let fail = false;
+        const h = harness('plain', async options => {
+            requested.push(options?.validator);
+            if (fail) throw new Error('census unavailable');
+            if (options?.validator === validator) return { status: 'not-modified' };
+            return { status: 'listed', coverage: 'complete', rows: [], validator };
+        });
+        const admitted = await h.owner.refresh();
+        expect(await h.owner.refresh()).toBe(admitted);
+        fail = true;
+        await expect(h.owner.refresh()).rejects.toThrow('census unavailable');
+        fail = false;
+        expect(await h.owner.refresh()).toEqual(admitted);
+        expect(requested).toEqual([undefined, validator, validator, undefined]);
+    });
     it.each(['plain', 'e2ee'] as const)('reads and edits only demanded project defaults with revisioned clear and no census in %s', async mode => {
         const h = harness(mode);
         const project = { serverId: 'home', projectKey: 'anchor' };

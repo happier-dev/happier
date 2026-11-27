@@ -37,6 +37,24 @@ describe('Project row authoring metadata negotiation', () => {
             includeAuthoringSession: true }, {}, {}]);
     });
 
+    it('keeps the applied rows on a bodyless revalidation and can fall back after Home rollback', async () => {
+        const validator = 'W/"project-rows-v1-' + 'a'.repeat(64) + '"';
+        const rows = { status: 'listed', coverage: 'complete', rows: [] };
+        const transport = createApiProjectAccountRowsTransport({ request: async (_path, init) => {
+            const input = JSON.parse(String(init?.body));
+            expect(input.includeAuthoringSession).toBe(true);
+            if (input.validator && rollback) return Response.json({ error: 'invalid-params' }, { status: 400 });
+            if (input.validator === validator) return new Response(null, { status: 204 });
+            return Response.json(rows, { headers: rollback ? {} : { ETag: validator } });
+        } });
+        let rollback = false;
+        expect(await transport.list()).toEqual({ ...rows, validator });
+        const conditional = { validator };
+        expect(await transport.list(conditional)).toEqual({ status: 'not-modified' });
+        rollback = true;
+        expect(await transport.list(conditional)).toEqual(rows);
+    });
+
     it('propagates unrelated refusals without downgrading to an unrestricted read', async () => {
         let reads = 0;
         const transport = createApiProjectAccountRowsTransport({ request: async () => {
