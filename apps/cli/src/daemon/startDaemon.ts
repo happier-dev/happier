@@ -1,3 +1,4 @@
+import { observeTransitionTargetSpawn } from '@/session/agentTransition/failedFirstLaunch';
 import { fanoutRuntimeAuthUsageLimitRecovery } from './connectedServices/runtimeAuth/fanoutRuntimeAuthUsageLimitRecovery';
 import { createLocalServerStormTracker, createRuntimeAuthRecoveryLocalServerGate, shouldTreatRuntimeAuthRecoveryClassificationAsLocalServerFailure } from './serverWork/localServerStorm';
 export { shouldTreatRuntimeAuthRecoveryClassificationAsLocalServerFailure } from './serverWork/localServerStorm';
@@ -287,6 +288,7 @@ import {
   buildConnectedServiceCredentialSpawnErrorResult,
   buildConnectedServiceDiagnosticSpawnValidationErrorResult,
   buildConnectedServiceMaterializationSpawnErrorResult,
+  readConnectedServiceSpawnFailureLogFields,
 } from './connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { buildConnectedServiceUxDiagnostic } from './connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
@@ -1238,6 +1240,7 @@ export async function resolveSessionConnectedServiceSwitchContinuity(input: Read
   targetMaterializedEnv?: Readonly<Record<string, string>> | null;
   cwd?: string | null;
   candidatePersistedSessionFile?: string | null;
+  failedFirstLaunch?: 'retry_original_transition';
 }>) {
   const continuity = await resolveConnectedServiceSwitchContinuity(input.agentId, {
     sessionId: input.sessionId,
@@ -1267,6 +1270,7 @@ export async function resolveSessionConnectedServiceSwitchContinuity(input: Read
   }
   if (continuity.mode === 'restart_shared_state_required') {
     return resolveSharedStateRequiredSwitchContinuity({
+      failedFirstLaunch: input.failedFirstLaunch,
       agentId: input.agentId,
       accountSettings: input.accountSettings,
       warnings: continuity.reason ? [continuity.reason] : [],
@@ -3071,6 +3075,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
           }
           const key = computeDaemonSpawnRequestKey(normalizedOptions);
+          let transitionLaunch: ReturnType<typeof observeTransitionTargetSpawn>;
           return await spawnRequestCoalescer.run(key, async () => {
             if (typeof normalizedOptions.accountSettingsVersionHint === 'number') {
               try {
@@ -3083,6 +3088,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }
             }
             const normalizedExistingSessionId = typeof normalizedOptions.existingSessionId === 'string' ? normalizedOptions.existingSessionId.trim() : '';
+            if (normalizedExistingSessionId) {
+              const authorization = normalizedOptions.executionAuthorization;
+              transitionLaunch = observeTransitionTargetSpawn(
+                normalizedExistingSessionId,
+                requestedSpawnNonce,
+                authorization?.provenance === 'user_request' ? authorization.requestId : undefined,
+              );
+            }
             if (!normalizedExistingSessionId && !normalizeSpawnNonceForAck(normalizedOptions.spawnNonce)) {
               normalizedOptions = {
                 ...normalizedOptions,
@@ -3802,7 +3815,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       logger.warn('[DAEMON RUN] Connected services credential preflight failed; failing closed before spawn', {
                         agentId: catalogAgentId,
                         code: credentialRefreshErrorResult.errorMessage,
+                        // Which account refused the spawn: the code alone cannot say.
+                        ...readConnectedServiceSpawnFailureLogFields(credentialRefreshErrorResult),
                       });
+                      if (!effectiveResume) transitionLaunch?.credentialRefused();
                       return credentialRefreshErrorResult;
                     }
                     logger.debug('[DAEMON RUN] Connected services resolution failed', error);
@@ -4806,7 +4822,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     };
                   }
               });
-          });
+          }).finally(() => transitionLaunch?.finish());
                 };
 
         // Resume spawns of an existing session read its connected-service binding before their
@@ -7017,6 +7033,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             cwd: inactiveCwd,
             candidatePersistedSessionFile: inactiveCandidatePersistedSessionFile,
             persistedSessionMetadata: inactivePersistedSessionMetadata,
+            failedFirstLaunch,
           }) => {
             const persistedSessionMetadata = tracked
               ? await resolvePersistedConnectedServiceSwitchSessionMetadata({
@@ -7040,6 +7057,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               runtimeAuthSelection,
             });
             return await resolveSessionConnectedServiceSwitchContinuity({
+              failedFirstLaunch,
               sessionId,
               agentId,
               serviceId,
