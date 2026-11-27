@@ -8,7 +8,7 @@ type Fixture = Awaited<ReturnType<typeof startDatabaseWorkbenchInsightsFixture>>
 type CompleteTerminalConnect = NonNullable<Parameters<typeof startDatabaseWorkbenchInsightsFixture>[0]['completeTerminalConnect']>;
 
 export type WorkbenchFixtureRequest =
-  | { kind: 'start'; testDir: string }
+  | { kind: 'start'; testDir: string; workspaceDir: string }
   | { kind: 'approved' }
   | { kind: 'connect'; label: string }
   | { kind: 'sql'; database: string; input: string };
@@ -38,6 +38,7 @@ export async function serveDatabaseWorkbenchFixture(path: string) {
     if (start?.kind !== 'start') return;
     fixture = await startDatabaseWorkbenchInsightsFixture({
       testDir: start.testDir,
+      workspaceDir: start.workspaceDir,
       async completeTerminalConnect({ waitForSuccess, ...options }) {
         send({ kind: 'pair', options });
         if ((await receive())?.kind !== 'approved') throw new Error('Browser closed during Terminal Connect');

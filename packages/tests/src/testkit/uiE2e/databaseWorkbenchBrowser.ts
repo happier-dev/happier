@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rmdir } from 'node:fs/promises';
+import { mkdtemp, rm, rmdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -61,7 +61,7 @@ export async function startDatabaseWorkbenchBrowser(params: Readonly<{
     } finally {
       socket?.destroy();
       try {
-        await rmdir(pipeDir);
+        await rm(pipeDir, { recursive: true, force: true });
       } finally {
         await ui?.stop();
       }
@@ -86,7 +86,9 @@ export async function startDatabaseWorkbenchBrowser(params: Readonly<{
       if (reply.kind !== kind) throw new Error(`DBW fixture sent ${reply.kind} while waiting for ${kind}`);
       return reply as Extract<WorkbenchFixtureReply, { kind: K }>;
     }
-    await send({ kind: 'start', testDir });
+    // Retained test logs can live inside the source checkout. A Project's
+    // workspace must not inherit that checkout's Git metadata.
+    await send({ kind: 'start', testDir, workspaceDir: join(pipeDir, 'workspace') });
     const { options } = await receive('pair');
     ui = await startUiWeb({ testDir: join(testDir, 'ui'), skipWorkspacePrebuild: true, env: {
       ...uiEnv, HAPPIER_E2E_UI_WEB_MODE: 'metro',

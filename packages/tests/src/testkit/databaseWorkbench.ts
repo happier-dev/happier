@@ -119,6 +119,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
  * fixture prerequisites, never the named G1 control for any of those flows. */
 export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
   testDir: string;
+  workspaceDir?: string;
   completeTerminalConnect?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['completeTerminalConnect'];
   serverEnv?: NodeJS.ProcessEnv;
   daemonEnv?: NodeJS.ProcessEnv;
@@ -139,7 +140,7 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     // it concurrently for source observation and its own background services.
     const managedJavaScriptRuntime = await ensureManagedJavaScriptRuntimeCommand({ ...process.env, ...daemonEnv });
     if (!managedJavaScriptRuntime) throw new Error('DBW fixture managed JavaScript runtime unavailable');
-    const machine = await fixture.enrollDaemon(owner, { env: daemonEnv });
+    const machine = await fixture.enrollDaemon(owner, { env: daemonEnv, workspaceDir: params.workspaceDir });
     const pluginFixture = await installDatabaseWorkbenchPluginFixture({ testDir: params.testDir,
       daemonPort: machine.daemon.state.httpPort, controlToken: machine.daemon.state.controlToken });
     const envPath = '.env.local';
