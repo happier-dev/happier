@@ -125,6 +125,7 @@ setBrowserDiagnosticsActionRoutesProvider?: (
 setBrowserRecordingRoutesProvider?: (
       provider: (() => BrowserRecordingRoutes | null) | null,
     ) => void;
+setBrowserRecordingComposerAttachHandler?: (handler: BrowserRecordingDaemonRuntime['attachToComposer'] | undefined) => void;
 }>;
   resolveServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined> | CliServerFeaturesSnapshot | undefined;
   setGuardBrowserResourceOwner: (owner: Pick<Extract<BrowserSidecarControlAdapterFactoryResult, { ok: true }>, 'adapter' | 'readProcessRoots' | 'readResourceTargets'>) => void;
@@ -268,6 +269,7 @@ setBrowserRecordingRoutesProvider?: (
       runtimeActionRouteProviderTarget.setBrowserRecordingRoutesProvider?.(
         () => browserRecordingRoutes,
       );
+      runtimeActionRouteProviderTarget.setBrowserRecordingComposerAttachHandler?.(browserRecordingRuntime.attachToComposer);
       params.onBrowserRecordingRoutesReady?.(browserRecordingRoutes);
     }
   };
@@ -621,6 +623,7 @@ setBrowserRecordingRoutesProvider?: (
         runtimeActionRouteProviderTarget.setBrowserRecordingRoutesProvider?.(
           null,
         );
+        runtimeActionRouteProviderTarget.setBrowserRecordingComposerAttachHandler?.(undefined);
         browserRecordingRuntimeHasCdpScreencast = false;
       }
       if (
@@ -854,6 +857,7 @@ setBrowserRecordingRoutesProvider?: (
   const stopRecording = async (): Promise<void> => {
     await browserRecordingRuntime?.stop();
     browserRecordingRuntime = null;
+    runtimeActionRouteProviderTarget.setBrowserRecordingComposerAttachHandler?.(undefined);
     params.onBrowserRecordingRuntimeReady?.(null);
   };
   return { refreshBrowserRouteOwners, publishBrowserRouteOwners, publishBrowserAutomationRuntimeProvisioner,

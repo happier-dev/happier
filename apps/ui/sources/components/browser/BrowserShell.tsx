@@ -239,6 +239,7 @@ export type BrowserShellRecordingState = Readonly<{
     onStartRecording?: (request: BrowserRecordingStartControlRequest) => void;
     onStopRecording?: (recording: BrowserRecordingSessionV1) => void;
     onCancelRecording?: (recording: BrowserRecordingSessionV1) => void;
+    onViewAttached?: (view: Pick<BrowserRecordingSessionV1, 'browserSessionId' | 'viewId'>) => (() => void) | undefined;
     onUnavailable?: (reason: Readonly<{ reasonCode: string; message: string }>) => void;
     isCaptureSourceAvailable?: BrowserRecordingControlInput['isCaptureSourceAvailable'];
 }>;
@@ -532,6 +533,14 @@ export function BrowserShell(props: Readonly<{
     const annotating = annotator !== null && annotatorSession !== null;
 
     const recordingModel = props.browserRecording ?? null;
+    const onRecordingViewAttached = recordingModel?.onViewAttached;
+    const recordingBrowserSessionId = activeView?.browserSessionId;
+    const recordingViewId = activeView?.viewId;
+    React.useEffect(() => {
+        if (recordingBrowserSessionId && recordingViewId) return onRecordingViewAttached?.({
+            browserSessionId: recordingBrowserSessionId, viewId: recordingViewId,
+        });
+    }, [onRecordingViewAttached, recordingBrowserSessionId, recordingViewId]);
     const recordingControl = React.useMemo(() => (recordingModel
         ? resolveBrowserRecordingControl({
             view: activeView,

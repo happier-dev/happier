@@ -131,9 +131,11 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
         },
     });
     const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
-        resolveRouteOwners: () => ({ browserRecording: recording.routes }),
+        resolveRouteOwners: () => ({ browserRecording: recording.routes, attachBrowserRecordingToComposer: recording.attachToComposer }),
         resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {
-            browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, recording: { enabled: true } },
+            attachments: { enabled: true, uploads: { enabled: true } },
+            browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, context: { enabled: true }, recording: { enabled: true,
+                attachments: { enabled: true } } },
         } }) }),
     });
     const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',
@@ -227,6 +229,11 @@ describe('managed recording Action → private daemon IPC → capture → Sessio
                 .toMatchObject({ ok: true, result: { recordingId, status: 'recording' } });
             expect(await runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 }))
                 .toMatchObject({ ok: true, result: { status: 'finalized', recording: { frameCount: 1 } } });
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const attached = await runtime.execute('browser.recording.attachToComposer', { recordingId, sessionId: 'session' });
+                expect(attached, JSON.stringify(attached)).toMatchObject({ ok: true, result: { attachmentId: expect.any(String) } });
+            }
+            expect(runtime.attachments).toHaveLength(1);
         } finally { await runtime.dispose(); }
     });
 

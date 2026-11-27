@@ -47,6 +47,10 @@ The daemon owns recording admission, identifiers and lifecycle. Its per-view ide
 independently. Recording lists require both identity fields; status, Stop and Cancel
 address the daemon's unique recording id. The UI projects daemon results and retains
 the real Composer attachment path without a second local recording lifecycle.
+The shared Browser shell hydrates the daemon's recording list when a view attaches or
+becomes presented again. Hiding a retained pane does not cancel an already-dispatched
+Stop. The daemon's `browser.recording.attachToComposer` handler acknowledges the existing
+Session-media attachment after finalization; repeating it does not add another transcript card.
 
 The shared Session recording runtime presents failed starts in both the details pane
 and mobile browser. An Action failure or daemon refusal leaves no local active recording

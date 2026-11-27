@@ -43,6 +43,7 @@ const STARTUP_DISABLED_RECORDING_CAPABILITIES = {
 export type BrowserRecordingDaemonRuntime = Readonly<{
   service: BrowserRecordingDaemonService;
   routes: BrowserRecordingRoutes;
+  attachToComposer: NonNullable<BrowserRecordingMediaWriter['attachToComposer']>;
   stop: () => Promise<void>;
 }>;
 
@@ -205,10 +206,10 @@ export function createBrowserRecordingDaemonRuntime(
 
     async stopRecording(stopInput, context) {
       const result = await baseRoutes.stopRecording(stopInput, context);
-      if (result.status !== 'unavailable') {
+      if (result.status !== 'unavailable' && result.status !== 'finalized') {
         commandMediaTargetsByRecordingId?.delete(stopInput.recordingId);
       } else if (
-        result.reason.code === 'browser_recording_missing'
+        result.status === 'unavailable' && result.reason.code === 'browser_recording_missing'
       ) {
         commandMediaTargetsByRecordingId?.delete(stopInput.recordingId);
       }
@@ -239,6 +240,8 @@ export function createBrowserRecordingDaemonRuntime(
   return {
     service,
     routes,
+    attachToComposer: input => mediaWriter.attachToComposer?.(input)
+      ?? Promise.resolve({ ok: false, reason: 'recording_attachment_unavailable' }),
     async stop() {
       await service.dispose();
       commandMediaTargetsByRecordingId?.clear();

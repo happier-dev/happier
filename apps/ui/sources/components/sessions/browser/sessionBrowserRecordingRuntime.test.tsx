@@ -20,11 +20,13 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { resetMmkvStoresForTests } from '@/dev/reactNativeMmkvStub';
 import { t } from '@/text';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const machineRpcMock = vi.hoisted(() => ({
     start: vi.fn(),
     stop: vi.fn(),
     cancel: vi.fn(),
+    listForView: vi.fn(),
 }));
 const nativeCaptureDisposers: Array<() => void> = [];
 const modalSpies = vi.hoisted(() => ({ alert: vi.fn() }));
@@ -139,7 +141,8 @@ describe('session browser recording runtime', () => {
             serverIdentityId: 'srv_recording', accountId: 'owner', currentAccount: true });
         await installOwnMachineApprovalReplayBoundary({ harness: homes, serverId: homeId,
             accountId: 'owner', machineId: 'machine_1' });
-        for (const operation of ['start', 'stop', 'cancel'] as const) {
+        machineRpcMock.listForView.mockResolvedValue({ ok: true, result: [] });
+        for (const operation of ['start', 'stop', 'cancel', 'listForView'] as const) {
             const actionId = `browser.recording.${operation}` as const;
             homes.answer(homeId, `/v1/actions/${actionId}`, { select: async (body, request) => {
                 const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
@@ -163,10 +166,54 @@ describe('session browser recording runtime', () => {
         machineRpcMock.start.mockReset();
         machineRpcMock.stop.mockReset();
         machineRpcMock.cancel.mockReset();
+        machineRpcMock.listForView.mockReset();
         modalSpies.alert.mockReset();
         await homes.reset();
         storage.setState(initialStorage, true);
         resetMmkvStoresForTests();
+    });
+
+    it('hydrates an agent recording on view attach and settles Stop while its retained pane hides', async () => {
+        const active = recording();
+        const finalized = recording({ status: 'finalized', outcomeReason: 'user_stopped', stoppedAtMs: 12_000,
+            mediaRef: { refKind: 'sessionMedia', mediaId: 'media_1', mediaKind: 'video', mimeType: 'video/webm', sizeBytes: 2048 } });
+        machineRpcMock.listForView.mockResolvedValue({ ok: true, result: [active] });
+        const entered = createDeferred<AbortSignal>();
+        const stopped = createDeferred<{ ok: true; result: { status: 'finalized'; recording: BrowserRecordingSessionV1 } }>();
+        machineRpcMock.stop.mockImplementationOnce(({ signal }: { signal: AbortSignal }) => {
+            entered.resolve(signal);
+            return stopped.promise;
+        });
+        const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
+        const captured: { runtime: ReturnType<typeof useSessionBrowserRecordingRuntime> } = { runtime: null };
+        function Probe() {
+            const runtime = useSessionBrowserRecordingRuntime({ enabled: true, sessionId: 'session_1',
+                machineId: 'machine_1', serverId: 'srv_recording', recordingCapabilities });
+            captured.runtime = runtime;
+            React.useEffect(() => runtime?.browserShellRecording.onViewAttached?.({
+                browserSessionId: active.browserSessionId, viewId: active.viewId,
+            }), [runtime?.browserShellRecording.onViewAttached]);
+            return null;
+        }
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active><Probe /></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(captured.runtime?.state.activeRecordingIdByViewId.view_1).toBe(active.recordingId));
+        expect(machineRpcMock.listForView).toHaveBeenCalledTimes(1);
+        let pending: unknown;
+        await act(async () => { pending = captured.runtime?.browserShellRecording.onStopRecording?.(active); await entered.promise; });
+        await screen.update(<PluginSurfaceFocusEligibilityProvider active={false}><Probe /></PluginSurfaceFocusEligibilityProvider>);
+        expect((await entered.promise).aborted).toBe(false);
+        const refreshed = createDeferred<{ ok: true; result: BrowserRecordingSessionV1[] }>();
+        machineRpcMock.listForView.mockReturnValueOnce(refreshed.promise);
+        await act(async () => {
+            stopped.resolve({ ok: true, result: { status: 'finalized', recording: finalized } });
+            await pending;
+        });
+        await screen.update(<PluginSurfaceFocusEligibilityProvider active><Probe /></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(machineRpcMock.listForView).toHaveBeenCalledTimes(2));
+        // The retained Stop result is visible before the next daemon snapshot can answer.
+        expect(captured.runtime?.state.sessionsById.recording_1.status).toBe('finalized');
+        await act(async () => { refreshed.resolve({ ok: true, result: [finalized] }); });
+        await waitForHomeGovernance(() => expect(captured.runtime?.state.sessionsById.recording_1.status).toBe('finalized'));
     });
 
     it.each([true, false])('admits recording start through the real Action policy (enabled=%s)', async (enabled) => {

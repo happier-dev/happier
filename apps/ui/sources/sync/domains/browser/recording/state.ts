@@ -51,3 +51,20 @@ export function applyBrowserRecordingSessionSnapshot(
     const parsed = BrowserRecordingSessionV1Schema.parse(recording);
     return putRecording(state, parsed, recordingStatusIsActive(parsed.status));
 }
+
+export function replaceBrowserRecordingViewSnapshot(
+    state: BrowserRecordingState,
+    view: Pick<BrowserRecordingSessionV1, 'browserSessionId' | 'viewId'>,
+    recordings: readonly BrowserRecordingSessionV1[],
+): BrowserRecordingState {
+    const removed = new Set(Object.values(state.sessionsById)
+        .filter(recording => recording.browserSessionId === view.browserSessionId && recording.viewId === view.viewId)
+        .map(recording => recording.recordingId));
+    const retained = {
+        ...state,
+        sessionsById: Object.fromEntries(Object.entries(state.sessionsById).filter(([id]) => !removed.has(id))),
+        sessionOrder: state.sessionOrder.filter(id => !removed.has(id)),
+        activeRecordingIdByViewId: Object.fromEntries(Object.entries(state.activeRecordingIdByViewId).filter(([, id]) => !removed.has(id))),
+    };
+    return recordings.reduce(applyBrowserRecordingSessionSnapshot, retained);
+}

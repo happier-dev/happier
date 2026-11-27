@@ -200,7 +200,7 @@ function daemonView(captureSource?: Record<string, unknown>) {
 }
 
 describe('useBrowserStreamedSurfaceRuntime', () => {
-    it.each([[undefined, false], ['saved-profile', false], ['saved-profile', true], [deriveSessionBrowserProfileId(view.browserSessionId), false]] as const)('reads a real restarted daemon page as closed, retaining its open command for recovery (%s, window=%s)', async (profileId, asWindow) => {
+    it.each([[undefined, false, false], ['saved-profile', false, false], ['saved-profile', true, false], [deriveSessionBrowserProfileId(view.browserSessionId), false, false], [undefined, false, true]] as const)('reads a real restarted daemon page as closed, retaining its open command for recovery (%s, window=%s, new view=%s)', async (profileId, asWindow, openNewView) => {
         const root = await mkdtemp(join(tmpdir(), 'browser-restart-'));
         const makeStore = () => createBrowserProfileStore({ storageRootDirectory: root,
             partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
@@ -265,10 +265,15 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             try { await flushHookEffects(); expect(empty.getCurrent()).toBeNull(); }
             finally { await empty.unmount(); }
             boundary.views = status.views;
+            boundary.watchViews = async ({ payload, signal }) => {
+                const request = payload as { browserSessionId: string; knownViewIds: string[] };
+                await broker.watchViews({ ...request, signal });
+                return { protocolVersion: 1, views: routes.listViews(view.browserSessionId) };
+            };
             let retainedState = applyBrowserControlEvent(createBrowserControlState(), daemonView().events[0]);
-            const rendered = await renderHook(() => useBrowserStreamedSurfaceRuntime({ view,
+            const rendered = await renderHook(({ selectedView }) => useBrowserStreamedSurfaceRuntime({ view: selectedView,
                 browserSessionId: view.browserSessionId, machineId: 'machine_1', serverId,
-                onBrowserEvent: event => { retainedState = applyBrowserControlEvent(retainedState, event); } }));
+                onBrowserEvent: event => { retainedState = applyBrowserControlEvent(retainedState, event); } }), { initialProps: { selectedView: view } });
             hook = rendered;
             await flushHookEffects();
             expect(rendered.getCurrent()).toMatchObject({ closedAfterRestart: command, playerState: null });
@@ -293,15 +298,22 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             try {
                 const card = screen.findByType(SurfaceStateCard);
                 expect(card.props.action).toBeDefined();
-                await act(async () => { await card.props.action.onPress(); });
+                await act(async () => {
+                    if (openNewView) {
+                        await boundary.actionDispatch?.('browser.view.open', { ...command, commandId: 'new-open',
+                            viewId: 'new-view', target: { kind: 'externalUrl', targetId: 'new-target', url: 'https://new.example.com/' } });
+                    } else await card.props.action.onPress();
+                });
+                if (openNewView) await rendered.rerender({ selectedView: { ...view, viewId: 'new-view' } });
                 expect(profileDirectories).toHaveLength(2);
                 expect(profileDirectories[1]).toBe(profileDirectories[0]);
                 expect(await readFile(join(profileDirectories[1]!, 'Cookies'), 'utf8')).toBe('retained sign-in fixture');
                 expect(activeDaemon.adapter.listViews?.(view.browserSessionId)).toHaveLength(1);
+                if (openNewView) expect(activeDaemon.adapter.listTerminalViews?.(view.browserSessionId)).toEqual([]);
                 await flushHookEffects();
                 expect(rendered.getCurrent()?.closedAfterRestart).toBeUndefined();
                 expect(await activeDaemon.adapter.dispatchCommand({ kind: 'closeView', commandId: 'close',
-                    browserSessionId: view.browserSessionId, viewId: view.viewId })).toMatchObject({ status: 'dispatched' });
+                    browserSessionId: view.browserSessionId, viewId: openNewView ? 'new-view' : view.viewId })).toMatchObject({ status: 'dispatched' });
                 await activeDaemon.dispose?.();
                 const closed = await makeDaemon();
                 if (!closed.ok) throw new Error(closed.errorCode);
@@ -310,6 +322,7 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             } finally { await screen.unmount(); }
         } finally {
             await hook?.unmount();
+            boundary.watchViews = null;
             if (restarted?.ok) await restarted.dispose?.();
             await original.dispose?.();
             await rm(root, { recursive: true, force: true });

@@ -290,7 +290,10 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
                         ...notification,
                         ...(notification.sessionId ? { sessionId: JSON.stringify([sessionId, notification.sessionId]) } : {}),
                     }));
-                    result.contextCapture?.subscribeViewLifecycle?.((event) => emit(viewListeners, event));
+                    result.contextCapture?.subscribeViewLifecycle?.((event) => {
+                        if (event.type === 'bound') session.terminalViews = session.terminalViews.filter(view => !view.closedAfterRestart);
+                        emit(viewListeners, event);
+                    });
                     result.contextCapture?.subscribeBrowserEvents?.((event) => {
                         const replacement = profileReplacements.get(event.browserSessionId);
                         if (event.kind === 'viewClosed' && event.viewId === replacement?.view.viewId) {

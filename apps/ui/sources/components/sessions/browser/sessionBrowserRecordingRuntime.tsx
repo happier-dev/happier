@@ -13,6 +13,7 @@ import {
     DaemonBrowserRecordingStartResultV1Schema,
     DaemonBrowserRecordingStopResultV1Schema,
     DaemonBrowserRecordingTerminalResultV1Schema,
+    DaemonBrowserRecordingListResponseV1Schema,
 } from '@happier-dev/protocol/browser/recording/v1';
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -25,6 +26,7 @@ import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal, pre
 import { randomUUID } from '@/platform/randomUUID';
 import {
     applyBrowserRecordingSessionSnapshot,
+    replaceBrowserRecordingViewSnapshot,
     createBrowserRecordingState,
     type BrowserRecordingState,
     type BrowserRecordingUnavailableReason,
@@ -162,7 +164,7 @@ export function useSessionBrowserRecordingRuntime(
     }, [params.scopeKey, params.sessionId, params.machineId, params.serverId]);
 
     React.useEffect(() => {
-        if (!params.enabled || !presented) return;
+        if (!params.enabled) return;
         const controller = new AbortController();
         requestScope.current = controller;
         startInFlightByViewIdRef.current = new Set();
@@ -170,7 +172,7 @@ export function useSessionBrowserRecordingRuntime(
             controller.abort();
             if (requestScope.current === controller) requestScope.current = null;
         };
-    }, [params.scopeKey, params.sessionId, params.machineId, params.serverId, params.enabled, presented]);
+    }, [params.scopeKey, params.sessionId, params.machineId, params.serverId, params.enabled]);
 
     const sessionId = params.sessionId;
     const onUnavailable = params.onUnavailable ?? presentBrowserRecordingUnavailable;
@@ -187,6 +189,22 @@ export function useSessionBrowserRecordingRuntime(
     const recordingCapabilities = params.recordingCapabilities
         ?? readRecordingCapabilitiesFromSnapshot(snapshot.status === 'ready' ? snapshot.features.capabilities.browser : null);
     const nativeViewCaptureHandlerRegistered = useDesktopBrowserRecordingReverseCaptureHandler(machineId);
+
+    const onViewAttached = React.useCallback((view: Pick<BrowserRecordingSessionV1, 'browserSessionId' | 'viewId'>) => {
+        if (!enabled || !machineId) return;
+        const controller = new AbortController();
+        void (async () => {
+            try {
+                const result = await execute('browser.recording.listForView', view, {
+                    signal: controller.signal, defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId },
+                });
+                if (controller.signal.aborted || !isCurrent() || !result.ok) return;
+                const parsed = DaemonBrowserRecordingListResponseV1Schema.safeParse({ protocolVersion: 1, recordings: result.result });
+                if (parsed.success) setState(current => replaceBrowserRecordingViewSnapshot(current, view, parsed.data.recordings));
+            } catch { /* Discovery resumes through the next view attach or presentation. */ }
+        })();
+        return () => controller.abort();
+    }, [enabled, execute, isCurrent, machineId, sessionId]);
 
     const isCaptureSourceAvailable = React.useCallback<NonNullable<BrowserShellRecordingState['isCaptureSourceAvailable']>>((input) => {
         if (!machineId) return false;
@@ -354,6 +372,7 @@ export function useSessionBrowserRecordingRuntime(
                 onStartRecording,
                 onStopRecording,
                 onCancelRecording,
+                onViewAttached,
                 onUnavailable,
                 isCaptureSourceAvailable,
             },
@@ -366,6 +385,7 @@ export function useSessionBrowserRecordingRuntime(
         onStartRecording,
         onStopRecording,
         onUnavailable,
+        onViewAttached,
         recordingCapabilities,
         state,
     ]);

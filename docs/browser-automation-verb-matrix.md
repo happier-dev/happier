@@ -642,8 +642,9 @@ command beside the Session's profile storage. Discovery and `browser.view.list` 
 that binding as `closedAfterRestart` with a terminal `viewClosed` event. The Session
 Browser shows the existing state card with Reopen; pressing it invokes
 `browser.view.open` through the existing Action admission with that profile binding.
-It reloads the address retained at the last successful control command, rather than
-restoring in-page state. Explicit final-tab close, Session stop and Session deletion
+Opening a live view in that Session clears the restart-recovery placeholder, including
+when the person chooses a different URL. Reopen reloads the address retained at the last
+successful control command, rather than restoring in-page state. Explicit final-tab close, Session stop and Session deletion
 remove that binding. Older profile directories without a binding remain unknown.
 Load matching development Protocol, daemon and App sources for this optional field
 on the closed discovery record. No engine survives the daemon, and no page opens

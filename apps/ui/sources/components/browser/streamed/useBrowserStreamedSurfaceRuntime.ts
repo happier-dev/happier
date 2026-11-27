@@ -368,7 +368,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         // Before any view exists the empty Session Browser still explains what keeps the agent's
         // browser from opening: the typed first-use state of its open, or the one prerequisite
         // discovery names. Any other discovery failure stays quiet.
-        if (closedAfterRestart) return { machineName, playerState: null, closedAfterRestart, onReopen: reopen };
+        if (!discoveredView && closedAfterRestart) return { machineName, playerState: null, closedAfterRestart, onReopen: reopen };
         if (!view) return firstUse || unavailableReason === 'managed_package_missing'
             ? { machineName, playerState: null, ...(unavailableReason === 'managed_package_missing' ? { unavailableReason } : {}),
                 ...(firstUse ? { firstUse } : {}), ...(firstUseTargetUrl ? { firstUseTargetUrl } : {}),
@@ -391,5 +391,5 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                     saveDownload, clipboardShortcut }
                 : null,
         };
-    }, [closedAfterRestart, reopen, clipboardShortcut, discoveryStatus, failedDiscovery, firstUse, firstUseFailure, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
+    }, [closedAfterRestart, discoveredView, reopen, clipboardShortcut, discoveryStatus, failedDiscovery, firstUse, firstUseFailure, firstUseTargetUrl, machineName, metadata, playerState, retry, saveDownload, sendControl, sendInput, socket, sourceId, streamId, unavailableReason, view, viewerKey]);
 }
