@@ -204,6 +204,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const findingsOffset = React.useRef<number | null>(null);
   const streamOffset = React.useRef(0);
   const scrollTop = React.useRef(0);
+  const stopJump = React.useRef<{ requestedY: number; landedY: number | null } | null>(null);
   // The phone column's Find focus root; the wide root also scopes the review keys.
   const phoneRootRef = React.useRef<View>(null);
   const firstUnread =
@@ -283,12 +284,13 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const scrollToStop = React.useCallback(
     (stopId: string) => {
       setCurrentStopId(stopId);
-      const y = stopOffsets.current.get(stopId);
-      if (typeof y === 'number')
-        scrollRef.current?.scrollTo({
-          y: Math.max(0, y + streamOffset.current - (phone ? 52 : 0)),
-          animated: false,
-        });
+      stopJump.current = null;
+      const offset = stopOffsets.current.get(stopId);
+      const scroll = scrollRef.current;
+      if (offset === undefined || !scroll) return;
+      const y = Math.max(0, offset + streamOffset.current - (phone ? 52 : 0));
+      stopJump.current = { requestedY: y, landedY: null };
+      scroll.scrollTo({ y, animated: false });
     },
     [phone],
   );
@@ -351,12 +353,23 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const onScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       nativeViewport?.onScroll(event);
-      scrollTop.current = event.nativeEvent.contentOffset.y;
-      if (scrollTop.current > 0) landingStopId.current = null;
-      const line =
-        event.nativeEvent.contentOffset.y +
-        CURRENT_STOP_READING_LINE_PX -
-        streamOffset.current;
+      const y = event.nativeEvent.contentOffset.y;
+      scrollTop.current = y;
+      if (y > 0) landingStopId.current = null;
+      const jump = stopJump.current;
+      if (jump) {
+        if (jump.landedY === null) {
+          const { contentSize, layoutMeasurement } = event.nativeEvent;
+          const maxY = Math.max(0, contentSize.height - layoutMeasurement.height);
+          // Scroll metrics can round to pixels. Use the actual offset once the jump lands.
+          if (Math.abs(y - Math.min(jump.requestedY, maxY)) < 1) jump.landedY = y;
+        }
+        // At the clamp the selected heading may never reach the reading line. Repeated reports
+        // at this offset still belong to the jump. Movement away resumes reading-line tracking.
+        if (jump.landedY === y) return;
+        stopJump.current = null;
+      }
+      const line = y + CURRENT_STOP_READING_LINE_PX - streamOffset.current;
       let reached: string | null = null;
       for (const stop of reading.stops) {
         const y = stopOffsets.current.get(stop.id);

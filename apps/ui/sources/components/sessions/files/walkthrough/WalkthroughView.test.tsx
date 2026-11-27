@@ -124,6 +124,57 @@ function diffsUnder(screen: Awaited<ReturnType<typeof renderScreen>>, testID: st
 }
 
 describe('WalkthroughView (lab WT1-A)', () => {
+    it('keeps an explicit stop jump at the scroll boundary and follows the reading line on manual scroll', async () => {
+        const reading = buildWalkthroughReading(COMPLETE);
+        const stops = reading.stops.slice(0, 2);
+        const screen = await renderScreen(<WalkthroughView reading={{ ...reading, stops }} scopeLabel="This session" layout="phone" />);
+        const scroller = screen.findAll((node) => Object.is(node.type, 'ScrollView') && typeof node.props.onScroll === 'function')[0]!;
+        const sections = stops.map((stop) => {
+            let section = screen.findHostByTestId(`walkthrough-stop-${stop.id}`);
+            while (section && typeof section.props.onLayout !== 'function') section = section.parent;
+            return section!;
+        });
+        let stream = sections[0]!.parent;
+        while (stream && typeof stream.props.onLayout !== 'function') stream = stream.parent;
+        await act(async () => {
+            stream!.props.onLayout({ nativeEvent: { layout: { y: 40 } } });
+            sections[0]!.props.onLayout({ nativeEvent: { layout: { y: 0 } } });
+            // Cut 56: at scrollTop 422 the second heading is still 182px below the viewport top.
+            sections[1]!.props.onLayout({ nativeEvent: { layout: { y: 564 } } });
+        });
+
+        const viewportHeight = 408;
+        const contentHeight = 830;
+        const end = contentHeight - viewportHeight;
+        const scroll = (y: number) => act(async () => {
+            scroller.props.onScroll({ nativeEvent: {
+                contentOffset: { y }, contentSize: { height: contentHeight }, layoutMeasurement: { height: viewportHeight },
+            } });
+        });
+        const jump = async (direction: 'next' | 'previous') => {
+            nativeScrollRequests.length = 0;
+            await screen.pressByTestIdAsync(`walkthrough-${direction}`);
+            const target = nativeScrollRequests.at(-1)!.y;
+            await scroll(Math.min(Math.max(0, target), end));
+        };
+        const expectCurrent = (index: number) => {
+            expect(screen.findHostByTestId('walkthrough-section-control')?.props.accessibilityLabel).toContain(stops[index]!.title);
+            expect(Boolean(screen.findHostByTestId('walkthrough-previous')?.props.accessibilityState?.disabled)).toBe(index === 0);
+            expect(Boolean(screen.findHostByTestId('walkthrough-next')?.props.accessibilityState?.disabled)).toBe(index === 1);
+        };
+
+        expectCurrent(0);
+        await jump('next');
+        expectCurrent(1);
+        await scroll(end); // React Native Web can report the same offset again when scrolling ends.
+        expectCurrent(1);
+        await jump('previous');
+        expectCurrent(0);
+        await jump('next');
+        await scroll(end - 1);
+        expectCurrent(0);
+    });
+
     it.each(['restoring', 'unavailable'] as const)('does not offer a new walkthrough while saved data is %s', async restoreState => {
         const screen = await renderScreen(<WalkthroughView reading={EMPTY_WALKTHROUGH_READING} scopeLabel="Pending changes" layout="wide"
             restoreState={restoreState} start={{ options: null, onStart: vi.fn(), busy: false, disabled: false }} />);
