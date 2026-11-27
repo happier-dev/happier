@@ -56,6 +56,32 @@ function createManualBridge() {
 }
 
 describe('createSystemTaskRunner', () => {
+    it('serializes ordered bridge arrivals once without republishing a replay', async () => {
+        const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
+        const manual = createManualBridge();
+        const runner = createSystemTaskRunner({ bridge: manual.bridge });
+        const taskId = await runner.start(createSpec());
+        const events = Array.from({ length: 1000 }, (_, index) => ({
+            protocolVersion: 1, taskId, tsMs: index + 1, type: 'progress', message: `Log ${index}`,
+        } satisfies SystemTaskEvent));
+        const stringify = JSON.stringify;
+        let serializations = 0;
+        const count = vi.spyOn(JSON, 'stringify').mockImplementation((value) => {
+            if (value?.taskId === taskId) serializations += 1;
+            return stringify(value);
+        });
+        const listener = vi.fn();
+        runner.subscribe(taskId, listener);
+        try {
+            for (const event of events) manual.emitEvent(taskId, event);
+            manual.emitEvent(taskId, events[0]);
+        } finally {
+            count.mockRestore();
+        }
+        expect(serializations).toBe(1001);
+        expect(listener).toHaveBeenCalledTimes(1000);
+        expect(runner.getSnapshot(taskId)?.events).toEqual(events);
+    });
     it('admits Account cancellation only for the task’s captured Home and Account and preserves terminal state', async () => {
         const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
         const manual = createManualBridge();

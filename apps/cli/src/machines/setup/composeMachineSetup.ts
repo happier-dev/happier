@@ -284,15 +284,19 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const facts = await host.readHostFacts(request.context, input.selectedMachineId, input.targets.map(target => target.machineId));
       if (request.signal?.aborted || request.context.signal?.aborted) return failure('cancelled');
       const offline = new Set(facts.offlineMachineIds ?? []);
+      // Distinct Machines can start their read-only plans together. Consume them
+      // in the requested order so a refusal can settle before later plans.
+      const observations = input.targets.map(target =>
+        offline.has(target.machineId) ? undefined : targetPlan({ ...request, input: target }));
       const targets: MachineSetupCombinedPlanResultV1['targets'] = [];
-      for (const target of input.targets) {
+      for (const [index, target] of input.targets.entries()) {
         if (request.signal?.aborted || request.context.signal?.aborted) return failure('cancelled');
         if (offline.has(target.machineId)) {
           targets.push({ homeId: target.homeId, machineId: target.machineId,
             status: 'unavailable', reason: 'offline', errorCode: 'machine_offline' });
           continue;
         }
-        const result = await targetPlan({ ...request, input: target });
+        const result = await observations[index];
         if (request.signal?.aborted || request.context.signal?.aborted) return failure('cancelled');
         const refused = ActionExecuteFailureSchema.safeParse(result);
         if (refused.success) {

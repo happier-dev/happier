@@ -1,6 +1,6 @@
 import {
     machineSetupSourceApplyOriginKeyV1, MachineSetupPlanResultV1Schema,
-    type MachineSetupAppChildV1, type MachineSetupPlanInputV1, type MachineSetupSourceApplyV1, type MachineSetupSourceApplyEntryV1,
+    type MachineSetupAppChildV1, type MachineSetupPlanInputV1, type MachineSetupPlanResultV1, type MachineSetupSourceApplyV1, type MachineSetupSourceApplyEntryV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { mergeMachineSetupsV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -26,6 +26,27 @@ function attachMachineSetupSource(sources: MachineSetupSourceApplyV1, proposed: 
     return attached;
 }
 
+async function readMachineSetupApplyBaseline(params: Readonly<{
+    executeAction: ReturnType<typeof createDefaultActionExecutor>['execute'];
+    context: ActionExecutorContext;
+    homeId: string;
+    machineId: string;
+    currentPlan?: MachineSetupPlanResultV1;
+}>, current: () => boolean): Promise<MachineSetupPlanResultV1 | ActionExecuteFailure> {
+    const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
+    if (!current()) return fail('continuation_retired');
+    if (params.currentPlan) return params.currentPlan;
+    const response = await params.executeAction('machines.setup.plan', {
+        homeId: params.homeId, machineId: params.machineId,
+    }, params.context);
+    if (!current()) return fail('continuation_retired');
+    if (!response.ok) return response;
+    const outcome = classifyHomeActionOutcome(response);
+    if (outcome.kind !== 'completed') return fail('approval_required');
+    const parsed = MachineSetupPlanResultV1Schema.safeParse(outcome.result);
+    return parsed.success ? parsed.data : fail('managed_response_invalid');
+}
+
 /** Explicit Apply/Retry prepares the exact target plan after replacing its saved source copy. */
 export async function prepareMachineSetupPresetApplyInput(params: Readonly<{
     executeAction: ReturnType<typeof createDefaultActionExecutor>['execute'];
@@ -33,6 +54,7 @@ export async function prepareMachineSetupPresetApplyInput(params: Readonly<{
     homeId: string;
     machineId: string;
     preset: MachineSetupPresetInput;
+    currentPlan?: MachineSetupPlanResultV1;
     appChildren?: MachineSetupAppChildV1[];
     removeItemKeys?: string[];
     selectedMachineId?: string;
@@ -45,16 +67,8 @@ export async function prepareMachineSetupPresetApplyInput(params: Readonly<{
     const setup = await reviewMachineSetupRecipeInputs({ setup: params.preset.setup,
         context: params.context, isCurrent: current });
     if (!setup) return null;
-    const response = await params.executeAction('machines.setup.plan', {
-        homeId: params.homeId, machineId: params.machineId,
-    }, params.context);
-    if (!current()) return fail('continuation_retired');
-    if (!response.ok) return response;
-    const outcome = classifyHomeActionOutcome(response);
-    if (outcome.kind !== 'completed') return fail('approval_required');
-    const parsed = MachineSetupPlanResultV1Schema.safeParse(outcome.result);
-    if (!parsed.success) return fail('managed_response_invalid');
-    const plan = parsed.data;
+    const plan = await readMachineSetupApplyBaseline(params, current);
+    if ('errorCode' in plan) return plan;
     let presetContentOverride;
     if (!('kind' in params.preset) && !sameStrictJsonValue(params.preset.setup, setup)) {
         const { serverId, expectedAccountId } = params.context;
@@ -83,19 +97,9 @@ export async function prepareMachineSetupSourcesAdditionApplyInput(params: Omit<
     sources: MachineSetupSourceApplyV1;
     candidatePreset?: MachineSetupPlanInputV1['candidatePreset'];
 }>): Promise<MachineSetupPreparedApply> {
-    const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
     const current = () => params.isCurrent() && !params.context.signal?.aborted;
-    if (!current()) return fail('continuation_retired');
-    const response = await params.executeAction('machines.setup.plan', {
-        homeId: params.homeId, machineId: params.machineId,
-    }, params.context);
-    if (!current()) return fail('continuation_retired');
-    if (!response.ok) return response;
-    const outcome = classifyHomeActionOutcome(response);
-    if (outcome.kind !== 'completed') return fail('approval_required');
-    const parsed = MachineSetupPlanResultV1Schema.safeParse(outcome.result);
-    if (!parsed.success) return fail('managed_response_invalid');
-    const plan = parsed.data;
+    const plan = await readMachineSetupApplyBaseline(params, current);
+    if ('errorCode' in plan) return plan;
     let sources = plan.sources;
     for (const addition of params.candidatePreset === undefined ? params.sources : []) {
         if (addition.kind !== 'direct') {

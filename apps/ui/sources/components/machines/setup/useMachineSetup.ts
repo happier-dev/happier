@@ -318,11 +318,13 @@ export function useMachineSetup(
             machineId,
             preset: intent.preset,
             isCurrent,
+            ...(plan ? { currentPlan: plan } : {}),
             ...(removeItemKeys?.length ? { removeItemKeys } : {}),
           });
         } else if (intent.kind === 'sources') {
           prepared = await prepareMachineSetupSourcesAdditionApplyInput({
             executeAction: execute, context: ctx, homeId, machineId, sources: intent.sources, isCurrent,
+            ...(plan ? { currentPlan: plan } : {}),
             ...(intent.candidatePreset === undefined ? {} : { candidatePreset: intent.candidatePreset }),
             ...(removeItemKeys?.length ? { removeItemKeys } : {}),
           });

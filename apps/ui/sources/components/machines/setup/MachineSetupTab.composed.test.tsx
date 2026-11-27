@@ -17,7 +17,7 @@ import {
 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { MachineSetupAppChildV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupAppChildV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachinePresetItemV1Schema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { openManagedMachinePresetRecipientProjectionV1, projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -631,23 +631,27 @@ function setupPlanFromOpened(input: Omit<MachineSetupPlanResultV1, 'sources' | '
 }
 
 describe('Machine setup preparation', () => {
-  it('attaches a bundled preset through the existing Plan and Apply source program without changing recipe order or inputs', async () => {
+  it.each([true, false])('attaches the exact bundled preset with or without a loaded Setup snapshot (%s)', async loaded => {
     const { prepareMachineSetupPresetApplyInput } = await import('@/components/settings/machines/managed/machineSetupApply');
     const ref = { pluginId: 'example.setup', localId: 'secure', revision: '1' };
     const setup = { items: ['firewall', 'ssh'].map(recipeId => ({ kind: 'setupRecipe' as const,
       selection: { ref: { pluginId: ref.pluginId, recipeId, revision: '1' }, inputs: {} } })) };
     const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [] });
+    const modes: unknown[] = [];
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
       const request = MachineSetupPlanInputV1Schema.parse(input);
+      modes.push(request.mode);
       return request.mode ? { ...current, sources: request.sources, recipePlans: [] } : current;
     } }));
-    const prepared = await prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui' },
+    const loadedSnapshot = loaded ? { currentPlan: current } : {};
+    const prepared = await prepareMachineSetupPresetApplyInput({ ...loadedSnapshot, executeAction: executor.execute, context: { surface: 'ui' },
       homeId: 'srv_build', machineId: 'devbox', preset: { kind: 'bundledPreset', ref, setup }, isCurrent: () => true });
     expect(prepared).toMatchObject({
       ok: true, input: { targets: [{ sources: [{ kind: 'bundledPreset', ref, setup }, { kind: 'direct', setup: {} }] }] },
     });
     if (!prepared?.ok) throw new Error('Bundled preset preparation failed');
     expect(prepared.input.targets[0]?.preset).toBeUndefined();
+    expect(modes).toEqual(loaded ? ['effects'] : [undefined, 'effects']);
   });
   it.each([false, true])('retains reviewed removals through Plan and Apply, rejecting a substituted selection (combined=%s)', async combined => {
     const { prepareMachineSetupSourcesApplyInput } = await import('@/components/settings/machines/managed/machineSetupReview');
@@ -1111,9 +1115,11 @@ describe('Machine → Setup tab (P-M1)', () => {
       } }),
       compareAndSwap: async () => { throw new Error('Review cannot change desired Setup'); },
     });
+    const planModes: MachineSetupPlanInputV1['mode'][] = [];
     harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
       const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
+      planModes.push(request.mode);
       return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
         result: await prepareMachineSetupPlanV1({ input: request, current, readRecipes: async () => [recipe],
           runNative: async command => {
@@ -1127,7 +1133,9 @@ describe('Machine → Setup tab (P-M1)', () => {
     const hook = await renderHook(() => useMachineSetup({ serverId, machineId: 'devbox', active: true, online: true, canCheck: true }));
     onTestFinished(() => hook.unmount());
     await waitForHomeGovernance(() => expect(hook.getCurrent().plan?.desiredRevision).toBe(4));
+    const previousPlans = planModes.length;
     await act(async () => { await hook.getCurrent().prepare({ kind: 'sources', sources: [{ kind: 'direct', setup: { items: [item] } }] }); });
+    expect(planModes.slice(previousPlans)).toEqual(['effects']);
     expect(hook.getCurrent().failure).toBeNull();
     expect(MachineSetupApplyInputV1Schema.parse(hook.getCurrent().review?.prepared?.input).targets[0]).toMatchObject({ desiredRevision: 4,
       sources: [retained, { kind: 'direct', setup: { scripts: [script], items: [item] } }],
@@ -1301,11 +1309,12 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-preset-review:web')).not.toBeNull());
     expect(harness.requests.filter(request => request.path === '/v1/machines/presets/list')).toHaveLength(1);
+    const previousPlans = plans.length;
     await screen.pressByTestIdAsync('machine-setup-preset-review:example.setup/secure');
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-review')).not.toBeNull());
-    expect(plans.at(-1)).toMatchObject({ mode: 'effects', sources: [
+    expect(plans.slice(previousPlans)).toMatchObject([{ mode: 'effects', sources: [
       { kind: 'bundledPreset', ref: { pluginId: 'example.setup', localId: 'secure', revision: '2' }, setup }, { kind: 'direct', setup: {} },
-    ] });
+    ] }]);
     await screen.unmount();
   });
   it.each([{ kind: 'creation-bearing', creation: true }, { kind: 'setup-only', creation: false }])(

@@ -31,6 +31,7 @@ type TaskRecord = {
     spec: SystemTaskSpec;
     accountScope: SystemTaskAccountScope | null;
     state: SystemTaskRunState;
+    eventSignatures: Set<string>;
     listeners: Set<() => void>;
     unlistenBridge: (() => void) | null;
     promptContinuation: SystemTaskPromptContinuation | null;
@@ -42,36 +43,46 @@ function getEventSignature(event: SystemTaskEvent): string {
     return JSON.stringify(event);
 }
 
-function insertEventInChronologicalOrder(
-    events: readonly SystemTaskEvent[],
-    nextEvent: SystemTaskEvent,
-): SystemTaskEvent[] {
-    const nextSignature = getEventSignature(nextEvent);
-    if (events.some((event) => getEventSignature(event) === nextSignature)) {
-        return [...events];
-    }
+function readProgress(event: SystemTaskEvent) {
+    return event.type === CLI_ACQUISITION_PROGRESS_EVENT ? parseCliAcquisitionProgress(event.data) : null;
+}
 
-    const nextEvents = [...events];
-    const insertIndex = nextEvents.findIndex((event) => nextEvent.tsMs < event.tsMs);
-    nextEvents.splice(insertIndex === -1 ? nextEvents.length : insertIndex, 0, nextEvent);
-    // Retain phase milestones and prompts while replacing transfer byte samples.
-    // Sorting first also prevents a bridge replay from replacing a newer sample.
-    const retained: SystemTaskEvent[] = [];
-    let previousProgress: SystemTaskEvent | null = null;
-    for (const event of nextEvents) {
-        const progress = event.type === CLI_ACQUISITION_PROGRESS_EVENT ? parseCliAcquisitionProgress(event.data) : null;
-        if (progress) {
-            const previous = previousProgress ? parseCliAcquisitionProgress(previousProgress.data) : null;
-            if (previousProgress && previous?.phase === progress.phase && !previous.failure && !progress.failure
-                && previous.receivedBytes !== undefined && progress.receivedBytes !== undefined
-                && previousProgress.stepId === event.stepId) {
-                retained.splice(retained.indexOf(previousProgress), 1);
-            }
-            previousProgress = event;
-        }
-        retained.push(event);
+function neighboringProgress(events: readonly SystemTaskEvent[], index: number, direction: -1 | 1) {
+    for (; index >= 0 && index < events.length; index += direction) {
+        const event = events[index]!;
+        const progress = readProgress(event);
+        if (progress) return { index, event, progress };
     }
-    return retained;
+    return null;
+}
+
+function insertEventInChronologicalOrder(record: TaskRecord, nextEvent: SystemTaskEvent): SystemTaskEvent[] | null {
+    const signature = getEventSignature(nextEvent);
+    if (record.eventSignatures.has(signature)) return null;
+
+    const events = record.state.events;
+    const insertIndex = nextEvent.tsMs >= (events.at(-1)?.tsMs ?? 0)
+        ? events.length : events.findIndex(event => nextEvent.tsMs < event.tsMs);
+    let replacedIndex = -1;
+    const progress = readProgress(nextEvent);
+    if (progress && !progress.failure && progress.receivedBytes !== undefined) {
+        const isSameTransfer = (neighbor: ReturnType<typeof neighboringProgress>) => neighbor
+            && neighbor.event.stepId === nextEvent.stepId && neighbor.progress.phase === progress.phase
+            && !neighbor.progress.failure && neighbor.progress.receivedBytes !== undefined;
+        // Phase milestones break a transfer. A replayed sample only affects
+        // the run of samples on its side of the closest milestone.
+        if (isSameTransfer(neighboringProgress(events, insertIndex, 1))) return null;
+        const previous = neighboringProgress(events, insertIndex - 1, -1);
+        if (previous && isSameTransfer(previous)) {
+            record.eventSignatures.delete(getEventSignature(previous.event));
+            replacedIndex = previous.index;
+        }
+    }
+    record.eventSignatures.add(signature);
+    const nextEvents = [...events];
+    nextEvents.splice(insertIndex, 0, nextEvent);
+    if (replacedIndex >= 0) nextEvents.splice(replacedIndex, 1);
+    return nextEvents;
 }
 
 function createInitialTaskState(taskId: string): SystemTaskRunState {
@@ -216,7 +227,11 @@ export function createSystemTaskRunner(options: Readonly<{
         }
 
         const event = parsed.data;
-        const nextEvents = insertEventInChronologicalOrder(record.state.events, event);
+        const nextEvents = insertEventInChronologicalOrder(record, event);
+        if (!nextEvents) {
+            continuePrompt(taskId);
+            return;
+        }
         const latestEvent = nextEvents[nextEvents.length - 1] ?? null;
         record.state = {
             ...record.state,
@@ -271,6 +286,7 @@ export function createSystemTaskRunner(options: Readonly<{
             spec: parsedSpec,
             accountScope: admittedScope,
             state: createInitialTaskState(taskId),
+            eventSignatures: new Set(),
             listeners: new Set(),
             unlistenBridge: null,
             promptContinuation: continuation ?? null,
