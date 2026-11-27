@@ -173,7 +173,7 @@ export function SessionMediaGalleryView(props: SessionMediaGalleryViewProps) {
             variant="title"
             emphasis="semiBold"
             numberOfLines={1}
-            style={styles.grow}
+            style={[styles.grow, { color: theme.colors.text.primary }]}
           >
             {t('files.pane.gallery.media')}
           </Text>

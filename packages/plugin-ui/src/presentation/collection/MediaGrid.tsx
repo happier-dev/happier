@@ -163,6 +163,7 @@ export const HappierMediaGridHeading = memo(function HappierMediaGridHeading(
       <HappierText
         variant="label"
         emphasis="semiBold"
+        tone="neutral"
         numberOfLines={1}
         style={headingTitleStyle}
       >
@@ -303,7 +304,7 @@ export const HappierMediaFolderTile = memo(function HappierMediaFolderTile(
       ]}
     >
       {props.glyph}
-      <HappierText variant="body" numberOfLines={1} style={folderNameStyle}>
+      <HappierText variant="body" tone="neutral" numberOfLines={1} style={folderNameStyle}>
         {props.name}
       </HappierText>
     </HappierPressable>

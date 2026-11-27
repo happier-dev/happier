@@ -161,7 +161,7 @@ export function FolderGalleryView(props: FolderGalleryViewProps) {
             variant="title"
             emphasis="semiBold"
             numberOfLines={1}
-            style={styles.grow}
+            style={[styles.grow, { color: theme.colors.text.primary }]}
           >
             {name}
           </Text>
