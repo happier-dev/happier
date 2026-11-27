@@ -1,14 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import { deriveActionActorV1, deriveSessionInputActionRequestAttributionV1, materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
+import { deriveActionActorV1, deriveActionRequestActorV1, deriveSessionInputActionRequestAttributionV1, materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
-import type { ActionCaller } from './executor/types.js';
+import type { ActionCaller, ActionExecutorContext } from './executor/types.js';
 import { SessionMessageRefV1Schema } from '../sessions/messages/sessionMessageRefV1.js';
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { settleSessionInputRequestV1 } from '../sessions/messages/sessionInputAdmission.js';
 
 describe('host request attribution custody', () => {
   const persona = { serverId: 'home', sessionId: 'bot' };
+
+  it.each([false, true])('records a shared Machine requester independently of its custodian (plugin delegation: %s)', delegated => {
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture',
+      binding: { accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1',
+        custodianAccountId: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e',
+        authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home',
+        machineId: 'machine', installationId: 'installation', actionId: delegated ? 'action.invoke' : 'review.start', requestId: 'request',
+        target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43) } });
+    const context = { surface: delegated ? 'plugin' : 'ui',
+      authority: delegated ? 'account_automation' : 'present_user',
+      actionCaller: delegated ? { kind: 'plugin', pluginId: 'happier.triage', initiatingCaller: { kind: 'host' } } : { kind: 'host' },
+      runtimeAccountId: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e',
+      externalActionExecutionAuthorization: authorization,
+    } satisfies ActionExecutorContext;
+    expect(deriveActionRequestActorV1(context, 'review.start'))
+      .toEqual({ actorKind: 'person', accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1' });
+    expect(deriveActionRequestActorV1({ ...context, actionRequestAttributionV1: {
+      requestRef: 'uncaptured-person', persona, requester: null, origin: null,
+    } }, 'review.start')).toBeUndefined();
+  });
+
+  it('keeps the requesting agent and original person when another person approves its effect', () => {
+    expect(deriveActionRequestActorV1({ surface: 'ui', authority: 'present_user', runtimeAccountId: 'approver',
+      actionCaller: { kind: 'host' }, approvedActionReplay: { origin: { surface: 'agent', accountId: 'custodian',
+        caller: { kind: 'session', sessionId: 'asking-agent', starterDepth: 0, turnDepth: 0 } } },
+      actionRequestAttributionV1: { requestRef: 'request', persona,
+        requester: { serverId: 'original-home', accountId: 'requester' }, origin: null },
+      presentUserApproval: { actionId: 'review.start', requestId: 'approved', inputDigest: 'digest',
+        decidingAccountId: 'approver', decidedAtMs: 1 },
+    }, 'review.start')).toEqual({ actorKind: 'agent', sessionId: 'asking-agent',
+      onBehalfOf: { serverId: 'original-home', accountId: 'requester' } });
+    expect(deriveActionRequestActorV1({ actionCaller: { kind: 'host' }, runtimeAccountId: 'custodian' }, 'review.start'))
+      .toBeUndefined();
+  });
+
+  it('does not relabel a historical host request with its current approver', () => {
+    expect(deriveActionRequestActorV1({ surface: 'ui', authority: 'present_user', runtimeAccountId: 'approver',
+      actionCaller: { kind: 'host' }, approvedActionReplay: { origin: { surface: 'ui', accountId: 'custodian', caller: { kind: 'host' } } },
+      presentUserApproval: { actionId: 'review.start', requestId: 'approved', inputDigest: 'digest',
+        decidingAccountId: 'approver', decidedAtMs: 1 },
+    }, 'review.start')).toBeUndefined();
+  });
 
   it('names the witnessed approver instead of the requesting Session or its host Account', () => {
     expect(deriveActionActorV1({ runtimeAccountId: 'machine-owner',
@@ -48,6 +91,8 @@ describe('host request attribution custody', () => {
         serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'deployments.deploy',
         requestId: 'machine-request', target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43) } });
     expect(deriveActionActorV1({ actionCaller, runtimeAccountId, surface: 'cli', authority: 'present_user',
+      externalActionExecutionAuthorization }, 'deployments.deploy')).toBeUndefined();
+    expect(deriveActionRequestActorV1({ actionCaller, runtimeAccountId, surface: 'cli', authority: 'present_user',
       externalActionExecutionAuthorization }, 'deployments.deploy')).toBeUndefined();
   });
 

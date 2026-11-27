@@ -5774,6 +5774,18 @@ In unreleased 0.3, `readReviewFindingDecisionV1` projects a dismissed comment as
 
 Review human Actions use `createReviewHumanActionExecutorV1` in both CLI and UI. Home HTTP responses retain stored verdict envelopes; the transport opens every historical verdict through the admitted Review Artifact codec before the strict Action output schema accepts opened prose. CLI prose submission uses that same resource codec and identity binding. Prose-free submissions need no Artifact material unless the response contains retained prose. This unreleased 0.3 adapter correction changes no server or persisted schema, permission, or plain/E2EE mode rule.
 
+In unreleased 0.3, `review.start` captures the admitted requesting actor in the
+sealed Review header's optional `requestedBy`, using the Action attribution
+owner independently of effect approval. Both native and composed starts write
+through the same Review record port. Later rounds and settlement retain the
+initial requester; historical records without this fact remain unknown. Machine
+custody and mutable Artifact provenance are not requester evidence. The linked
+Review resolves that recorded person's name through the existing authorized
+principal resolver. This is a direct development-format change: matching
+Protocol, CLI and UI readers are required; older strict header readers cannot
+open the new field. It changes no Home database schema, encryption envelope or
+access grant.
+
 At review launch, the bridge reads the worktree fingerprint through the SCM owner and stores it in the run's intent input. Terminal outputs retain that launch value on success, failure, cancellation, timeout and invalid findings; they never replace it with model-supplied values or a later SCM read. An unavailable fingerprint is recorded as null and does not suppress review.
 
 `review.start` stamps one `display.groupId` on every engine Run in its panel. Materialized comments retain panel membership in `metadata.reviewGroupIds`; a later panel that deduplicates to an existing semantic finding adds its membership through the same signed CAS transition, without changing the finding's verdict. Group membership grants no access. Dispute detection compares the actor of the latest state-changing dismissal with the reopening actor: the same principal, or another user on the user side, can change their mind without creating a dispute. Same-state triage annotations do not replace dismissal provenance.

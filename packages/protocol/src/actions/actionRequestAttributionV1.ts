@@ -53,6 +53,28 @@ export function deriveActionActorV1(context: ActionExecutorContext, actionId: Ac
   return undefined;
 }
 
+/** Who asked for the operation, independently of the person approving its effect. */
+export function deriveActionRequestActorV1(context: ActionExecutorContext, actionId: ActionId): ActionActorV1 | undefined {
+  const original = context.approvedActionReplay?.origin;
+  const caller = readInitiatingActionCallerV1(original?.caller ?? context.actionCaller);
+  if (!caller || caller.kind === 'host') {
+    const cause = context.actionRequestAttributionV1;
+    if (cause) return cause.requester ? { actorKind: 'person', accountId: cause.requester.accountId } : undefined;
+    // A replay's current bearer/host belongs to its approver. An uncaptured original stays unknown.
+    if (original) return undefined;
+    const binding = context.externalActionExecutionAuthorization?.binding;
+    if (binding) {
+      const accountId = readAuthenticatedActionRequesterAccountIdV1(binding);
+      return accountId ? { actorKind: 'person', accountId } : undefined;
+    }
+  }
+  return deriveActionActorV1({
+    ...context,
+    presentUserApproval: undefined,
+    actionCaller: caller,
+  }, actionId);
+}
+
 /** Content-free host projection of one admitted cause. Never execution or approval authority. */
 export const ActionRequestAttributionV1Schema = lazyZodSchema(() => z.strictObject({
   requestRef: z.string().check(z.minLength(1)),

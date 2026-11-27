@@ -25,6 +25,23 @@ function fixture() {
 }
 
 describe('durable Review rounds', () => {
+  it('keeps the original requester through settlement and a new round started by its custodian, while older records stay unknown', async () => {
+    const f = fixture();
+    const start = { reviewId: 'requester-review', title: 'Working tree changes', subjectKind: 'comparison' as const,
+      sourceKind: 'direct' as const, reviewerIds: [], startedAt: 1 };
+    const requestedBy = { actorKind: 'person' as const, accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1' };
+    const first = await f.records.start({ ...start, requestedBy });
+    await f.records.settle({ ...first, outcome: 'completed', finishedAt: 2, runs: [] });
+    await f.records.start({ ...start, startedAt: 3, newRound: true,
+      requestedBy: { actorKind: 'person', accountId: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e' } });
+    expect(await f.records.read(start.reviewId)).toMatchObject({ requestedBy, rounds: [
+      { ordinal: 1, state: 'completed' }, { ordinal: 2, state: 'running' },
+    ] });
+    const historical = fixture();
+    await historical.records.start(start);
+    await historical.records.start({ ...start, startedAt: 3, newRound: true, requestedBy });
+    expect(await historical.records.read(start.reviewId)).not.toHaveProperty('requestedBy');
+  });
   it('retains admitted reviewer identities across a selected retry without copying omitted reviewers', async () => {
     const f = fixture();
     const start = { reviewId: 'named-session-review', title: 'Review', subjectKind: 'repository' as const,

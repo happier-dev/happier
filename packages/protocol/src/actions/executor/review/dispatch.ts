@@ -1,4 +1,5 @@
 import { isActionFamilyId } from '../actionFamilies.js';
+import { deriveActionRequestActorV1 } from '../../actionRequestAttributionV1.js';
 import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, ReviewCommentActionIdV1Schema, ReviewCommentListActionRequestV1Schema, ReviewCommentListResponseV1Schema, type ReviewCommentListResponseV1 } from '../../../reviews/comments/actions.js';
 import type { WorkflowSessionScopeV1 } from '../../../workflows/workflowSessionScopeV1.js';
 import { normalizeId } from '../inputReading.js';
@@ -291,6 +292,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         let reviewInput = data as ReviewStartInput;
+        const requestedBy = deriveActionRequestActorV1(ctx, 'review.start');
         // Workflow reviewers execute detached, but the admitted Session still owns the reviewed changes.
         const sourceSessionId = normalizeId(reviewInput.sessionId) || sessionId || undefined;
         // Plugin-mediated starts retain the creating Workflow in host context;
@@ -473,6 +475,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             ...(initialComparison ? { comparison: initialComparison } : {}),
             ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
             reviewStart: { reviewId: globalThis.crypto.randomUUID(),
+              ...(requestedBy ? { requestedBy } : {}),
               ...(projectSourceId ? { projectSourceId } : {}),
               subjectKind,
               sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
@@ -668,6 +671,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...(initialComparison ? { comparison: initialComparison } : {}),
           ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
           reviewStart: { reviewId,
+            ...(requestedBy ? { requestedBy } : {}),
             ...(projectSourceId ? { projectSourceId } : {}),
             subjectKind,
             sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',

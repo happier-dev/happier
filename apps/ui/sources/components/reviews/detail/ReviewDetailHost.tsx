@@ -86,6 +86,7 @@ import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflo
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
 import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
@@ -191,12 +192,16 @@ const EMPTY_PRINCIPALS: readonly PrincipalRefV1[] = Object.freeze([]);
 const NO_ACTIVITY: readonly ReviewActivityEvent[] = Object.freeze([]);
 const NO_SELECTED_FINDINGS: ReadonlySet<string> = new Set();
 
-/** Every person the opened Review names: requested reviewers of every round and every verdict's author. */
-function humanPrincipals(human: ReviewHumanActionStateV1 | null): readonly PrincipalRefV1[] {
-  if (!human) return EMPTY_PRINCIPALS;
+/** Every person the opened Review names, resolved in the page's existing principal batch. */
+function humanPrincipals(human: ReviewHumanActionStateV1 | null, requesterAccountId: string | null): readonly PrincipalRefV1[] {
+  if (!human && !requesterAccountId) return EMPTY_PRINCIPALS;
   const byKey = new Map<string, PrincipalRefV1>();
-  for (const request of human.requests) byKey.set(sharePrincipalKey(request.principal), request.principal);
-  for (const verdict of human.verdicts) {
+  if (requesterAccountId) {
+    const principal: PrincipalRefV1 = { kind: 'account', accountId: requesterAccountId };
+    byKey.set(sharePrincipalKey(principal), principal);
+  }
+  for (const request of human?.requests ?? []) byKey.set(sharePrincipalKey(request.principal), request.principal);
+  for (const verdict of human?.verdicts ?? []) {
     const principal: PrincipalRefV1 = { kind: 'account', accountId: verdict.accountId };
     byKey.set(sharePrincipalKey(principal), principal);
   }
@@ -320,7 +325,11 @@ export function ReviewDetailHost(props: Readonly<{
   // Selection is a mode behind Select (lab `detail-bulk`): rows show only their status glyph until it starts.
   const [selectingKey, setSelectingKey] = React.useState<string | null>(null);
   const selecting = selectingKey === selectionKey || selectedRowIds.length > 0;
-  const principals = React.useMemo(() => humanPrincipals(human), [human]);
+  const requester = record?.requestedBy;
+  const requesterAccountId = requester?.actorKind === 'person' ? requester.accountId
+    : requester?.onBehalfOf && areServerProfileIdentifiersEquivalent(requester.onBehalfOf.serverId, scope?.serverId)
+      ? requester.onBehalfOf.accountId : null;
+  const principals = React.useMemo(() => humanPrincipals(human, requesterAccountId), [human, requesterAccountId]);
   const { names } = useSharePrincipalNames(principals.length > 0 ? principals : null, scope?.serverId ?? null);
   const humanActions = useReviewHumanActions(scope, human);
   const round = record?.rounds.find((item) => item.ordinal === selectedRound) ?? record?.rounds.at(-1);
@@ -602,6 +611,11 @@ export function ReviewDetailHost(props: Readonly<{
     ...(record.rounds.length > 0 ? [{ key: 'round', text: t('reviewWalkthrough.detail.round', { round: lastOrdinal }) }] : []),
     ...(record.rounds[0] ? [{ key: 'started', text: t('reviewWalkthrough.detail.startedAt', {
       time: formatShortRelativeTime(record.rounds[0].startedAt) }) }] : []),
+    ...(requesterAccountId ? [{ key: 'requester', text: `${t('detailPages.approval.contextTitle')} ${presentSharePrincipal({
+      ref: { kind: 'account', accountId: requesterAccountId },
+      name: names?.get(sharePrincipalKey({ kind: 'account', accountId: requesterAccountId })) ?? null,
+      viewerAccountId: scope?.accountId ?? null,
+    }).displayName}` }] : []),
     // Who it reaches, once it reaches anyone (the Artifact audience owner's words); a private Review says nothing.
     ...(audience?.shared ? [{ key: 'audience', icon: 'users' as const, text: audience.team
       ? t('artifacts.browser.facts.sharedWithTeam', { team: audience.team }) : t('artifacts.browser.facts.shared') }] : []),

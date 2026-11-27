@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { ActionActorV1Schema, type ActionActorV1 } from '../actions/actionActorV1.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '../artifacts/artifactKindV1.js';
 import {
   projectReviewReviewerOutcomeV1,
@@ -71,7 +72,7 @@ export const ReviewRoundStartMetadataV1Schema = z.strictObject({ ...reviewRoundS
 export const ReviewMetadataWriteV1Schema = z.union([ReviewRoundStartMetadataV1Schema, ReviewRoundSettlementMetadataV1Schema]);
 export type ReviewMetadataWriteV1 = z.infer<typeof ReviewMetadataWriteV1Schema>;
 export const ReviewArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(REVIEW_ARTIFACT_KIND_V1), v: z.literal(1),
-  reviewId: z.string(), title: z.string() });
+  reviewId: z.string(), title: z.string(), requestedBy: z.optional(ActionActorV1Schema) });
 const ReviewRoundReviewerQualityV1Schema = lazyZodSchema(() => z.strictObject({
   reviewerId: z.string().check(z.minLength(1)),
   displayName: z.optional(z.string().check(z.minLength(1))), ...ReviewQualityV1Schema.shape,
@@ -161,6 +162,7 @@ export interface ReviewArtifactTransportV1 {
   update(input: Readonly<{ artifactId: string; expectedRevision: Revision; header: Readonly<Record<string, unknown>>; body: string; reviewMetadata: ReviewMetadataWriteV1; signal?: AbortSignal }>): Promise<Readonly<{ ok: true; revision: Revision } | { ok: false; errorCode: string }>>;
 }
 export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; subjectKind: ReviewSubjectKindV1;
+  requestedBy?: ActionActorV1;
   sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; workflowRunId?: string; comparisonId?: string;
   comparisonCapture?: ReviewRoundComparisonCaptureV1; sourceSessionId?: string;
   reviewerIds: readonly string[]; reviewerDisplayNames?: Readonly<Record<string, string>>;
@@ -257,7 +259,10 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
         state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null,
         ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
         ...(sourceSessionId ? { sourceSessionId } : {}) };
+      const requestedBy = previous ? previous.requestedBy : input.requestedBy;
       const next: ReviewArtifactV1 = { kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: input.reviewId,
+        // Later writers and rounds cannot replace the person who requested this Review.
+        ...(requestedBy ? { requestedBy } : {}),
         title: previous?.title ?? input.title, rounds: [...previous?.rounds ?? [], { ordinal,
           ...(comparisonId ? { comparisonId } : {}),
           ...(input.comparisonCapture ? { comparisonCapture: input.comparisonCapture } : {}), state: 'running', startedAt: input.startedAt,

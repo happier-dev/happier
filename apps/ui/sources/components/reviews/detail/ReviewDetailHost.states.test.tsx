@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionActorV1';
 import {
   createSessionFilesViewFixture,
   installSessionFilesViewBoundaries,
@@ -31,12 +32,17 @@ async function renderReview(
     reviewId: string;
     state: 'completed' | 'partial';
     comments: readonly ReviewCommentV1[];
+    requestedBy?: ActionActorV1;
     metadataResponse?: () => Response;
   }>,
 ) {
   fixture = await createSessionFilesViewFixture({
     serverUrl: `https://${params.reviewId}.test`,
     request: async (url) => {
+      if (new URL(String(url)).pathname === '/v1/session-access/principals/resolve')
+        return Response.json({ v: 1, principals: [{ kind: 'account',
+          accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1', name: 'QA TH B',
+          firstName: null, lastName: null, username: 'qa-th-b-1025', avatarUrl: null }] });
       if (new URL(String(url)).pathname === '/v1/reviews/get' && params.metadataResponse)
         return params.metadataResponse();
       if (new URL(String(url)).pathname === '/v1/reviews/comments')
@@ -57,6 +63,7 @@ async function renderReview(
       v: 1,
       reviewId: params.reviewId,
       title: 'Code review',
+      ...(params.requestedBy ? { requestedBy: params.requestedBy } : {}),
     },
     body: JSON.stringify({
       v: 1,
@@ -92,6 +99,15 @@ async function renderReview(
     />,
   );
 }
+
+it('names the admitted requester on a Review whose Machine belongs to another person', async () => {
+  const screen = await renderReview({ reviewId: 'shared-machine-requester', state: 'completed', comments: [],
+    requestedBy: { actorKind: 'person', accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1' } });
+  try {
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Requested by QA TH B'));
+    expect(screen.getTextContent()).not.toContain('Requested by alice');
+  } finally { await screen.unmount(); }
+});
 
 it('keeps the opened Review visible and retries its typed metadata read failure', async () => {
   const reviewId = 'metadata-failed-review';

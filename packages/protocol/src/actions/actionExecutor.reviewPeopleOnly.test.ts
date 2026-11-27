@@ -62,7 +62,9 @@ describe('person-only Review admission', () => {
     });
     let request: ReturnType<typeof ReviewReviewersSetInputV1Schema.parse> | undefined;
     const result = await dispatchReviewDispatch2({ actionId: 'review.start', data, parsed: { data },
-      ctx: { surface: 'ui' }, deps: { reviewRecords: () => records }, workflowSessionScope: null,
+      ctx: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1' },
+      deps: { reviewRecords: () => records }, workflowSessionScope: null,
       // The authenticated requested-reviewer transport is the external boundary;
       // Review creation and settlement retain their real domain implementation.
       executeHostChild: async (actionId, input) => {
@@ -91,5 +93,9 @@ describe('person-only Review admission', () => {
     expect((await records.read(request!.reviewId))?.rounds).toEqual([
       expect.objectContaining({ state: 'completed', runs: [], reviewerIds: [], finishedAt: expect.any(Number) }),
     ]);
+    // A68 live Team13 -> QA A Machine: execution placement is not the requester.
+    expect(await records.read(request!.reviewId)).toMatchObject({ requestedBy: {
+      actorKind: 'person', accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1',
+    } });
   });
 });
