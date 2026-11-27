@@ -1,17 +1,20 @@
+import { randomUUID } from 'node:crypto';
 import type { CliActionDepsParams } from './types';
-import type { CliMachineActionCall } from './machineTransport';
+import type { CliMachineActionCall, CliOriginalAccountMachineActionDispatch } from './machineTransport';
 import type { CliProjectAdmission } from './projectAdmission';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { WorkspaceSyncRelationshipsListRpcResultV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { hasStoredSessionCredentialProvenance } from '@/persistence';
+import { WorkspaceSyncRelationshipsListRpcResultV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncRelationshipDisableActionOutputV1Schema, WorkspaceSyncRelationshipEnableActionOutputV1Schema, WorkspaceSyncRelationshipFlushActionOutputV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncRelationshipTerminateActionOutputV1Schema, WorkspaceSyncStatusV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { resolveWorkspaceSyncReadControllerV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { forwardHandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import type { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 export function createCliWorkspaceSyncActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'serverIdentityId'>,
-  { actionHomeId, callMachineAction, normalizeStringValue, notSupported, projectHomeAdmission, projectHomeId, readProjectRows, readRecord, resolveProjectHomeIdentity }: Readonly<{
+  params: Pick<CliActionDepsParams, 'credentials' | 'serverIdentityId' | 'machineActionDirectTargetTransport'>,
+  { actionHomeId, callMachineAction, dispatchOriginalAccountMachineAction, normalizeStringValue, notSupported, projectHomeAdmission, projectHomeId, readProjectRows, readRecord, resolveProjectHomeIdentity }: Readonly<{
     actionHomeId: string;
     callMachineAction: CliMachineActionCall;
+    dispatchOriginalAccountMachineAction: CliOriginalAccountMachineActionDispatch;
     normalizeStringValue: (value: unknown) => string | null;
     notSupported: () => never;
     projectHomeAdmission: CliProjectAdmission['projectHomeAdmission'];
@@ -42,6 +45,38 @@ export function createCliWorkspaceSyncActionDeps(
     const denied = await projectHomeAdmission(currentServerId);
     if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
     return resolveWorkspaceSyncReadControllerV1({ ...input, workspaceRefs, relationships, serverId: currentServerId });
+  };
+  const dispatchOriginalRelationshipControl = async <T>(
+    actionId:
+      | 'workspace.sync.relationship.terminate'
+      | 'workspace.sync.relationship.disable'
+      | 'workspace.sync.relationship.enable'
+      | 'workspace.sync.relationship.flush',
+    input: Readonly<{ controllerMachineId: string; relationshipId: string }>,
+    outputSchema: Readonly<{ parse: (value: unknown) => T }>,
+    context: ActionExecutorContext | undefined,
+    signal?: AbortSignal,
+  ): Promise<T | { ok: false; errorCode: string; error: string } | null> => {
+    if (
+      !context
+      || !params.credentials
+      || !hasStoredSessionCredentialProvenance(params.credentials)
+      || (context.actionCaller && context.actionCaller.kind !== 'host')
+      || context.externalActionExecutionAuthorization
+      || context.externalActionCredential
+      || params.machineActionDirectTargetTransport?.machineId === input.controllerMachineId
+    ) {
+      return null;
+    }
+    const execution = await dispatchOriginalAccountMachineAction({
+      actionId,
+      machineId: input.controllerMachineId,
+      input,
+      context: context.actionRequestId ? context : { ...context, actionRequestId: randomUUID() },
+      ...(signal ? { signal } : {}),
+    });
+    if (!execution) return null;
+    return execution.ok ? outputSchema.parse(execution.result) : execution;
   };
   return {
     workspaceSyncRelationshipObserveCreation: async ({ input, operationId, serverId, signal }) => {
@@ -107,6 +142,14 @@ export function createCliWorkspaceSyncActionDeps(
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
+      const dispatched = await dispatchOriginalRelationshipControl(
+        'workspace.sync.relationship.terminate',
+        input,
+        WorkspaceSyncRelationshipTerminateActionOutputV1Schema,
+        context,
+        signal,
+      );
+      if (dispatched !== null) return dispatched;
       const response = await callMachineAction({
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
@@ -123,6 +166,14 @@ export function createCliWorkspaceSyncActionDeps(
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
+      const dispatched = await dispatchOriginalRelationshipControl(
+        'workspace.sync.relationship.disable',
+        input,
+        WorkspaceSyncRelationshipDisableActionOutputV1Schema,
+        context,
+        signal,
+      );
+      if (dispatched !== null) return dispatched;
       const response = await callMachineAction({
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
@@ -139,6 +190,14 @@ export function createCliWorkspaceSyncActionDeps(
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
+      const dispatched = await dispatchOriginalRelationshipControl(
+        'workspace.sync.relationship.enable',
+        input,
+        WorkspaceSyncRelationshipEnableActionOutputV1Schema,
+        context,
+        signal,
+      );
+      if (dispatched !== null) return dispatched;
       const response = await callMachineAction({
         machineId: input.controllerMachineId,
         serverId: actionHomeId,
@@ -155,6 +214,14 @@ export function createCliWorkspaceSyncActionDeps(
       if (!params.credentials) return notSupported();
       const denied = await projectHomeAdmission(serverId ?? actionHomeId);
       if (denied) return denied;
+      const dispatched = await dispatchOriginalRelationshipControl(
+        'workspace.sync.relationship.flush',
+        input,
+        WorkspaceSyncRelationshipFlushActionOutputV1Schema,
+        context,
+        signal,
+      );
+      if (dispatched !== null) return dispatched;
       const response = await callMachineAction({
         machineId: input.controllerMachineId,
         serverId: actionHomeId,

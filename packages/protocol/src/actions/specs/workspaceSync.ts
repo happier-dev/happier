@@ -9,7 +9,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 function createWorkspaceSyncActionSpecs() {
   const relationshipControlExecution = { executionPlacement: 'machine', originalExecution: { accountRoot: 'allowed',
-    requesterCredentials: 'none', daemonIngressSurfaces: ['cli'] },
+    requesterCredentials: 'none' },
     machineRuntimeDemandForInput: (input, context) => {
       const machineId = readNonEmptyString(readRecord(input).controllerMachineId);
       return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;

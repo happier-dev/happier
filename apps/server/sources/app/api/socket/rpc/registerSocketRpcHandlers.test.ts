@@ -3453,7 +3453,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             requestId: 'source-request', continuation: true, timeoutMs: null }, vi.fn());
         await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
         const packet = dispatch.mock.calls[0]![1] as { requestId: string; continuationReturn: { socketId: string; requestId: string } };
-        expect(packet.continuationReturn).toEqual({ socketId: 'source-socket', requestId: 'source-request' });
+        expect(packet.continuationReturn).toEqual({ socketId: 'source-socket', requestId: 'source-request', proof: expect.any(String) });
         expect(caller.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.CONTINUATION,
             { requestId: 'source-request', selectedSocketId: 'remote-target' });
         await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CONTINUATION, {
@@ -3474,6 +3474,86 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             requestId: 'source-request', callId: '22'.repeat(16), params: 'late',
         });
         expect(delivered).toHaveLength(2);
+    });
+
+    it('drops continuation frames with forged, missing, or cross-socket returnTo addresses instead of injecting into arbitrary rooms', async () => {
+        let finish!: (value: unknown) => void;
+        const dispatch = vi.fn<RpcTargetEmitWithAck>(() => new Promise(resolve => { finish = resolve; }));
+        const target = { id: 'remote-target', timeout: () => ({ emitWithAck: dispatch }) };
+        const delivered: Array<{ room: string; event: string; frame: unknown }> = [];
+        const io = {
+            sockets: { sockets: new Map(), adapter: { rooms: new Map() } },
+            in: () => ({ fetchSockets: async () => [target], timeout: () => ({ fetchSockets: async () => [target] }) }),
+            to: (room: string) => ({ emit: (event: string, frame: unknown) => { delivered.push({ room, event, frame }); } }),
+        } as unknown as Server;
+        const caller = createFakeSocket({ id: 'source-socket' });
+        const receiver = createFakeSocket({ id: 'remote-target' });
+        const attacker = createFakeSocket({ id: 'attacker-socket' });
+        registerSocketRpcHandlers({ userId: 'user-1', socket: caller as unknown as Socket, io });
+        registerSocketRpcHandlers({ userId: 'user-1', socket: receiver as unknown as Socket, io });
+        registerSocketRpcHandlers({ userId: 'attacker-user', socket: attacker as unknown as Socket, io });
+
+        const call = triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+            method: 'agent.run', params: 'opaque', requestId: 'source-request', continuation: true, timeoutMs: null,
+        }, vi.fn());
+        await vi.waitFor(() => expect(dispatch).toHaveBeenCalledOnce());
+        const packet = dispatch.mock.calls[0]![1] as {
+            requestId: string;
+            continuationReturn: { socketId: string; requestId: string; proof?: string };
+        };
+
+        // 1. Unauthenticated attacker tries to inject into victim user room (missing proof)
+        await triggerSocketHandler(attacker, SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: 'forged-request',
+            returnTo: { socketId: 'user:victim-account', requestId: 'victim-req' },
+            callId: 'aa'.repeat(16), reply: true, params: 'injected-frame',
+        });
+        // 2. Attacker supplies bogus proof
+        await triggerSocketHandler(attacker, SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: 'forged-request',
+            returnTo: { socketId: 'source-socket', requestId: 'source-request', proof: 'forged-proof' },
+            callId: 'bb'.repeat(16), reply: true, params: 'injected-frame',
+        });
+        // 3. Attacker steals legitimate continuationReturn and replays it from a different socket
+        await triggerSocketHandler(attacker, SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: packet.requestId,
+            returnTo: packet.continuationReturn,
+            callId: 'cc'.repeat(16), reply: true, params: 'replayed-from-wrong-socket',
+        });
+        // 4. Legitimate receiver tampers with target socketId while keeping proof
+        await triggerSocketHandler(receiver, SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: packet.requestId,
+            returnTo: { ...packet.continuationReturn, socketId: 'user:victim-account' },
+            callId: 'dd'.repeat(16), reply: true, params: 'tampered-destination',
+        });
+        // 5. Legitimate receiver tampers with requestId while keeping proof
+        await triggerSocketHandler(receiver, SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: 'different-request-id',
+            returnTo: packet.continuationReturn,
+            callId: 'ee'.repeat(16), reply: true, params: 'tampered-request-id',
+        });
+
+        expect(delivered).toEqual([]);
+
+        // Legitimate receiver with genuine server-signed continuationReturn still succeeds
+        await triggerSocketHandler(receiver, SOCKET_RPC_EVENTS.CONTINUATION, {
+            requestId: packet.requestId,
+            returnTo: packet.continuationReturn,
+            callId: 'ff'.repeat(16), reply: true, params: 'legitimate-reply',
+        });
+        expect(delivered).toEqual([{
+            room: 'source-socket',
+            event: SOCKET_RPC_EVENTS.CONTINUATION,
+            frame: {
+                requestId: 'source-request',
+                senderSocketId: 'remote-target',
+                callId: 'ff'.repeat(16),
+                reply: true,
+                params: 'legitimate-reply',
+            },
+        }]);
+        finish({ removed: true });
+        await call;
     });
 
     it("binds cancellation to the issuing socket and server-mints distinct target request ids", async () => {

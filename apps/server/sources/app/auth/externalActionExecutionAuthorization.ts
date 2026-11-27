@@ -5521,6 +5521,93 @@ async function verifyWorkspaceSyncProjectSourcePacket(
     return true;
 }
 
+export type ResolvedWorkspaceSyncSourceWriterCleanupDestination = Readonly<{
+    writer: Exclude<Awaited<ReturnType<typeof resolveMachineAdmission>>, { kind: 'denied' }>;
+    destination: Readonly<{
+        id: string;
+        accountId: string;
+        installationId: string;
+        installationPublicKey: Uint8Array;
+    }>;
+}>;
+
+/**
+ * Canonical authorization owner for workspaceSyncSourceWriterTargetRouting cleanup phases
+ * (release | inspect | dependencies | remove) across HTTP admission verification and Socket RPC.
+ * Binds method prefix === routing.target.targetMachineId and requires current Machine admission
+ * on the destination using ONLY authenticated or Home-signed principals (never unauthenticated
+ * sourceContext.machineAdmission.actorAccountId).
+ */
+export async function resolveWorkspaceSyncSourceWriterCleanupDestination(params: Readonly<{
+    routing: WorkspaceSyncSourceWriterTargetRoutingV1;
+    method: string;
+    authenticatedAccountId?: string;
+    retirementActorAccountId?: string | null;
+}>): Promise<ResolvedWorkspaceSyncSourceWriterCleanupDestination | null> {
+    if (!isWorkspaceSyncSourceWriterCleanupPhaseV1(params.routing.target.phase)) return null;
+    if (!isWorkspaceSyncSourceWriterTargetMethodV1(params.routing.target.phase, params.method, params.routing.target.targetMachineId)) return null;
+
+    const writerAccountId = params.authenticatedAccountId ?? params.routing.source.sourceContext.machineAdmission.custodianAccountId;
+    const writer = await resolveMachineAdmission({
+        actorAccountId: writerAccountId,
+        machineId: params.routing.sourceWriter.machineId,
+        requiredRole: 'manage',
+    });
+    if (
+        writer.kind !== 'admitted'
+        || writer.actorAccountId !== writer.custodianAccountId
+        || writer.installationId !== params.routing.sourceWriter.installationId
+    ) {
+        return null;
+    }
+
+    let targetAdmission = await resolveMachineAdmission({
+        actorAccountId: writer.custodianAccountId,
+        machineId: params.routing.target.targetMachineId,
+        requiredRole: 'use',
+    });
+    if (targetAdmission.kind !== 'admitted' && params.retirementActorAccountId) {
+        const [sourceAccess, targetAccess] = await Promise.all([
+            resolveMachineAdmission({
+                actorAccountId: params.retirementActorAccountId,
+                machineId: params.routing.source.sourceMachineId,
+                requiredRole: 'use',
+            }),
+            resolveMachineAdmission({
+                actorAccountId: params.retirementActorAccountId,
+                machineId: params.routing.target.targetMachineId,
+                requiredRole: 'use',
+            }),
+        ]);
+        if (sourceAccess.kind === 'admitted' && targetAccess.kind === 'admitted') {
+            targetAdmission = targetAccess;
+        }
+    }
+    if (targetAdmission.kind !== 'admitted') return null;
+
+    const destination = await db.machine.findUnique({
+        where: { id: params.routing.target.targetMachineId },
+    }).then(decodeMachineStoredContent);
+    if (
+        !destination?.installationId
+        || !destination.installationPublicKey
+        || destination.installationId !== targetAdmission.installationId
+        || destination.accountId !== targetAdmission.custodianAccountId
+        || classifyMachineAvailabilityState(destination) !== 'available'
+    ) {
+        return null;
+    }
+    return {
+        writer,
+        destination: {
+            id: destination.id,
+            accountId: destination.accountId,
+            installationId: destination.installationId,
+            installationPublicKey: destination.installationPublicKey,
+        },
+    };
+}
+
 /** Reviewed cleanup spends the current SOURCE root without admitting the physical target again. */
 export async function readCurrentWorkspaceSyncCopyRetirementAuthorization(
     authorization: ExternalActionExecutionAuthorizationV1,
@@ -6094,7 +6181,7 @@ export async function verifyExternalActionMachineRpcExecution(
         if (routing.target.phase === 'inspect' || routing.target.phase === 'remove') {
             if (request.workspaceSyncTargetRouting || request.workspaceSyncSourceExecution
                 || execution.effectActionId !== binding.actionId || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
-                || request.method.slice(request.method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(routing.target.phase)) return null;
+                || !isWorkspaceSyncSourceWriterTargetMethodV1(routing.target.phase, request.method, routing.target.targetMachineId)) return null;
             const verified = await readCurrentWorkspaceSyncCopyRetirementAuthorization(execution.authorization, routing, request.resolveCurrentSessionMachine);
             const writer = await db.machine.findUnique({ where: { id: routing.sourceWriter.machineId } }).then(decodeMachineStoredContent);
             if (!verified || !writer?.installationPublicKey || writer.accountId !== routing.source.sourceContext.machineAdmission.custodianAccountId
@@ -6337,4 +6424,4 @@ export async function verifyExternalActionExecutionAuthorizationCurrentness(
     return publicVerified;
 }
 import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
-import { readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
+import { isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1 } from '@happier-dev/protocol/socketRpc';

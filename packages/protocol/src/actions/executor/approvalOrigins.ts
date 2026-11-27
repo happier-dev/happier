@@ -1,5 +1,5 @@
 import { ApprovalExecutionOriginV1Schema, ApprovalRequestOriginV1Schema, isApprovalRequesterConfirmationBoundToOriginV1, type ApprovalRequesterConfirmationV1, type ApprovalExecutionOriginCallerV1, type ApprovalExecutionOriginV1, type ApprovalRequest, type ApprovalRequestOriginV1 } from '../../approvals/approvalRequestV1.js';
-import { ACTION_ID_FAMILIES_V1, isLocalServiceStopActionIdV1, type ActionId } from '../actionIds.js';
+import { ACTION_ID_FAMILIES_V1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipControlActionId, type ActionId } from '../actionIds.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actionSpecs.js';
 import type { ActionCaller, ActionExecutorContext } from './types.js';
 import { normalizeId } from './inputReading.js';
@@ -287,7 +287,8 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   // An original Account Stop has a native destination, but its Ask has no
   // originating daemon custody. Signed invocations retain their Machine even
   // when public Artifact reads omit the private authorization.
-  const originalAccountStop = isLocalServiceStopActionIdV1(params.actionId)
+  const originalAccountStop = (isLocalServiceStopActionIdV1(params.actionId)
+    || isWorkspaceSyncRelationshipControlActionId(params.actionId))
     && !externalAuthorization && !externalCredential && caller.kind === 'host'
     && (surface === 'cli' || surface === 'mcp' || surface === 'ui');
   // The CLI's local identity supplies context, not a daemon invocation for a Home read.

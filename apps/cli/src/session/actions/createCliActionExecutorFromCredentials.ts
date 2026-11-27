@@ -2157,6 +2157,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           })) };
         }
       }
+      if (originalCliCaller && isWorkspaceSyncRelationshipControlActionId(actionId)) {
+        return {
+          context: { ...context, actionRequestId: context.actionRequestId ?? randomUUID() },
+          ...(admittedInput !== input ? { preparedSessionInput: admittedInput } : {}),
+        };
+      }
       const pairedTerminal = originalCliCaller && provenance?.provenance.kind === 'terminal';
       let controlControllerTarget: Awaited<ReturnType<typeof resolveManagedControlControllerTarget>> = null;
       try {

@@ -409,7 +409,7 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
     credentials: { ...setup.credentials, credentialProvenance: 'stored_session' }, externalActionClient: true,
     serverId: setup.installed.serverId, serverIdentityId: setup.installed.homeServerIdentityId,
     serverApiUrl: setup.installed.serverHttpBaseUrl,
-    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+    actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false, accountSettings: accountSettingsParse({
       actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.flush': ['cli'] } },
     }) }) });
   const control = await executor.execute('workspace.sync.relationship.flush', { relationshipId: result.relationshipId,

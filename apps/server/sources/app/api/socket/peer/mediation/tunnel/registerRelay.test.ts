@@ -2526,4 +2526,26 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
         ]));
         expect(JSON.stringify(emitted)).not.toContain('relay_grant_tun_denied');
     });
+
+    it('targets the protected user-scoped room instead of account-revocation when no user socketId is bound', async () => {
+        const mod = await loadRegisterRelayModule();
+        expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
+        if (!mod?.registerPeerTcpTunnelRelaySocketHandler) return;
+
+        const machineSocket = createSocket({ id: 'socket_machine_1', clientType: 'machine-scoped', machineId: 'machine_1' });
+        const io = createIo();
+        mod.registerPeerTcpTunnelRelaySocketHandler('user_1', machineSocket, {
+            io,
+            serverRoutedEnabled: true,
+            allowedPorts: [3000],
+            maxRawPayloadBytes: 2,
+            relayAuthorizationTrustRoots,
+            coordinator: createRelayTestCoordinator(io, 'user_1'),
+        });
+
+        await machineSocket.trigger('peer:tunnel:v1', createMachineDataEnvelope('tun_unbound_user_room', 'orphan-chunk'));
+
+        expect(io.local.to).toHaveBeenCalledWith('user:user_1');
+        expect(io.local.to).not.toHaveBeenCalledWith('account-revocation:user_1');
+    });
 });

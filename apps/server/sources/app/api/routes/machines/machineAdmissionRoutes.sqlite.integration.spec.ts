@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainMachineStoredContent, signMachineInstallationProof } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db } from '@/storage/db';
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
+import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
+import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import type { Socket } from 'socket.io';
 import { machinesRoutes } from './machinesRoutes';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
@@ -15,7 +19,7 @@ import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 describe('Machine receiver current admission on SQLite', () => {
     let harness: LightSqliteHarness | undefined;
     beforeAll(async () => { harness = await createLightSqliteHarness({
-        tempDirPrefix: 'happier-machine-receiver-currentness-', initAuth: false, initEncrypt: false, initFiles: false,
+        tempDirPrefix: 'happier-machine-receiver-currentness-', initAuth: true, initEncrypt: false, initFiles: false,
         env: { HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1' },
     }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
@@ -195,6 +199,174 @@ describe('Machine receiver current admission on SQLite', () => {
             const released = await verify(body('abort'));
             expect(released.statusCode).toBe(200);
             expect(released.json()).toEqual({ v: 1, ok: true });
+        } finally { await app.close(); }
+    });
+
+    it('refuses cross-account sourceWriterTarget cleanup oracle, arbitrary socket forwarding, forged actorAccountId, and methodPrefix mismatch, and revokes immediately', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const attacker = await db.account.create({ data: { publicKey: `attacker-${randomUUID()}`, encryptionMode: 'plain' } });
+        const victim = await db.account.create({ data: { publicKey: `victim-${randomUUID()}`, encryptionMode: 'plain' } });
+        const bystander = await db.account.create({ data: { publicKey: `bystander-${randomUUID()}`, encryptionMode: 'plain' } });
+        const attackerKey = tweetnacl.sign.keyPair();
+        const victimKey = tweetnacl.sign.keyPair();
+        const bystanderKey = tweetnacl.sign.keyPair();
+        const createMachine = (accountId: string, key: ReturnType<typeof tweetnacl.sign.keyPair>) => db.machine.create({ data: {
+            id: randomUUID(), accountId, active: true,
+            metadata: encodePlainMachineStoredContent({ host: 'cleanup-sec', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+            installationId: randomUUID(), installationPublicKey: new Uint8Array(key.publicKey),
+        } });
+        const attackerMachine = await createMachine(attacker.id, attackerKey);
+        const victimMachine = await createMachine(victim.id, victimKey);
+        const bystanderMachine = await createMachine(bystander.id, bystanderKey);
+
+        const writerContext = {
+            actorAccountId: attacker.id, custodianAccountId: attacker.id, machineId: attackerMachine.id,
+            installationId: attackerMachine.installationId!, role: 'manage' as const, encryptionMode: 'plain' as const,
+        };
+        const buildRouting = (phase: 'release' | 'inspect' | 'dependencies', targetMachineId: string, claimedActorId = attacker.id) =>
+            WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({
+                v: 1,
+                sourceWriter: { machineId: attackerMachine.id, installationId: attackerMachine.installationId! },
+                source: {
+                    v: 1, phase: 'abort', operationId: randomUUID(), accountServerId: homeId,
+                    sourceMachineId: attackerMachine.id, sourceRootPath: '/attacker/src',
+                    sourceContext: {
+                        machineAdmission: { ...writerContext, actorAccountId: claimedActorId },
+                        callerAuthority: 'present_user',
+                    },
+                },
+                target: {
+                    v: 1, phase, operationId: randomUUID(), accountServerId: homeId,
+                    targetMachineId, targetRootPath: '/victim/dst',
+                },
+            });
+        const phaseMethod = (phase: 'release' | 'inspect' | 'dependencies') =>
+            phase === 'release' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
+                : phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+                    : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_DEPENDENCIES_INSPECT;
+
+        const app = createAuthenticatedTestApp();
+        machinesRoutes(app);
+        const attackerToken = await createAccountTokenForTests(attacker.id, { kind: 'account', authority: 'present_user' });
+        try {
+            const verifyHttp = (machine: { id: string; installationId: string | null; accountId: string }, key: ReturnType<typeof tweetnacl.sign.keyPair>, method: string, routing: ReturnType<typeof buildRouting>) => {
+                const proof = signMachineInstallationProof({
+                    payload: {
+                        version: 1, machineId: machine.id, installationId: machine.installationId!, accountId: machine.accountId,
+                        rpcAdmission: { context: writerContext, method, workspaceSyncSourceWriterTargetRouting: routing },
+                    },
+                    privateKey: key.secretKey,
+                });
+                return app.inject({
+                    method: 'POST',
+                    url: `/v1/machines/${machine.id}/admission/verify`,
+                    headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': machine.accountId },
+                    payload: { v: 1, context: writerContext, method, workspaceSyncSourceWriterTargetRouting: routing, proof },
+                });
+            };
+
+            const callSocket = async (targetMachine: { id: string; installationId: string | null; accountId: string }, method: string, routing: ReturnType<typeof buildRouting>) => {
+                const compat = evaluateAccountStoredContentSocketCompatibility({ accountStoredContentCompatibility: { v: 1, protocolVersion: 2 } }).evaluation;
+                const forwarded: unknown[] = [];
+                const targetDaemon = createAuthenticatedFakeSocket({
+                    id: `daemon-${targetMachine.id}`,
+                    data: {
+                        clientType: 'machine-scoped', userId: targetMachine.accountId, machineId: targetMachine.id,
+                        verifiedMachineInstallationId: targetMachine.installationId!,
+                        accountStoredContentCompatibility: compat,
+                    },
+                    timeout: () => ({ emitWithAck: async (_event: string, packet: unknown) => { forwarded.push(packet); return { ok: true }; } }),
+                });
+                const io = createSocketRoomDiscoveryHarness(async room =>
+                    room === targetDaemon.id || room === `rpc:${targetMachine.accountId}:${method}` ? [targetDaemon] : []);
+                const caller = Object.assign(createAuthenticatedFakeSocket({
+                    id: `attacker-socket-${randomUUID()}`,
+                    data: {
+                        clientType: 'machine-scoped', userId: attacker.id, machineId: attackerMachine.id,
+                        verifiedMachineInstallationId: attackerMachine.installationId!,
+                        authTokenKind: 'account', authAuthority: 'present_user',
+                        accountStoredContentCompatibility: compat,
+                    },
+                }), { handshake: { auth: { token: attackerToken } } });
+                registerSocketRpcHandlers({ userId: attacker.id, socket: caller as unknown as Socket, io });
+                const cb = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+                    method, params: 'opaque', workspaceSyncSourceWriterTargetRouting: routing,
+                }, cb);
+                return { result: cb.mock.calls[0]?.[0], forwarded };
+            };
+
+            // 1. Cross-account attacker M_A -> victim M_B across release, inspect (all inspect methods), dependencies
+            for (const [phase, rpcMethod] of [
+                ['release', phaseMethod('release')],
+                ['inspect', phaseMethod('inspect')],
+                ['inspect', RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE],
+                ['inspect', RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ],
+                ['dependencies', phaseMethod('dependencies')],
+            ] as const) {
+                const routing = buildRouting(phase, victimMachine.id);
+                const method = `${victimMachine.id}:${rpcMethod}`;
+                const senderDiscovery = await verifyHttp(attackerMachine, attackerKey, method, routing);
+                expect(senderDiscovery.statusCode).toBe(403);
+                expect(senderDiscovery.json()).toEqual({ error: 'access_denied' });
+
+                const receiverVerify = await verifyHttp(victimMachine, victimKey, method, routing);
+                expect(receiverVerify.statusCode).toBe(403);
+                expect(receiverVerify.json()).toEqual({ error: 'access_denied' });
+
+                const socketCall = await callSocket(victimMachine, method, routing);
+                expect(socketCall.forwarded).toEqual([]);
+                expect(socketCall.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+            }
+
+            // 2. Attacker unilaterally grants victim access to M_A and spoofs actorAccountId = victim.id
+            await db.machineGrant.create({ data: {
+                principalKind: 'account', machineId: attackerMachine.id, accountId: victim.id,
+                accessLevel: 'admin', createdByAccountId: attacker.id,
+            } });
+            const spoofedRouting = buildRouting('release', victimMachine.id, victim.id);
+            const victimReleaseMethod = `${victimMachine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`;
+            expect((await verifyHttp(attackerMachine, attackerKey, victimReleaseMethod, spoofedRouting)).statusCode).toBe(403);
+            expect((await verifyHttp(victimMachine, victimKey, victimReleaseMethod, spoofedRouting)).statusCode).toBe(403);
+            const spoofedSocket = await callSocket(victimMachine, victimReleaseMethod, spoofedRouting);
+            expect(spoofedSocket.forwarded).toEqual([]);
+            expect(spoofedSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 3. Victim grants attacker active use access to M_B: legitimate cleanup works,
+            //    but mismatched methodPrefix (bystanderMachine) is STILL refused.
+            await db.machineGrant.create({ data: {
+                principalKind: 'account', machineId: victimMachine.id, accountId: attacker.id,
+                accessLevel: 'view', createdByAccountId: victim.id,
+            } });
+            const legitimateRouting = buildRouting('release', victimMachine.id);
+            const mismatchedMethod = `${bystanderMachine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`;
+            expect((await verifyHttp(attackerMachine, attackerKey, mismatchedMethod, legitimateRouting)).statusCode).toBe(403);
+            expect((await verifyHttp(bystanderMachine, bystanderKey, mismatchedMethod, legitimateRouting)).statusCode).toBe(403);
+            const mismatchedSocket = await callSocket(bystanderMachine, mismatchedMethod, legitimateRouting);
+            expect(mismatchedSocket.forwarded).toEqual([]);
+            expect(mismatchedSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // Legitimate admitted target succeeds on discovery, receiver verify, and socket call
+            const okDiscovery = await verifyHttp(attackerMachine, attackerKey, victimReleaseMethod, legitimateRouting);
+            expect(okDiscovery.statusCode).toBe(200);
+            expect(okDiscovery.json()).toMatchObject({
+                v: 1, ok: true,
+                destinationInstallation: { machineId: victimMachine.id, installationId: victimMachine.installationId },
+            });
+            expect((await verifyHttp(victimMachine, victimKey, victimReleaseMethod, legitimateRouting)).statusCode).toBe(200);
+            const okSocket = await callSocket(victimMachine, victimReleaseMethod, legitimateRouting);
+            expect(okSocket.forwarded, JSON.stringify(okSocket.result)).toHaveLength(1);
+            expect(okSocket.result).toMatchObject({ ok: true });
+
+            // 4. Instant revocation: deleting the grant immediately revokes discovery, verify, and socket forwarding
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: victimMachine.id, accountId: attacker.id } } });
+            expect((await verifyHttp(attackerMachine, attackerKey, victimReleaseMethod, legitimateRouting)).statusCode).toBe(403);
+            expect((await verifyHttp(victimMachine, victimKey, victimReleaseMethod, legitimateRouting)).statusCode).toBe(403);
+            const revokedSocket = await callSocket(victimMachine, victimReleaseMethod, legitimateRouting);
+            expect(revokedSocket.forwarded).toEqual([]);
+            expect(revokedSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
         } finally { await app.close(); }
     });
 });

@@ -6,7 +6,7 @@ import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@h
 import { verifyPeerTcpTunnelRelayAuthorizationV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorization';
 import { type PeerTcpTunnelRelayAuthorizationPayloadV2, type PeerTcpTunnelRelayAuthorizationTrustRootV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorizationSchemas';
 
-import { getSocketRooms } from '../../../../socketRooms';
+import { getProtectedSocketRooms, getSocketRooms } from '../../../../socketRooms';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { eventRouter } from '@/app/events/eventRouter';
 import { log } from '@/utils/logging/log';
@@ -103,7 +103,7 @@ function participantRoom(input: Readonly<{
         const tunnelUserSocketId = userSocketIdByTunnelKey.get(tunnelKey);
         if (tunnelUserSocketId) return tunnelUserSocketId;
     }
-    return getSocketRooms({
+    return getProtectedSocketRooms({
         userId,
         clientType: 'user-scoped',
     })[0] ?? `user:${userId}`;

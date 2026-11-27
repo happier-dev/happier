@@ -102,7 +102,7 @@ import {
     authorizeSessionFollowSourceKeyPreparer,
 } from "@/app/session/follow/sessionFollowEdgeService";
 import { verifyExternalActionMachineRpcExecution, hasCurrentExternalActionSessionSource,
-    readCurrentWorkspaceSyncHandoffWriterTarget, verifyWorkspaceSyncProjectSourceAuthorization,
+    readCurrentWorkspaceSyncHandoffWriterTarget, resolveWorkspaceSyncSourceWriterCleanupDestination, verifyWorkspaceSyncProjectSourceAuthorization,
     resolveReceivingMachineRpcAdmission } from "@/app/auth/externalActionExecutionAuthorization";
 import {
     readMaterializedRunnerMachineRoutingBinding,
@@ -120,6 +120,7 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, resolveCurrentSessionMachineFromS
 import type { ExternalActionDaemonDispatcher } from "../externalActionDispatcher";
 import { forwardHostResourceWatch } from "../forwardHostResourceWatch";
 import { forwardRpcCall } from "./forwardRpcCall";
+import { verifySocketRpcContinuationReturn } from "./continuationReturnProof";
 import type { RpcForwardTargetGuard } from "./_types";
 import { buildMachineRpcAvailabilityRoom, buildRpcMethodRoom } from "./rpcMethodRoom";
 import { RPC_REGISTERED_METHODS_SOCKET_DATA_KEY, readSocketRegisteredRpcMethods } from './rpcRegisteredMethods';
@@ -920,6 +921,13 @@ export function registerSocketRpcHandlers(params: Readonly<{
         const parsed = SocketRpcContinuationFrameV1Schema.safeParse(value);
         if (!parsed.success) return;
         const frame = parsed.data;
+        if (frame.returnTo && !verifySocketRpcContinuationReturn({
+            returnTo: frame.returnTo,
+            targetSocketId: params.socket.id,
+            targetRequestId: frame.requestId,
+        })) {
+            return;
+        }
         const active = frame.returnTo ? undefined : activeCancellations.get(frame.requestId);
         const destination = frame.returnTo ?? (active?.targetSocketId
             ? { socketId: active.targetSocketId, requestId: active.targetRequestId } : null);
@@ -2086,13 +2094,23 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     if (writer.kind !== 'admitted' || writer.custodianAccountId !== params.userId
                         || writer.actorAccountId !== params.userId || writer.installationId !== sender.installationId) return null;
                     if (cleanup) {
-                        if (sessionActionOrigin || (externalActionExecution
+                        if (sessionActionOrigin || workspaceSyncTargetRouting || (externalActionExecution
                             ? !externalActionExecution.success || !verifiedExternalAction
                             : routing.target.phase === 'remove')) return null;
-                        const receiver = await db.machine.findUnique({ where: { id: machinePrefix } }).then(decodeMachineStoredContent);
-                        if (!receiver?.installationId || classifyMachineAvailabilityState(receiver) !== 'available') return null;
-                        const { kind: _kind, ...context } = writer;
-                        return { context, receiverId: receiver.id, receiverInstallationId: receiver.installationId, accountId: receiver.accountId };
+                        const cleanupAdmitted = await resolveWorkspaceSyncSourceWriterCleanupDestination({
+                            routing,
+                            method,
+                            authenticatedAccountId: params.userId,
+                            retirementActorAccountId: verifiedExternalAction?.binding.accountId ?? null,
+                        });
+                        if (!cleanupAdmitted) return null;
+                        const { kind: _kind, ...context } = cleanupAdmitted.writer;
+                        return {
+                            context,
+                            receiverId: cleanupAdmitted.destination.id,
+                            receiverInstallationId: cleanupAdmitted.destination.installationId,
+                            accountId: cleanupAdmitted.destination.accountId,
+                        };
                     }
                     if (!externalActionExecution?.success || !verifiedExternalAction) return null;
                     const current = await readCurrentWorkspaceSyncHandoffWriterTarget(externalActionExecution.data.authorization, routing,

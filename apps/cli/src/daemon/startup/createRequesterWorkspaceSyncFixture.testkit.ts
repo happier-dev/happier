@@ -125,6 +125,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   workerCleanCopy?: boolean;
   allowRelationshipAction?: boolean;
   allowRelationshipControls?: boolean;
+  isolateInstalledProjectRows?: boolean;
   remoteSeed?: boolean;
   isolationOff?: boolean;
   gitReplica?: 'existing' | 'missing';
@@ -423,7 +424,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     } }));
   const sourceSocket = Reflect.get(installed.machine, 'socket');
   const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, withScmRuntime: true, projectRowsFromHttp: true,
-    ...(options.allowRelationshipControls ? { isolateInstalledProjectRows: true } : {}),
+    ...(options.allowRelationshipControls || options.isolateInstalledProjectRows ? { isolateInstalledProjectRows: true } : {}),
     ...(options.gitReplica ? { gitWorktreeSeed: true } : {}),
     ...(options.nativeCarrierHome ? { nativeCarrierHome: options.nativeCarrierHome } : {}),
     serverId: installed.homeServerIdentityId, profileId: installed.serverId, managedHomeId: installed.homeServerIdentityId,

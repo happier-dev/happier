@@ -3,7 +3,7 @@ import { TransferRelayV2SendEnvelopeSchema, type TransferRelayV2Recipient, type 
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { Server, Socket } from 'socket.io';
 
-import { getSocketRooms } from '../socketRooms';
+import { getProtectedSocketRooms, getSocketRooms } from '../socketRooms';
 import {
   transferRelayLifecycle,
   type TransferRelayLogicalIdentity,
@@ -104,7 +104,7 @@ function resolveRecipientRoom(params: Readonly<{
     return rooms.find((room) => room.startsWith(`machine:${machineId}:`))
       ?? `machine:${machineId}:${params.userId}`;
   }
-  return getSocketRooms({
+  return getProtectedSocketRooms({
     userId: params.userId,
     clientType: 'user-scoped',
   })[0] ?? `user:${params.userId}`;

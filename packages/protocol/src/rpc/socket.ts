@@ -147,6 +147,7 @@ export const SocketRpcRequestIdSchema = lazyZodSchema(() => z.string().check(z.t
 /** Relay address only. The active call and its captured codec decide the receiver. */
 export const SocketRpcContinuationReturnV1Schema = lazyZodSchema(() => z.strictObject({
   socketId: z.string().check(z.minLength(1)), requestId: SocketRpcRequestIdSchema,
+  proof: z.optional(z.string().check(z.minLength(1), z.maxLength(256))),
 }));
 export type SocketRpcContinuationReturnV1 = z.infer<typeof SocketRpcContinuationReturnV1Schema>;
 export const SocketRpcContinuationFrameV1Schema = lazyZodSchema(() => z.strictObject({

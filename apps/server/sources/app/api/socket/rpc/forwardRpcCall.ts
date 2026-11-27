@@ -52,6 +52,7 @@ import {
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 
+import { signSocketRpcContinuationReturn } from "./continuationReturnProof";
 import { waitForRpcTargetAvailability } from "./rpcAvailabilityWait";
 import { resolveRpcForwardTimeoutMs } from "./rpcForwardTimeout";
 import {
@@ -494,7 +495,14 @@ async function executeRpcForwardCall(params: Readonly<{
             return { ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE };
         }
         const targetRequestId = params.cancellation?.targetRequestId
-            ?? (params.createCallerInputAuthorization || params.identifyRequest ? `rpc_${randomUUID()}` : undefined);
+            ?? (params.createCallerInputAuthorization || params.identifyRequest || params.continuationReturn ? `rpc_${randomUUID()}` : undefined);
+        const signedContinuationReturn = params.continuationReturn && targetRequestId
+            ? signSocketRpcContinuationReturn({
+                returnTo: params.continuationReturn,
+                targetSocketId: selection.target.id,
+                targetRequestId,
+            })
+            : undefined;
         const request: SocketRpcRequestPayload = {
             method: params.method,
             params: params.callParams,
@@ -513,7 +521,7 @@ async function executeRpcForwardCall(params: Readonly<{
             timeoutMs,
             ...(targetRequestId ? { requestId: targetRequestId } : {}),
             ...(params.projectOpenRequestId ? { projectOpenRequestId: params.projectOpenRequestId } : {}),
-            ...(params.continuationReturn ? { continuation: true as const, continuationReturn: params.continuationReturn } : {}),
+            ...(signedContinuationReturn ? { continuation: true as const, continuationReturn: signedContinuationReturn } : {}),
             ...(params.cancellation?.ackSignal ? { waitForResultOnCancel: true } : {}),
             ...(params.traceId ? { traceId: params.traceId } : {}),
             ...(params.authorization ? { authorization: params.authorization } : {}),

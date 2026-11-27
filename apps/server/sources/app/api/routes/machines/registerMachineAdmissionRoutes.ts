@@ -10,6 +10,7 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
     isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1, readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
     readCurrentWorkspaceSyncCopyRetirementAuthorization,
+    resolveWorkspaceSyncSourceWriterCleanupDestination,
     verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
     hasCurrentExternalActionSessionSource, readCurrentWorkspaceSyncSeedAuthorization, verifyExternalActionMachineRpcExecution,
     verifyWorkspaceSyncSeedKeyCustody,
@@ -244,34 +245,35 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     publicKey: encodeBase64(receiver.installationPublicKey, 'base64url') })) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
+            if (cleanup) {
+                const cleanupAdmitted = await resolveWorkspaceSyncSourceWriterCleanupDestination({
+                    routing: writerRouting,
+                    method,
+                    retirementActorAccountId: retirement?.binding.accountId ?? null,
+                });
+                if (!cleanupAdmitted) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                const { kind: _kind, ...transport } = cleanupAdmitted.writer;
+                if (!isDeepStrictEqual(context, transport)) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                if (receiver.id === cleanupAdmitted.writer.machineId
+                    && receiver.installationId === cleanupAdmitted.writer.installationId) {
+                    const { destination } = cleanupAdmitted;
+                    return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
+                        installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
+                }
+                if (receiver.id !== cleanupAdmitted.destination.id
+                    || receiver.installationId !== cleanupAdmitted.destination.installationId) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                return reply.send({ v: 1, ok: true });
+            }
             const writer = await resolveMachineAdmission({ actorAccountId: writerRouting.source.sourceContext.machineAdmission.custodianAccountId,
                 machineId: writerRouting.sourceWriter.machineId, requiredRole: 'manage' });
             if (writer.kind !== 'admitted' || writer.installationId !== writerRouting.sourceWriter.installationId) {
                 return reply.code(403).send({ error: 'access_denied' });
-            }
-            if (cleanup) {
-                // The receiver's existing retained operation owns past target custody.
-                // This Home proof authenticates only current writer/receiver transport.
-                const { kind: _kind, ...transport } = writer;
-                if (!isDeepStrictEqual(context, transport)) {
-                    return reply.code(403).send({ error: 'access_denied' });
-                }
-                if (receiver.id === writer.machineId
-                    && receiver.installationId === writer.installationId) {
-                    // SOURCE discovers only transport; the retained TARGET owner
-                    // still decides whether this exact copy may be inspected.
-                    const destination = await db.machine.findUnique({ where: { id: method.slice(0, method.indexOf(':')) } }).then(decodeMachineStoredContent);
-                    if (!destination?.installationId || !destination.installationPublicKey
-                        || classifyMachineAvailabilityState(destination) !== 'available') {
-                        return reply.code(403).send({ error: 'access_denied' });
-                    }
-                    return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
-                        installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
-                }
-                if (!method.startsWith(`${receiver.id}:`)) {
-                    return reply.code(403).send({ error: 'access_denied' });
-                }
-                return reply.send({ v: 1, ok: true });
             }
             const admitted = callerInputAuthorization
                 && await readCurrentWorkspaceSyncHandoffWriterTarget(callerInputAuthorization, writerRouting, app.resolveCurrentSessionMachine,

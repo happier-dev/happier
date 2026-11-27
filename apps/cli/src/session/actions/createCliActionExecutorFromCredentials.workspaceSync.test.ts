@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
@@ -28,6 +30,13 @@ it('addresses Stop to the committed controller when invoked from the linked Work
     ]);
     vi.spyOn(axios, 'post').mockImplementation(rows);
     const machineReads: string[] = [];
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
+      const path = new URL(String(config.url)).pathname;
+      if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
+      return { status: 404, data: { error: 'not_found' } };
+    });
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(url).pathname;
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
@@ -42,10 +51,14 @@ it('addresses Stop to the committed controller when invoked from the linked Work
       machineId: 'worker', actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({
         v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.terminate': ['cli'] },
       }) },
+      resolveServerFeaturesSnapshot: () => ({
+        status: 'ready', provenance: 'authenticated',
+        features: FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: serverId } } }),
+      }),
     });
     const result = await executor.execute('workspace.sync.relationship.terminate',
       { relationshipId, controllerMachineId: 'worker' }, { surface: 'cli', authority: 'present_user' });
-    expect(result).toMatchObject({ ok: false, errorCode: 'access_denied' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     expect(machineReads).toEqual(['source']);
   });
 });
