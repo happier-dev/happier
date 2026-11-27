@@ -24,6 +24,11 @@ jobs:
   docker:
     needs:
       - source
+    # GitHub admits a reusable call only when the caller grants every permission its jobs declare; the
+    # build_only path skips the publish job and registry logins, so nothing is pushed with this grant.
+    permissions:
+      contents: read
+      packages: write
     uses: ./.github/workflows/publish-docker.yml
     with:
       channel: dev
