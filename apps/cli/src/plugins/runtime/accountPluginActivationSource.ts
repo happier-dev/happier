@@ -1,5 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -35,6 +35,7 @@ import { resolveBundledPluginEnablement, withAccountPluginProjectScopes } from '
 import { resolveUnavailableAgentPluginsByBackendId } from '@/plugins/projection/registry/builtIn/snapshot';
 import { PluginDiagnosticError } from './moduleFailure';
 import { projectAccountContributionRegistry } from './accountContributionProjection';
+import { publishAccountPluginArtifactFiles } from './publishAccountPluginArtifactFiles';
 
 type AccountBundledSelection = Parameters<typeof resolvePluginAccountExecutionSelectionV1>[0]['bundled'];
 
@@ -336,16 +337,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                     if (!opened || createCanonicalJsonSigningInput(opened.artifactGraph) !== createCanonicalJsonSigningInput(graph)) {
                         throw new Error('plugin_account_execution_artifact_invalid');
                     }
-                    for (const [relativePath, bytes] of opened.files) {
-                        const path = join(root, relativePath);
-                        await mkdir(dirname(path), { recursive: true });
-                        try { await writeFile(path, bytes, { flag: 'wx' }); }
-                        catch (error) {
-                            if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-                            // Only a file this write did not produce needs comparing.
-                            if (!Buffer.from(await readFile(path)).equals(Buffer.from(bytes))) throw new Error('plugin_account_execution_cache_invalid');
-                        }
-                    }
+                    await publishAccountPluginArtifactFiles(root, opened.files);
                 } else if (!held) {
                     if (hostSource?.kind === 'bundled') await hostSource.prepare?.();
                     const files = await Promise.all(graph.files.map(async file => ({ relativePath: file.relativePath,

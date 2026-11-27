@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import fastify from 'fastify';
@@ -10,6 +11,7 @@ import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/curr
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createDeferred } from '@/testkit/async/deferred';
 import { readCurrentAccountPluginEnablements, readCurrentAccountPluginExecutionSelection, readCurrentMountedAccountPluginExecutionSelection, resolveAccountPluginActivationSources } from './accountPluginActivationSource';
 import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 import { createCommittedContributedActionInvoker, createCommittedContributedActionDefinitionLister,
@@ -487,12 +489,12 @@ describe('Account activation source assembly', () => {
             expect(exactReads).toBe(4);
         } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
     });
-    it('holds admitted Account module content once: repeated use redownloads nothing and disable still refuses', async () => {
+    it('shares a complete Account artifact across cold loads, refuses conflicting bytes, and reuses the held module', async () => {
         const home = await mkdtemp(join(tmpdir(), 'account-held-source-'));
         // The released module imports the SDK; a real import needs this package's resolution root.
         await symlink(join(process.cwd(), 'node_modules'), join(home, 'node_modules'));
         const app = fastify();
-        const { pluginId, setEnabled } = await registerAuthoredAccountActionRelease(app, 'owner');
+        const { pluginId, files, release, setEnabled } = await registerAuthoredAccountActionRelease(app, 'owner');
         let hostedArtifactReads = 0;
         app.addHook('onRequest', async request => {
             if (request.url === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.uiArtifact.read']) hostedArtifactReads += 1;
@@ -502,19 +504,56 @@ describe('Account activation source assembly', () => {
         app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
         await app.ready();
         const restore = installAxiosFastifyAdapter({ app, origin: 'http://account-held-source.test' });
+        const paths = resolvePluginStorePaths({ happyHomeDir: home });
+        const entry = join(paths.cacheDir, 'account-artifacts', release.archiveDigestSha256.slice(7), pluginId, files[0]!.relativePath);
         const census = () => resolveAccountPluginActivationSources({ contributes: createResolvedContributionRegistry({}),
-            paths: resolvePluginStorePaths({ happyHomeDir: home }), credentials: { token: 'fixture', encryption: null },
+            paths, credentials: { token: 'fixture', encryption: null },
             serverUrl: 'http://account-held-source.test', isCurrent: () => true, resolveBundledActivationSource: () => null });
         try {
-            const first = await census();
-            const loaded = await first.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            const [first, second] = await Promise.all([census(), census()]);
+            const resolveFirst = () => first.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            const resolveSecond = () => second.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            await mkdir(dirname(entry), { recursive: true });
+            await writeFile(entry, 'conflicting cache contents');
+            await expect(resolveFirst()).rejects.toThrow('plugin_account_execution_cache_invalid');
+            expect(await readFile(entry, 'utf8')).toBe('conflicting cache contents');
+            await rm(entry);
+
+            const prefixWritten = createDeferred();
+            const finishWrite = createDeferred();
+            const realWriteFile = filesystem.writeFile;
+            let pauseNextArtifactWrite = true;
+            const write = vi.spyOn(filesystem, 'writeFile').mockImplementation(async (path, bytes, options) => {
+                if (pauseNextArtifactWrite && typeof path === 'string' && dirname(path) === dirname(entry) && bytes instanceof Uint8Array) {
+                    pauseNextArtifactWrite = false;
+                    await realWriteFile(path, bytes.subarray(0, Math.floor(bytes.length / 2)), options);
+                    prefixWritten.resolve();
+                    await finishWrite.promise;
+                    await realWriteFile(path, bytes, { flag: 'w' });
+                    return;
+                }
+                await realWriteFile(path, bytes, options);
+            });
+            const pending = Promise.resolve(resolveFirst());
+            const loaded = await (async () => {
+                try {
+                    await Promise.race([prefixWritten.promise, pending.then(() => { throw new Error('Expected an in-flight artifact write'); })]);
+                    return await resolveSecond();
+                } finally {
+                    finishWrite.resolve();
+                    await Promise.allSettled([pending]);
+                    write.mockRestore();
+                }
+            })();
             expect(typeof loaded?.module.activate).toBe('function');
-            expect(hostedArtifactReads).toBe(1);
+            expect((await pending)?.module).toBe(loaded?.module);
+            expect(await readFile(entry)).toEqual(Buffer.from(files[0]!.bytes));
+            const coldArtifactReads = hostedArtifactReads;
             // A later invocation's census re-decides use; only the bytes are reused.
-            const second = await census();
-            const repeated = await second.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
+            const later = await census();
+            const repeated = await later.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime');
             expect(repeated?.module).toBe(loaded?.module);
-            expect(hostedArtifactReads).toBe(1);
+            expect(hostedArtifactReads).toBe(coldArtifactReads);
             setEnabled(false);
             const disabled = await census();
             await expect(disabled.sourcesByPluginId.get(pluginId)?.resolveRelativeModule?.('account-runtime') ?? Promise.reject(new Error('unavailable')))
