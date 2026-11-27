@@ -21,7 +21,7 @@ vi.mock('@/utils/platform/tauri/transferFetch', () => ({
     resolveTauriRuntimeFetch: async () => (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
 }));
 
-import { DATABASE_PLUGIN_ID_V1, UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1, UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/mountedUiProtocol';
 import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
@@ -513,7 +513,7 @@ function createCurrentUiClientActionFixture(input: Readonly<{
             hostAccountOrigin: accountOrigin,
             accountActionDeclaration: PluginActionContributionV2Schema.parse({
                 id: action.id, title: action.title, execution: action.execution, scopes: action.scopes,
-                surfaces: action.surfaces, dangerLevel: action.dangerLevel, inputSchema: {},
+                surfaces: action.surfaces, dangerLevel: action.dangerLevel, confirmation: action.confirmation, inputSchema: {},
             }),
         } : { [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin }),
     });
@@ -1998,14 +1998,14 @@ describe('current UI context Voice tool port', () => {
     });
 
     it.each([
-        { name: 'DB Workbench History Clear', mountId: '9293781a-27e9-4de4-81a2-e9b5c1f076bc',
+        { name: 'DB Workbench History Clear', mountId: '0dc76ace-1589-4749-bf0b-77189d8a19f1',
             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1) },
-            status: 'cleared', operation: null },
+            status: 'cleared', operation: null, confirm: true },
         { name: 'Triage Summary', mountId: '_r_16_', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
             operation: { kind: 'setPublicationSummary', summary: '' } },
         { name: 'Triage saved View', mountId: '_r_16_', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
             operation: { kind: 'selectSavedView', viewId: 'c6027590-2b4c-42ea-8528-0d16be2a4d98' } },
-    ])('admits $name from the mounted Account Client Action reverse ingress', async ({ mountId, action, operation, status }) => {
+    ])('admits $name from the mounted Account Client Action reverse ingress', async ({ mountId, action, operation, status, confirm }) => {
         const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -2019,20 +2019,43 @@ describe('current UI context Voice tool port', () => {
         const snapshot = { navigation: { area: 'plugin', screen: 'page' }, commands: [],
             detail: { address: { mountId } } } satisfies CurrentUiContextSnapshotV1;
         const actionInput = (address: { mountId: string }) => operation ? { ...address, operation } : { address };
-        const handler = vi.fn(async (input: unknown) => mounted && JSON.stringify(input) === JSON.stringify(actionInput({ mountId }))
-            ? { status } : { status: 'unavailable' });
-        const fixture = createCurrentUiClientActionFixture({ identity: action, accountLifetime: lifetime, occurrenceId,
-            surfaces: ['agent'], handler,
+        const accessRead = { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1) };
+        const accessReadKey = `${accessRead.pluginId}/${accessRead.localId}`;
+        const machineId = 'machine-public-authoring-client-action';
+        const applied = vi.fn();
+        const handler = vi.fn<PluginClientActionHandler>(async (input, context) => {
+            if (!mounted || JSON.stringify(input) !== JSON.stringify(actionInput({ mountId }))) return { status: 'unavailable' };
+            if (confirm) await context.ui.executeAction(accessRead.localId, { target: { linkId: 'workbench-link' } });
+            applied();
+            return { status };
         });
+        const fixture = createCurrentUiClientActionFixture({ identity: action, accountLifetime: lifetime, occurrenceId,
+            surfaces: ['agent'], handler, dangerLevel: confirm ? 'writesLocal' : 'safe',
+        });
+        const accessReadOccurrence = 'daemon-access-read-occurrence';
+        const projection: PluginUiProjectionModel = confirm ? {
+            ...fixture.projection, actionsById: { ...fixture.projection.actionsById, [accessReadKey]: {
+                ...PluginProjectedActionV2Schema.parse({
+                    id: accessRead.localId, pluginId: accessRead.pluginId, occurrenceId: accessReadOccurrence,
+                    title: 'Read database access', scopes: ['global'], surfaces: ['agent', 'plugin'],
+                    execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
+                }),
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: { ...ACTION_ORIGIN, machineId, serverId: lifetime.scope.serverId },
+            } },
+        } : fixture.projection;
+        const defaultReply = daemonReply.getMockImplementation()!;
+        daemonReply.mockImplementation(request => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE
+            ? Promise.resolve({ ok: true, result: { allowed: true } }) : defaultReply(request));
         await fixture.composition.unload();
-        const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
+        let publishedProjection = projection;
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => publishedProjection);
         const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
-            invocationSurface, hostAction, readProjection: () => fixture.projection, readNavigationBinding: () => null,
+            invocationSurface, hostAction, readProjection: () => publishedProjection, readNavigationBinding: () => null,
             reader: { readCurrentUiContext: () => mounted ? snapshot : null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
         }));
         const execute = createDefaultActionExecutor().execute;
-        const binding = { machineId: 'invoking-machine', ...lifetime.scope,
-            readProjection: () => fixture.projection, isCurrent: lifetime.isCurrent, execute };
+        const binding = { machineId, ...lifetime.scope,
+            readProjection: () => projection, isCurrent: lifetime.isCurrent, execute };
         const receive = createCurrentUiContributedActionRpcHandler(binding);
         try {
             expect(await fixture.composition.reconcile([fixture.activation])).toMatchObject([{ result: { ok: true } }]);
@@ -2054,9 +2077,34 @@ describe('current UI context Voice tool port', () => {
                 ok: false, errorCode: 'contributed_action_unavailable', actionHandlerInvocation: 'notStarted',
             });
             expect(handler).not.toHaveBeenCalled();
-            expect(await invoke(request)).toMatchObject({ ok: true, result: { status } });
+            const answer = async (beforeConfirm: () => void) => {
+                if (!confirm) return invoke(request);
+                let pending!: ReturnType<typeof invoke>;
+                await act(async () => { pending = invoke(request); });
+                await vi.waitFor(() => expect(modalScreen.findByTestId('app-shell-confirmation-confirm')).not.toBeNull());
+                beforeConfirm();
+                await modalScreen.pressByTestIdAsync('app-shell-confirmation-confirm');
+                return pending;
+            };
+            const answered = await answer(() => {
+                expect(handler).not.toHaveBeenCalled();
+                // Discovery refreshes independently of the still-registered occurrence.
+                publishedProjection = { ...projection, actionsById: { [accessReadKey]: projection.actionsById[accessReadKey]! } };
+            });
+            publishedProjection = projection;
+            expect(answered).toEqual({ ok: true, result: { status } });
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(applied).toHaveBeenCalledTimes(1);
+            if (confirm) expect(daemonReply).toHaveBeenCalledWith(expect.objectContaining({
+                machineId, method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                payload: expect.objectContaining({ qualifiedActionId: accessReadKey, expectedContributorOccurrenceId: accessReadOccurrence,
+                    invocation: expect.objectContaining({ kind: 'clientPluginAction',
+                        clientActionBinding: expect.objectContaining({ occurrenceId }) }) }),
+            }));
             mounted = false;
-            expect(await invoke(request)).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+            expect(await answer(() => expect(handler).toHaveBeenCalledTimes(1)))
+                .toMatchObject({ ok: true, result: { status: 'unavailable' } });
+            expect(applied).toHaveBeenCalledTimes(1);
         } finally {
             unregister(); unpublish(); await fixture.composition.unload(); await connection.dispose();
         }

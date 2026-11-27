@@ -319,12 +319,15 @@ export function createCurrentUiContextVoiceToolPort(
         const unsubscribe = input.reader.subscribe(checkSession);
         const mergedSignal = mergeAbortSignals([sessionRetirement.signal, request.signal]);
         checkSession();
+        const accountRegistration = resolved.kind === 'account' ? resolved.accountRegistration.registration : undefined;
         const isCurrent = (): boolean => (
             !mergedSignal.signal.aborted
             && (!followsViewedSession || (input.reader.readCurrentSessionId?.() ?? null) === currentSessionId)
             && isCallerCurrent()
             && (actionAccountLifetime?.isCurrent() !== false)
-            && (followsAccountPublication || isResolvedActionCurrent(input.readProjection, request.action, resolved))
+            && (followsAccountPublication || (accountRegistration
+                ? accountRegistration.lifecycle.isCurrent() && accountRegistration.accountLifetime?.isCurrent() !== false
+                : isResolvedActionCurrent(input.readProjection, request.action, resolved)))
         );
         if (!isCurrent()) {
             unsubscribe();
@@ -718,6 +721,8 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
                 ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
                 expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
                 ...(expectedAccountId ? { expectedAccountId } : {}),
+                // An Account Client Action borrows this Machine for its daemon children.
+                ...(expectedAccountId && !invokingAccount ? { defaultSessionMachineId: input.machineId } : {}),
                 ...(invokingAccount ? {
                     authority: 'account_automation' as const,
                     actionCaller: invokingAccount.caller,

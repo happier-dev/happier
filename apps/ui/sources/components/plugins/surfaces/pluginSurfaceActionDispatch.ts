@@ -1611,8 +1611,7 @@ async function executeClientContributedAction(
         || hostContext?.executionRunTargetMachineId !== undefined;
     const machineId = hostTarget?.kind === 'machine' ? hostTarget.machineId
         : hostContext?.executionRunTargetMachineId ?? hostContext?.defaultSessionMachineId;
-    if (projectedAction.execution.target === 'account' && !input.contributedAction
-        && machineId && initial.registration.accountLifetime) {
+    if (!input.contributedAction && machineId && initial.registration.accountLifetime) {
         input = { ...input, contributedAction: {
             machineId,
             serverId: initial.registration.accountLifetime.scope.serverId,
@@ -1715,13 +1714,8 @@ async function executeClientContributedAction(
     };
     const presentUserGate = createPluginActionPresentUserGate<PluginUiActionProjection>({
         resolve: () => {
-            const current = resolveClientContributedActionSelection(input, identity, projectedAction);
-            if (!current || !current.action.authorization) {
-                return Object.freeze({
-                    status: 'unavailable' as const,
-                    code: 'plugin_surface_client_action_unavailable',
-                });
-            }
+            // The approval and eventual handler use the same prepared registration.
+            const current = initial;
             const accountOrigin = readPluginUiAccountExecutableOrigin(current.action);
             const accountAvailability = accountOrigin
                 ? evaluateContributionAvailability({
