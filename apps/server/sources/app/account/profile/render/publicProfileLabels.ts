@@ -17,9 +17,10 @@ const metricLabels: Record<PublicProfileAssetMetric, string> = {
 function publicProfileSupporterLabels(supporter: NonNullable<PublicProfileViewV1['identity']['supporter']>) {
     const label = PUBLIC_PROFILE_FIELD_COPY_EN.supporter;
     const { recurring, sinceYear } = supporter;
-    if (!recurring) return { label, tenure: sinceYear === undefined ? undefined : `Supporter since ${sinceYear}` };
-    const date = formatUsageCalendarDate(recurring.sinceMonthMs, 0, { month: 'long', year: 'numeric' }, PUBLIC_PROFILE_LOCALE);
-    return { label, tenure: `Supporting for ${recurring.months} ${recurring.months === 1 ? 'month' : 'months'} · since ${date}` };
+    const copy = PUBLIC_PROFILE_PAGE_COPY_EN;
+    if (!recurring) return { label, tenure: sinceYear === undefined ? undefined : copy.supporterSinceYear({ year: sinceYear }) };
+    const since = formatUsageCalendarDate(recurring.sinceMonthMs, 0, { month: 'long', year: 'numeric' }, PUBLIC_PROFILE_LOCALE);
+    return { label, tenure: copy.supportingForMonths({ count: recurring.months, since }) };
 }
 
 export const PUBLIC_PROFILE_ASSET_LABELS: PublicProfileAssetLabels = {

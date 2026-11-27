@@ -4,6 +4,8 @@ export const publicIdentity: PublicIdentityTranslations = {
   publicIdentity: {
     blocks: { sky: 'Céu de dias', crew: 'Tripulação', planet: 'Seu planeta', orbit: 'Órbita', shipped: 'Entregue' , totals: "Totais", parallel: "Pico de paralelismo", hours: "Quando os agentes trabalham", tide: "Maré da semana" },
     page: {
+      supportingForMonths: ({ count, since }: { count: number; since: string }) => `Apoiando há ${count} ${count === 1 ? 'mês' : 'meses'} · desde ${since}`,
+      supporterSinceYear: ({ year }: { year: number }) => `Apoiador desde ${year}`,
       since: ({ date }: { date: string }) => `desde ${date}`,
       periodDetail: ({ range, synced }: { range: string; synced: string }) => `${range} · sincronizado ${synced}`,
       empty: 'Nenhum bloco colocado ainda.',

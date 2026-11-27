@@ -29,6 +29,12 @@ describe('publicProfilePageLabels', () => {
     expect(publicProfilePageLabels({ ...context, identity: {} }, snapshot, null, '90days').identityLine).toBe('');
     expect(publicProfilePageLabels(context, snapshot, null, '90days').identityLine).toBe('@ada');
   });
+  it('pairs the supporter badge with current recurring tenure from the profile', () => {
+    const supporter = { sinceYear: 2024, recurring: { sinceMonthMs: Date.UTC(2026, 8, 1), months: 1 } };
+    const labels = publicProfilePageLabels({ ...context, identity: { ...context.identity, supporter } }, snapshot, null, '90days');
+    expect(labels.supporter).toEqual({ label: 'Supporter', tenure: 'Supporting for 1 month · since September 2026' });
+    expect(publicProfilePageLabels(context, snapshot, null, '90days').supporter).toBeUndefined();
+  });
   it('names the period the owner chose, not a fixed one', () => {
     expect(
       publicProfilePageLabels(context, snapshot, null, '30days').periodTitle,

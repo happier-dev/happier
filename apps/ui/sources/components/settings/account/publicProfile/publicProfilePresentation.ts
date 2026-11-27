@@ -20,9 +20,15 @@ export function publicProfilePageLabels(context: PublicProfileContextV1, snapsho
   const period = snapshot?.period;
   const since = context.identity.sinceMs === undefined ? null : formatUsageCalendarDate(context.identity.sinceMs,
     period?.timeZoneOffsetMinutes ?? 0, { month: 'long', year: 'numeric' });
+  const supporter = context.identity.supporter;
+  const recurring = supporter?.recurring;
+  const tenure = recurring ? t('publicIdentity.page.supportingForMonths', { count: recurring.months,
+    since: formatUsageCalendarDate(recurring.sinceMonthMs, 0, { month: 'long', year: 'numeric' }) })
+    : supporter?.sinceYear !== undefined ? t('publicIdentity.page.supporterSinceYear', { year: supporter.sinceYear }) : undefined;
   return {
     identityLine: [context.identity.name && context.handle ? `@${context.handle}` : null, context.service?.displayName ?? null,
       since ? t('publicIdentity.page.since', { date: since }) : null].filter(Boolean).join(' · '),
+    ...(supporter ? { supporter: { label: t('publicIdentity.publicData.fields.supporter'), ...(tenure ? { tenure } : {}) } } : {}),
     periodTitle: formatUsageCalendarPeriod({ relative: chosenPeriod }),
     periodDetail: snapshot && period ? t('publicIdentity.page.periodDetail', { range: formatUsageCalendarPeriod(period),
       synced: formatRelativeTime(snapshot.computedAtMs) }) : pendingLine ?? '',

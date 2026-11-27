@@ -4,6 +4,8 @@ export const publicIdentity: PublicIdentityTranslations = {
   publicIdentity: {
     blocks: { sky: 'Cel de dies', crew: 'Tripulació', planet: 'El teu planeta', orbit: 'Òrbita', shipped: 'Lliurat' , totals: "Totals", parallel: "Pic de paral·lelisme", hours: "Quan treballen els agents", tide: "Marea setmanal" },
     page: {
+      supportingForMonths: ({ count, since }: { count: number; since: string }) => `Fas costat a Happier des de fa ${count} ${count === 1 ? 'mes' : 'mesos'} · ${since}`,
+      supporterSinceYear: ({ year }: { year: number }) => `Col·laborador des de ${year}`,
       since: ({ date }: { date: string }) => `des del ${date}`,
       periodDetail: ({ range, synced }: { range: string; synced: string }) => `${range} · sincronitzat ${synced}`,
       empty: 'Encara no hi ha cap bloc col·locat.',

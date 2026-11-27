@@ -4,6 +4,8 @@ export const publicIdentity: PublicIdentityTranslations = {
   publicIdentity: {
     blocks: { sky: '日子的天空', crew: '團隊', planet: '你的星球', orbit: '軌道', shipped: '已交付' , totals: "總計", parallel: "最高並行", hours: "代理工作時段", tide: "每週起伏" },
     page: {
+      supportingForMonths: ({ count, since }: { count: number; since: string }) => `已支持 ${count} 個月 · 自 ${since} 起`,
+      supporterSinceYear: ({ year }: { year: number }) => `自 ${year} 年起支持`,
       since: ({ date }: { date: string }) => `自 ${date}`,
       periodDetail: ({ range, synced }: { range: string; synced: string }) => `${range} · ${synced}已同步`,
       empty: '尚未放置任何區塊。',

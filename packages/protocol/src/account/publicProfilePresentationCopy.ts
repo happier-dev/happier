@@ -4,6 +4,9 @@ export const PUBLIC_PROFILE_PAGE_COPY_EN = {
   since: ({ date }: {
     date: string;
   }) => `since ${date}`,
+  supportingForMonths: ({ count, since }: { count: number; since: string }) =>
+    `Supporting for ${count} ${count === 1 ? 'month' : 'months'} · since ${since}`,
+  supporterSinceYear: ({ year }: { year: number }) => `Supporter since ${year}`,
   periodDetail: ({ range, synced }: {
     range: string;
     synced: string;

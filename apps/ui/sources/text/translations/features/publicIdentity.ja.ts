@@ -4,6 +4,8 @@ export const publicIdentity: PublicIdentityTranslations = {
   publicIdentity: {
     blocks: { sky: '日々の空', crew: 'クルー', planet: 'あなたの惑星', orbit: '軌道', shipped: '出荷済み' , totals: "合計", parallel: "最大同時実行", hours: "エージェントが動く時間", tide: "週のうねり" },
     page: {
+      supportingForMonths: ({ count, since }: { count: number; since: string }) => `${count}か月支援中 · ${since}から`,
+      supporterSinceYear: ({ year }: { year: number }) => `${year}年から支援`,
       since: ({ date }: { date: string }) => `${date} から`,
       periodDetail: ({ range, synced }: { range: string; synced: string }) => `${range} · ${synced} に同期`,
       empty: 'まだブロックが配置されていません。',
