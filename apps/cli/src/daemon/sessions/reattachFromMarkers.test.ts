@@ -347,7 +347,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     expect(removeSessionMarker).not.toHaveBeenCalledWith(marker.pid);
   });
 
-  it('does not probe or destroy a dead legacy terminal attachment during startup reconstruction', async () => {
+  it.each(['ESRCH', 'EPERM'])('only fences positively dead runners and leaves legacy attachments untouched at startup (%s)', async (code) => {
     const marker = {
       pid: 43215,
       happySessionId: 'session-dead-terminal-dead-runner',
@@ -386,7 +386,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     } });
     mockHappyProcessesForDiscovery([]);
     vi.spyOn(process, 'kill').mockImplementation(() => {
-      throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+      throw Object.assign(new Error(code), { code });
     });
 
     const result = await reattachTrackedSessionsFromMarkers({
@@ -395,7 +395,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
 
     expect(result.orphanedDeadDaemonSessions).toEqual([]);
-    expect(result.unresolvedTerminalHostSessionIds).toEqual(['session-dead-terminal-dead-runner']);
+    expect(result.unresolvedTerminalHostSessionIds).toEqual(code === 'ESRCH' ? [marker.happySessionId] : undefined);
     expect(adapter.evaluateLiveness).not.toHaveBeenCalled();
     expect(adapter.dispose).not.toHaveBeenCalled();
     expect(removeTerminalAttachmentInfo).not.toHaveBeenCalled();

@@ -20,6 +20,7 @@ import { resolveSessionRuntimeSnapshot } from './runtimeSnapshot/resolveSessionR
 
 import type { TrackedSession } from '../types';
 import { findAllHappyProcesses, findHappyProcessByPid, indicatesDaemonStartedSessionCommand, type HappyProcessInfo } from '../doctor';
+import { isPidAliveBySignal } from '../processRunState';
 import { adoptSessionsFromMarkers, isOwnedLiveDaemonSessionProcessCommand } from '../reattach';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
@@ -412,10 +413,9 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     });
     const aliveMarkers = [];
     for (const marker of markers) {
-      try {
-        process.kill(marker.pid, 0);
+      if (isPidAliveBySignal(marker.pid)) {
         aliveMarkers.push(marker);
-      } catch {
+      } else {
         const sessionId = normalizeSessionId(marker.happySessionId);
         const markerAgentId = normalizeMarkerAgentId(marker.respawn?.backendTarget?.kind === 'builtInAgent'
           ? marker.respawn.backendTarget.agentId
