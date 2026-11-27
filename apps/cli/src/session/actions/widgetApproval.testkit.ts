@@ -2,7 +2,7 @@ import { onTestFinished, expect } from 'vitest';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { ExternalActionServerPrincipalV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionExecutionAuthorizationRequestV1Schema,
+import { ExternalActionServerPrincipalV1Schema, ExternalActionRequestEnvelopeSchema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema,
     ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
     ExternalActionExecutionAuthorizationVerifyResponseV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
@@ -10,6 +10,7 @@ import { ExternalActionServerPrincipalV1Schema, ExternalActionRequestEnvelopeSch
     projectExternalActionApprovalDecisionEnvelopeAdmissionV1, parseExternalActionDaemonDispatchResult } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { decodeJwtPayload, readAccountIdFromToken, readCredentialEpochFromToken } from '@/cloud/decodeJwtPayload';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
@@ -22,6 +23,7 @@ import type { StoredCredentials } from '@/persistence';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import type { Server } from 'socket.io';
 import type { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationSupersededV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -213,6 +215,12 @@ type MachineActionHomeFixtureInput = MachineReceiverFixtureInput & Readonly<{
     retainedAction?: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
     actionId?: string;
     accountEncryptionMode?: 'plain' | 'e2ee';
+    /** Explicit Home admission responses for other authenticated bearers; no authority is issued. */
+    executionAuthorizationRefusals?: ReadonlyArray<Readonly<{
+        token: string;
+        statusCode: number;
+        body: ReturnType<typeof ExternalActionHttpErrorSchema.parse>;
+    }>>;
 }>;
 
 /** Authenticated Home issuance and verification at the substituted HTTP boundary. */
@@ -244,8 +252,13 @@ export function registerMachineActionAuthorizationHomeHttp(app: FastifyInstance,
         issued.set(authorization.token, authorization);
         return authorization;
     };
-    // This network fixture accepts only its existing bearer; caller input cannot select another principal.
-    app.post(mintPath, async request => {
+    // Other named bearers may receive an explicit Home refusal, never this principal's authority.
+    const mintRefusals = new Map(input.executionAuthorizationRefusals?.map(refusal => [
+        `Bearer ${refusal.token}`, { statusCode: refusal.statusCode, body: ExternalActionHttpErrorSchema.parse(refusal.body) },
+    ]));
+    app.post(mintPath, async (request, reply) => {
+        const refusal = mintRefusals.get(String(request.headers.authorization));
+        if (refusal) return reply.code(refusal.statusCode).send(refusal.body);
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
         const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body);
         expect(body.machineId).toBe(input.machineId);
@@ -278,13 +291,30 @@ export function registerMachineActionAuthorizationHomeHttp(app: FastifyInstance,
 /** Home HTTP/socket substitutions from remoteDecider; registered receiver and private custody stay real. */
 export async function registerMachineActionHomeHttp(app: FastifyInstance, input: MachineActionHomeFixtureInput & Readonly<{
     executor: ReturnType<typeof createCliActionExecutorHarness>['executor'];
+    /** Add the fixture's genuine scoped RPC network peer beside Account updates. */
+    configureScopedRpcNetwork?: (input: Readonly<{
+        server: Server;
+        issued: ReadonlyMap<string, ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>>;
+        prepareRequesterAccountContext: PrepareExternalActionRequesterAccountContext;
+    }>) => void;
 }>) {
     const { actionId, principal, issue, issued } = registerMachineActionAuthorizationHomeHttp(app, input);
     const privateKey = decodeBase64(input.installation.privateKey, 'base64url');
     const lifetime = new AbortController();
-    const currentnessChannel = await createRequesterCurrentnessSocketHarness({ preserveScopedRpcOrigin: true });
+    const currentnessChannel = await createRequesterCurrentnessSocketHarness({ preserveScopedRpcOrigin: !input.configureScopedRpcNetwork });
     onTestFinished(async () => { lifetime.abort(); await currentnessChannel.close(); });
-    const rpc = new RpcHandlerManager({ scopePrefix: input.machineId, encryptionMode: 'plain', logger: () => {} });
+    const prepareRequesterAccountContext = createFixtureRequesterAccountContextPreparer(input, () => input.executor, lifetime.signal);
+    input.configureScopedRpcNetwork?.({ server: currentnessChannel.server, issued, prepareRequesterAccountContext });
+    const rpc = new RpcHandlerManager({ scopePrefix: input.machineId, encryptionMode: 'plain', logger: () => {},
+        authorizeRequest: request => authorizeMachineRpcRequest(request, {
+            machineId: input.machineId,
+            resolveHomeServerIdentityId: async () => input.serverIdentityId,
+            resolveCustodianAccountId: async () => input.accountId,
+            resolveInstallationId: () => input.installation.installationId,
+            verifyMachineAdmission: request => verifyMachineRpcAdmissionCurrent({ ...request,
+                privateKey, daemonToken: input.credentials.token, serverHttpBaseUrl: input.serverHttpBaseUrl }),
+        }),
+    });
     registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: input.executor });
     const verifyExecutionAuthorization = createFixtureExecutionAuthorizationVerifier(input);
     registerExternalActionRpcHandler(rpc, {
@@ -293,7 +323,7 @@ export async function registerMachineActionHomeHttp(app: FastifyInstance, input:
         externalActionMachineRequestPrivateKey: privateKey, verifyExecutionAuthorization,
         resolveTarget: createDaemonExternalActionTargetResolver({ credentials: input.credentials, serverApiUrl: input.serverHttpBaseUrl }),
         executor: input.executor,
-        prepareRequesterAccountContext: createFixtureRequesterAccountContextPreparer(input, () => input.executor, lifetime.signal),
+        prepareRequesterAccountContext,
     });
     app.post(`/v1/actions/${actionId}`, async request => {
         expect(request.headers.authorization === `Bearer ${input.credentials.token}`, 'Unexpected fixture authorization bearer').toBe(true);
@@ -304,9 +334,20 @@ export async function registerMachineActionHomeHttp(app: FastifyInstance, input:
         expect(body.envelope.target).toEqual({ kind: 'machine', machineId: input.machineId });
         const authorization = body.executionAuthorization ?? issue(body.envelope);
         expect(issued.get(authorization.token)?.binding).toEqual(authorization.binding);
+        const encryptionMode = authorization.binding.accountEncryptionMode;
+        if (!encryptionMode) throw new Error('Home admission omitted Account encryption mode');
         const relayed = parseExternalActionDaemonDispatchResult(await rpc.handleRequest({
             method: `${input.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
             authorization: ACTION_API_SERVER_ORIGIN,
+            callerAuthority: principal.authority,
+            machineAdmission: {
+                actorAccountId: principal.accountId,
+                custodianAccountId: authorization.binding.custodianAccountId,
+                machineId: authorization.binding.machineId,
+                installationId: authorization.binding.installationId,
+                role: 'manage',
+                encryptionMode,
+            },
             params: { actionId, envelope: body.envelope, executionAuthorization: authorization, principal,
                 placement: { machineId: input.machineId, target: { kind: 'machine', machineId: input.machineId } } },
         }, undefined, 'authenticated_home_socket'));
