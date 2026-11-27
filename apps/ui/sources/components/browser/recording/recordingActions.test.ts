@@ -33,6 +33,18 @@ describe('recording failure presentation', () => {
     expect(shown().body).not.toContain('requestId');
   });
 
+  it('shows the originating typed phase and actual Stop request in Technical details', () => {
+    presentRecordingStopOutcome({ status: 'failed', reason: 'capture_failed', requestId: 'stop-request',
+      failureCause: { phase: 'recording.capture_stop', errorClass: 'Error', errorCode: null, httpStatus: null,
+        nativeErrorCode: 'exit_1', nativeErrorReason: 'encoder_initialization_failed' } });
+    const details = shown().buttons?.find((button: { text: string }) => button.text === t('approvals.technicalDetails'));
+    alert.mockReset();
+    details?.onPress();
+    for (const value of ['recording.capture_stop', 'stop-request', 'exit_1', 'encoder_initialization_failed']) {
+      expect(shown().body).toContain(value);
+    }
+  });
+
   // The daemon's START admission (sessionMediaHost admitSave): nothing was captured in either case.
   it.each([
     ['recording_session_not_owned', 'browserRecording.failure.sessionNotOwned'],

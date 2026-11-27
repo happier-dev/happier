@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
@@ -50,6 +51,9 @@ export function presentRecordingStopOutcome(answer: unknown): void {
             ? t('browserRecording.failure.notSavedInFiles')
             : t('browserRecording.failure.notSavedBody'),
         code: saveFailure ?? reason ?? 'action_failed',
+        failureCause: ActionFailureCauseV1Schema.safeParse((answer as { failureCause?: unknown }).failureCause).data,
+        requestId: typeof (answer as { requestId?: unknown }).requestId === 'string'
+            ? (answer as { requestId: string }).requestId : undefined,
         context: { status: 'failed', ...(reason ? { reason } : {}) },
     });
 }
