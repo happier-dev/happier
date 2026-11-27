@@ -1180,6 +1180,8 @@ async function controllerDeclarationFixture(t, { lockfile } = {}) {
     await writeFile(path, contents, { mode });
   };
   await write('package.json', JSON.stringify({ name: 'fixture', workspaces: ['packages/*'] }));
+  await write('apps/stack/scripts/perf/entry-graphs.mjs',
+    "export const ENTRY_GRAPHS = [{ id: 'cli', entry: 'apps/cli/src/index.ts' }];\n");
   await write('packages/protocol/tsconfig.json', JSON.stringify({ compilerOptions: { declaration: true } }));
   if (lockfile) {
     await write('pnpm-workspace.yaml', 'packages:\n  - packages/*\n');
@@ -1197,7 +1199,7 @@ shift 2
 exec "${process.execPath}" "${entry}" "$@"
 `, 0o755);
   await write('scripts/workspaces/runTypeScriptCli.mjs', `
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { shouldRouteTypeScriptCliThroughHstack } from ${JSON.stringify(new URL('./resolveTypeScriptCliInvocation.mjs', import.meta.url).href)};
 if (shouldRouteTypeScriptCliThroughHstack({ args: process.argv.slice(2), env: process.env })) process.exit(98);
@@ -1214,7 +1216,7 @@ if (source.includes('from-new-workspace')) {
   const selected = readFileSync('node_modules/@happier-dev/new-package/src/index.ts', 'utf8');
   if (!selected.includes('= 41')) process.exit(94);
 }
-if ((source.includes('= 41') || (source.includes('= 42') && existsSync('src/landed.ts'))) && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
+if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
   console.log('src/index.ts(1,14): error TS9007: Fixture declaration diagnostic');
   process.exitCode = 2;
 }
@@ -1232,66 +1234,39 @@ if ((source.includes('= 41') || (source.includes('= 42') && existsSync('src/land
   const scratch = join(repo, 'comparison-scratch');
   await mkdir(scratch);
   const env = { ...process.env, TMPDIR: scratch, P03_GATE_CACHE: join(repo, '.git', 'gate'),
-    HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
     HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
   // This gate starts directly, outside the routed test runner's placement.
   for (const marker of ['HAPPIER_HSTACK_EXECUTION', 'HAPPIER_DEV_TARGET_EXECUTION', 'HAPPIER_TYPECHECK_DISPATCHED', 'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN']) delete env[marker];
-  return { repo, candidate, scratch, env, git, write };
+  const request = {
+    repo, trees: [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)],
+    packages: ['packages/protocol'], sides: ['base', 'head'],
+  };
+  return { repo, candidate, scratch, env, git, write, request };
 }
 
 test('the controller declaration gate admits and judges both Git trees with its installed toolchain', { skip: process.platform === 'win32' }, async t => {
-  const { repo, candidate, scratch, env, git } = await controllerDeclarationFixture(t);
-  const result = await runCommitGate({ repo, base: `${candidate}^`, tree: candidate, env, label: 'commit-partial' });
-  assert.equal(result.verdict, 'refused', JSON.stringify(result));
-  assert.ok(result.findings.some(finding => finding.includes('TS9007')));
-  const trees = [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)];
-  assert.ok(readFileSync(join(repo, 'admissions'), 'utf8').includes(`--judged-trees=${trees.join(',')}`));
+  const { repo, candidate, scratch, env, request } = await controllerDeclarationFixture(t);
+  const result = await commitGateTypecheck({ repo, base: `${candidate}^`, tree: candidate,
+    env, packages: request.packages });
+  assert.deepEqual([result.incomplete, result.unavailable], [[], []]);
+  assert.deepEqual(result.fresh.map(row => [row.package, row.code]), [['packages/protocol', 9007]]);
+  assert.ok(readFileSync(join(repo, 'admissions'), 'utf8').includes(`--judged-trees=${request.trees.join(',')}`));
   assert.deepEqual(await readdir(scratch), []);
 });
 
-test('the admitted final declaration recheck compares only the closure changed since the prior pass', { skip: process.platform === 'win32' }, async t => {
-  const { repo, candidate, scratch, env, git, write } = await controllerDeclarationFixture(t);
-  const gitIndex = (index, ...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8',
-    env: { ...process.env, GIT_INDEX_FILE: join(repo, '.git', index) } }).trim();
-  const sdk = 'packages/plugin-sdk';
-  await write(`${sdk}/package.json`, JSON.stringify({ name: '@fixture/plugin-sdk', scripts: { typecheck: 'tsc' } }));
-  await write(`${sdk}/tsconfig.json`, JSON.stringify({ compilerOptions: { declaration: true } }));
-  await write(`${sdk}/src/index.ts`, 'export const sdk = 1;\n');
-  const baseIndex = 'initial-index';
-  gitIndex(baseIndex, 'read-tree', candidate + '^');
-  gitIndex(baseIndex, 'add', sdk);
-  const base = git('commit-tree', gitIndex(baseIndex, 'write-tree'), '-p', candidate + '^', '-m', 'both packages exist');
-  const priorIndex = 'accepted-index';
-  gitIndex(priorIndex, 'read-tree', base);
-  await write(`${sdk}/src/index.ts`, 'export const sdk = 2;\n');
-  await write('packages/protocol/src/index.ts', 'export const value = 42;\n');
-  gitIndex(priorIndex, 'add', 'packages/protocol/src/index.ts', `${sdk}/src/index.ts`);
-  const prior = git('commit-tree', gitIndex(priorIndex, 'write-tree'), '-p', base, '-m', 'packet changes both packages');
-
-  const movedFile = 'packages/protocol/src/landed.ts';
-  await write(movedFile, 'export const landed = true;\n');
-  gitIndex(baseIndex, 'add', movedFile);
-  gitIndex(priorIndex, 'add', movedFile);
-  const newBase = git('commit-tree', gitIndex(baseIndex, 'write-tree'), '-p', base, '-m', 'landed elsewhere');
-  const replay = gitIndex(priorIndex, 'write-tree');
-  const options = { repo, base: newBase, tree: replay, prior, priorBase: base, cheapOnly: true, env, label: 'commit-partial' };
-
-  const cached = await runCommitGate(options);
-  assert.equal(cached.verdict, 'needs-full', JSON.stringify(cached));
-  assert.equal(cached.check, 'package declarations');
-
-  const rejected = await runCommitGate({ ...options, finalDeclarationRecheck: true,
-    env: { ...env, TEST_DECLARATION_COMPILER: 'fail' } });
-  assert.equal(rejected.verdict, 'incomplete', JSON.stringify(rejected));
-  assert.deepEqual(rejected.reason, { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'] });
-
-  const final = await runCommitGate({ ...options, finalDeclarationRecheck: true });
-  assert.equal(final.verdict, 'refused', JSON.stringify(final));
-  assert.ok(final.findings.some(finding => finding.includes('TS9007')));
-  const requests = readFileSync(join(repo, 'admissions'), 'utf8');
-  assert.match(requests, /--require-inherited\n/u);
-  assert.match(requests, /--projects=packages\/protocol\n/u);
-  assert.doesNotMatch(requests, /plugin-sdk/u);
+test('the synchronous gate loads the CLI without admitting a declaration comparison', { skip: process.platform === 'win32' }, async t => {
+  const { repo, candidate, scratch, env } = await controllerDeclarationFixture(t);
+  const checked = [];
+  const result = await runCommitGate({ repo, base: `${candidate}^`, tree: candidate, env, label: 'commit-partial',
+    // Stub the admitted entry-load process. The real gate selects it from the candidate registry.
+    compareAdmittedEntryLoads: async ({ selected }) => {
+      checked.push(...selected);
+      return { findings: [], preexisting: [], results: selected.map(graph => ({ graph, status: 'passed' })), timings: {} };
+    },
+  });
+  assert.equal(result.verdict, 'pass', JSON.stringify(result));
+  assert.deepEqual(checked, ['cli']);
+  assert.equal(existsSync(join(repo, 'admissions')), false);
   assert.deepEqual(await readdir(scratch), []);
 });
 
@@ -1357,11 +1332,7 @@ snapshots:
 });
 
 test('the controller compiler accepts a queued request without a scratch path and removes its own scratch', { skip: process.platform === 'win32' }, async t => {
-  const { repo, candidate, scratch, env, git } = await controllerDeclarationFixture(t);
-  const request = {
-    repo, trees: [git('rev-parse', `${candidate}^^{tree}`), git('rev-parse', `${candidate}^{tree}`)],
-    packages: ['packages/protocol'], sides: ['base', 'head'],
-  };
+  const { repo, scratch, env, request } = await controllerDeclarationFixture(t);
   const entry = fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url));
   const stdout = execFileSync(process.execPath, [entry, '--compiler-admitted'], {
     cwd: repo, encoding: 'utf8',
@@ -1372,12 +1343,12 @@ test('the controller compiler accepts a queued request without a scratch path an
 });
 
 test('controller declaration scratch is removed on failure and after cancellation', { skip: process.platform === 'win32', timeout: 20_000 }, async t => {
-  const { repo, candidate, scratch, env } = await controllerDeclarationFixture(t);
-  const command = [fileURLToPath(new URL('./commitGate.mjs', import.meta.url)), '--label=commit-partial',
-    `--base=${candidate}^`, `--tree=${candidate}`];
+  const { repo, scratch, env, request } = await controllerDeclarationFixture(t);
+  const command = [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--compiler-admitted'];
+  const childEnv = { ...env, HAPPIER_COMMIT_TYPECHECK_CONTROLLER_REQUEST: JSON.stringify(request) };
   const failed = spawnSync(process.execPath, command, { cwd: repo, encoding: 'utf8', timeout: 8_000,
-    env: { ...env, TEST_DECLARATION_COMPILER: 'fail' } });
-  assert.equal(failed.status, 11, failed.stderr + failed.stdout);
+    env: { ...childEnv, TEST_DECLARATION_COMPILER: 'fail' } });
+  assert.equal(failed.status, 2, failed.stderr + failed.stdout);
   assert.deepEqual(await readdir(scratch), []);
 
   const ready = join(repo, 'comparison-started');
@@ -1388,7 +1359,7 @@ test('controller declaration scratch is removed on failure and after cancellatio
     }
   })();
   const child = spawn(process.execPath, command, { cwd: repo, stdio: 'ignore',
-    env: { ...env, TEST_DECLARATION_COMPILER: 'wait', TEST_DECLARATION_READY: ready } });
+    env: { ...childEnv, TEST_DECLARATION_COMPILER: 'wait', TEST_DECLARATION_READY: ready } });
   const ended = once(child, 'close');
   t.after(() => child.kill());
   try {
