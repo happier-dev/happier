@@ -77,9 +77,20 @@ describe('useTrackScreens', () => {
         expect(recordActionMock).toHaveBeenCalledWith('screen.navigate', { route: 'session/:id/file' });
     });
 
-    it('sends no screen event for a route without a name, but still records the navigation', async () => {
+    it('sends one $screen named home for the root route', async () => {
         trackingState.value = { screen: screenMock };
         useSegmentsMock.mockReturnValue(['(app)']);
+
+        await renderScreen(<HookProbe />);
+
+        expect(screenMock).toHaveBeenCalledTimes(1);
+        expect(screenMock).toHaveBeenCalledWith('home');
+        expect(recordActionMock).toHaveBeenCalledWith('screen.navigate', { route: 'home' });
+    });
+
+    it('sends no $screen for a route with no segments yet, but still records the navigation', async () => {
+        trackingState.value = { screen: screenMock };
+        useSegmentsMock.mockReturnValue([]);
 
         await renderScreen(<HookProbe />);
 
