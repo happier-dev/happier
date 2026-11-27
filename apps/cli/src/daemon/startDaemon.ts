@@ -65,6 +65,7 @@ import {
   getConnectedServiceRuntimeAuthAdapter,
   getConnectedServiceStateSharingDescriptor,
   getVendorResumeSupport,
+  readLocalHistoryKeptDueAtMsThroughCatalog,
   requireCatalogEntry,
   resolveConnectedServiceCredentialLifecycleDescriptor,
   resolveConnectedServiceGenerationApplicationScope,
@@ -8483,6 +8484,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
       // Do machine bootstrap in the background so shutdown requests are not blocked by /v1/machines latency.
       void (async () => {
+        const keptDueAtMs = await readLocalHistoryKeptDueAtMsThroughCatalog().catch(() => {
+          logger.warn('[DAEMON RUN] Could not read the kept-session notice during machine registration');
+          return undefined;
+        });
         let attempts = 0;
         while (!shutdownInitiated) {
           try {
@@ -8490,7 +8495,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               api,
               machineId,
               metadata: metadataForRegistration,
-              daemonState: initialDaemonState,
+              daemonState: { ...initialDaemonState, ...(keptDueAtMs === undefined ? {} : { keptDueAtMs }) },
               timeoutMs: machineRegistrationTimeoutMs,
               caller: 'startDaemon',
             });
@@ -8523,7 +8528,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   startupSource,
                   serviceManaged: isDaemonStartupSourceServiceManaged(startupSource),
                   ...(serviceLabel ? { serviceLabel } : null),
-                });
+                }, keptDueAtMs);
             apiMachine = connectedApiMachine;
             apiMachineForSessions = connectedApiMachine;
             await reconcileSessionMachineAccessBindings();

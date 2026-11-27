@@ -7,7 +7,6 @@ describe('features/voiceFeature', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'production',
       HAPPIER_FEATURE_VOICE__ENABLED: 'true',
-      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       // Missing ELEVENLABS_* env vars
     } as any);
 
@@ -17,11 +16,34 @@ describe('features/voiceFeature', () => {
     expect(res.capabilities?.voice?.provider).toBe(null);
   });
 
+  it('enables Happier Voice in production from ElevenLabs configuration alone (no RevenueCat key)', () => {
+    const res = resolveVoiceFeature({
+      NODE_ENV: 'production',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      ELEVENLABS_API_KEY: 'k',
+      ELEVENLABS_AGENT_ID_PROD: 'agent_prod',
+    } as any);
+
+    expect((res.features as any)?.voice?.happierVoice?.enabled).toBe(true);
+    expect(res.capabilities?.voice?.configured).toBe(true);
+    expect(res.capabilities?.voice?.provider).toBe('elevenlabs');
+  });
+
+  it('keeps Happier Voice off in production when no ElevenLabs keys are set, even with a RevenueCat key', () => {
+    const res = resolveVoiceFeature({
+      NODE_ENV: 'production',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      REVENUECAT_SECRET_KEY: 'rc_secret',
+    } as any);
+
+    expect((res.features as any)?.voice?.happierVoice?.enabled).toBe(false);
+    expect(res.capabilities?.voice?.configured).toBe(false);
+  });
+
   it('treats ELEVENLABS_AGENT_ID as configured in non-production', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'development',
       HAPPIER_FEATURE_VOICE__ENABLED: 'true',
-      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID: 'agent_dev',
     } as any);
@@ -36,7 +58,6 @@ describe('features/voiceFeature', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'development',
       HAPPIER_FEATURE_VOICE__ENABLED: 'true',
-      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID_PROD: 'agent_prod',
     } as any);
@@ -50,7 +71,6 @@ describe('features/voiceFeature', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'production',
       HAPPIER_FEATURE_VOICE__ENABLED: 'true',
-      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID: 'agent_dev',
       ELEVENLABS_AGENT_ID_PROD: 'agent_prod',
@@ -65,7 +85,6 @@ describe('features/voiceFeature', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'production',
       HAPPIER_FEATURE_VOICE__ENABLED: 'true',
-      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID: 'agent_dev',
     } as any);

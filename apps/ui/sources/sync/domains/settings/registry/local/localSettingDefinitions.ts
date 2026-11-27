@@ -24,6 +24,12 @@ import {
     LoadingIndicatorStyleIdSchema,
 } from './loadingIndicatorStyleSetting';
 import {
+    DEFAULT_SUPPORTER_PASS_FINISH_ID,
+    DEFAULT_SUPPORTER_PASS_STYLE_ID,
+    SupporterPassFinishIdSchema,
+    SupporterPassStyleIdSchema,
+} from './supporterPassStyleSetting';
+import {
     SESSION_LIST_FOLDER_SORT_MODE_DEFAULT_V1,
     SESSION_LIST_FOLDER_SORT_MODES_V1,
 } from '@/sync/domains/session/listing/sessionListFolderSortMode';
@@ -258,6 +264,20 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
+    supporterPassStyle: {
+        schema: SupporterPassStyleIdSchema,
+        default: DEFAULT_SUPPORTER_PASS_STYLE_ID,
+        description: 'Which artwork this device draws behind the Supporter pass',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
+    supporterPassFinish: {
+        schema: SupporterPassFinishIdSchema,
+        default: DEFAULT_SUPPORTER_PASS_FINISH_ID,
+        description: 'Whether this device draws the Supporter pass in its dark or light finish',
+        storageScope: 'local',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
+    },
     loadingIndicatorSpeed: {
         schema: LoadingIndicatorSpeedIdSchema,
         default: DEFAULT_LOADING_INDICATOR_SPEED_ID,
@@ -429,6 +449,17 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: PetCompanionStoredPositionSchema,
         default: PET_COMPANION_POSITION_DEFAULT,
         description: 'Versioned normalized app-shell pet companion position on this device',
+        storageScope: 'local',
+    },
+    leavingFootDismissals: {
+        // One value per server: the leaving batch (by its newest date) or the policy notice (by its
+        // start date) the person dismissed on this device. A newer batch or start date shows again.
+        schema: z.record(z.string(), z.object({
+            leavingThrough: z.number().int().optional(),
+            policyStartsAt: z.number().int().optional(),
+        })).catch({}),
+        default: {},
+        description: 'Device-local session list leaving-notice dismissals per server',
         storageScope: 'local',
     },
     petsDismissedCompanionTrayItemKeys: {

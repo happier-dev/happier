@@ -1223,6 +1223,7 @@ export async function createSessionMessage(
                 select: { seq: true },
                 data: {
                     seq: { increment: 1 },
+                    cloudCopyLeftAt: null,
                     ...resolveSessionUnreadSinceWrite({
                         stored: { unreadSince: beforeBadgeInputs?.unreadSince ?? null },
                         after: toSessionUnreadInputs(normalizedBeforeBadgeInputs, {

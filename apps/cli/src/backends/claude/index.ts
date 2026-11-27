@@ -108,6 +108,7 @@ export const agent = {
       targetStrict: input.targetStrict === true,
     }),
   getDirectSessionProviderOps: async () => (await import('@/backends/claude/directSessions/providerOps')).claudeDirectSessionProviderOps,
+  readLocalHistoryKeptDueAtMs: async () => (await import('@/backends/claude/directSessions/runClaudeLocalHistory')).readClaudeLocalHistoryKeptDueAtMs(),
   resolveAgentNativeSessionLogPath: async (input) =>
     await (await import('@/backends/claude/utils/resolveClaudeNativeSessionLogPath')).resolveClaudeNativeSessionLogPath(input),
   onTerminalAttachmentRetired: async ({ happyHomeDir, sessionId, attachmentInfo }) => {

@@ -65,6 +65,12 @@ afterEach(() => {
 });
 
 describe('buildSessionViewShellSessionSignature', () => {
+    it('publishes an owner cloud-copy transition before the next metadata version', () => {
+        const hosted = createSession({ id: 'retained' });
+        const moved = { ...hosted, cloudCopyLeftAt: 150 };
+        expect(buildSessionViewShellSessionSignature(moved)).not.toBe(buildSessionViewShellSessionSignature(hosted));
+    });
+
     it('stays stable for timestamp-only session heartbeats', () => {
         const base = createSession();
         const heartbeat = createSession({

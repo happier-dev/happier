@@ -8,9 +8,7 @@ export function resolveVoiceFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelt
     const elevenLabsApiKey = env.ELEVENLABS_API_KEY?.trim() ?? "";
     const elevenLabsAgentId = resolveElevenLabsAgentId(env);
     const elevenLabsConfigured = Boolean(elevenLabsApiKey) && Boolean(elevenLabsAgentId);
-    const requireSubscription = featureConfig.requireSubscription;
-    const revenueCatConfigured = !requireSubscription || Boolean(env.REVENUECAT_SECRET_KEY?.trim());
-    const configured = elevenLabsConfigured && revenueCatConfigured;
+    const configured = elevenLabsConfigured;
     const enabled = voiceEnabledByEnv;
     const happierVoiceEnabled = voiceEnabledByEnv && configured;
 

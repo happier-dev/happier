@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Account" ADD COLUMN "plan" TEXT;
+ALTER TABLE "Account" ADD COLUMN "planSource" TEXT;
+ALTER TABLE "Account" ADD COLUMN "planEndsAt" DATETIME;
+ALTER TABLE "Account" ADD COLUMN "planRenews" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Account" ADD COLUMN "supporterRing" BOOLEAN NOT NULL DEFAULT false;

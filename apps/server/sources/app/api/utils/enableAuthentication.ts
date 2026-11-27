@@ -1,8 +1,8 @@
 import { Fastify } from "../types";
 import { log } from "@/utils/logging/log";
+import { redactHttpRequestUrl } from "@/utils/logging/redactHttpRequestUrl";
 import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
-import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 
 function shouldLogAuthDecoratorDiagnostics(): boolean {
     return process.env.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1"
@@ -18,7 +18,7 @@ export function enableAuthentication(app: Fastify) {
             if (logDiagnostics) {
                 log(
                     { module: 'auth-decorator' },
-                    `Auth check - path: ${redactPublicShareCapabilityUrl(request.url)}, has header: ${!!authHeader}`,
+                    `Auth check - path: ${redactHttpRequestUrl(request.url)}, has header: ${!!authHeader}`,
                 );
             }
             if (!authHeader || !authHeader.startsWith('Bearer ')) {

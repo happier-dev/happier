@@ -450,6 +450,8 @@ const baseExpoConfig = {
                     }
                 }
             ],
+            // The eight app icons (Appearance › App icon); the list lives in appIcons.json.
+            require("./plugins/withAppIcons.js"),
             require("./plugins/withIosPodDeploymentTargetFloor.js"),
             require("./plugins/withIosSceneLifecycle.js"),
         ],
@@ -472,7 +474,6 @@ const baseExpoConfig = {
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,
-                revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE,
                 ...(syncTuningJson ? { syncTuningJson } : {})
             }
         },

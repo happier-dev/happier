@@ -1,5 +1,4 @@
-import type { Prisma } from '@prisma/client';
-
+import { retentionEligibleSessionWhere } from '@/app/retention/retentionEligibleSessionWhere';
 import { activityCache } from '@/app/presence/sessionCache';
 import { db } from '@/storage/db';
 
@@ -48,14 +47,6 @@ export function resolveSessionMessagePreserveFromSeq(
     return floors.length > 0 ? Math.min(...floors) : 1;
 }
 
-function staleInactiveSessionWhere(cutoff: Date): Prisma.SessionWhereInput {
-    return {
-        active: false,
-        updatedAt: { lt: cutoff },
-        lastActiveAt: { lt: cutoff },
-    };
-}
-
 async function pruneSessionMessagePage(params: {
     cutoff: Date;
     sessionPageSize: number;
@@ -72,7 +63,7 @@ async function pruneSessionMessagePage(params: {
     const sessionPageSize = positiveIntOrDefault(params.sessionPageSize, 1);
     const deleteLimit = positiveIntOrDefault(params.deleteLimit, 1);
     const minTailMessages = positiveIntOrDefault(params.minTailMessages, DEFAULT_MIN_TAIL_MESSAGES);
-    const sessionWhere = staleInactiveSessionWhere(params.cutoff);
+    const sessionWhere = retentionEligibleSessionWhere(params.cutoff);
     const resumesWithinSession = params.startCursor !== null
         && params.startCursor !== undefined
         && params.startCursor.afterSeq !== null
@@ -150,7 +141,7 @@ async function pruneSessionMessagePage(params: {
                     sessionId: session.id,
                     seq: { lt: preserveFromSeq },
                     createdAt: { lt: params.cutoff },
-                    session: { is: staleInactiveSessionWhere(params.cutoff) },
+                    session: { is: retentionEligibleSessionWhere(params.cutoff) },
                 },
             });
             deleted += result.count;

@@ -282,8 +282,6 @@ vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
         loadLocalSettings: () => ({}),
         saveLocalSettings: vi.fn(),
         loadThemePreference: () => 'adaptive',
-        loadPurchases: () => ({}),
-        savePurchases: vi.fn(),
         loadSessionDrafts: loadSessionDraftsMock,
         saveSessionDrafts: saveSessionDraftsMock,
         loadSessionReviewCommentsDrafts: () => ({}),

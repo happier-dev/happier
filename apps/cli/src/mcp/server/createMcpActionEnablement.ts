@@ -75,13 +75,13 @@ export function createMcpActionApprovalRequirement(params: Readonly<{
   getAccountSettings?: (() => AccountSettings | null) | null;
   actionSettingsProvider?: McpActionSettingsProvider | null;
   surface: keyof ActionSurfaces;
-}>): (id: ActionId) => boolean {
+}>): (id: ActionId, defaultRequired?: boolean) => boolean {
   const provider = params.actionSettingsProvider ?? createMcpActionSettingsProvider({
     accountSettings: params.accountSettings ?? null,
     getAccountSettings: params.getAccountSettings ?? null,
   });
-  return (id) =>
+  return (id, defaultRequired) =>
     isApprovalRequiredByActionsSettings(id, provider.getActionsSettings(), {
       surface: params.surface,
-    });
+    }, defaultRequired);
 }

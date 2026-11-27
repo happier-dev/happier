@@ -1,5 +1,6 @@
 import type { DirectSessionsSource } from '@happier-dev/protocol';
 import type { DirectSessionTranscriptReadAfter } from '@/backends/directSessions/providerOps';
+import type { CodexRolloutReadPathResolver } from '../rollout/openCompressedCodexRollout';
 
 import { readCodexDirectTranscript } from './codexDirectTranscriptSource';
 
@@ -11,6 +12,7 @@ export async function readAfterCodexTranscript(params: Readonly<{
   cursor: string;
   maxBytes: number;
   maxItems: number;
+  resolveRolloutReadPath?: CodexRolloutReadPathResolver;
 }>): Promise<DirectSessionTranscriptReadAfter> {
   return await readCodexDirectTranscript({ ...params, direction: 'newer', follow: true });
 }

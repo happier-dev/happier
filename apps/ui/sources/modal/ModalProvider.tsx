@@ -255,7 +255,9 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     const screenOverlayPortalZIndex = zIndexBase - 10000;
     const isKeyboardLiftSuppressedByModal = state.modals.length > 0;
 
+    const hasOpenModal = React.useCallback(() => stateRef.current.modals.length > 0, []);
     const contextValue: ModalContextValue = {
+        hasOpenModal,
         isKeyboardLiftSuppressedByModal,
         state,
         showModal,

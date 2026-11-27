@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 
 import {
   ClaudeSessionRetentionPolicyV1Schema,
@@ -8,6 +8,7 @@ import {
 
 import { resolveClaudeSettingsFilePath, withClaudeSettingsWriteLock } from '@/backends/claude/unifiedTerminal/tuiControls/settingsGuard';
 import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
+import { readClaudeManagedRetention } from './readClaudeManagedRetention';
 
 // Claude Code's documented default; an unset native setting is not an explicit retention intent.
 export const CLAUDE_DEFAULT_CLEANUP_PERIOD_DAYS = 30;
@@ -28,6 +29,9 @@ export async function applyClaudeSessionRetentionSettings(params: Readonly<{
   configDir: string;
   id: string;
   policy: ClaudeSessionRetentionPolicyV1 | null;
+  managedSettingsDir?: string | null;
+  getLegacyPolicy?: () => ClaudeSessionRetentionPolicyV1 | null | undefined;
+  expectedCurrentDays?: number | null;
 }>): Promise<RetentionTarget> {
   const result = (status: RetentionTarget['status'], currentDays: number | null, reason?: string): RetentionTarget => ({
     id: params.id, status, currentDays, ...(reason ? { reason } : {}),
@@ -35,20 +39,33 @@ export async function applyClaudeSessionRetentionSettings(params: Readonly<{
   const edit = async (): Promise<RetentionTarget> => {
     // The settings guard and persistent editor resolve the same file authority for linked homes.
     const path = await resolveClaudeSettingsFilePath(params.configDir);
+    let previousContents: string | null = null;
     let settings: Record<string, unknown> = {};
     let mode = 0o600;
     try {
       const raw = await readFile(path, 'utf8');
+      previousContents = raw;
       const parsed: unknown = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return result('error', null, 'invalid_settings');
       settings = parsed as Record<string, unknown>;
-      mode = (await stat(path)).mode & 0o777;
+      mode = (await stat(path)).mode & 0o7777;
     } catch (error) {
       if (error instanceof SyntaxError) return result('error', null, 'invalid_settings');
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     const currentDays = readClaudeCleanupPeriodDays(settings.cleanupPeriodDays) ?? null;
+    const managed = params.managedSettingsDir ? await readClaudeManagedRetention(params.managedSettingsDir) : 'absent';
+    if (managed === 'present') return result('managed', currentDays, 'managed_settings_detected');
+    if (managed === 'unreadable') return result('error', currentDays, 'managed_settings_unreadable');
+    if (params.getLegacyPolicy) {
+      const legacyPolicy = params.getLegacyPolicy();
+      if (legacyPolicy === undefined) return result('error', currentDays, 'account_settings_unavailable');
+      if (legacyPolicy) return result('managed', currentDays, 'account_policy_active');
+    }
     if (!params.policy) return result('unmanaged', currentDays);
+    if (params.expectedCurrentDays !== undefined && params.expectedCurrentDays !== currentDays) {
+      return result('error', currentDays, 'retention_changed');
+    }
     if (params.policy.mode === 'providerDefault') {
       if (!Object.hasOwn(settings, 'cleanupPeriodDays')) return result('applied', null);
       delete settings.cleanupPeriodDays;
@@ -56,8 +73,9 @@ export async function applyClaudeSessionRetentionSettings(params: Readonly<{
       if (currentDays === params.policy.days) return result('applied', currentDays);
       settings.cleanupPeriodDays = params.policy.days;
     }
-    await mkdir(params.configDir, { recursive: true });
-    await writeGeneratedTextAtomicallyIfChanged({ path, contents: `${JSON.stringify(settings, null, 2)}\n`, mode });
+    await writeGeneratedTextAtomicallyIfChanged({
+      path, contents: `${JSON.stringify(settings, null, 2)}\n`, mode, previousContents,
+    });
     return result('applied', params.policy.mode === 'days' ? params.policy.days : null);
   };
   try {

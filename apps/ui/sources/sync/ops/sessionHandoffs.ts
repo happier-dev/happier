@@ -354,6 +354,8 @@ async function startSessionHandoffOnSourceWithMachineRpcTimeout(
     }
 
     try {
+        const { storeRetainedSessionLink } = await import('./storeRetainedSessionLink');
+        await storeRetainedSessionLink(options.sessionId, serverId);
         const raw = await machineRpcWithServerScope<unknown, unknown>({
             machineId: sourceMachineId,
             method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START,

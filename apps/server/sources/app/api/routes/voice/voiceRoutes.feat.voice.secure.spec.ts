@@ -41,7 +41,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
@@ -68,7 +67,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "0",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
@@ -95,7 +93,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_BUILD_FEATURES_DENY: "voice,voice.happierVoice",
             ELEVENLABS_API_KEY: undefined,
             ELEVENLABS_AGENT_ID_PROD: undefined,
-            REVENUECAT_SECRET_KEY: "rc_secret",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
@@ -121,7 +118,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: undefined,
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
@@ -141,45 +137,18 @@ describe("voiceRoutes (secure)", () => {
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false }));
     });
 
-    it("returns 403 when user is not subscribed and free quota is 0", async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ subscriber: { entitlements: { active: {} } } }),
-        });
-
-        const { voiceRoutes } = await import("./voiceRoutes");
-        const route = createRouteTestBuilder({
-            method: "POST",
-            path: "/v1/voice/token",
-            registerRoutes(app) {
-                voiceRoutes(app as any);
-            },
-        });
-        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
-
-        expect(reply.code).toHaveBeenCalledWith(403);
-        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "subscription_required" }));
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    });
-
-    it("returns 403 quota_exceeded when user is not subscribed and free minutes are exhausted", async () => {
+    it("returns 403 quota_exceeded when free minutes are exhausted", async () => {
         resetVoiceEnv({
             NODE_ENV: "production",
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             VOICE_FREE_MINUTES_PER_MONTH: "1",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
             VOICE_MAX_SESSION_SECONDS: "600",
         });
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 60 } });
-
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ subscriber: { entitlements: { active: {} } } }),
-        });
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
@@ -195,75 +164,8 @@ describe("voiceRoutes (secure)", () => {
         expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "quota_exceeded" }));
     });
 
-    it("returns 503 when RevenueCat is unavailable", async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: false,
-            status: 503,
-        });
-
-        const { voiceRoutes } = await import("./voiceRoutes");
-        const route = createRouteTestBuilder({
-            method: "POST",
-            path: "/v1/voice/token",
-            registerRoutes(app) {
-                voiceRoutes(app as any);
-            },
-        });
-        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
-
-        expect(reply.code).toHaveBeenCalledWith(503);
-        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
-    });
-
-    it("returns 503 when RevenueCat credentials are invalid (401)", async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: false,
-            status: 401,
-        });
-
-        const { voiceRoutes } = await import("./voiceRoutes");
-        const route = createRouteTestBuilder({
-            method: "POST",
-            path: "/v1/voice/token",
-            registerRoutes(app) {
-                voiceRoutes(app as any);
-            },
-        });
-        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
-
-        expect(reply.code).toHaveBeenCalledWith(503);
-        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    });
-
-    it("returns 503 when RevenueCat forbids access (403)", async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: false,
-            status: 403,
-        });
-
-        const { voiceRoutes } = await import("./voiceRoutes");
-        const route = createRouteTestBuilder({
-            method: "POST",
-            path: "/v1/voice/token",
-            registerRoutes(app) {
-                voiceRoutes(app as any);
-            },
-        });
-        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
-
-        expect(reply.code).toHaveBeenCalledWith(503);
-        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "upstream_error" }));
-        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    });
-
     it("returns 429 when user already has an active session", async () => {
         leaseFindMany.mockResolvedValueOnce([{ id: "lease_other" }]);
-
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
-        });
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
@@ -281,12 +183,8 @@ describe("voiceRoutes (secure)", () => {
         expect(leaseDelete).toHaveBeenCalledTimes(1);
     });
 
-    it("returns token when user is subscribed (voice entitlement)", async () => {
+    it("mints in production with no RevenueCat key and makes no RevenueCat request", async () => {
         (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
-            })
             .mockResolvedValueOnce({
                 ok: true,
                 json: async () => ({ token: "conv_token" }),
@@ -306,15 +204,46 @@ describe("voiceRoutes (secure)", () => {
         expect(res).toEqual(expect.objectContaining({ allowed: true, token: "conv_token", leaseId: "lease_1", expiresAtMs: expect.any(Number) }));
         expect(leaseCreate).toHaveBeenCalledTimes(1);
         expect(leaseDeleteMany).toHaveBeenCalledTimes(1);
-        expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+        expect(leaseCreate).toHaveBeenCalledWith(
+            expect.objectContaining({ data: expect.objectContaining({ grantedBy: "free" }) }),
+        );
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        const fetchedUrls = (globalThis.fetch as any).mock.calls.map((call: unknown[]) => String(call[0]));
+        expect(fetchedUrls.some((url: string) => url.includes("revenuecat"))).toBe(false);
+    });
+
+    it("returns 403 quota_exceeded when the free sessions per month are used", async () => {
+        resetVoiceEnv({
+            NODE_ENV: "production",
+            HAPPIER_FEATURE_VOICE__ENABLED: "1",
+            ELEVENLABS_API_KEY: "el_key",
+            ELEVENLABS_AGENT_ID_PROD: "agent_prod",
+            VOICE_FREE_SESSIONS_PER_MONTH: "1",
+            VOICE_MAX_CONCURRENT_SESSIONS: "1",
+            VOICE_MAX_SESSION_SECONDS: "600",
+        });
+        leaseFindMany
+            .mockResolvedValueOnce([{ id: "lease_1" }])
+            .mockResolvedValueOnce([{ id: "lease_earlier" }]);
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/token",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { reply } = await route.invoke({ userId: "u1", body: { sessionId: "s1" } });
+
+        expect(reply.code).toHaveBeenCalledWith(403);
+        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ allowed: false, reason: "quota_exceeded" }));
+        expect(leaseDelete).toHaveBeenCalledTimes(1);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
     });
 
     it("aliases /v1/voice/lease/mint and persists a lease with sessionId null when body is empty", async () => {
         (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
-            })
             .mockResolvedValueOnce({
                 ok: true,
                 json: async () => ({ token: "conv_token" }),
@@ -346,10 +275,6 @@ describe("voiceRoutes (secure)", () => {
         (globalThis.fetch as any)
             .mockResolvedValueOnce({
                 ok: true,
-                json: async () => ({ subscriber: { entitlements: { active: { voice: { expires_date: "2099-01-01" } } } } }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
                 json: async () => ({ token: "conv_token" }),
             });
 
@@ -377,8 +302,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
-            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "0",
             VOICE_MAX_MINUTES_PER_DAY: "1",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
@@ -411,8 +334,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
-            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "0",
             VOICE_MAX_MINUTES_PER_DAY: "1",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
@@ -442,7 +363,6 @@ describe("voiceRoutes (secure)", () => {
             HAPPIER_FEATURE_VOICE__ENABLED: "1",
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID_PROD: "agent_prod",
-            REVENUECAT_SECRET_KEY: "rc_secret",
             VOICE_FREE_MINUTES_PER_MONTH: "1",
             VOICE_FREE_SESSIONS_PER_MONTH: "0",
             VOICE_MAX_CONCURRENT_SESSIONS: "1",
@@ -450,11 +370,6 @@ describe("voiceRoutes (secure)", () => {
         });
         conversationAggregate.mockResolvedValueOnce({ _sum: { durationSeconds: 0 } });
         leaseCount.mockResolvedValueOnce(1);
-
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ subscriber: { entitlements: { active: {} } } }),
-        });
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({

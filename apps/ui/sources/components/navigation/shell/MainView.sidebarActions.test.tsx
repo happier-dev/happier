@@ -414,7 +414,7 @@ describe('MainView sidebar actions', () => {
         expect(sessionListHookState.useHasHiddenInactiveSessionsCalls).toBe(0);
         const list = screen.tree.findByType('SessionsListContent');
         expect(list.props.data).toBe(sessionListState.data);
-        expect(list.props.storageKind).toBe('persisted');
+        expect(list.props.storageKind).toBe('persistedWithRetained');
     });
 
     it('passes the active route session into the sidebar session list data hook', async () => {

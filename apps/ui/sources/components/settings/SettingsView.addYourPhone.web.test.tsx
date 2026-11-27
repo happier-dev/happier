@@ -59,7 +59,6 @@ installSettingsViewCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useEntitlement: () => false,
             useLocalSettingMutable: () => [false, vi.fn()],
             useSetting: () => null,
             useAllMachines: () => [],
@@ -130,13 +129,11 @@ vi.mock('@/auth/context/AuthContext', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         refreshMachinesThrottled: vi.fn(async () => {}),
-        presentPaywall: vi.fn(async () => ({ success: false, error: 'nope' })),
         refreshProfile: vi.fn(async () => {}),
     },
 }));
 
 vi.mock('@/track', () => ({
-    trackPaywallButtonClicked: vi.fn(),
     trackWhatsNewClicked: vi.fn(),
 }));
 
@@ -174,10 +171,6 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconSource: () => 1,
     getAgentIconTintColor: () => null,
     resolveAgentIdFromConnectedServiceId: () => null,
-}));
-
-vi.mock('@/components/settings/supportUsBehavior', () => ({
-    resolveSupportUsAction: () => 'github',
 }));
 
 vi.mock('@/utils/system/bugReportActionTrail', () => ({

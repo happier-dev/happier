@@ -5,7 +5,6 @@ import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/settings';
 import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
-import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { Profile, profileDefaults, profileParse } from '../profiles/profile';
 import {
     migrateThemeProfileLocalStateTokenIds,
@@ -595,26 +594,6 @@ export function saveLocalPetSourcesBySourceKey(sources: Record<string, LocalPetS
 
 export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
     return loadThemeRuntimeLocalState().themePreference;
-}
-
-export function loadPurchases(): Purchases {
-    const mmkv = getPersistenceStorage();
-    const purchases = mmkv.getString('purchases');
-    if (purchases) {
-        try {
-            const parsed = JSON.parse(purchases);
-            return purchasesParse(parsed);
-        } catch (e) {
-            console.error('Failed to parse purchases', e);
-            return { ...purchasesDefaults };
-        }
-    }
-    return { ...purchasesDefaults };
-}
-
-export function savePurchases(purchases: Purchases) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('purchases', JSON.stringify(purchases));
 }
 
 export function loadSessionDrafts(scope?: ServerAccountScope | null): Record<string, string> {

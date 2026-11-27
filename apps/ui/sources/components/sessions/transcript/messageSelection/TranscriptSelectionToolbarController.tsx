@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useSessionMessages } from '@/sync/store/hooks';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
+import { showExportSheet } from '@/components/sessions/export/ExportSheet';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { useTranscriptSelectionState } from './TranscriptMessageSelectionContext';
@@ -48,6 +49,13 @@ export function TranscriptSelectionToolbarController(props: Readonly<{
             roleLabels={props.roleLabels}
             sendToSessionEnabled={props.sendToSessionEnabled}
             maxWidth={props.maxWidth}
+            onExportSelection={(selectedIds) => {
+                showExportSheet({
+                    sessionId: props.sessionId,
+                    selectedMessages: messages.filter((message) => selectedIds.has(message.id)),
+                    initialScope: 'selection',
+                });
+            }}
             onSendToSession={props.onSendToSession}
         />
     );

@@ -202,6 +202,9 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
                 ? updateBody.archivedAt
                 : session.archivedAt,
+        cloudCopyLeftAt: updateBody.cloudCopyLeftAt === null || typeof updateBody.cloudCopyLeftAt === 'number'
+            ? updateBody.cloudCopyLeftAt
+            : session.cloudCopyLeftAt,
         meaningfulActivityAt:
             typeof updateBody.meaningfulActivityAt === 'number' && Number.isFinite(updateBody.meaningfulActivityAt)
                 ? updateBody.meaningfulActivityAt

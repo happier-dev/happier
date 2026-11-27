@@ -31,10 +31,7 @@ vi.mock('react-native-mmkv', () => {
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock('@/track', () => ({
-    trackReviewPromptShown: vi.fn(),
-    trackReviewPromptResponse: vi.fn(),
     trackReviewStoreShown: vi.fn(),
-    trackReviewRetryScheduled: vi.fn(),
 }));
 
 const syncApplySettingsSpy = vi.hoisted(() => vi.fn());
@@ -59,8 +56,6 @@ installSystemUtilityCommonModuleMocks({
             storage: {
                 getState: () => ({
                     settings: {
-                        reviewPromptAnswered: false,
-                        reviewPromptLikedApp: null,
                     },
                 }),
             },

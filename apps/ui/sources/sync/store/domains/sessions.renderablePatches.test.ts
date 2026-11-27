@@ -28,7 +28,6 @@ function mockSessionsDomainBoundaries() {
         }),
         loadLocalSettings: () => ({}),
         loadPendingSettings: () => ({}),
-        loadPurchases: () => ({}),
         loadProfile: () => ({ id: 'account_a' }),
         loadSessionDrafts: () => ({}),
         loadSessionLastViewed: () => ({}),
@@ -54,7 +53,6 @@ function mockSessionsDomainBoundaries() {
         saveSettings: vi.fn(),
         saveLocalSettings: vi.fn(),
         savePendingSettings: vi.fn(),
-        savePurchases: vi.fn(),
         saveProfile: vi.fn(),
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({

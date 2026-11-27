@@ -3,15 +3,18 @@ import { Platform } from 'react-native';
 import { t } from '@/text';
 import { createNativeCacheFileSink, shareNativeCacheFile } from './nativeCacheFileSink';
 
-export async function saveFileBytes(input: Readonly<{
+type SaveFileParameters = Readonly<{
     name: string;
-    bytes: Uint8Array;
     mimeType: string;
     dialogTitle: string;
     UTI?: string;
-}>): Promise<void> {
+}>;
+
+export async function saveFileStream<T>(input: SaveFileParameters, write: (sink: (bytes: Uint8Array) => Promise<void>) => Promise<T>): Promise<T> {
     if (Platform.OS === 'web') {
-        const href = URL.createObjectURL(new Blob([new Uint8Array(input.bytes)], { type: input.mimeType }));
+        const chunks: Array<Uint8Array<ArrayBuffer>> = [];
+        const output = await write(async (bytes) => { chunks.push(new Uint8Array(bytes)); });
+        const href = URL.createObjectURL(new Blob(chunks, { type: input.mimeType }));
         try {
             const anchor = document.createElement('a');
             anchor.href = href;
@@ -21,14 +24,14 @@ export async function saveFileBytes(input: Readonly<{
             // Preserve the existing browser download handoff before releasing the Blob URL.
             setTimeout(() => URL.revokeObjectURL(href), 1000);
         }
-        return;
+        return output;
     }
 
     const created = await createNativeCacheFileSink({ directoryName: 'happier-downloads', name: input.name });
     if (!created.ok) throw new Error(created.error);
     let retainCacheFile = false;
     try {
-        await created.sink.writeBytes(input.bytes);
+        const output = await write(created.sink.writeBytes);
         await created.sink.close();
         const result = await shareNativeCacheFile({
             fileUri: created.sink.fileUri,
@@ -39,7 +42,12 @@ export async function saveFileBytes(input: Readonly<{
         });
         if (result.status === 'unavailable') throw new Error(t('files.fileSharingUnavailable'));
         if (result.status === 'shared') retainCacheFile = result.retainCacheFile;
+        return output;
     } finally {
         if (!retainCacheFile) await created.sink.cleanup();
     }
+}
+
+export async function saveFileBytes(input: SaveFileParameters & Readonly<{ bytes: Uint8Array }>): Promise<void> {
+    await saveFileStream(input, (write) => write(input.bytes));
 }

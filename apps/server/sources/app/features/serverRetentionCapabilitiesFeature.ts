@@ -1,21 +1,20 @@
 import type { FeaturesPayloadDelta } from './types';
 
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
-import { resolveEffectiveRetentionEnabled } from '@/app/retention/config/retentionPolicyState';
+import { resolveLimitTable } from '@/app/plans/accountLimits';
 import { retentionPolicyToCapabilities } from '@/app/retention/config/retentionPolicyToCapabilities';
 
 export function resolveServerRetentionCapabilitiesFeature(
     env: NodeJS.ProcessEnv,
 ): FeaturesPayloadDelta {
     const policy = readRetentionPolicyFromEnv(env);
-    if (!resolveEffectiveRetentionEnabled(policy)) {
-        return {};
-    }
+    const retention = retentionPolicyToCapabilities(policy, resolveLimitTable(env));
+    if (!retention.enabled) return {};
 
     return {
         capabilities: {
             server: {
-                retention: retentionPolicyToCapabilities(policy),
+                retention,
             },
         },
     };

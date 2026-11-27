@@ -469,3 +469,5 @@ export * from './providers/providerCliInstallGuidance.js';
 export * from './providerSettings/index.js';
 
 export * from './voice/index.js';
+
+export { deriveLinkFromHostedMetadata, type DerivedHostedSessionLink } from './sessionControls/deriveLinkFromHostedMetadata.js';
