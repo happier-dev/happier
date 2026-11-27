@@ -148,7 +148,6 @@ import {
   validatePluginSearchProviderContributionsV1,
 } from './searchProviders.js';
 import {
-  MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1,
   PluginComposerAttachmentContributionV1Schema,
 } from './composerAttachments.js';
 import {
@@ -473,11 +472,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2: PluginCoreContributionFamilie
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.daemonDatabases, schema: PluginDaemonDatabaseContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerReferences, schema: PluginComposerReferenceProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.searchProviders, schema: PluginSearchProviderContributionV1Schema }),
-  definePluginContributionFamilyV2({
-    family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerAttachments,
-    schema: PluginComposerAttachmentContributionV1Schema,
-    maxItems: MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1,
-  }),
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerAttachments, schema: PluginComposerAttachmentContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerControls, schema: PluginComposerControlContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerRegions, schema: PluginComposerRegionContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.openableContentViewers, schema: PluginOpenableContentViewerContributionV1Schema }),

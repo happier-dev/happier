@@ -1,8 +1,8 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import { build } from 'esbuild';
@@ -15,7 +15,6 @@ import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createHostingProviderOperationActions } from '@happier-dev/plugin-sdk/scm/hosting';
 import { deploymentInProgressStates } from '@happier-dev/plugin-sdk/events';
-import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 
 import { compileUniversalPluginUiCommonJs } from '../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 import { loadPluginModule } from './loadPluginModule';
@@ -41,8 +40,7 @@ describe('portable CommonJS plugin host modules', () => {
                 "import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';",
                 "import { createHostingProviderOperationActions } from '@happier-dev/plugin-sdk/scm/hosting';",
                 "import { deploymentInProgressStates } from '@happier-dev/plugin-sdk/events';",
-                "import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';",
-                'export const read = () => ({ mini: z.string, classic: classic.string, defaultClassic: defaultZod.string, core: core.$ZodError, english, composer: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema, hosting: createHostingProviderOperationActions, events: deploymentInProgressStates, manifest: PluginUiArtifactsManifestV2Schema, parsed: z.string().safeParse(42) });',
+                'export const read = () => ({ mini: z.string, classic: classic.string, defaultClassic: defaultZod.string, core: core.$ZodError, english, composer: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema, hosting: createHostingProviderOperationActions, events: deploymentInProgressStates, parsed: z.string().safeParse(42) });',
             ].join('\n'));
             const compiled = await compileUniversalPluginUiCommonJs({
                 projectRoot: root, entryPath, artifactId: 'account-runtime', requestedExports: ['read'],
@@ -58,7 +56,7 @@ describe('portable CommonJS plugin host modules', () => {
                 english: EnglishLocale, composer: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema,
                 hosting: createHostingProviderOperationActions,
                 events: deploymentInProgressStates,
-                manifest: PluginUiArtifactsManifestV2Schema, parsed: expect.objectContaining({ success: false }) });
+                parsed: expect.objectContaining({ success: false }) });
         } finally {
             await rm(root, { recursive: true, force: true });
         }
@@ -97,38 +95,66 @@ describe('portable CommonJS plugin host modules', () => {
         }
     });
 
-    it.for(['node', 'bun-source', 'bun-compiled'] as const)('executes shared host bindings in the %s payload', async (runtime, context) => {
-        if (runtime !== 'node' && !hasBun) return context.skip();
+    it.for(['node', 'node-source', 'bun-source', 'bun-compiled'] as const)('executes shared host bindings in the %s runtime', async (runtime, context) => {
+        if (runtime.startsWith('bun') && !hasBun) return context.skip();
+        const authoredSource = runtime === 'node-source';
         const repoRoot = resolve(import.meta.dirname, '../../../../..');
         const payloadRoot = await mkdtemp(join(repoRoot, '.project/tmp/cli-cjs-payload-'));
         const artifactRoot = await mkdtemp(join(tmpdir(), 'happier-portable-payload-artifact-'));
         try {
             const authorPath = join(artifactRoot, 'entry.ts');
             const artifactPath = join(artifactRoot, 'entry.cjs.bundle');
-            await writeFile(authorPath, "import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol'; import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners'; import { z } from 'zod/mini'; export const read = () => ({ schema: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema, string: z.string });");
+            await writeFile(authorPath, [
+                "import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';",
+                "import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';",
+                "import { z } from 'zod/mini';",
+                'export const read = () => ({ schema: ProtocolComposerRefV1Schema, machine: MachineProvisionerCheckResultV1Schema, string: z.string });',
+                "export const readLate = () => require('@happier-dev/protocol/usage/coach/buildUsageCoachRemedies');",
+                "export const readSchema = () => require('@happier-dev/protocol/plugins/ui/uiArtifactsManifest').PluginUiArtifactsManifestV2Schema;",
+            ].join('\n'));
             const compiled = await compileUniversalPluginUiCommonJs({ projectRoot: artifactRoot,
-                entryPath: authorPath, artifactId: 'account-runtime', requestedExports: ['read'] });
+                entryPath: authorPath, artifactId: 'account-runtime', requestedExports: ['read', 'readLate', 'readSchema'] });
             await writeFile(artifactPath, compiled.bytes);
-            const probePath = join(payloadRoot, 'probe.ts');
+            const probePath = join(payloadRoot, 'probe.mts');
             await writeFile(probePath, [
                 `import { loadPluginModule } from ${JSON.stringify(join(repoRoot, 'apps/cli/src/plugins/runtime/loadPluginModule.ts'))};`,
                 "import { ProtocolComposerRefV1Schema } from '@happier-dev/plugin-sdk/protocol';",
                 "import { MachineProvisionerCheckResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';",
+                "import { PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';",
                 "import { z } from 'zod/mini';",
                 'const entryPath = process.argv[2];',
                 'const source = { kind: "file_backed", entryPath, committedAuthorization: { pluginId: "acme.portable-payload", immutableGenerationId: entryPath } };',
                 'const first = await loadPluginModule({ source }); const second = await loadPluginModule({ source });',
+                ...(authoredSource ? [] : ['if (Reflect.get(globalThis, "lateProtocolEvaluated")) throw new Error("Unused Protocol module evaluated during portable load");']),
+                'const late = first.readLate();',
+                'if (late !== first.readLate()) throw new Error("Late Protocol require did not reuse the host namespace");',
+                ...(authoredSource ? [] : ['if (!Reflect.get(globalThis, "lateProtocolEvaluated")) throw new Error("Late Protocol require did not evaluate its module");']),
+                'if (first.readSchema() !== PluginUiArtifactsManifestV2Schema) throw new Error("Protocol schema did not reuse host identity");',
                 'const value = first.read();',
                 'if (value.schema !== ProtocolComposerRefV1Schema || value.machine !== MachineProvisionerCheckResultV1Schema || value.string !== z.string || first !== second) throw new Error("Shared host identity failed");',
                 'console.log("portable-host-shared:PASS");',
             ].join('\n'));
+            const tsconfig = join(repoRoot, 'apps/cli/tsconfig.json');
+            if (authoredSource) {
+                const result = await execute(process.execPath, ['--conditions=happier-source', '--import',
+                    join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs'), probePath, artifactPath], {
+                    cwd: repoRoot, env: { ...process.env, TSX_TSCONFIG_PATH: tsconfig },
+                });
+                expect(result.stdout.trim()).toBe('portable-host-shared:PASS');
+                return;
+            }
             const payloadPath = join(payloadRoot, 'probe.mjs');
             await build({ entryPoints: [probePath], outfile: payloadPath, bundle: true, platform: 'node',
                 format: 'esm', conditions: ['happier-source'],
                 plugins: [{ name: 'native-jiti-host', setup(builder) {
                     builder.onResolve({ filter: /^jiti$/ }, () => ({ path: jitiEntry, external: true }));
+                    builder.onLoad({ filter: /\/usage\/coach\/buildUsageCoachRemedies\.ts$/ }, async ({ path }) => ({
+                        contents: `${await readFile(path, 'utf8')}\nReflect.set(globalThis, 'lateProtocolEvaluated', true);`,
+                        loader: 'ts',
+                        resolveDir: dirname(path),
+                    }));
                 } }],
-                tsconfig: join(repoRoot, 'apps/cli/tsconfig.json'),
+                tsconfig,
                 banner: { js: 'import { createRequire as createPayloadRequire } from "node:module"; const require = createPayloadRequire(import.meta.url);' } });
             let executable = runtime === 'node' ? process.execPath : bunCommand;
             let args = [payloadPath, artifactPath];

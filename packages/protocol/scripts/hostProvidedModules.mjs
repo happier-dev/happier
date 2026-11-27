@@ -232,14 +232,15 @@ export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULES: Readonly<Record<string, u
 }
 
 /**
- * The same set for Metro hosts. Metro evaluates a namespace import when its importer
- * evaluates, but keeps a literal `require` inside the function that calls it, so the
- * app evaluates a subpath only when an artifact imports it. Node hosts use the table above.
+ * The same set for Metro and compiled CLI hosts. Literal requires keep each edge
+ * visible to bundlers while deferring evaluation. The unbundled CLI ESM host
+ * supplies its own synchronous resolver.
  */
 function renderModuleLoaders(provided) {
-  return `${header}\n// Metro hosts: each loader evaluates its subpath on first use. Node hosts use hostProvidedProtocolModules.\n${
-    'export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULE_LOADERS: Readonly<Record<string, () => unknown>> = Object.freeze({\n'}${
-    provided.map(specifier => `    '${specifier}': () => require('${specifier}'),\n`).join('')}});\n`;
+  return `${header}
+export const HAS_BUNDLED_PROTOCOL_MODULE_REQUIRE = typeof require === 'function';
+export const PLUGIN_UI_HOST_PROVIDED_PROTOCOL_MODULE_LOADERS: Readonly<Record<string, () => unknown>> = Object.freeze({
+${provided.map(specifier => `    '${specifier}': () => require('${specifier}'),\n`).join('')}});\n`;
 }
 
 async function readText(path) {

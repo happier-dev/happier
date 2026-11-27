@@ -215,7 +215,7 @@ describe('plugin manifest v2 root contract', () => {
       .toMatchObject({ ok: false, diagnostics: [{ code: 'plugin_manifest_duplicate_contribution_id' }] });
   });
 
-  it('admits at most the approved number of declared composer attachment types', () => {
+  it('admits declared composer attachment types independently of composer instance limits', () => {
     const composerAttachments = Array.from(
       { length: MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1 },
       (_, index) => ({
@@ -238,7 +238,21 @@ describe('plugin manifest v2 root contract', () => {
         cardinality: 'many',
         valueSchema: { type: 'object' },
       }] },
-    })).success).toBe(false);
+    })).success).toBe(true);
+  });
+
+  it('admits unique environment key names beyond the former declaration ceilings', () => {
+    const keys = Array.from({ length: 65 }, (_, index) => `PLUGIN_${'A'.repeat(128)}_${index}`);
+    const request = (names: string[]) => manifest({ hostAccess: { required: [
+      { id: 'read-env', capability: 'environment', reason: 'Read tool configuration', scope: { keys: names } },
+      { id: 'run-tool', capability: 'process', reason: 'Run a configured tool', scope: {
+        executables: [{ kind: 'systemTool', id: { pluginId: 'com.acme.fixture', localId: 'tool' } }],
+        envKeys: names,
+      } },
+    ] } });
+    expect(PluginManifestV2Schema.safeParse(request(keys)).success).toBe(true);
+    expect(PluginManifestV2Schema.safeParse(request([...keys, keys[0]!])).success).toBe(false);
+    expect(PluginManifestV2Schema.safeParse(request(['INVALID=NAME'])).success).toBe(false);
   });
 
   it('defaults network.client private-network authority to false while preserving explicit intent', () => {
@@ -865,6 +879,25 @@ describe('plugin manifest v2 root contract', () => {
     }));
 
     expect(parsed.success).toBe(true);
+  });
+
+  it('defers targeted contribution quotas to the target and the active catalog', () => {
+    const protocol = { id: 'acme.providers/catalog', version: 1 };
+    const targetedPluginContributions = Array.from({ length: 65 }, (_, index) => ({
+      id: `provider-${index}`,
+      target: { pluginId: index < 17 ? 'acme.providers' : `acme.provider-${index}`, pointId: 'providers' },
+      protocol,
+      descriptor: { detail: index === 0 ? 'a'.repeat(17 * 1024) : 'fixture' },
+      operations: {},
+    }));
+    const result = PluginManifestV2Schema.safeParse(manifest({ contributes: {
+      pluginContributionPoints: [{
+        id: 'providers', maxContributionsPerContributor: 17,
+        protocols: [{ ...protocol, descriptor: { type: 'object' }, operations: {} }],
+      }],
+      targetedPluginContributions,
+    } }));
+    expect(result.success ? result.data.contributes.targetedPluginContributions.length : result.error.issues).toBe(65);
   });
 
   it('admits exactly the Protocol-owned number of target protocol epochs per point', () => {

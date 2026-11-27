@@ -11,7 +11,7 @@ import { PluginUiRendererChainBindingV1Schema } from './ui/rendererChainBinding.
 import { PluginUiIconTokenV1Schema } from './ui/tokens.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-/** The existing per-plugin contribution ceiling applies to attachment types. */
+/** @deprecated Former manifest limit on declared attachment types. */
 export const MAX_PLUGIN_COMPOSER_ATTACHMENTS_V1 = 64;
 
 /**

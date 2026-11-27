@@ -3979,12 +3979,22 @@ The CLI refuses an unprovided Protocol specifier instead of resolving another
 copy beside the artifact. Artifacts built before the field existed omit it and
 externalize only the fixed list.
 
-The CLI supplies the portable SDK/Zod/Protocol subset through its existing plugin module
-loader's demand-loaded CommonJS adapter. Its static host bindings remain visible
-to native payload bundling, so an acquired artifact does not need adjacent SDK
-packages. Other dependencies keep the native artifact-relative resolver and
-the incumbent module/generation cache; ordinary CLI startup does not initialize
-this portable executable graph.
+The CLI supplies the portable SDK/Zod/Protocol subset through its demand-loaded
+CommonJS adapter. The CLI and Plugin UI host share the generated Protocol subpath
+loaders. A portable `require` evaluates its requested subpath synchronously and
+the CLI reuses that namespace across artifacts. Literal requires expose the same
+dependencies to native payload bundling. Unbundled JavaScript execution resolves
+a provided subpath from the CLI's own package closure. Direct TypeScript
+execution borrows the authored ESM namespaces to preserve identity with the
+development loader. Other dependencies keep the native artifact-relative
+resolver and module/generation cache.
+
+In unreleased 0.3, the manifest accepts any number of unique environment keys
+matching the existing environment name grammar, and any number of declared
+composer attachment types. Runtime attachment instance limits still apply to
+the active composer. Targeted contribution admission applies the target's
+declared quota and the active catalog bounds. Match the author schema and host
+parser when publishing manifests that use the larger declarations.
 
 In 0.3 development source, the UI's existing executable host shares pending
 activation work and reuses a current activation for its exact authority,

@@ -81,9 +81,11 @@ export type PluginExecutionTargetV2 = z.infer<typeof PluginExecutionTargetV2Sche
 
 export { PluginLocalizedStringV2Schema, type PluginLocalizedStringV2 } from '../contributions/publicTypes.js';
 const HttpMethodSchema = lazyZodSchema(() => z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']));
+/** @deprecated Former manifest limit. The manifest accepts any number of unique environment keys. */
 export const MAX_PLUGIN_ENVIRONMENT_KEYS = 64;
+/** @deprecated Former manifest limit. Environment keys follow the environment name grammar. */
 export const MAX_PLUGIN_ENVIRONMENT_KEY_LENGTH = 128;
-const PluginEnvironmentKeySchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(MAX_PLUGIN_ENVIRONMENT_KEY_LENGTH), z.regex(/^[A-Za-z_][A-Za-z0-9_]*$/)));
+const PluginEnvironmentKeySchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.regex(/^[A-Za-z_][A-Za-z0-9_]*$/)));
 export const PluginNetworkTargetV2Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('fixedOrigin'), origin: CanonicalHttpOriginSchema }),
   /**
@@ -252,14 +254,14 @@ const PluginHostAccessRequestVariantsV2 = [
     capability: z.literal('process'),
     scope: z.strictObject({
       executables: uniqueNonEmptyArray(PluginDeclaredExecutableRefSchema),
-      envKeys: z.optional(uniqueNonEmptyArray(PluginEnvironmentKeySchema).check(z.maxLength(MAX_PLUGIN_ENVIRONMENT_KEYS))),
+      envKeys: z.optional(uniqueNonEmptyArray(PluginEnvironmentKeySchema)),
     }),
   })),
   lazyZodSchema(() => z.strictObject({
     ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('environment'),
     scope: z.strictObject({
-      keys: uniqueNonEmptyArray(PluginEnvironmentKeySchema).check(z.maxLength(MAX_PLUGIN_ENVIRONMENT_KEYS)),
+      keys: uniqueNonEmptyArray(PluginEnvironmentKeySchema),
     }),
   })),
   PluginConnectedAccountsHostAccessRequestV2Schema,

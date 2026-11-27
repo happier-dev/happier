@@ -22,31 +22,23 @@ import {
   PluginUiRendererChainBindingV1Schema,
 } from './ui/rendererChainBinding.js';
 import {
+  PLUGIN_UI_TARGETED_CONTRIBUTION_OPERATIONS_MAX_V1,
+  PLUGIN_UI_TARGETED_CONTRIBUTION_POINTS_MAX_V1,
   PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1,
+  PLUGIN_UI_TARGETED_CONTRIBUTION_SURFACES_MAX_V1,
   PluginUiTargetedContributionSurfacePresentationV1Schema,
   type PluginUiTargetedContributionSurfacePresentationV1,
 } from '../ui/targetedContributions.js';
 import { PluginJsonSchemaV2Schema, PluginJsonValueV2Schema, type PluginJsonSchemaV2 } from './publicTypes.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
-const TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL = 16;
-const TARGETED_CONTRIBUTION_MAX_POINTS_PER_PLUGIN = 16;
-const TARGETED_CONTRIBUTION_MAX_TARGET_PLUGINS_PER_CONTRIBUTOR = 16;
-const TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_PLUGIN = 64;
-const TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_POINT = 16;
-const TARGETED_CONTRIBUTION_MAX_DESCRIPTOR_BYTES = 16 * 1024;
-
-function utf8Length(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
-}
-
 function boundedOperationMap<TValue extends z.core.SomeType>(valueSchema: TValue): z.ZodMiniType<Record<string, z.infer<TValue>>> {
   return z.record(PluginContributionOperationRoleV1Schema, valueSchema).check(z.superRefine((operations, ctx) => {
     const count = Object.keys(operations).length;
-    if (count > TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL) {
+    if (count > PLUGIN_UI_TARGETED_CONTRIBUTION_OPERATIONS_MAX_V1) {
       ctx.addIssue({
         code: "custom",
-        message: `Targeted contribution operation maps may contain at most ${TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL} roles.`,
+        message: `Targeted contribution operation maps may contain at most ${PLUGIN_UI_TARGETED_CONTRIBUTION_OPERATIONS_MAX_V1} roles.`,
       });
     }
   }));
@@ -55,10 +47,10 @@ function boundedOperationMap<TValue extends z.core.SomeType>(valueSchema: TValue
 function boundedSurfaceMap<TValue extends z.ZodMiniType>(valueSchema: TValue): z.ZodMiniType<Record<string, z.infer<TValue>>> {
   return z.record(asProtocolZod(PluginContributionLocalIdSchema), valueSchema).check(z.superRefine((surfaces, ctx) => {
     const count = Object.keys(surfaces).length;
-    if (count < 1 || count > TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL) {
+    if (count < 1 || count > PLUGIN_UI_TARGETED_CONTRIBUTION_SURFACES_MAX_V1) {
       ctx.addIssue({
         code: "custom",
-        message: `Targeted contribution surface maps must contain 1 to ${TARGETED_CONTRIBUTION_MAX_ROLES_PER_PROTOCOL} roles.`,
+        message: `Targeted contribution surface maps must contain 1 to ${PLUGIN_UI_TARGETED_CONTRIBUTION_SURFACES_MAX_V1} roles.`,
       });
     }
   }));
@@ -211,7 +203,7 @@ export function rehydratePluginContributionPointSemanticsV1(
 
 export const PluginContributionPointV1Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
-  maxContributionsPerContributor: z.optional(z.number().check(z.int(), z.positive(), z.int(), z.maximum(TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_POINT))),
+  maxContributionsPerContributor: z.optional(z.number().check(z.int(), z.positive())),
   protocols: z.array(PluginContributionPointProtocolV1Schema).check(z.minLength(1), z.maxLength(PLUGIN_UI_TARGETED_CONTRIBUTION_PROTOCOLS_MAX_V1)),
 }).check(z.superRefine((point, ctx) => {
   const seen = new Set<string>();
@@ -294,8 +286,8 @@ export const PluginTargetedContributionV1Schema = lazyZodSchema(() => z.strictOb
 export type PluginTargetedContributionV1 = z.infer<typeof PluginTargetedContributionV1Schema>;
 
 /**
- * Manifest-local bounds which do not need a target plugin. Target presence,
- * role qualification, and active-snapshot limits stay with catalog admission.
+ * A target's declared points must fit its mounted UI snapshot. Catalog
+ * admission owns target presence, role qualification and active contributions.
  */
 export function validateTargetedContributionEnvelopeBoundsV1(
   value: Readonly<{
@@ -304,48 +296,11 @@ export function validateTargetedContributionEnvelopeBoundsV1(
   }>,
   ctx: z.core.$RefinementCtx,
 ): void {
-  if (value.pluginContributionPoints.length > TARGETED_CONTRIBUTION_MAX_POINTS_PER_PLUGIN) {
+  if (value.pluginContributionPoints.length > PLUGIN_UI_TARGETED_CONTRIBUTION_POINTS_MAX_V1) {
     ctx.addIssue({
       code: "custom",
       path: ['pluginContributionPoints'],
-      message: `At most ${TARGETED_CONTRIBUTION_MAX_POINTS_PER_PLUGIN} targeted contribution points are allowed.`,
-    });
-  }
-  if (value.targetedPluginContributions.length > TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_PLUGIN) {
-    ctx.addIssue({
-      code: "custom",
-      path: ['targetedPluginContributions'],
-      message: `At most ${TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_PLUGIN} targeted contributions are allowed.`,
-    });
-  }
-  const targets = new Set<string>();
-  const contributionsByPoint = new Map<string, number>();
-  value.targetedPluginContributions.forEach((contribution, index) => {
-    if (contribution.descriptor !== undefined
-      && utf8Length(JSON.stringify(contribution.descriptor)) > TARGETED_CONTRIBUTION_MAX_DESCRIPTOR_BYTES) {
-      ctx.addIssue({
-        code: "custom",
-        path: ['targetedPluginContributions', index, 'descriptor'],
-        message: `A targeted contribution descriptor may not exceed ${TARGETED_CONTRIBUTION_MAX_DESCRIPTOR_BYTES} bytes.`,
-      });
-    }
-    targets.add(contribution.target.pluginId);
-    const pointKey = `${contribution.target.pluginId}/${contribution.target.pointId}`;
-    const count = (contributionsByPoint.get(pointKey) ?? 0) + 1;
-    contributionsByPoint.set(pointKey, count);
-    if (count > TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_POINT) {
-      ctx.addIssue({
-        code: "custom",
-        path: ['targetedPluginContributions', index],
-        message: `At most ${TARGETED_CONTRIBUTION_MAX_CONTRIBUTIONS_PER_POINT} targeted contributions may bind one target point.`,
-      });
-    }
-  });
-  if (targets.size > TARGETED_CONTRIBUTION_MAX_TARGET_PLUGINS_PER_CONTRIBUTOR) {
-    ctx.addIssue({
-      code: "custom",
-      path: ['targetedPluginContributions'],
-      message: `At most ${TARGETED_CONTRIBUTION_MAX_TARGET_PLUGINS_PER_CONTRIBUTOR} target plugins may be named.`,
+      message: `At most ${PLUGIN_UI_TARGETED_CONTRIBUTION_POINTS_MAX_V1} targeted contribution points are allowed.`,
     });
   }
 }
