@@ -60,6 +60,9 @@ export type RecordingOutputFormat = Readonly<{
   container: 'mp4' | 'webm';
 }>;
 
+// yuv420p needs even dimensions. Pad rather than crop or rescale captured pixels.
+const RECORDING_FRAME_FILTER = 'pad=ceil(iw/2)*2:ceil(ih/2)*2';
+
 const WEBM_FORMAT: RecordingOutputFormat = { encoder: 'libvpx', mimeType: 'video/webm', container: 'webm' };
 // These encoders accept software yuv420p frames without a separate device/filter graph.
 // Hardware availability is established by the executable, never by the host OS name.
@@ -87,10 +90,11 @@ export async function resolveRecordingOutputFormat(binaryPath: string): Promise<
     for (const encoder of H264_ENCODERS) {
       if (!encoders.has(encoder)) continue;
       // Listing proves compilation, not runtime usability (including software
-      // libraries). Exercise encoding and the actual MP4 muxer once per identity.
+      // libraries). Exercise odd-sized RGB frames through the same padding filter
+      // and actual MP4 muxer once per identity.
       const usable = await new Promise<boolean>(resolve => {
-        execFile(binaryPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=s=1280x720',
-          '-frames:v', '1', '-an', '-c:v', encoder, '-pix_fmt', 'yuv420p',
+        execFile(binaryPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=s=1281x721,format=rgb24',
+          '-frames:v', '1', '-an', '-vf', RECORDING_FRAME_FILTER, '-c:v', encoder, '-pix_fmt', 'yuv420p',
           '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1'],
         { windowsHide: true }, error => resolve(!error));
       });
@@ -120,6 +124,8 @@ function buildFfmpegArgs(input: Readonly<{
     '-i',
     'pipe:0',
     '-an',
+    '-vf',
+    RECORDING_FRAME_FILTER,
     '-c:v',
     input.format.encoder,
     '-pix_fmt',

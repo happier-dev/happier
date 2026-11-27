@@ -31,6 +31,11 @@ only for an `UNSURFACE` cell that makes no product promise.
 | `mediaRecorder`       | UNSURFACE (daemon) | — | client-rendered surfaces | A client-side (in-page) capture path; the daemon surfaces no producer for it. |
 | `unavailable`         | UNSURFACE   | — | — | No-capture sentinel. |
 
+In 0.3 development, the shared ffmpeg encoder pads odd frame widths and heights
+to the next even dimension for yuv420p, preserving captured pixels. Browser and
+Computer recordings use this same filter; the H.264 capability probe exercises
+odd-sized RGB input through it before selecting MP4.
+
 ## Reference-only invariant (BRW-15)
 
 The daemon owns recording admission, identifiers and lifecycle. Its per-view identity is

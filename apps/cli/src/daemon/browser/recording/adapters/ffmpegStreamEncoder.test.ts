@@ -109,7 +109,7 @@ function outputPathFromArgs(args: readonly string[]): string {
 }
 
 describe('browser recording ffmpeg stream encoder', () => {
-  it('acquires the installed encoder and produces playable changing frames', async ({ skip }) => {
+  it.for([[16, 16], [1280, 577], [1279, 576], [1279, 577]])('encodes playable changing frames at %i×%i without cropping', async ([width, height], { skip }) => {
     const { resolveFfmpegStaticBinaryPath } = await import('../../../runtime/ffmpegStatic');
     const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const binary = await resolveFfmpegStaticBinaryPath();
@@ -119,8 +119,8 @@ describe('browser recording ffmpeg stream encoder', () => {
     const run = promisify(execFile);
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-real-encoder-'));
     try {
-      const frame = async (color: string) => (await run(binary, ['-f', 'lavfi', '-i', `color=c=${color}:s=16x16`,
-        '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer' })).stdout;
+      const frame = async (color: string) => (await run(binary, ['-f', 'lavfi', '-i', `color=c=${color}:s=${width}x${height},format=rgb24`,
+        '-frames:v', '1', '-pix_fmt', 'yuvj444p', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer' })).stdout;
       const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory });
       const encoder = await factory({ recording: createRecording(), captureSource, registeredSource, outputMimeType: 'video/webm' });
       encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: await frame('red') });
@@ -128,7 +128,12 @@ describe('browser recording ffmpeg stream encoder', () => {
       const output = await encoder.finish({ recording: createRecording(), frameCount: 2, durationMs: 1_000 });
       try {
         if (output.source.kind !== 'local-file') throw new Error('expected recorded video file');
-        const decoded = (await run(binary, ['-i', output.source.path, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'],
+        const picture = (await run(binary, ['-hide_banner', '-loglevel', 'error', '-i', output.source.path, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'ppm', 'pipe:1'],
+          { encoding: 'buffer', maxBuffer: (width + 1) * (height + 1) * 3 + 1024 })).stdout;
+        expect(picture.subarray(0, 40).toString('ascii').split('\n').slice(0, 3)).toEqual([
+          'P6', `${width + width % 2} ${height + height % 2}`, '255',
+        ]);
+        const decoded = (await run(binary, ['-hide_banner', '-loglevel', 'error', '-i', output.source.path, '-vf', 'scale=16:16', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'],
           { encoding: 'buffer' })).stdout;
         const frameBytes = 16 * 16 * 3;
         expect(decoded.length).toBe(12 * frameBytes);
@@ -185,7 +190,7 @@ describe('browser recording ffmpeg stream encoder', () => {
       expect(spawnFfmpeg).toHaveBeenCalledWith(
         '/bundled/ffmpeg',
         expect.arrayContaining(['-f', 'mjpeg', '-i', 'pipe:0', '-f', 'webm']),
-        expect.objectContaining({ stdio: ['pipe', 'ignore', 'ignore'] }),
+        expect.objectContaining({ stdio: ['pipe', 'ignore', 'pipe'] }),
       );
       const expectedFrames = Buffer.concat([
         ...Array.from({ length: 6 }, () => Buffer.from('first-frame')),
@@ -229,7 +234,7 @@ describe('browser recording ffmpeg stream encoder', () => {
         captureSource,
         registeredSource,
         outputMimeType: 'video/webm',
-      })).rejects.toThrow('Browser recording ffmpeg encoder is unavailable.');
+      })).rejects.toMatchObject({ code: 'encoder_unavailable' });
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }
