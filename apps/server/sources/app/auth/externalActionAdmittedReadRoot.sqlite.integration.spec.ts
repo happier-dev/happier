@@ -18,7 +18,20 @@ import tweetnacl from 'tweetnacl';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { auth } from '@/app/auth/auth';
 import { verifyExternalActionDomainExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
+import {
+    EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+} from '@happier-dev/protocol/actions/externalActionApi';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { changesRoutes } from '@/app/api/routes/changes/changesRoutes';
+import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
+import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
+import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
+import { registerSessionMessageRoutes } from '@/app/api/routes/session/registerSessionMessageRoutes';
+import { registerSessionSystemRecordRoutes } from '@/app/api/routes/session/registerSessionSystemRecordRoutes';
+import { registerSessionTurnMutationRoute } from '@/app/api/routes/session/registerSessionTurnMutationRoute';
 import type { Fastify as AppFastify } from '@/app/api/types';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -299,7 +312,7 @@ describe('admitted read-root requester reads', () => {
         } finally { await app.close(); }
     });
 
-    it('refuses Session-route transcript GETs on automation and foreign-custodian read roots while preserving present-user and own-session reads (RT5/RT6)', async () => {
+    it('refuses Session-route transcript GETs on automation and foreign-custodian read roots via real HTTP routing while preserving present-user and own-session reads (RT5/RT6)', async () => {
         const fixture = await createFixture();
         const homeId = await getOrCreateServerIdentityId();
         const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -318,12 +331,19 @@ describe('admitted read-root requester reads', () => {
         await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
             sessionId: otherSession.id, data: 'other-session-key' } });
         const app = createApp(async () => fixture.machine.id);
+        registerSessionListingRoutes(app);
+        registerSessionMessageRoutes(app);
+        registerSessionTurnMutationRoute(app);
+        sessionPendingRoutes(app);
+        changesRoutes(app);
+        registerSessionSystemRecordRoutes(app);
+        featuresRoutes(app);
         const ownBound = { machineId: fixture.machine.id, installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey };
         const foreignBound = { machineId: host.id, installationId: host.installationId!, privateKey: hostKeys.secretKey };
         const accountToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const terminalToken = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
         try {
-            const mintAndVerifySessionRoute = async (
+            const mintAndGetHttp = async (
                 opts: Readonly<{
                     actionId: string;
                     input: ExternalActionRequestEnvelopeV1['input'];
@@ -332,8 +352,6 @@ describe('admitted read-root requester reads', () => {
                     bound?: Readonly<{ machineId: string; installationId: string; privateKey: Uint8Array }>;
                 }>,
                 path: string,
-                sessionId: string,
-                routeActionId: "session.transcript.get" | null = "session.transcript.get",
             ) => {
                 const bound = opts.bound ?? ownBound;
                 const requestId = crypto.randomUUID();
@@ -351,17 +369,27 @@ describe('admitted read-root requester reads', () => {
                         ...(origin ? { sessionActionOrigin: origin, sessionActionSource: source, installationProof } : {}) } });
                 expect(minted.statusCode, `${opts.actionId}: ${minted.body}`).toBe(200);
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
-                return verifyExternalActionDomainExecutionRequest({
+                const machineSignature = signExternalActionMachineRequestV1({
                     authorizationToken: authorization.token, effectActionId: opts.actionId,
-                    encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
-                    method: 'GET', path, body: undefined,
-                    sessionRouteTarget: { kind: 'session', sessionId, ...(routeActionId ? { actionId: routeActionId } : {}) },
-                    resolveCurrentSessionMachine: async () => ownBound.machineId,
-                    machineSignature: signExternalActionMachineRequestV1({
-                        authorizationToken: authorization.token, effectActionId: opts.actionId,
-                        target: authorization.binding.target, installationId: bound.installationId,
-                        requestId: authorization.binding.requestId, method: 'GET', path, privateKey: bound.privateKey }),
+                    target: authorization.binding.target, installationId: bound.installationId,
+                    requestId: authorization.binding.requestId, method: 'GET', path, privateKey: bound.privateKey });
+                return app.inject({
+                    method: 'GET',
+                    url: path,
+                    headers: {
+                        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: machineSignature,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: opts.actionId,
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    },
                 });
+            };
+            const expectHttpAdmitted = (response: Awaited<ReturnType<typeof mintAndGetHttp>>, label: string) => {
+                expect(response.statusCode, `${label}: ${response.body}`).toBe(200);
+            };
+            const expectHttpPurposeRefused = (response: Awaited<ReturnType<typeof mintAndGetHttp>>, label: string) => {
+                expect(response.statusCode, `${label}: ${response.body}`).toBe(401);
+                expect(response.json(), label).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
             };
 
             const envListInput = { serverId: homeId };
@@ -372,71 +400,83 @@ describe('admitted read-root requester reads', () => {
                 { label: 'standalone terminal', credential: terminalToken, withSessionOrigin: false },
             ] as const) {
                 const envList = { actionId: 'deployments.environments.list', input: envListInput, ...mode };
-                expect(await mintAndVerifySessionRoute(envList, `/v1/sessions/${otherSession.id}/messages`, otherSession.id),
-                    `RT6 ${mode.label}: other Session v1 transcript GET must be refused`).toBeNull();
-                expect(await mintAndVerifySessionRoute(envList, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
-                    `RT6 ${mode.label}: other Session v2 transcript GET must be refused`).toBeNull();
-                expect(await mintAndVerifySessionRoute(envList, `/v2/sessions/${otherSession.id}`, otherSession.id),
-                    `RT6 ${mode.label}: other Session detail GET must be refused`).toBeNull();
+                expectHttpPurposeRefused(await mintAndGetHttp(envList, `/v1/sessions/${otherSession.id}/messages`),
+                    `RT6 ${mode.label}: other Session v1 transcript GET must be refused`);
+                expectHttpPurposeRefused(await mintAndGetHttp(envList, `/v2/sessions/${otherSession.id}/messages/replies/pending`),
+                    `RT6 ${mode.label}: other Session v2 replies pending GET must be refused`);
+                expectHttpPurposeRefused(await mintAndGetHttp(envList, `/v2/sessions/${otherSession.id}`),
+                    `RT6 ${mode.label}: other Session detail GET must be refused`);
                 if (mode.withSessionOrigin) {
-                    expect(await mintAndVerifySessionRoute(envList, `/v2/sessions/${callerSession.id}`, callerSession.id),
-                        `RT6 ${mode.label}: caller's own Session detail GET stays admitted`).not.toBeNull();
+                    expectHttpAdmitted(await mintAndGetHttp(envList, `/v2/sessions/${callerSession.id}`),
+                        `RT6 ${mode.label}: caller's own Session detail GET stays admitted`);
                 }
             }
 
-            // RT6 (foreign custodian): a read root bound to another custodian's shared Machine cannot GET requester Session transcripts.
+            // RT6 (foreign custodian): positive control proves the foreign fixture & signature reach admission
+            // before asserting requester Session transcript routes are refused.
             const foreignEnvList = { actionId: 'deployments.environments.list', input: envListInput,
                 credential: accountToken, withSessionOrigin: false, bound: foreignBound };
-            expect(await mintAndVerifySessionRoute(foreignEnvList, `/v1/sessions/${otherSession.id}/messages`, otherSession.id),
-                'RT6 foreign custodian present_user read root: other Session transcript GET must be refused').toBeNull();
-            expect(await mintAndVerifySessionRoute(foreignEnvList, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
-                'RT6 foreign custodian present_user read root: other Session v2 transcript GET must be refused').toBeNull();
+            expectHttpAdmitted(await mintAndGetHttp(foreignEnvList, '/v1/features/authenticated'),
+                'RT6 foreign custodian positive control: authenticated features discovery stays admitted');
+            expectHttpPurposeRefused(await mintAndGetHttp(foreignEnvList, `/v1/sessions/${otherSession.id}/messages`),
+                'RT6 foreign custodian present_user read root: other Session transcript GET must be refused');
+            expectHttpPurposeRefused(await mintAndGetHttp(foreignEnvList, `/v2/sessions/${otherSession.id}/messages/replies/pending`),
+                'RT6 foreign custodian present_user read root: other Session v2 replies pending GET must be refused');
+            expectHttpPurposeRefused(await mintAndGetHttp(foreignEnvList, `/v2/sessions/${otherSession.id}/execution-runs/run-1/pending`),
+                'RT6 foreign custodian present_user read root: other Session execution-run pending GET must be refused');
 
             // RT6 (Session-surface read root): widgets.catalog.list under Session-origin keeps exact Session detail
-            // and non-transcript widget metadata reads, but cannot borrow any other Session transcript-class route.
+            // and real non-transcript widget metadata routes, but cannot borrow any other Session transcript-class route.
             const widgetsList = {
                 actionId: 'widgets.catalog.list',
                 input: { surface: { serverId: homeId, accountId: fixture.account.id, owner: { kind: 'sessionBoard', sessionId: callerSession.id } } },
                 credential: accountToken, withSessionOrigin: true,
             };
-            expect(await mintAndVerifySessionRoute(widgetsList, `/v2/sessions/${otherSession.id}`, otherSession.id),
-                'RT6 widgets.catalog.list Session-origin: exact other Session detail GET stays admitted').not.toBeNull();
-            expect(await mintAndVerifySessionRoute(widgetsList, `/v2/sessions/${otherSession.id}?accessProjectionVersion=1`, otherSession.id),
-                'RT6 widgets.catalog.list Session-origin: exact other Session detail projection GET stays admitted').not.toBeNull();
-            expect(await mintAndVerifySessionRoute(widgetsList, `/v2/sessions/${otherSession.id}/system-records/v1`, otherSession.id, null),
-                'RT6 widgets.catalog.list Session-origin: non-transcript Session metadata GET stays admitted').not.toBeNull();
+            expectHttpAdmitted(await mintAndGetHttp(widgetsList, `/v2/sessions/${otherSession.id}`),
+                'RT6 widgets.catalog.list Session-origin: exact other Session detail GET stays admitted');
+            expectHttpAdmitted(await mintAndGetHttp(widgetsList, `/v2/sessions/${otherSession.id}?accessProjectionVersion=1`),
+                'RT6 widgets.catalog.list Session-origin: exact other Session detail projection GET stays admitted');
+            expectHttpAdmitted(await mintAndGetHttp(widgetsList, `/v2/sessions/${otherSession.id}/system-records`),
+                'RT6 widgets.catalog.list Session-origin: non-transcript Session system-records GET stays admitted');
             for (const [label, path] of [
                 ['v1 messages', `/v1/sessions/${otherSession.id}/messages`],
-                ['v2 messages', `/v2/sessions/${otherSession.id}/messages`],
+                ['v2 replies pending', `/v2/sessions/${otherSession.id}/messages/replies/pending`],
+                ['v2 message by localId', `/v2/sessions/${otherSession.id}/messages/by-local-id/msg-1`],
                 ['v1 percent-encoded messages', `/v1/sessions/${otherSession.id}/%6Dessages`],
-                ['v2 percent-encoded messages', `/v2/sessions/${otherSession.id}/%6Dessages`],
                 ['v2 percent-encoded replies pending', `/v2/sessions/${otherSession.id}/%6Dessages/replies/pending`],
+                ['v2 percent-encoded message by localId', `/v2/sessions/${otherSession.id}/%6Dessages/by-local-id/msg-1`],
                 ['v1 turns', `/v1/sessions/${otherSession.id}/turns`],
                 ['v2 pending', `/v2/sessions/${otherSession.id}/pending`],
+                ['v2 execution-run pending (N1)', `/v2/sessions/${otherSession.id}/execution-runs/run-1/pending`],
+                ['v2 percent-encoded execution-run pending (N1)', `/v2/sessions/${otherSession.id}/execution-runs/run-1/%70ending`],
                 ['v2 changes query', `/v2/changes?sessionId=${encodeURIComponent(otherSession.id)}`],
             ] as const) {
-                expect(await mintAndVerifySessionRoute(widgetsList, path, otherSession.id),
-                    `RT6 widgets.catalog.list Session-origin: other Session ${label} GET must be refused`).toBeNull();
+                expectHttpPurposeRefused(await mintAndGetHttp(widgetsList, path),
+                    `RT6 widgets.catalog.list Session-origin: other Session ${label} GET must be refused`);
             }
 
-            // RT5: session.targets.resolve shield stays intact with sessionRouteTarget while legitimate preparation and present-user reads stay admitted.
+            // RT5: session.targets.resolve shield stays intact through real HTTP routing while preparation and present-user reads stay admitted.
             const targetsResolve = {
                 actionId: 'session.targets.resolve',
                 input: { target: { selector: 'workers' }, actionId: 'session.message.send' },
                 credential: accountToken, withSessionOrigin: false,
             };
-            expect(await mintAndVerifySessionRoute(targetsResolve, `/v2/sessions/${otherSession.id}`, otherSession.id),
-                'RT5 present-user session.targets.resolve selector detail preparation stays admitted').not.toBeNull();
-            expect(await mintAndVerifySessionRoute(targetsResolve, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
-                'RT5 present-user session.targets.resolve v2 messages GET with sessionRouteTarget must be refused').toBeNull();
-            expect(await mintAndVerifySessionRoute(targetsResolve, `/v1/sessions/${otherSession.id}/messages`, otherSession.id),
-                'RT5 present-user session.targets.resolve v1 messages GET with sessionRouteTarget must be refused').toBeNull();
+            expectHttpAdmitted(await mintAndGetHttp(targetsResolve, `/v2/sessions/${otherSession.id}`),
+                'RT5 present-user session.targets.resolve selector detail preparation stays admitted');
+            expectHttpPurposeRefused(await mintAndGetHttp(targetsResolve, `/v2/sessions/${otherSession.id}/messages/replies/pending`),
+                'RT5 present-user session.targets.resolve v2 replies pending GET must be refused');
+            expectHttpPurposeRefused(await mintAndGetHttp(targetsResolve, `/v1/sessions/${otherSession.id}/messages`),
+                'RT5 present-user session.targets.resolve v1 messages GET must be refused');
 
-            // Present-user own-Machine read root keeps present-user equivalence for requester Session routes.
+            // Present-user own-Machine read root keeps present-user equivalence for requester Session routes (including run pending).
             const presentUserEnvList = { actionId: 'deployments.environments.list', input: envListInput,
                 credential: accountToken, withSessionOrigin: false };
-            expect(await mintAndVerifySessionRoute(presentUserEnvList, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
-                'RT5 present-user own-Machine read root keeps requester Session GET equivalence').not.toBeNull();
+            expectHttpAdmitted(await mintAndGetHttp(presentUserEnvList, `/v1/sessions/${otherSession.id}/messages`),
+                'RT5 present-user own-Machine read root keeps requester Session v1 messages GET equivalence');
+            expectHttpAdmitted(await mintAndGetHttp(presentUserEnvList, `/v2/sessions/${otherSession.id}/messages/replies/pending`),
+                'RT5 present-user own-Machine read root keeps requester Session v2 replies pending GET equivalence');
+            expectHttpAdmitted(await mintAndGetHttp(presentUserEnvList, `/v2/sessions/${otherSession.id}/execution-runs/run-1/pending`),
+                'RT5 present-user own-Machine read root keeps requester Session execution-run pending GET equivalence');
         } finally { await app.close(); }
     });
 

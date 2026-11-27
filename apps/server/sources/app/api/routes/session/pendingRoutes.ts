@@ -236,7 +236,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
             config: {
                 restrictedCredentialBinding: { scope: "session", session: "params.sessionId" },
                 rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
-                ...(!executionRunTarget ? { apiTokenSessionAction: "session.transcript.get" as const } : {}),
+                apiTokenSessionAction: "session.transcript.get",
             },
         },
         async (request, reply) => {
