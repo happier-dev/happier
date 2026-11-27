@@ -105,7 +105,7 @@ export function createCliMachineActionDeps(
         }
         const result = await executeOriginalAccountRequesterOperation({ operation, requestId: context.actionRequestId ?? randomUUID(),
           credentials, serverIdentityId,
-          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), authority: context.authority,
+          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), authority: context.authority, context,
           isCurrent: params.isCredentialCurrent, ...(signal ? { signal } : {}) });
         if (result) return result.ok ? result.result : result;
       }

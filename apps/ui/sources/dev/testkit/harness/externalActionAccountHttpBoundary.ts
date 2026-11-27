@@ -301,17 +301,24 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
             const binding = { serverIdentityId: params.serverIdentityId, accountId: params.accountId,
                 authentication: { kind: 'account' as const, tokenEpoch: params.tokenEpoch },
                 actionId: params.actionId, target };
-            const material = requesterOperationRead
+            const controllerCodec = requesterOperationRead
                 ? openManagedControllerActionCodecV1({ authorization: request?.executionAuthorization,
                     machineId: machine.id, installationId: machine.installationId!, serverIdentityId: params.serverIdentityId,
-                    installationPrivateKey: installation.privateKey })
+                    installationPrivateKey: installation.privateKey, includeInvocation: true })
+                : null;
+            const material = requesterOperationRead ? controllerCodec?.material
                 : params.encryption ? { type: 'dataKey' as const, machineKey: params.encryption.getContentPrivateKey() } : null;
             const input = envelope.v === 1 ? envelope.input
                 : material ? openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: { ...binding, requestId: envelope.requestId }, material })?.input : undefined;
             if (input === undefined) throw new Error('Invalid encrypted external Action fixture request');
             const requestHeaders = new Headers(init?.headers);
             let result: unknown;
-            if (params.requesterInvocation === 'optional' && !request?.executionAuthorization) {
+            if (params.requesterInvocation === 'optional' && requesterOperationRead) {
+                if (!controllerCodec || !request?.executionAuthorization) throw new Error('Invalid requester operation carrier');
+                result = await params.execute(input, { target, invocation: controllerCodec.invocation,
+                    authorization: request.executionAuthorization, envelope, requestId: envelope.requestId,
+                    signal: init?.signal, requestHeaders });
+            } else if (params.requesterInvocation === 'optional' && !request?.executionAuthorization) {
                 result = await params.execute(input, { target, envelope, requestId: envelope.requestId, signal: init?.signal, requestHeaders });
             } else if (params.requesterInvocation === 'none') {
                 if (!requesterOperationRead && request?.executionAuthorization?.requesterAccountContext) {

@@ -2925,7 +2925,7 @@ type VoiceActionExecutorBinding = Readonly<{
         }
         if (accountContext && isRequesterOperationActionIdV1(actionId) && (!context.actionCaller || context.actionCaller.kind === 'host')) {
           const execution = await executeOriginalAccountRequesterOperation({ account: accountContext, actionId, input,
-            requestId: context.actionRequestId ?? randomUUID(), authority: context.authority, ...(signal ? { signal } : {}) });
+            requestId: context.actionRequestId ?? randomUUID(), authority: context.authority, context, ...(signal ? { signal } : {}) });
           if (execution) return execution.ok ? execution.result : execution;
         }
         return await executeActionOperationActionV1({

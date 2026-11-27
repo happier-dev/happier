@@ -14,7 +14,7 @@ export function describeTeamSetupBatch(input: TeamSetupBatchInputV1): HostReview
     ...(input.machine ? [
       { action: CHILD.machine, role: 'machine', input: projectNativeJsonValueForTransport(input.machine) },
       { action: CHILD.operation, role: CHILD.operation, scopeInput: {
-        serverId: input.serverId, machineId: input.machineId, waitForTerminal: true,
+        serverId: input.homeId, machineId: input.machineId, waitForTerminal: true,
       } },
     ] : []),
     ...input.repositories.map(({ id, input }) => ({ action: CHILD.repository, role: `repository:${id}`,
@@ -50,7 +50,7 @@ export async function runTeamSetupBatch(
       if (!machine.ok || !('operationId' in machine.result)) break;
       const { operationId } = machine.result;
       const observed = await review.invoke({ action: CHILD.operation, role: CHILD.operation, input: {
-        serverId: input.serverId, machineId: input.machineId, operationId, waitForTerminal: true,
+        serverId: input.homeId, machineId: input.machineId, operationId, waitForTerminal: true,
       } });
       const failure = observed.ok
         ? await waitForMachineSetupOperationV1(operationId, async () => observed.result)

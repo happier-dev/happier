@@ -79,6 +79,49 @@ function answerOwnedMachine() {
     homes.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
 }
 
+it('settles the Team Setup wait with the parent review under installed Ask policy', async () => {
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+    const { TEAM_SETUP_RUN_ACTION_ID_V1, TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1: child } =
+        await import('@happier-dev/protocol/teams/actionIdsV1');
+    const machineId = 'machine-1';
+    const homeId = binding.serverIdentityId;
+    const operationId = 'accepted-setup';
+    const machine = { homeId, machineId, targets: [{ homeId, machineId, desiredRevision: 0,
+        sources: [{ kind: 'direct', setup: {} }], recipePlans: [] }] };
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: child.machine, tokenEpoch: 0,
+        requesterInvocation: 'optional', execute: () => ({ operationId }) });
+    const policy = ActionsSettingsV1Schema.parse({ v: 1, actions: { [child.operation]: { approvalRequiredSurfaces: ['ui'] } } });
+    const receive = createActionExecutor({ actionOperationAction: async ({ input }) => {
+        expect(input).toMatchObject({ machineId, operationId, waitForTerminal: true });
+        return { kind: 'found', operation: { version: 1, revision: 1, operationId, actionId: child.machine,
+            scope: { accountId: binding.accountId, machineId }, state: 'succeeded', title: 'Machine setup',
+            createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported' } };
+    } });
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: child.operation, tokenEpoch: 0,
+        requesterInvocation: 'optional',
+        execute: async (input, received) => {
+            const settled = await receive.execute(child.operation, input, {
+                surface: received.invocation?.surface ?? 'ui', authority: 'present_user',
+                actionCaller: received.invocation?.caller ?? { kind: 'host' }, actionsSettings: policy,
+                serverId: homeId, serverIdentityId: homeId, runtimeAccountId: binding.accountId,
+                actionRequestId: received.requestId, externalActionTarget: received.target,
+                externalActionExecutionAuthorization: received.authorization,
+                presentUserConfirmation: received.invocation?.presentUserConfirmation,
+            });
+            return settled.ok ? settled.result : settled;
+        },
+        failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null });
+    const executor = createDefaultActionExecutor();
+    const context = { serverId, expectedAccountId: binding.accountId, surface: 'ui' as const, authority: 'present_user' as const };
+    const result = await executor.executeConfirmed(TEAM_SETUP_RUN_ACTION_ID_V1,
+        { serverId: homeId, homeId, machineId, machine, repositories: [] }, context);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { completed: true, machineSettlement: null } });
+    const direct = await executor.execute(child.operation, { serverId: homeId, machineId, operationId, waitForTerminal: true }, context);
+    expect(direct).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+});
+
 it.each(['project', 'child refusal', 'connection lost'] as const)(
     'settles a read-only Railway options Action through the Account bridge: %s', async outcome => {
         if (!account) throw new Error('Expected captured Account');

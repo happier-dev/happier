@@ -112,6 +112,7 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
     input: unknown;
     requestId: string;
     authority?: ActionRequiredAuthority;
+    context?: ActionExecutorContext;
     signal?: AbortSignal;
 }>): Promise<ActionExecuteResult | null> {
     const { account } = params;
@@ -129,7 +130,7 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
     const { accountMode } = await account.resolveAccountEncryption();
     return withActionAccountRequestSignal(account, params.signal, signal => executeRequesterActionOperationV1({
         ...operation, accountId: account.accountId, accountEncryptionMode: accountMode, serverIdentityId, tokenEpoch: authentication.tokenEpoch,
-        requestId: params.requestId, randomBytes: getRandomBytes,
+        requestId: params.requestId, context: params.context, randomBytes: getRandomBytes,
         request: async (path, body) => {
             const response = await account.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json',
                 ...(params.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) },

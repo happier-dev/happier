@@ -963,6 +963,7 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
   serverHttpBaseUrl: string;
   requestId: string;
   authority?: ActionExecutorContext['authority'];
+  context?: ActionExecutorContext;
   isCurrent?: () => boolean | Promise<boolean>;
   signal?: AbortSignal;
 }>): Promise<ActionExecuteResult | null> {
@@ -991,7 +992,7 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
   return executeRequesterActionOperationV1({ ...params.operation, accountId, accountEncryptionMode: accountMode.mode,
     serverIdentityId: params.serverIdentityId,
     authenticationKind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch,
-    requestId: params.requestId, randomBytes,
+    requestId: params.requestId, context: params.context, randomBytes,
     request: async (path, body) => {
       await assertCurrent();
       const response = await axios.post<unknown>(`${home}${path}`, body, { headers, validateStatus: () => true,
