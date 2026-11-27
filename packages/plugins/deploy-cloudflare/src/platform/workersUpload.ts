@@ -77,15 +77,18 @@ async function upload(input: CloudflareRoleInput<DeploymentTargetUploadDeployInp
     for (const bucket of value.buckets as string[][]) {
       const form = new FormData();
       for (const hash of bucket) {
-        const asset = available.get(hash)!;
+        const asset = available.get(hash);
+        if (!asset || form.has(hash)) continue;
         const bytes = await readFile(asset.path, { signal: context.signal });
         form.set(hash, new Blob([bytes.toString('base64')], { type: asset.contentType }), hash);
       }
+      if (form.keys().next().done) continue;
       const encoded = await encode(form);
       const uploaded = await requestWorkerAssets(io, accountId, value.jwt, encoded.body, encoded.contentType);
       if ('code' in uploaded) throw withActionFailureDiagnostic(new PluginError({ code: uploaded.code, retryable: uploaded.retryable, details: { phase: uploaded.phase },
         failureCause: projectActionFailureCauseV1(uploaded, `deployment.cloudflare.${uploaded.phase}`) }),
         { phase: `deployment.cloudflare.${uploaded.phase}`, causeKind: 'native_failure', error: uploaded });
+      for (const hash of form.keys()) available.delete(hash);
       if (isObject(uploaded.value) && typeof uploaded.value.jwt === 'string' && uploaded.value.jwt) completionJwt = uploaded.value.jwt;
     }
     if (!completionJwt) throw new PluginError({ code: 'outcome_unknown', details: { phase: 'send' } });

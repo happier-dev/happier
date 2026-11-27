@@ -27,7 +27,7 @@ function result(exitCode = 0): PluginProcessResult {
     stdout: new Uint8Array(), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
 async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lost' | 'denied' | 'malformed' | 'uncompiled' | 'otherVersion'
-  | 'assets' | 'assetsCached' | 'unknownAsset' | 'preview' | 'compactVersion' = 'success', latestPreviewError?: number) {
+  | 'assets' | 'assetsCached' | 'unknownAsset' | 'preview' | 'compactVersion' = 'success', latestPreviewError?: number, assetBuckets?: string[][]) {
   const root = await mkdtemp(join(tmpdir(), 'workers-upload-'));
   await writeFile(join(root, 'worker.ts'), 'export default { fetch: () => new Response("compiled") };');
   await writeFile(join(root, '.env'), 'PRIVATE=not-for-build');
@@ -83,7 +83,7 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lost' | 'd
     let value: unknown = { id: 'app', deployment_id: mode === 'compactVersion' ? versionId.replaceAll('-', '') : versionId };
     if (request.url.endsWith('/workers/scripts')) value = [{ id: 'app', tag: 'worker-tag' }];
     else if (request.url.endsWith('/assets-upload-session')) value = { jwt: 'asset-upload-token',
-      buckets: mode === 'assetsCached' ? [] : [[mode === 'unknownAsset' ? 'unknown-hash' : 'asset-hash']] };
+      buckets: assetBuckets ?? (mode === 'assetsCached' ? [] : [[mode === 'unknownAsset' ? 'unknown-hash' : 'asset-hash']]) };
     else if (request.url.includes('/workers/assets/upload')) value = { jwt: 'asset-completion-token' };
     else if (request.url.endsWith('/previews/pr-1')) value = { id: previewId, name: 'pr-1' };
     else if (request.url.includes('/previews/')) value = { id: 'preview-deployment', urls: ['https://exact-app.example.workers.dev'],
@@ -253,6 +253,16 @@ it.each(['assets', 'assetsCached'] as const)('uploads the exact Worker Static As
     expect(JSON.parse(String(form.get('metadata')))).toMatchObject({ main_module: 'worker.js', assets: {
       jwt: mode === 'assets' ? 'asset-completion-token' : 'asset-upload-token', config: { run_worker_first: false } } });
     expect(h.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+  } finally { await h.dispose(); }
+});
+
+it('sends each acknowledged asset digest once even when two upload buckets request it', async () => {
+  const buckets = [['asset-hash'], ['asset-hash']];
+  const h = await fixture('assets', undefined, buckets);
+  try {
+    expect(await h.invoke()).toMatchObject({ state: 'succeeded', providerDeploymentId: providerReference });
+    const uploadSession = h.requests.filter(request => request.method !== 'GET' && !request.url.endsWith('/assets-upload-session'));
+    expect(uploadSession).toHaveLength(new Set(buckets.flat()).size + 1);
   } finally { await h.dispose(); }
 });
 
