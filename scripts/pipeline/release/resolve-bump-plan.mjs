@@ -123,6 +123,9 @@ function main() {
       'versioned-server-changed': { type: 'string' },
       'versioned-plugin-sdk-changed': { type: 'string' },
       'versioned-sdk-changed': { type: 'string' },
+      'resume-cli-version': { type: 'string', default: '' },
+      'resume-stack-version': { type: 'string', default: '' },
+      'resume-server-version': { type: 'string', default: '' },
       'github-output': { type: 'string', default: '' },
     },
     allowPositionals: false,
@@ -180,6 +183,11 @@ function main() {
   const versionedServerChanged = parseOptionalBoolString(values['versioned-server-changed'], '--versioned-server-changed');
   const versionedPluginSdkChanged = parseOptionalBoolString(values['versioned-plugin-sdk-changed'], '--versioned-plugin-sdk-changed');
   const versionedSdkChanged = parseOptionalBoolString(values['versioned-sdk-changed'], '--versioned-sdk-changed');
+  // A resumed release reruns planning after main may already equal the candidate; the exact resumed
+  // version of a verified immutable candidate is the only exemption from the version-change refusal.
+  const resumeCliVersion = String(values['resume-cli-version'] ?? '').trim();
+  const resumeStackVersion = String(values['resume-stack-version'] ?? '').trim();
+  const resumeServerVersion = String(values['resume-server-version'] ?? '').trim();
 
   const publishCli = deployTargets.includes('cli');
   const publishStack = deployTargets.includes('stack');
@@ -211,7 +219,7 @@ function main() {
       if (!devVersion || !mainVersion) {
         fail('Unable to resolve cli versions for production validation.');
       }
-      if (devVersion === mainVersion) {
+      if (devVersion === mainVersion && resumeCliVersion !== devVersion) {
         fail(
           `Refusing production deploy_targets includes cli without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
         );
@@ -224,7 +232,7 @@ function main() {
       if (!devVersion || !mainVersion) {
         fail('Unable to resolve stack versions for production validation.');
       }
-      if (devVersion === mainVersion) {
+      if (devVersion === mainVersion && resumeStackVersion !== devVersion) {
         fail(
           `Refusing production deploy_targets includes stack without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
         );
@@ -245,7 +253,7 @@ function main() {
         mainVersion = '';
       }
 
-      if (mainVersion && devVersion && devVersion === mainVersion) {
+      if (mainVersion && devVersion && devVersion === mainVersion && resumeServerVersion !== devVersion) {
         fail(
           `Refusing production deploy_targets includes server without a version change (dev and main both at ${devVersion}). Materialize and commit CHANGELOG and version changes in the approved candidate, then rerun final exact-SHA promotion with bump=none.`,
         );

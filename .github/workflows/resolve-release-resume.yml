@@ -209,13 +209,22 @@ jobs:
             echo 'origin_run_id must be a positive integer.' >&2
             exit 1
           fi
+          # GitHub's run listings return transient HTTP 502s; a failed paginated read
+          # restarts from the first page so the output is never partial.
+          gh_api_paginate_retry() {
+            local endpoint="$1" out="$2" attempt
+            for attempt in 1 2 3; do
+              if gh api --paginate --slurp "$endpoint" > "$out"; then return 0; fi
+              echo "GitHub API read failed (attempt ${attempt}/3): ${endpoint}" >&2
+              if [ "$attempt" -lt 3 ]; then sleep $((attempt * 15)); fi
+            done
+            return 1
+          }
           gh api "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}" > "$RUNNER_TEMP/resume-run.json"
-          gh api --paginate --slurp \
-            "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/artifacts?per_page=100" \
-            > "$RUNNER_TEMP/resume-artifacts.json"
-          gh api --paginate --slurp \
-            "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/jobs?filter=latest&per_page=100" \
-            > "$RUNNER_TEMP/resume-jobs.json"
+          gh_api_paginate_retry "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/artifacts?per_page=100" "$RUNNER_TEMP/resume-artifacts.json"
+          # 100-job pages of a full combined release run (772 jobs) returned HTTP 502
+          # deterministically on some pages; 50-job pages did not.
+          gh_api_paginate_retry "repos/${GH_REPO}/actions/runs/${ORIGIN_RUN_ID}/jobs?filter=latest&per_page=50" "$RUNNER_TEMP/resume-jobs.json"
           node scripts/pipeline/release/resolve-release-resume.mjs \
             --mode inspect \
             --origin-run-json "$RUNNER_TEMP/resume-run.json" \

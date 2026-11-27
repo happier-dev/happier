@@ -41,7 +41,8 @@ export function projectReleaseStatus(mode, env) {
     return {
       id,
       result: requestedValue ? (verified ? 'success' : result(env, resultName)) : 'skipped',
-      identity: { sourceSha, verified, ...(verified ? { product, version } : {}) },
+      // A published candidate keeps its identity when verification fails, so a resume re-verifies the same bytes.
+      identity: { sourceSha, verified, ...(requestedValue && exact(resultName) && version ? { product, version } : {}) },
       recoveryHint,
     };
   };

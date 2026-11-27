@@ -670,6 +670,9 @@ jobs:
           VERSIONED_SERVER_CHANGED: ${{ steps.versioned_plan.outputs.changed_server }}
           VERSIONED_PLUGIN_SDK_CHANGED: ${{ steps.versioned_plan.outputs.changed_plugin_sdk }}
           VERSIONED_SDK_CHANGED: ${{ steps.versioned_plan.outputs.changed_sdk }}
+          RESUME_CLI_VERSION: ${{ needs.resolve_resume.outputs.cli_version }}
+          RESUME_STACK_VERSION: ${{ needs.resolve_resume.outputs.stack_version }}
+          RESUME_SERVER_VERSION: ${{ needs.resolve_resume.outputs.server_version }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs release-resolve-bump-plan \
@@ -696,6 +699,9 @@ jobs:
             --versioned-server-changed "${VERSIONED_SERVER_CHANGED}" \
             --versioned-plugin-sdk-changed "${VERSIONED_PLUGIN_SDK_CHANGED}" \
             --versioned-sdk-changed "${VERSIONED_SDK_CHANGED}" \
+            --resume-cli-version "${RESUME_CLI_VERSION}" \
+            --resume-stack-version "${RESUME_STACK_VERSION}" \
+            --resume-server-version "${RESUME_SERVER_VERSION}" \
             --github-output "$GITHUB_OUTPUT"
 
       - name: Resolve selected public SDK versions before approval admission

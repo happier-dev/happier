@@ -61,6 +61,39 @@ test('production bump planning directs an unversioned exact candidate to materia
   }
 });
 
+test('production bump planning admits only the exact verified resume version after the branch promotion landed', () => {
+  // A resumed release reruns planning after main already equals the candidate; the resumed version is the exemption.
+  const root = mkdtempSync(join(tmpdir(), 'happier-release-bump-plan-'));
+  const bin = join(root, 'bin');
+  const cliVersion = JSON.parse(readFileSync(join(repoRoot, 'apps', 'cli', 'package.json'), 'utf8')).version;
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, 'git'),
+    `#!/bin/sh\nset -eu\nif [ "$1" = show ] && [ "$2" = origin/main:apps/cli/package.json ]; then printf '%s\\n' ${JSON.stringify(JSON.stringify({ version: cliVersion }))}; exit 0; fi\necho "unexpected git call: $*" >&2\nexit 2\n`,
+    { mode: 0o755 },
+  );
+  const plan = (extra) => spawnSync(
+    process.execPath,
+    [
+      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'resolve-bump-plan.mjs'),
+      '--environment', 'production', '--bump-preset', 'none', '--deploy-targets', 'cli',
+      '--changed-ui', 'false', '--changed-cli', 'false', '--changed-stack', 'false',
+      '--changed-server', 'false', '--changed-website', 'false', '--changed-shared', 'false',
+      ...extra,
+    ],
+    { cwd: repoRoot, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` }, encoding: 'utf8' },
+  );
+  try {
+    assert.equal(plan(['--resume-cli-version', '0.0.0-wrong']).status, 1);
+    const resumed = plan(['--resume-cli-version', cliVersion]);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(JSON.parse(resumed.stdout).publish_cli, true);
+    assert.equal(JSON.parse(resumed.stdout).bump_cli, 'none');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a materialized final candidate resolves no new post-approval bump', () => {
   const out = execFileSync(
     process.execPath,

@@ -60,8 +60,13 @@ test('one trusted reusable workflow resolves prior release candidates by exact r
   assert.match(source, /--artifact-id "\$STATUS_ARTIFACT_ID"/);
   assert.match(source, /--artifact-digest "\$EXPECTED_DIGEST"/);
   assert.match(source, /resolve-release-resume\.mjs[\s\S]*--mode resolve/);
-  assert.equal((source.match(/\/jobs\?filter=latest&per_page=100/g) ?? []).length, 1);
+  // 100-job pages of a full combined release run returned HTTP 502 deterministically; 50-job pages did not.
+  assert.equal((source.match(/\/jobs\?filter=latest&per_page=50/g) ?? []).length, 1);
   assert.match(source, /--jobs-json "\$RUNNER_TEMP\/resume-jobs.json"/);
+  // GitHub's run listing endpoints return transient HTTP 502s; a failed paginated read restarts from page one.
+  assert.match(source, /gh_api_paginate_retry\(\) \{[\s\S]*for attempt in 1 2 3/);
+  assert.match(source, /gh_api_paginate_retry "repos\/\$\{GH_REPO\}\/actions\/runs\/\$\{ORIGIN_RUN_ID\}\/jobs\?filter=latest&per_page=50" "\$RUNNER_TEMP\/resume-jobs.json"/);
+  assert.match(source, /gh_api_paginate_retry "repos\/\$\{GH_REPO\}\/actions\/runs\/\$\{ORIGIN_RUN_ID\}\/artifacts\?per_page=100" "\$RUNNER_TEMP\/resume-artifacts.json"/);
   for (const mode of ['Inspect exact origin run and status artifact', 'Resolve verified reusable candidate versions']) {
     const step = resolveJob.steps.find((entry) => entry.name === mode);
     assert.equal(step.env.STATUS_ARTIFACT_NAME, '${{ inputs.status_artifact_name }}');
@@ -193,6 +198,13 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.match(parsed.jobs.plan.outputs.publish_runner_binaries_needed, /needs\.resolve_resume\.outputs\.runner_requested/);
   assert.match(parsed.jobs.plan.outputs.publish_runner_binaries_needed, /steps\.plan\.outputs\.changed_runner/);
   assert.match(parsed.jobs.plan.outputs.publish_ui_web_needed, /needs\.resolve_resume\.outputs\.ui_web_requested/);
+  // Production planning reruns on resume after main may already equal the candidate.
+  const bumpPlanStep = parsed.jobs.plan.steps.find((step) => step.id === 'bump_plan');
+  for (const product of ['cli', 'stack', 'server']) {
+    const name = `RESUME_${product.toUpperCase()}_VERSION`;
+    assert.equal(bumpPlanStep.env[name], `\${{ needs.resolve_resume.outputs.${product}_version }}`);
+    assert.match(bumpPlanStep.run, new RegExp(`--resume-${product}-version "\\$\\{${name}\\}"`));
+  }
   assert.match(parsed.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed/);
   assert.ok(needs(parsed.jobs.deploy_ui).includes('resolve_resume'));
   const uiPromotion = workflow('promote-ui.yml');

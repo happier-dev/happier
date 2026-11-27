@@ -205,7 +205,10 @@ function resolveDesktopArtifacts(artifacts, run, workflowSha, channel, allowLega
     if (typeof artifact.expired !== 'boolean') throw new Error('[release] desktop artifact expiry must be boolean');
     if (!artifact.expired) (prefix === 'tauri-updates-' ? finalized : selected)[platform] = admitted;
   }
-  return { runNumber: Number(run.run_number), artifacts: selected,
+  // The desktop build version embeds the run number its bytes were built with. Only reused bytes carry the origin's
+  // number; when nothing is reusable the resumed run rebuilds with its own number, so a later resume binds correctly.
+  const reusable = Object.keys(selected).length > 0 || Object.keys(finalized).length > 0;
+  return { ...(reusable ? { runNumber: Number(run.run_number) } : {}), artifacts: selected,
     ...(!allowLegacy || Object.keys(finalized).length > 0 ? { finalizedArtifacts: finalized } : {}) };
 }
 
@@ -425,14 +428,22 @@ export function resolveReleaseResume(input) {
     if (declaredProduct && surface.requested === true) {
       requested[/** @type {'cli' | 'stack' | 'server' | 'runner' | 'ui-web'} */ (declaredProduct)] = true;
     }
-    if (surface.state !== 'complete' || surface.result !== 'success') continue;
+    // A published candidate whose verification failed is reused as the same bytes; the resumed run re-verifies it.
+    const publishedPartial = declaredProduct && surface.requested === true && surface.state === 'partial'
+      && surface.result === 'success';
+    if (!publishedPartial && (surface.state !== 'complete' || surface.result !== 'success')) continue;
     if (!surface.identity || typeof surface.identity !== 'object' || Array.isArray(surface.identity)) continue;
     const identity = /** @type {Record<string, unknown>} */ (surface.identity);
     if (!Object.hasOwn(identity, 'product')) continue;
     const rawProduct = requiredString(identity.product, `resume status surface ${index} product`);
     const product = rawProduct === 'hstack' ? 'stack' : rawProduct;
     if (!RESUMABLE_PRODUCTS.has(product)) throw new Error(`[release] unsupported resumable product: ${rawProduct}`);
-    if (identity.verified !== true) throw new Error(`[release] resumable ${product} candidate is not owner-verified`);
+    if (publishedPartial && product !== declaredProduct) {
+      throw new Error('[release] published candidate product does not match its surface');
+    }
+    if (identity.verified !== true && !(publishedPartial && identity.verified === false)) {
+      throw new Error(`[release] resumable ${product} candidate is not owner-verified`);
+    }
     if (requiredSha(identity.sourceSha, `resumable ${product} source SHA`) !== statusSourceSha) {
       throw new Error(`[release] resumable ${product} candidate source SHA does not match the release`);
     }

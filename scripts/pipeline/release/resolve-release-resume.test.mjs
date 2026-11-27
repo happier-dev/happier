@@ -414,7 +414,9 @@ test('resume resolution reuses only successful verified immutable candidates', (
     sourceSha: SOURCE_SHA,
     uiExpoAction: '',
     uiCompleted: { ota: false, nativeIos: false, nativeAndroid: false, apk: false },
-    desktop: { runNumber: 337, artifacts: {} },
+    // No reusable desktop bytes: no inherited run number, so rebuilt candidates carry the new run's own number
+    // and a later resume from that run binds the number they actually contain (0.2 67ffab8a7f3).
+    desktop: { artifacts: {} },
     versions: {
       cli: '0.2.10-dev.73',
       stack: '',
@@ -569,4 +571,24 @@ test('resume accepts the named v0.3 control branch without changing source ident
     artifactDigest: DIGEST, artifactId: 1234, workflowSha: SOURCE_SHA,
     statusArtifactName: 'happier-release-status',
   });
+});
+
+test('published partial candidates bind their version without completing rolling verification', () => {
+  for (const product of ['cli', 'stack', 'server', 'runner', 'ui-web']) {
+    const candidate = {
+      id: `${product === 'stack' ? 'hstack' : product}-immutable-candidate`, requested: true,
+      state: 'partial', result: 'success',
+      identity: { product, version: '0.2.21-dev.1', sourceSha: SOURCE_SHA, verified: false },
+    };
+    const input = { originRun: originRun(), artifacts: [statusArtifact()], downloadedDigest: DIGEST,
+      status: status({ surfaces: [candidate] }), expected };
+    assert.equal(resolveReleaseResume(input).versions[product], '0.2.21-dev.1');
+    assert.equal(Object.values(resolveReleaseResume(input).completed).some(Boolean), false);
+    assert.throws(() => resolveReleaseResume({ ...input, status: status({ surfaces: [
+      { ...candidate, identity: { ...candidate.identity, sourceSha: 'c'.repeat(40) } },
+    ] }) }), /source SHA/);
+    assert.throws(() => resolveReleaseResume({ ...input, status: status({ surfaces: [
+      { ...candidate, identity: { ...candidate.identity, product: product === 'cli' ? 'server' : 'cli' } },
+    ] }) }), /does not match its surface/);
+  }
 });

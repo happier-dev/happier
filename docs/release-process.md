@@ -627,8 +627,9 @@ or integrity checks. A read retry never repeats a publication mutation.
 
 For hosted failures, first rerun failed jobs when no workflow/control change is
 needed. When control code changed but candidate bytes did not, a new release
-attempt may reuse only individually verified immutable candidates from the
-named completed origin run. Release-output-affecting byte changes require new release outputs. One failed sibling product does not invalidate independently
+attempt reuses the exact published immutable candidates from the named completed
+origin run, including candidates whose verification failed. Reuse skips rebuilding
+and signing; the candidate verification jobs still run before promotion. Release-output-affecting byte changes require new release outputs. One failed sibling product does not invalidate independently
 verified immutable candidates from successful products.
 
 Use the narrowest safe recovery:
@@ -637,6 +638,7 @@ Use the narrowest safe recovery:
 | --- | --- |
 | Same control SHA; transient runner, download, read-only API, or safely recoverable external failure | `gh run rerun <run-id> --repo happier-dev/happier --failed` |
 | Corrected workflow control, tests, or validation; unchanged candidate bytes; terminal origin with verified candidates | `hmaint release resume` from the richest valid origin |
+| Published immutable candidate; verification failed; unchanged candidate bytes | `hmaint release resume` binds the published version and re-verifies the existing bytes without rebuilding |
 | Changed source, package/build dependency, signing input, or immutable candidate bytes | Prepare a fresh release |
 | Ambiguous publication mutation | Inspect canonical remote state, then use the owning recovery-aware job; never blind-retry |
 
