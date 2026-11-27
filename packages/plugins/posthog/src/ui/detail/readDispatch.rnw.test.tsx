@@ -57,6 +57,7 @@ async function mountRegisteredActivity(misbind = false, status = 200) {
     } },
   } });
   plugins.push(plugin);
+  const dispatched: string[] = [];
   const producerResults: unknown[] = [];
   const readRequestIds: string[] = [];
   let detail!: PluginUiTestkit;
@@ -69,6 +70,7 @@ async function mountRegisteredActivity(misbind = false, status = 200) {
       }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { executeAction: async ({ action, input, requestId, signal }) => {
         if (typeof action === 'string' || action.pluginId !== POSTHOG_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
+        dispatched.push(action.localId);
         const activity = action.localId === POSTHOG_ACTION_IDS.issueActivity;
         const request = misbind && activity ? PosthogIssueActivityInputV1Schema.parse(input) : null;
         const result = await plugin.invokeAction(request === null ? action.localId : POSTHOG_ACTION_IDS.issueEvents,
@@ -79,7 +81,7 @@ async function mountRegisteredActivity(misbind = false, status = 200) {
     });
   });
   mounted.push(detail);
-  return { detail, requests, producerResults, readRequestIds, release };
+  return { detail, dispatched, requests, producerResults, readRequestIds, release };
 }
 describe('registered PostHog activity read dispatch', () => {
   it('shows the registered HTTP failure code and issued request identity in Details', async () => {
@@ -94,7 +96,7 @@ describe('registered PostHog activity read dispatch', () => {
     await expect(detail.getByText(readRequestIds[0]!)).resolves.toBeDefined();
   });
   it('retains pending and settled activity across equivalent parsed launch input', async () => {
-    const { detail, requests, producerResults, release } = await mountRegisteredActivity();
+    const { detail, dispatched, requests, producerResults, release } = await mountRegisteredActivity();
     expect(requests.some(url => url.includes('/activity/'))).toBe(true);
     await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
     await act(async () => { release(); });
@@ -104,6 +106,7 @@ describe('registered PostHog activity read dispatch', () => {
     await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
     await expect(detail.getByText('Dana Okafor')).resolves.toBeDefined();
     expect(producerResults).toHaveLength(1);
+    expect(dispatched).toEqual([POSTHOG_ACTION_IDS.issueActivity]);
   });
   it('rejects a mis-bound registered producer', async () => {
     const { detail, producerResults } = await mountRegisteredActivity(true);

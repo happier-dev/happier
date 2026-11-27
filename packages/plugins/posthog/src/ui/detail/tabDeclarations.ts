@@ -9,7 +9,7 @@ import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protoco
  * rather than restating inline, and the facts a test can check without mounting a
  * device.
  *
- * `readPlane` is the ownership statement that matters most here. Occurrences, Stack
+ * `readPlanes` is the ownership statement that matters most here. Occurrences, Stack
  * Trace and Affected Sessions are three views of one detail-instance sample: they are
  * consumers, never loaders. A second read plane among them would be a second owner of
  * the same sampled rows, which is how a duplicate fetch, a panel-local cache, or a
@@ -25,7 +25,7 @@ export type PosthogDetailTabIdV1 =
     | 'affected-sessions'
     | 'activity';
 
-/** Which read a panel's content comes from. */
+/** Which reads a panel's content comes from. */
 export type PosthogDetailTabReadPlaneV1 =
     /** The applied observation, replaced by the live entry materialization. */
     | 'entryMaterialization'
@@ -42,7 +42,7 @@ export type PosthogDetailTabDeclarationV1 = Readonly<{
     retention: 'retain' | 'discard';
     /** Exactly what survives a tab leave, in this panel and nothing else. */
     retainedState: string;
-    readPlane: PosthogDetailTabReadPlaneV1;
+    readPlanes: readonly PosthogDetailTabReadPlaneV1[];
     /** The single component that owns this panel's vertical scrolling. */
     scrollOwner: TriageDetailPanelScrollOwnerV1;
 }>;
@@ -55,7 +55,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll offset and settled presentation state for'
             + ' the current exact detail instance',
-        readPlane: 'entryMaterialization' as const,
+        readPlanes: ['entryMaterialization', 'detailInstanceSample'] as const,
         scrollOwner: 'scrollArea' as const,
     }),
     Object.freeze({
@@ -66,7 +66,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
         retainedState: 'its one vertical scroll anchor, list window and row focus; the'
             + ' selected occurrence and the sampled rows stay owned by the detail-root'
             + ' controller',
-        readPlane: 'detailInstanceSample' as const,
+        readPlanes: ['detailInstanceSample'] as const,
         scrollOwner: 'list' as const,
     }),
     Object.freeze({
@@ -76,7 +76,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll anchor, list window and non-sensitive'
             + ' frame disclosure state for the controller’s selected occurrence',
-        readPlane: 'detailInstanceSample' as const,
+        readPlanes: ['detailInstanceSample'] as const,
         scrollOwner: 'list' as const,
     }),
     Object.freeze({
@@ -86,7 +86,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll anchor and list window only; the'
             + ' session-to-row correlation is derived afresh on re-entry',
-        readPlane: 'detailInstanceSample' as const,
+        readPlanes: ['detailInstanceSample'] as const,
         scrollOwner: 'list' as const,
     }),
     Object.freeze({
@@ -98,7 +98,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
         // reader a record set that is no longer being read.
         retention: 'discard' as const,
         retainedState: 'nothing across a tab leave',
-        readPlane: 'activityPage' as const,
+        readPlanes: ['activityPage'] as const,
         scrollOwner: 'list' as const,
     }),
 ] as const);

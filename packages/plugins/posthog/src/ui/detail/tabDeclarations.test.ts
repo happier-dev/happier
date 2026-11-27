@@ -37,14 +37,14 @@ describe('POSTHOG_DETAIL_TABS_V1', () => {
 
     it('keeps one sampled loader behind every sampled-data consumer', () => {
         const sampledConsumers = POSTHOG_DETAIL_TABS_V1
-            .filter((tab) => tab.readPlane === 'detailInstanceSample')
+            .filter((tab) => tab.readPlanes.includes('detailInstanceSample'))
             .map((tab) => tab.id);
 
         // Occurrences, Stack Trace and Affected Sessions are consumers of one
         // detail-instance loader. A second read plane among them would be a second
         // owner of the same sampled rows.
-        expect(sampledConsumers).toEqual(['occurrences', 'stack-trace', 'affected-sessions']);
-        expect(POSTHOG_DETAIL_TABS_V1.filter((tab) => tab.readPlane === 'entryMaterialization')
+        expect(sampledConsumers).toEqual(['overview', 'occurrences', 'stack-trace', 'affected-sessions']);
+        expect(POSTHOG_DETAIL_TABS_V1.filter((tab) => tab.readPlanes.includes('entryMaterialization'))
             .map((tab) => tab.id)).toEqual(['overview']);
     });
 
@@ -54,8 +54,8 @@ describe('POSTHOG_DETAIL_TABS_V1', () => {
         // Activity is the one plane that is neither the entry materialization nor the
         // sampled loader. Attaching it to either would make a second owner of rows that
         // read differently and are discarded on a different lifetime.
-        expect(activity.readPlane).toBe('activityPage');
-        expect(POSTHOG_DETAIL_TABS_V1.filter((tab) => tab.readPlane === 'activityPage')
+        expect(activity.readPlanes).toEqual(['activityPage']);
+        expect(POSTHOG_DETAIL_TABS_V1.filter((tab) => tab.readPlanes.includes('activityPage'))
             .map((tab) => tab.id)).toEqual(['activity']);
         // It is the only panel that keeps nothing across a leave.
         expect(activity.retention).toBe('discard');

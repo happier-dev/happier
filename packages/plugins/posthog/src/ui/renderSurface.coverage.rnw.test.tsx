@@ -350,7 +350,7 @@ describe('the mounted PostHog Overview', () => {
                 sampleSignals.push(signal);
                 return await new Promise<JsonValue>((resolve) => { sampleSettlers.push(resolve); });
             },
-        }, 'occurrences');
+        }, 'overview');
         await selectTab(page, 'Session');
         expect(overviewSignals[0]?.aborted).toBe(true);
         expect(sampleSignals[0]?.aborted).toBe(true);
@@ -369,18 +369,20 @@ describe('the mounted PostHog Overview', () => {
         await expect(page.getByText('ResumedError: current sample')).resolves.toBeDefined();
         await expect(page.queryByText('aaaaaaaa-0000-4000-8000-000000000001')).resolves.toBeUndefined();
     });
-    it('keeps its pending root summary alive when the host changes panels', async () => {
+    it('retires a pending summary when Activity replaces Overview and resumes on return', async () => {
         let panel = 'overview';
-        let originalSignal: AbortSignal | undefined;
+        const overviewSignals: AbortSignal[] = [];
         let settle!: (result: JsonValue) => void;
         const pending = new Promise<JsonValue>((resolve) => { settle = resolve; });
         const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
-            readOverview: async (signal) => { originalSignal ??= signal; return await pending; },
+            readOverview: async (signal) => { overviewSignals.push(signal); return await pending; },
         }, () => panel);
-        expect(originalSignal?.aborted).toBe(false);
+        expect(overviewSignals).toHaveLength(1);
+        expect(overviewSignals[0]?.aborted).toBe(false);
         panel = 'activity';
         await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
-        expect(originalSignal?.aborted).toBe(false);
+        expect(overviewSignals).toHaveLength(1);
+        expect(overviewSignals[0]?.aborted).toBe(true);
         await act(async () => { settle({
             observation: {
                 kind: 'present',
@@ -396,7 +398,23 @@ describe('the mounted PostHog Overview', () => {
         panel = 'overview';
         await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
         await expect(page.getByText('critical')).resolves.toBeDefined();
+        expect(overviewSignals).toHaveLength(2);
     });
+    it.each([
+        ['overview', [POSTHOG_ACTION_IDS.nativeOverview, POSTHOG_ACTION_IDS.issueEvents]],
+        ['activity', [POSTHOG_ACTION_IDS.issueActivity]],
+        ['actions', [POSTHOG_ACTION_IDS.nativeOverview]],
+        ['occurrences', [POSTHOG_ACTION_IDS.issueEvents]],
+        ['stack-trace', [POSTHOG_ACTION_IDS.issueEvents]],
+        ['affected-sessions', [POSTHOG_ACTION_IDS.issueEvents]],
+    ] as const)('dispatches only the reads consumed by the %s panel', async (panel, expected) => {
+        const dispatched: string[] = [];
+        await mountDetail(activityResult({}), SAMPLED_EVENTS, {
+            onExecute: (id) => { dispatched.push(id); },
+        }, panel);
+        expect(dispatched.sort()).toEqual([...expected].sort());
+    });
+
     it('renders the host Overview as what happened with one source-owned occurrence sample', async () => {
         const dispatched: string[] = [];
         const page = await mountDetail(activityResult({}), SAMPLED_EVENTS, {
@@ -584,7 +602,7 @@ describe('the mounted PostHog Activity panel', () => {
 });
 
 describe('the mounted PostHog Occurrences panel', () => {
-    it('aborts the sampled page read when the detail retires', async () => {
+    it('keeps a sample pending between consumers and aborts when the detail retires', async () => {
         let panel = 'occurrences';
         let pendingSignal: AbortSignal | undefined;
         let settle!: (result: JsonValue) => void;
@@ -594,7 +612,7 @@ describe('the mounted PostHog Occurrences panel', () => {
         }, () => panel);
         expect(pendingSignal?.aborted).toBe(false);
         const originalSignal = pendingSignal;
-        panel = 'activity';
+        panel = 'stack-trace';
         await act(async () => { await page.updateSurface(createSurfaceContextFixture()); });
         expect(originalSignal?.aborted).toBe(false);
         expect(pendingSignal).toBe(originalSignal);

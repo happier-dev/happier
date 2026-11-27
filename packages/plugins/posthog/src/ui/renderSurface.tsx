@@ -143,14 +143,15 @@ const LIVE_RESULT_UNREADABLE: TriageSourceFailureV1 = Object.freeze({
  * Materializes the mounted entry through the native projection of canonical `get`.
  *
  * The applied observation is a bounded list projection that may already be stale, so the
- * detail body always asks the source for the current entry. It runs once per exact
- * instance/entry, pausing unfinished work with the root interval: a late result cannot replace the body
+ * panels that show current entry facts ask the source for them. The read retains its
+ * settled result and pauses unfinished work when those consumers leave: a late result cannot replace the body
  * of a detail the reader has already left. A read that did not answer names itself, in
  * the same typed vocabulary the sampled panels use.
  */
 function useLiveEntry(
     input: TriageDetailSurfaceInputV1,
     signal: AbortSignal,
+    demanded: boolean,
 ): Readonly<{ live: PosthogDetailLiveReadV1; reading: boolean; refresh: () => void }> {
     const action = React.useMemo(
         () => ({ pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.nativeOverview }),
@@ -178,7 +179,7 @@ function useLiveEntry(
     }
 
     React.useEffect(() => {
-        if (!active || activeSignal.aborted || signal.aborted || settledRequest.current === request) return undefined;
+        if (!demanded || !active || activeSignal.aborted || signal.aborted || settledRequest.current === request) return undefined;
         if (request.kind !== 'ready') {
             setReading(false);
             setLive({ kind: 'failed', failure: LIVE_READ_REFUSED });
@@ -226,7 +227,7 @@ function useLiveEntry(
             activeSignal.removeEventListener('abort', abort);
             controller.abort();
         };
-    }, [active, activeSignal, execute, request, revision, signal]);
+    }, [active, activeSignal, demanded, execute, request, revision, signal]);
 
     return { live, reading, refresh };
 }
@@ -1231,8 +1232,14 @@ function PosthogDetailBody({
     // One render-time read, passed down as data, so no child owns a hidden clock.
     const nowMs = Date.now();
 
-    const { live, reading, refresh } = useLiveEntry(input, signal);
-    const controller = usePosthogOccurrenceController(input, signal);
+    const panel = input.panel ?? tab;
+    const readPlanes = POSTHOG_DETAIL_TABS_V1.find(declaration => declaration.id === panel)?.readPlanes;
+    const { live, reading, refresh } = useLiveEntry(
+        input, signal, panel === 'actions' || readPlanes?.includes('entryMaterialization') === true,
+    );
+    const controller = usePosthogOccurrenceController(
+        input, signal, readPlanes?.includes('detailInstanceSample') === true,
+    );
     const openFrameStackTrace = useTriageDetailPanelOpener('stack-trace');
     const model = React.useMemo(
         () => projectPosthogDetailSurface(input, live),

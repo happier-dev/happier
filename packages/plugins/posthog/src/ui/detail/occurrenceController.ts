@@ -229,16 +229,17 @@ export function usePosthogDetailRequest(input: TriageDetailSurfaceInputV1) {
 }
 
 /**
- * Source panels share one sample. Hiding the source aborts unfinished paging;
+ * Sample consumers share one read. Leaving all consumers aborts unfinished paging;
  * its next root interval resumes that position without discarding settled rows.
  * Replacing the exact authority resets the sample, and retirement rejects late results.
  */
 export function usePosthogOccurrenceController(
     input: TriageDetailSurfaceInputV1,
     signal: AbortSignal,
+    demanded: boolean,
 ): PosthogOccurrenceControllerV1 {
     const [state, dispatch] = useReducer(posthogSampleReducer, INITIAL);
-    // Paging shares the exact detail lifetime, not a source panel's interval.
+    // Settled pages survive across panels on the same detail.
     const lifetime = useRef<AbortController | null>(null);
     const action = useMemo(
         () => ({ pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.issueEvents }),
@@ -302,7 +303,7 @@ export function usePosthogOccurrenceController(
     }, [execute, request]);
 
     useEffect(() => {
-        if (!active || activeSignal.aborted || signal.aborted) return undefined;
+        if (!demanded || !active || activeSignal.aborted || signal.aborted) return undefined;
         const controller = new AbortController();
         lifetime.current = controller;
         const abort = (): void => {
@@ -319,7 +320,7 @@ export function usePosthogOccurrenceController(
             activeSignal.removeEventListener('abort', abort);
             controller.abort();
         };
-    }, [active, activeSignal, readPage, signal]);
+    }, [active, activeSignal, demanded, readPage, signal]);
 
     const select = useCallback((uuid: string) => {
         dispatch({ kind: 'selected', uuid });
@@ -327,11 +328,11 @@ export function usePosthogOccurrenceController(
 
     const loadMore = useCallback(() => {
         const pageSignal = lifetime.current?.signal;
-        if (!active || !state.canLoadMore || state.continuation === null || pageSignal === undefined || pageSignal.aborted) {
+        if (!demanded || !active || !state.canLoadMore || state.continuation === null || pageSignal === undefined || pageSignal.aborted) {
             return;
         }
         void readPage(state.token + 1, state.continuation, pageSignal);
-    }, [active, readPage, state.canLoadMore, state.continuation, state.token]);
+    }, [active, demanded, readPage, state.canLoadMore, state.continuation, state.token]);
 
     const selectedEvent = useMemo(
         () => state.rows.find((candidate) => candidate.uuid === state.selectedUuid),
