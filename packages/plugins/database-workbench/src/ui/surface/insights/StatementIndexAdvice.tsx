@@ -87,8 +87,8 @@ export function StatementIndexAdvice({ target, statementKey }: Readonly<{ target
             table: `${relation.schema}.${relation.name}`, column,
           })} />
           <Row gap="large" wrap>
-            <Metric size="stat" label={t('plugins.database.insights.adviceBefore', 'Estimated cost before')} value={cost.format(baselineCost)} />
-            <Metric size="stat" label={t('plugins.database.insights.adviceAfter', 'Estimated cost after')} value={cost.format(candidateCost)} />
+            <Metric size="stat" showLabel label={t('plugins.database.insights.adviceBefore', 'Estimated cost before')} value={cost.format(baselineCost)} />
+            <Metric size="stat" showLabel label={t('plugins.database.insights.adviceAfter', 'Estimated cost after')} value={cost.format(candidateCost)} />
           </Row>
         </Stack>
       ))}

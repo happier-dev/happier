@@ -1035,6 +1035,10 @@ describe('Database Insights surfaces', () => {
       expect(adviceReads).toBe(2);
       expect(await details.queryByRole('group', { name: 'Estimated cost before: 250' })).toBeTruthy();
       expect(await details.queryByRole('group', { name: 'Estimated cost after: 12.5' })).toBeTruthy();
+      const beforeCost = document.querySelector('[role="group"][aria-label="Estimated cost before: 250"]');
+      const afterCost = document.querySelector('[role="group"][aria-label="Estimated cost after: 12.5"]');
+      expect(beforeCost?.textContent).toContain('Estimated cost before');
+      expect(afterCost?.textContent).toContain('Estimated cost after');
     } finally {
       await details.dispose();
     }
