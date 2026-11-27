@@ -35,7 +35,9 @@ export function buildNativeReviewOutputSchema(intentInput: unknown): PluginJsonS
     ? z.strictObject({ answerMarkdown: ReviewFollowUpV1Schema.shape.answerMarkdown,
       updatedFindings: z.optional(z.array(finding)), questions: z.optional(questions), assumptions: z.optional(assumptions) })
     : ReviewModelOutputV1Schema;
-  const schema = zodSchemaToJsonSchemaObject(model, { target: 'draft-7' });
+  // Native null/required encoding owns a separate document; the portable
+  // projection is shared and immutable across tool and Session consumers.
+  const schema = structuredClone(zodSchemaToJsonSchemaObject(model, { target: 'draft-7' }));
   closeNativeOutputSchema(schema);
   return normalizePluginJsonSchema(schema);
 }
