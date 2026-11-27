@@ -105,6 +105,7 @@ describe('GitHub preview-status registered Action', () => {
 
   it.each([
     [OBSERVED_HEAD, 'ready', 'https://pr-1284.example.test/app'],
+    [OBSERVED_HEAD.toUpperCase(), 'ready', 'https://pr-1284.example.test/app'],
     [ADVANCED_HEAD, 'outdated', null],
   ] as const)('reads the exact PR preview at head %s through the registered private projection', async (headSha, state, targetUrl) => {
     const stub = previewStatusTransport({ operation: 'deploy', pullRequestState: 'open', domainState: 'active', domainPath: '/app', headSha });

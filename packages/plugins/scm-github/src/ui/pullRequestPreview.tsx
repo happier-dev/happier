@@ -88,7 +88,7 @@ function useGithubPullRequestPreview(
   const query = React.useMemo(() => {
     const route = routingToken === null ? null : parseGithubRoutingToken(routingToken);
     return serverId !== null && route !== null
-      ? buildGithubPreviewEnvironmentQueryV1(serverId, route, localRef.entryId) : null;
+      ? buildGithubPreviewEnvironmentQueryV1(serverId, route, [localRef.entryId]) : null;
   }, [serverId, routingToken, localRef.entryId]);
   const observedCollection = useLivePluginResourceProjection({ hostRead: 'deployments.environments.list', input: query ?? { serverId: serverId ?? '' } },
     previewCollectionProjection, selectPreviewCollection, { enabled: pullRequest && query !== null && active }).value;

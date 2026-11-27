@@ -1,12 +1,13 @@
 import { admitGithubEntryInvocation } from './admission.js';
 import { GithubPreviewInputV1Schema, type GithubPreviewResultV1 } from './detail/contracts.js';
 import { readGithubPreviewEnvironments } from './previewEnvironments.js';
+import { applyGithubPreviewHeadV1 } from './previewProjection.js';
 import { readGithubPullRequest } from './get.js';
 import { createGithubRepositoryReader } from './repositories.js';
 import { classifyGithubPreviewReadFailure, readGithubPreviewDeployment, readGithubPreviewPublicationStatus } from './mutations/previewStatusAdmission.js';
 import type { GithubTriageInvocationContext } from './invocation.js';
 import { readGithubPullRequestPreviewPublication } from './mutations/previewStatus.js';
-import type { GithubPullRequestPreviewStatusInputV1 } from './mutations/contracts.js';
+import { GithubPullRequestPreviewStatusInputV1Schema } from './mutations/contracts.js';
 
 const unavailable = (code: string, requestId?: string, cause?: unknown): GithubPreviewResultV1 => ({ kind: 'unavailable', failure: classifyGithubPreviewReadFailure(code, requestId, cause) });
 
@@ -33,21 +34,24 @@ export async function readGithubPreview(input: unknown, context: GithubTriageInv
         if (preview.kind !== 'deployment') return { kind: 'unavailable' as const, environmentId,
           ...(preview.controller ? { controller: preview.controller } : {}),
           failure: preview.kind === 'failed' ? preview.failure : classifyGithubPreviewReadFailure(preview.reason, context.requestId) };
-        const state = preview.servingSha !== headSha ? 'outdated' as const : preview.state;
+        const { state, targetUrl } = applyGithubPreviewHeadV1(preview, headSha);
         const status = state === 'outdated' ? null : readGithubPreviewPublicationStatus(preview);
         let publication;
         if (status !== null) {
-          const input: GithubPullRequestPreviewStatusInputV1 = { ...request,
+          const publicationInput = GithubPullRequestPreviewStatusInputV1Schema.safeParse({ ...request,
             environmentId, templateEnvironmentId: preview.provenance.templateEnvironmentId,
             targetLinkId: preview.environment.runtimeTargetLinkId!, deploymentId: preview.deployment.id,
-            expectedHeadSha: headSha, status, targetUrl: status === 'ready' ? preview.targetUrl : null };
-          const observed = await readGithubPullRequestPreviewPublication({ ...input,
-            localRef: admitted.localRef, route: admitted.route, templateTargetLinkId: preview.provenance.runtimeTargetLinkId }, dependencies);
-          publication = observed.kind === 'current' ? observed : { ...observed, input };
+            expectedHeadSha: headSha, status, targetUrl });
+          // The commit can serve the PR even when GitHub's exact revision cannot be offered for a status write.
+          if (publicationInput.success) {
+            const observed = await readGithubPullRequestPreviewPublication({ ...publicationInput.data,
+              localRef: admitted.localRef, route: admitted.route, templateTargetLinkId: preview.provenance.runtimeTargetLinkId }, dependencies);
+            publication = observed.kind === 'current' ? observed : { ...observed, input: publicationInput.data };
+          }
         }
         return { kind: 'preview' as const, operation: preview.deployment.operation, state, environmentId, deploymentId: preview.deployment.id,
           ...(preview.controller ? { controller: preview.controller } : {}),
-          servingSha: preview.servingSha, targetUrl: state === 'ready' ? preview.targetUrl : null,
+          servingSha: preview.servingSha, targetUrl,
           ...(publication ? { publication } : {}) };
       } catch (error) { context.signal.throwIfAborted(); return { kind: 'unavailable' as const, environmentId,
         failure: classifyGithubPreviewReadFailure('deployment_unavailable', context.requestId, error) }; }

@@ -341,6 +341,25 @@ describe('deployment demand read controller', () => {
             expect(base.transport.listEnvironments).toHaveBeenCalledTimes(2);
         } finally { selected.release(); peer.release(); controller.retire(); }
     });
+
+    it('rejects an unrequested PR in a preview page selected by repository identity', async () => {
+        const base = networkBoundary();
+        const preview = createDeploymentEnvironmentHeaderV1({ purpose: 'preview', previewTemplateEnvironmentId: 'template-b',
+            previewRepositoryId: scope.projectSourceId, previewPullRequestId: '17', previewTargetLinkId: 'target-link' });
+        base.transport.listEnvironments.mockResolvedValue({ ok: true, value: createDeploymentEnvironmentCollectionV1({
+            items: [{ environment: preview, title: 'Preview' }],
+        }) });
+        const controller = createDeploymentReadControllerV1({ scope: { serverId: scope.serverId, accountId: scope.accountId }, transport: base.transport });
+        const previewRepository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/repo' };
+        const allowed = controller.acquireCollection({ previewRepository, previewPullRequestIds: ['17'] }, active);
+        const foreign = controller.acquireCollection({ previewRepository, previewPullRequestIds: ['18'] }, active);
+        try {
+            await Promise.all([allowed.refresh(), foreign.refresh()]);
+            expect(allowed.getSnapshot()).toMatchObject({ status: 'ready', value: { items: [{ environment: preview }] } });
+            expect(foreign.getSnapshot()).toMatchObject({ status: 'unavailable', value: null, failure: { code: 'invalid_response' } });
+        } finally { allowed.release(); foreign.release(); controller.retire(); }
+    });
+
     it('shares one Environment read across one hundred joining demand leases and reads again only on an explicit refresh', async () => {
         const base = networkBoundary();
         const controller = createDeploymentReadControllerV1({ scope, transport: base.transport });

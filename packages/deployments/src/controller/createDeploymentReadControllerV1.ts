@@ -502,9 +502,10 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                         admit(value) {
                             const page = DeploymentEnvironmentCollectionV1Schema.parse(value);
                             if (!page.items.every(row => environmentMatches(row.environment))) throw new Error('Foreign Environment');
-                            if (filters.previewRepositoryId !== undefined && !page.items.every(({ environment }) => environment.purpose === 'preview'
-                                && environment.previewRepositoryId === filters.previewRepositoryId
-                                && previewIds.has(environment.previewPullRequestId!))) throw new Error('Foreign preview');
+                            if ((filters.previewRepositoryId !== undefined || filters.previewRepository !== undefined)
+                                && !page.items.every(({ environment }) => environment.purpose === 'preview'
+                                    && (filters.previewRepositoryId === undefined || environment.previewRepositoryId === filters.previewRepositoryId)
+                                    && previewIds.has(environment.previewPullRequestId!))) throw new Error('Foreign preview');
                             if (filters.previewTemplateEnvironmentId !== undefined && !page.items.every(({ environment }) => environment.purpose === 'preview'
                                 && environment.previewTemplateEnvironmentId === filters.previewTemplateEnvironmentId)) throw new Error('Foreign preview template');
                             return page;
