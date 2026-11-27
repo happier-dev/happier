@@ -225,3 +225,83 @@ it('keeps transcript streams away from user-scoped sockets that declare no trans
         await close();
     }
 });
+
+it('delivers live transcripts to declared sockets only for the sessions in their runtime interest set', async () => {
+    const { userId, makeSocket, close } = await startSocketHarness();
+    try {
+        const declared = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync', transcriptInterestDeclared: true });
+        await open(declared.socket);
+        const setInterest = (socket: Socket, payload: unknown) => new Promise<unknown>((resolve) => {
+            socket.timeout(2_000).emit('transcript-interest:set', payload, (error: Error | null, response: unknown) => {
+                resolve(error ? `ack-error:${error.message}` : response);
+            });
+        });
+        let phase = 0;
+        const receivedDuring = async (sessionId: string) => {
+            const nextPhase = ++phase;
+            const barrier = new Promise<void>((resolve) => {
+                const receive = (value: { id: string }) => {
+                    if (value.id !== `barrier-${nextPhase}`) return;
+                    declared.socket.off('update', receive);
+                    resolve();
+                };
+                declared.socket.on('update', receive);
+            });
+            for (let seq = 1; seq <= 2; seq++) {
+                eventRouter.emitUpdate({ userId, recipientFilter: { type: 'all-interested-in-session', sessionId }, payload: buildNewMessageUpdate({
+                    id: `msg${seq}`, seq, localId: null, createdAt: new Date(0), updatedAt: new Date(0),
+                    content: { t: 'encrypted', c: 'message' },
+                }, sessionId, seq, `update${seq}`) });
+                eventRouter.emitEphemeral({ userId, recipientFilter: { type: 'transcript-interested-in-session', sessionId }, payload: {
+                    type: 'transcript-stream-segment-delta', sessionId,
+                    message: { localId: `stream${seq}`, content: { t: 'encrypted', c: 'delta' }, tick: seq, baseLength: 0, createdAt: 0, updatedAt: 0 },
+                } });
+            }
+            eventRouter.emitUpdate({ userId, payload: buildAccountSettingsChangedUpdate(nextPhase, 99, `barrier-${nextPhase}`), recipientFilter: { type: 'all-user-authenticated-connections' } });
+            await barrier;
+            return declared.events.splice(0);
+        };
+        const messages = (sessionId: string) => Array.from({ length: 2 }, () => `message:${sessionId}`);
+        const transcript = (sessionId: string) => Array.from({ length: 2 }, () => [`message:${sessionId}`, `delta:${sessionId}`]).flat();
+        const sessionA = randomUUID();
+        const sessionB = randomUUID();
+
+        // The handshake marker alone declares an empty set: session updates still arrive, streams do not.
+        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
+        expect(await setInterest(declared.socket, { sessionIds: [sessionA] })).toEqual({ ok: true });
+        expect(await receivedDuring(sessionA)).toEqual(transcript(sessionA));
+        expect(await receivedDuring(sessionB)).toEqual(messages(sessionB));
+
+        // A set replaces the whole previous set.
+        expect(await setInterest(declared.socket, { sessionIds: [sessionB] })).toEqual({ ok: true });
+        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
+        expect(await receivedDuring(sessionB)).toEqual(transcript(sessionB));
+
+        // Malformed sets are refused and leave the current membership untouched.
+        for (const payload of [{ sessionIds: [sessionA, 7] }, { sessionIds: sessionA }, { sessionIds: [sessionA], extra: true }, null]) {
+            expect(await setInterest(declared.socket, payload)).toEqual({ ok: false, error: 'invalid-payload' });
+        }
+        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
+        expect(await receivedDuring(sessionB)).toEqual(transcript(sessionB));
+
+        // Blank ids are dropped and the rest are trimmed and de-duplicated.
+        expect(await setInterest(declared.socket, { sessionIds: ['', '   ', ` ${sessionA} `, sessionA] })).toEqual({ ok: true });
+        expect(await receivedDuring(sessionA)).toEqual(transcript(sessionA));
+        expect(await receivedDuring(sessionB)).toEqual(messages(sessionB));
+        expect(await setInterest(declared.socket, { sessionIds: [] })).toEqual({ ok: true });
+        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
+
+        // Interest is not buffered server-side: a reconnected socket is back to the empty handshake set.
+        declared.socket.disconnect();
+        await open(declared.socket);
+        expect(await receivedDuring(sessionA)).toEqual(messages(sessionA));
+        expect(await setInterest(declared.socket, { sessionIds: [sessionA] })).toEqual({ ok: true });
+        expect(await receivedDuring(sessionA)).toEqual(transcript(sessionA));
+
+        const undeclared = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync' });
+        await open(undeclared.socket);
+        expect(await setInterest(undeclared.socket, { sessionIds: [sessionA] })).toEqual({ ok: false, error: 'not-allowed' });
+    } finally {
+        await close();
+    }
+});

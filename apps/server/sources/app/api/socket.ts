@@ -40,6 +40,7 @@ import { describeLoggableError } from "@/utils/logging/describeLoggableError";
 import { registerSessionRuntimeActivitySnapshotSocketEvent } from "@/app/session/runtimeActivity/socketEvents";
 import { publishSessionPublisherLifecycleUpdate } from "@/app/session/runtimeActivity/publishPublisherLifecycleUpdate";
 import { registerUiFocusSocketEvent } from "./socket/registerUiFocusSocketEvent";
+import { registerTranscriptInterestSocketEvent } from "./socket/registerTranscriptInterestSocketEvent";
 import { readHappierSocketData } from "./socket/socketData";
 import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
 
@@ -238,6 +239,8 @@ export function startSocket(app: Fastify) {
         socketData.sessionId = sessionId;
         socketData.machineId = machineId;
         socketData.connectedServiceIds = readConnectedServiceReaderSupport(socket.handshake.auth[CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD]);
+        socketData.transcriptInterestDeclared = clientType === 'user-scoped'
+            && socket.handshake.auth[TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD] === true;
         return next();
     };
 
@@ -328,9 +331,7 @@ export function startSocket(app: Fastify) {
                 ...(clientType === 'user-scoped' && typeof interest === 'string' && interest.trim() && interest === interest.trim()
                     ? { sessionUpdateInterest: interest }
                     : {}),
-                ...(clientType === 'user-scoped' && socket.handshake.auth[TRANSCRIPT_INTEREST_DECLARED_SOCKET_AUTH_FIELD] === true
-                    ? { transcriptInterestDeclared: true as const }
-                    : {}),
+                ...(socketData.transcriptInterestDeclared ? { transcriptInterestDeclared: true as const } : {}),
             };
         }
         eventRouter.addConnection(userId, connection);
@@ -466,6 +467,7 @@ export function startSocket(app: Fastify) {
         );
         if (connection.connectionType === "user-scoped") {
             registerUiFocusSocketEvent(socket);
+            registerTranscriptInterestSocketEvent(socket);
             registerReleasedUiV021SessionEndSocketEvent({
                 socket,
                 accountId: userId,
