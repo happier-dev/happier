@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor, type ActionExecutorContext } from './actionExecutor.js';
+import type { ActionExecutorContext } from './actionExecutor.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { MachineSetupApplyInputV1Schema, ManagedAcquireInputV1Schema } from '../machines/managed/actionsV1.js';
@@ -12,6 +12,7 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionEx
 import { PluginActionContributionV2Schema } from '../plugins/actions/v2.js';
 import { fingerprintPluginAccountActionConfirmation } from '../plugins/actions/invocation.js';
 import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
+import { createActionExecutorWithEmptyAutomationPort } from './executor/actionAutomationAdmission.testkit.js';
 
 const actionId = 'machines.setup.apply' as const;
 const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'machine', targets: [{
@@ -123,7 +124,7 @@ describe('one in-flow confirmation for the requested operation', () => {
 
   it('runs exact Account-bound Voice setup without a second card before the operation owner admits effects', async () => {
     let applied = 0;
-    const executor = createActionExecutor({ machineSetupApply: async () => {
+    const executor = createActionExecutorWithEmptyAutomationPort({ machineSetupApply: async () => {
       applied++;
       return { operationId: 'install-operation' };
     } });
@@ -143,7 +144,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     });
     let acquired = false;
     let approvals = 0;
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       // Native acquisition and Artifact persistence are external host ports;
       // enrollment declarations and all approval policy remain real.
       managedMachineAction: async () => { acquired = true; return { managedId: 'managed' }; },
@@ -171,7 +172,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     } };
     expect(getActionSpec(actionId).safety).toBe('safe');
     getActionSpec(actionId).inputSchema.parse(input);
-    const executor = createActionExecutor({ widgetAccountScope: () => ({ serverId: 'home', accountId: 'owner' }) });
+    const executor = createActionExecutorWithEmptyAutomationPort({ widgetAccountScope: () => ({ serverId: 'home', accountId: 'owner' }) });
     const prepared = await executor.prepare(actionId, input, { ...context, surface: 'voice',
       externalActionTarget: undefined }, { reviewOnly: true });
     expect(prepared).toMatchObject({ kind: 'ready', operation: { actionId, safety: 'danger' } });
@@ -183,7 +184,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     let removed = 0;
     let approvals = 0;
     const observed: unknown[] = [];
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       notificationConfigurationAction: async () => { removed++; return { channelId: input.channelId }; },
       approvalsCreate: async () => { approvals++; return { artifactId: 'ordinary-review' }; },
       // The external plugin observation port must not publish an unexecuted review as settlement.
@@ -210,7 +211,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     const input = { channelId: 'spoken-webhook-removal' };
     let removed = 0;
     let approvals = 0;
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       notificationConfigurationAction: async () => { removed++; return { channelId: input.channelId }; },
       approvalsCreate: async () => { approvals++; return { artifactId: 'unexpected-preparation-ask' }; },
     });
@@ -231,7 +232,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     expect(getActionSpec(actionId).irreversible).toBe(true);
     const removed: unknown[] = [];
     const createdApprovals: unknown[] = [];
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       // The answering notification client and Artifact persistence are external
       // ports of this process-neutral admission owner; policy/review stay real.
       notificationConfigurationAction: async ({ input }) => {
@@ -259,7 +260,7 @@ describe('one in-flow confirmation for the requested operation', () => {
   it('answers explicit own-UI Ask with the designed confirmation without an approval Artifact', async () => {
     let applied = 0;
     let approvals = 0;
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       approvalsCreate: async () => { approvals++; return { artifactId: 'explicit-install-approval' }; },
       machineSetupApply: async () => { applied++; return { operationId: 'install-operation' }; },
     });
@@ -280,7 +281,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     let applied = 0;
     const child = { action: 'machines.work.summary.get' as const, role: 'inspect',
       input: { serverId: 'home', machineId: 'machine' } };
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.setup.apply' ? { children: [child] } : null,
       approvalsCreate: async () => ({ artifactId: 'explicit-step-approval' }),
       machineSetupApply: async () => { applied++; return { operationId: 'unexpected' }; },
@@ -300,7 +301,7 @@ describe('one in-flow confirmation for the requested operation', () => {
   it('projects the same reviewed parent after an in-place deferred approval decision', async () => {
     let request: ApprovalRequestV2 | null = null;
     let reviewedParent: unknown;
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       // Artifact storage and the external origin's currentness are system boundaries;
       // review admission, decision transitions and effect dispatch remain real.
       approvalsCreate: async ({ request: value }) => {
@@ -333,7 +334,7 @@ describe('one in-flow confirmation for the requested operation', () => {
     let childReads = 0;
     const child = { action: 'machines.work.summary.get' as const, role: 'inspect',
       input: { serverId: 'home', machineId: 'machine' } };
-    const executor = createActionExecutor({
+    const executor = createActionExecutorWithEmptyAutomationPort({
       prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.setup.apply' ? { children: [child] } : null,
       machineWorkSummaryGet: async () => { childReads++; return { kind: 'current', requesters: [] }; },
       machineSetupApply: async ({ context }) => {
@@ -357,7 +358,7 @@ describe('one in-flow confirmation for the requested operation', () => {
   it.each(['agent', 'mcp', 'changed-input', 'changed-account', 'changed-home', 'changed-request', 'changed-target'] as const)(
     'retains Ask for %s instead of applying an unrelated confirmation', async variant => {
       let applied = 0;
-      const executor = createActionExecutor({ machineSetupApply: async () => { applied++; return { operationId: 'unexpected' }; } });
+      const executor = createActionExecutorWithEmptyAutomationPort({ machineSetupApply: async () => { applied++; return { operationId: 'unexpected' }; } });
       const confirmed = { ...context, presentUserConfirmation: { actionId,
         inputDigest: computeActionInputApprovalDigestV1(actionId, input), requestId: context.actionRequestId,
         accountId: context.runtimeAccountId, serverId: context.serverId, target: context.externalActionTarget } };
