@@ -100,3 +100,38 @@ test('genuinely staged changes survive index publication', async t => {
   assert.equal(await syncPublishedIndex({ repo, base, commit }), 0);
   assert.equal(git('show', ':new'), 'staged version');
 });
+
+test('publication catches up a missing index entry after a later private commit without changing foreign staging', async t => {
+  const { repo, commit: base, git } = repository(t);
+  writeFileSync(join(repo, 'foreign'), 'foreign staged bytes\n');
+  git('add', 'foreign');
+  const foreign = git('ls-files', '--stage', '--', 'foreign');
+  writeFileSync(join(repo, 'new'), 'later committed bytes\n');
+  const env = { ...process.env, GIT_INDEX_FILE: join(repo, '.git', 'private-index') };
+  const privateGit = (...args) => execFileSync('git', args, { cwd: repo, env, encoding: 'utf8' }).trim();
+  privateGit('read-tree', base);
+  privateGit('add', 'new');
+  const tree = privateGit('write-tree');
+  const commit = privateGit('commit-tree', tree, '-p', base, '-m', 'later private commit');
+  git('update-ref', 'HEAD', commit, base);
+
+  assert.equal(await syncPublishedIndex({ repo, base, commit }), 1);
+  assert.equal(git('rev-parse', ':new'), git('rev-parse', 'HEAD:new'));
+  assert.equal(git('ls-files', '--stage', '--', 'foreign'), foreign);
+});
+
+test('a missing entry with different disk bytes remains untouched', async t => {
+  const { repo, commit: base, git } = repository(t);
+  writeFileSync(join(repo, 'new'), 'later committed bytes\n');
+  const blob = git('hash-object', '-w', '--', 'new');
+  const env = { ...process.env, GIT_INDEX_FILE: join(repo, '.git', 'private-index') };
+  const privateGit = (...args) => execFileSync('git', args, { cwd: repo, env, encoding: 'utf8' }).trim();
+  privateGit('read-tree', base);
+  privateGit('update-index', '--cacheinfo', `100644,${blob},new`);
+  const commit = privateGit('commit-tree', privateGit('write-tree'), '-p', base, '-m', 'later');
+  git('update-ref', 'HEAD', commit, base);
+  writeFileSync(join(repo, 'new'), 'foreign disk bytes\n');
+  assert.equal(await syncPublishedIndex({ repo, base, commit }), 0);
+  assert.equal(git('ls-files', '--stage', '--', 'new'), '');
+  assert.equal(readFileSync(join(repo, 'new'), 'utf8'), 'foreign disk bytes\n');
+});

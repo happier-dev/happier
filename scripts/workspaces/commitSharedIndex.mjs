@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, linkSync, renameSync, rmSync, statSync, watch } from 'node:fs';
-import { dirname } from 'node:path';
+import { copyFileSync, existsSync, linkSync, lstatSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, watch } from 'node:fs';
+import { dirname, sep } from 'node:path';
 import { once } from 'node:events';
 import { gitIn } from './commitProducerClosure.mjs';
 
@@ -27,7 +27,19 @@ function treeChanges(git, base, tip) {
   return changes;
 }
 
-function indexUpdates(git, base, changes) {
+function diskMatches(git, repo, name, entry) {
+  const path = Buffer.concat([Buffer.from(repo + sep), Buffer.from(name, 'latin1')]);
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (!stat) return false;
+  const [mode, blob] = entry.split(' ');
+  const symlink = mode === '120000';
+  if (symlink ? !stat.isSymbolicLink() : !stat.isFile()) return false;
+  if (!symlink && mode !== ((stat.mode & 0o111) ? '100755' : '100644')) return false;
+  const input = symlink ? readlinkSync(path, { encoding: 'buffer' }) : readFileSync(path);
+  return git(['hash-object', '--stdin'], { input }).trim() === blob;
+}
+
+function indexUpdates(git, repo, base, changes) {
   // Intent-to-add can share the mode and empty blob of a base file while
   // representing a staged deletion. Git's cached diff sees that distinction.
   const staged = new Set(records(git(['diff', '--cached', '--ita-invisible-in-index',
@@ -43,7 +55,10 @@ function indexUpdates(git, base, changes) {
   const deletions = [];
   const replacements = [];
   for (const [name, { before, after }] of changes) {
-    if (staged.has(name) || (removed(before) ? entries.has(name) : entries.get(name) !== before)) continue;
+    // A missing entry can be a publication left behind by an earlier private
+    // commit. Only exact landed disk bytes distinguish that lag from disk work.
+    const missingLanded = !entries.has(name) && !removed(after) && diskMatches(git, repo, name, after);
+    if (!missingLanded && (staged.has(name) || (removed(before) ? entries.has(name) : entries.get(name) !== before))) continue;
     if (removed(after)) {
       deletions.push(`0 ${after.slice(7)}\t${name}`);
       entries.delete(name);
@@ -66,7 +81,7 @@ function readIndexIdentity(index) {
   return stat ? `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}` : null;
 }
 
-function prepareAndPublishIndex(git, env, index, base, commit, checkout, paths) {
+function prepareAndPublishIndex(git, env, index, repo, base, commit, checkout, paths) {
   if (git(['rev-parse', '--symbolic-full-name', 'HEAD']).trim() !== checkout) return 0;
   const tip = git(['rev-parse', '--verify', 'HEAD']).trim();
   try { git(['merge-base', '--is-ancestor', commit, tip]); }
@@ -92,7 +107,7 @@ function prepareAndPublishIndex(git, env, index, base, commit, checkout, paths) 
   try {
     const original = readIndexIdentity(index);
     if (original) copyFileSync(index, temp);
-    const updates = indexUpdates(tempGit, base, changes);
+    const updates = indexUpdates(tempGit, repo, base, changes);
     if (!updates.length) return readIndexIdentity(index) === original ? 0 : null;
     tempGit(['update-index', '-z', '--index-info'], { input: Buffer.from(`${updates.join('\0')}\0`, 'latin1') });
 
@@ -134,7 +149,7 @@ export async function syncPublishedIndex({ repo, base, commit, checkout, paths }
       changed.catch(() => {});
       try {
         if (!existsSync(`${index}.lock`)) {
-          const result = prepareAndPublishIndex(git, env, index, base, commit, checkout, paths);
+          const result = prepareAndPublishIndex(git, env, index, repo, base, commit, checkout, paths);
           if (result !== null) return result;
           continue;
         }
