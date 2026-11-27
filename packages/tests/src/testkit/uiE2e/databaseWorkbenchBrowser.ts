@@ -1,6 +1,11 @@
-import { fork } from 'node:child_process';
-import { on, once } from 'node:events';
-import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, rmdir } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { createServer, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { createInterface } from 'node:readline';
 import type { Page } from '@playwright/test';
 
 import { repoRootDir } from '../paths';
@@ -23,37 +28,64 @@ export async function startDatabaseWorkbenchBrowser(params: Readonly<{
     workspaceRootDir: join(repoRoot, 'apps/ui'), logPrefix: 'dbw-browser',
     stdoutPath: join(testDir, 'ui.web.stdout.log'), stderrPath: join(testDir, 'ui.web.stderr.log'),
   });
-  const child = fork(join(repoRoot, 'packages/tests/src/testkit/uiE2e/databaseWorkbenchFixtureProcess.ts'), {
-    execArgv: ['--conditions=happier-source', '--import', join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs')],
-    env: { ...process.env, TSX_TSCONFIG_PATH: join(repoRoot, 'apps/cli/tsconfig.runtime.json') },
+  const packageDir = join(repoRoot, 'packages/tests');
+  const requireTests = createRequire(join(packageDir, 'package.json'));
+  const vitest = join(dirname(requireTests.resolve('vitest/package.json')), 'vitest.mjs');
+  const pipeDir = await mkdtemp(join(tmpdir(), 'dbw-'));
+  const pipe = process.platform === 'win32' ? `\\\\.\\pipe\\${basename(pipeDir)}` : join(pipeDir, 'fixture.sock');
+  const listener = createServer();
+  const accepted = once(listener, 'connection') as Promise<[Socket]>;
+  listener.listen(pipe);
+  try {
+    await once(listener, 'listening');
+  } catch (error) {
+    // Both events observe a listen error. Consume the unused connection result.
+    await accepted.catch(() => {});
+    await rmdir(pipeDir);
+    throw error;
+  }
+  const child = spawn(process.execPath, [vitest, 'run', '--config', 'vitest.core.config.ts', '--maxWorkers=1',
+    'src/testkit/uiE2e/databaseWorkbenchFixtureProcess.test.ts'], {
+    cwd: packageDir, stdio: 'inherit', env: { ...process.env, HAPPIER_DBW_BROWSER_FIXTURE_PIPE: pipe },
   });
-  const messages = on(child, 'message', { close: ['disconnect', 'exit'] });
   const exit = once(child, 'exit');
   void exit.catch(() => {}); // The command or stop reports the process error.
   let ui: StartedUiWeb | undefined;
-
-  const send = (request: WorkbenchFixtureRequest) => new Promise<void>((resolve, reject) => {
-    child.send(request, error => error ? reject(error) : resolve());
-  });
-  async function receive<K extends WorkbenchFixtureReply['kind']>(kind: K) {
-    const reply: WorkbenchFixtureReply | undefined = (await messages.next()).value?.[0];
-    if (!reply) throw new Error(`DBW fixture process closed while waiting for ${kind}`);
-    if (reply.kind === 'failed') throw new Error(reply.error);
-    if (reply.kind !== kind) throw new Error(`DBW fixture sent ${reply.kind} while waiting for ${kind}`);
-    return reply as Extract<WorkbenchFixtureReply, { kind: K }>;
-  }
+  let socket: Socket | undefined;
   async function stop() {
     try {
-      if (child.connected) child.disconnect();
+      socket?.end();
+      listener.close();
       const [code, signal] = await exit;
       if (code !== 0) throw new Error(`DBW fixture process exited (${signal ?? code})`);
     } finally {
-      await messages.return?.();
-      await ui?.stop();
+      socket?.destroy();
+      try {
+        await rmdir(pipeDir);
+      } finally {
+        await ui?.stop();
+      }
     }
   }
 
   try {
+    const [connection] = await Promise.race([accepted, exit.then(([code, signal]) => {
+      throw new Error(`DBW fixture process exited before connecting (${signal ?? code})`);
+    })]);
+    socket = connection;
+    listener.close();
+    const messages = createInterface({ input: connection, crlfDelay: Infinity })[Symbol.asyncIterator]();
+    const send = (request: WorkbenchFixtureRequest) => new Promise<void>((resolve, reject) => {
+      connection.write(`${JSON.stringify(request)}\n`, error => error ? reject(error) : resolve());
+    });
+    async function receive<K extends WorkbenchFixtureReply['kind']>(kind: K) {
+      const message = await messages.next();
+      if (message.done) throw new Error(`DBW fixture process closed while waiting for ${kind}`);
+      const reply: WorkbenchFixtureReply = JSON.parse(message.value);
+      if (reply.kind === 'failed') throw new Error(reply.error);
+      if (reply.kind !== kind) throw new Error(`DBW fixture sent ${reply.kind} while waiting for ${kind}`);
+      return reply as Extract<WorkbenchFixtureReply, { kind: K }>;
+    }
     await send({ kind: 'start', testDir });
     const { options } = await receive('pair');
     ui = await startUiWeb({ testDir: join(testDir, 'ui'), skipWorkspacePrebuild: true, env: {

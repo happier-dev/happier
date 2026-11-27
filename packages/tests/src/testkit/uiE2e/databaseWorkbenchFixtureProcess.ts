@@ -1,4 +1,6 @@
-import { on } from 'node:events';
+import { once } from 'node:events';
+import { createConnection } from 'node:net';
+import { createInterface } from 'node:readline';
 
 import { startDatabaseWorkbenchInsightsFixture } from '../databaseWorkbench';
 
@@ -18,13 +20,17 @@ export type WorkbenchFixtureReply =
   | { kind: 'sql'; output: string }
   | { kind: 'failed'; error: string };
 
-async function serveFixture() {
-  const messages = on(process, 'message', { close: ['disconnect'] });
+export async function serveDatabaseWorkbenchFixture(path: string) {
+  const socket = createConnection({ path });
+  await once(socket, 'connect');
+  const messages = createInterface({ input: socket, crlfDelay: Infinity })[Symbol.asyncIterator]();
   const send = (reply: WorkbenchFixtureReply) => {
-    if (process.connected) process.send!(reply);
+    if (socket.writable) socket.write(`${JSON.stringify(reply)}\n`);
   };
-  const receive = async (): Promise<WorkbenchFixtureRequest | undefined> =>
-    (await messages.next()).value?.[0];
+  const receive = async (): Promise<WorkbenchFixtureRequest | undefined> => {
+    const message = await messages.next();
+    return message.done ? undefined : JSON.parse(message.value);
+  };
 
   let fixture: Fixture | undefined;
   try {
@@ -54,14 +60,7 @@ async function serveFixture() {
       await fixture?.stop();
     } finally {
       await messages.return?.();
-      if (process.connected) process.disconnect();
+      socket.end();
     }
   }
-}
-
-if (process.send) {
-  // The worker's source loader has captured the CLI alias. The fixture's
-  // server and daemon subprocesses resolve their own entrypoint configurations.
-  delete process.env.TSX_TSCONFIG_PATH;
-  await serveFixture();
 }
