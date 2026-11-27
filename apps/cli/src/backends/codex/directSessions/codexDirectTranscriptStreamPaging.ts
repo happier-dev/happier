@@ -7,7 +7,7 @@ import { readJsonlFileBackwardPage } from '@/api/directSessions/filePaging/jsonl
 import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
 
 import { createCodexRolloutSemanticTracker } from '../rollout/createCodexRolloutSemanticTracker';
-import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
+import type { CodexRolloutFile } from './collectCodexSessionRolloutFiles';
 import { collectCodexDirectTranscriptRolloutStreams } from './collectCodexDirectTranscriptRolloutStreams';
 import {
   decodeCodexDirectBackwardCursor,
@@ -89,7 +89,7 @@ async function captureDurableStreamProgress(
   stream: CodexDirectTranscriptRolloutStream,
   progress: CodexBoundaryProgress,
 ): Promise<CodexDurableStreamForwardProgress | null> {
-  const captured = await captureCodexRolloutFileBoundary(stream.filePath, progress.fingerprintOffsetBytes);
+  const captured = await captureCodexRolloutFileBoundary(stream.filePath, progress.fingerprintOffsetBytes, stream.fileIdentity);
   if (!captured) return null;
   return {
     fileRelPath: stream.fileRelPath,
@@ -112,7 +112,7 @@ async function buildStreamVectorCursorFromProgress(
     if (durable) return durable;
 
     resetStreamIds.add(stream.fileRelPath);
-    const tail = await captureCodexRolloutTailProgress(stream.filePath);
+    const tail = await captureCodexRolloutTailProgress(stream.filePath, stream.fileIdentity);
     if (!tail) return null;
     return {
       fileRelPath: stream.fileRelPath,
@@ -136,7 +136,7 @@ async function buildCodexStreamVectorTailCursor(
   streams: readonly CodexDirectTranscriptRolloutStream[],
 ): Promise<string> {
   const entries = await Promise.all(streams.map(async (stream) => {
-    const tail = await captureCodexRolloutTailProgress(stream.filePath);
+    const tail = await captureCodexRolloutTailProgress(stream.filePath, stream.fileIdentity);
     return tail
       ? {
         fileRelPath: stream.fileRelPath,
@@ -162,7 +162,7 @@ function decodeDurableStreamVectorCursor(
 }
 
 async function collectReadAfterRecords(params: Readonly<{
-  codexHome: string;
+  collectFiles: (threadId: string) => Promise<CodexRolloutFile[]>;
   initialStreams: readonly CodexDirectTranscriptRolloutStream[];
   initialProgressByStreamId: ReadonlyMap<string, CodexBoundaryProgress>;
   expectedBoundaryByStreamId: ReadonlyMap<string, CodexExpectedBoundary>;
@@ -216,8 +216,8 @@ async function collectReadAfterRecords(params: Readonly<{
       maxItems: Math.max(params.maxItems * 2, 1),
     });
     pageLimited = pageLimited || page.hitPageLimit;
-    if (page.truncated || !(await codexRolloutFileBoundaryMatches(stream.filePath, expectedBoundary))) {
-      const tail = await captureCodexRolloutTailProgress(stream.filePath);
+    if (page.truncated || !(await codexRolloutFileBoundaryMatches(stream.filePath, expectedBoundary, stream.fileIdentity))) {
+      const tail = await captureCodexRolloutTailProgress(stream.filePath, stream.fileIdentity);
       if (tail) {
         baseProgressByStreamId.set(stream.fileRelPath, tail.progress);
         expectedBoundaryByStreamId.set(stream.fileRelPath, tail.boundary);
@@ -252,7 +252,7 @@ async function collectReadAfterRecords(params: Readonly<{
         if (line.startOffsetBytes === offsetBytes && progress.subIndex > 0) continue;
         let childStreams = streamsByThreadId.get(threadId) ?? [];
         if (childStreams.length === 0) {
-          const childFiles = await collectCodexSessionRolloutFiles({ codexHome: params.codexHome, remoteSessionId: threadId });
+          const childFiles = await params.collectFiles(threadId);
           childStreams = childFiles.map((file) => ({ ...file, threadId, sidechainId: threadId }));
           streamsByThreadId.set(threadId, childStreams);
           for (const childStream of childStreams) {
@@ -261,7 +261,7 @@ async function collectReadAfterRecords(params: Readonly<{
         }
         for (const childStream of childStreams) {
           if (queuedStreamIds.has(childStream.fileRelPath)) continue;
-          const liveBoundary = await captureCodexRolloutFileBoundary(childStream.filePath, 0);
+          const liveBoundary = await captureCodexRolloutFileBoundary(childStream.filePath, 0, childStream.fileIdentity);
           if (!liveBoundary) continue;
           const liveProgress: CodexBoundaryProgress = {
             nextOffsetBytes: 0,
@@ -295,7 +295,7 @@ async function collectReadAfterRecords(params: Readonly<{
 }
 
 export async function readAfterCodexRolloutStreams(params: Readonly<{
-  codexHome: string;
+  collectFiles: (threadId: string) => Promise<CodexRolloutFile[]>;
   remoteSessionId: string;
   cursor: string;
   maxBytes: number;
@@ -303,7 +303,7 @@ export async function readAfterCodexRolloutStreams(params: Readonly<{
   initialRolloutFiles?: readonly CodexRolloutFile[];
 }>): Promise<DirectSessionTranscriptReadAfter> {
   const streams = await collectCodexDirectTranscriptRolloutStreams({
-    codexHome: params.codexHome,
+    collectFiles: params.collectFiles,
     remoteSessionId: params.remoteSessionId,
     initialRolloutFiles: params.initialRolloutFiles,
   });
@@ -336,14 +336,14 @@ export async function readAfterCodexRolloutStreams(params: Readonly<{
 
   for (const stream of streams) {
     const persisted = cursorProgressByStreamId.get(stream.fileRelPath);
-    if (persisted && await codexRolloutFileBoundaryMatches(stream.filePath, persisted)) {
+    if (persisted && await codexRolloutFileBoundaryMatches(stream.filePath, persisted, stream.fileIdentity)) {
       initialProgressByStreamId.set(stream.fileRelPath, toBoundaryProgress(persisted));
       expectedBoundaryByStreamId.set(stream.fileRelPath, persisted);
       readableStreamIds.add(stream.fileRelPath);
       continue;
     }
 
-    const tail = await captureCodexRolloutTailProgress(stream.filePath);
+    const tail = await captureCodexRolloutTailProgress(stream.filePath, stream.fileIdentity);
     if (tail) {
       initialProgressByStreamId.set(stream.fileRelPath, tail.progress);
       expectedBoundaryByStreamId.set(stream.fileRelPath, tail.boundary);
@@ -356,7 +356,7 @@ export async function readAfterCodexRolloutStreams(params: Readonly<{
   }
 
   const collected = await collectReadAfterRecords({
-    codexHome: params.codexHome,
+    collectFiles: params.collectFiles,
     initialStreams: streams,
     initialProgressByStreamId,
     expectedBoundaryByStreamId,
@@ -414,7 +414,7 @@ export async function readAfterCodexRolloutStreams(params: Readonly<{
 }
 
 export async function pageCodexRolloutStreams(params: Readonly<{
-  codexHome: string;
+  collectFiles: (threadId: string) => Promise<CodexRolloutFile[]>;
   remoteSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
@@ -430,7 +430,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
   truncationReason?: 'page_limit' | 'source_discontinuity';
 }>> {
   const streams = [...await collectCodexDirectTranscriptRolloutStreams({
-    codexHome: params.codexHome,
+    collectFiles: params.collectFiles,
     remoteSessionId: params.remoteSessionId,
     initialRolloutFiles: params.initialRolloutFiles,
   })];
@@ -472,10 +472,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
         if (!validChildThreadIds.includes(persisted.threadId)) continue;
         let files = rolloutFilesByThreadId.get(persisted.threadId);
         if (files === undefined) {
-          files = await collectCodexSessionRolloutFiles({
-            codexHome: params.codexHome,
-            remoteSessionId: persisted.threadId,
-          });
+          files = await params.collectFiles(persisted.threadId);
           rolloutFilesByThreadId.set(persisted.threadId, files);
         }
         const file = files.find((candidate) => candidate.fileRelPath === persisted.fileRelPath);
@@ -533,10 +530,7 @@ export async function pageCodexRolloutStreams(params: Readonly<{
       for (const childThreadId of projected.discoveredChildThreadIds) {
         if (discoveredThreadIds.has(childThreadId)) continue;
         discoveredThreadIds.add(childThreadId);
-        const childFiles = await collectCodexSessionRolloutFiles({
-          codexHome: params.codexHome,
-          remoteSessionId: childThreadId,
-        });
+        const childFiles = await params.collectFiles(childThreadId);
         for (const childFile of childFiles) {
           if (knownStreamIds.has(childFile.fileRelPath)) continue;
           knownStreamIds.add(childFile.fileRelPath);

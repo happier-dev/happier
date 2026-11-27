@@ -9,8 +9,12 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   bugReportsAcceptedArtifactKinds: 'HAPPIER_FEATURE_BUG_REPORTS__ACCEPTED_ARTIFACT_KINDS',
   bugReportsContextWindowMs: 'HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS',
 
+  plansEnabled: 'HAPPIER_FEATURE_PLANS__ENABLED',
+  supporterEnabled: 'HAPPIER_FEATURE_SUPPORTER__ENABLED',
+  plansConfig: 'HAPPIER_PLANS__CONFIG',
+  sessionPinsMax: 'HAPPIER_SESSION_PINS__MAX',
+
   voiceEnabled: 'HAPPIER_FEATURE_VOICE__ENABLED',
-  voiceRequireSubscription: 'HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION',
 
   connectedServicesEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED',
   connectedServicesQuotasEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED',

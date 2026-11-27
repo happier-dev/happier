@@ -73,4 +73,10 @@ export const ISLANDS: IslandMap = {
      * milliseconds on the only page that ever loads it.
      */
     'download-hub': lazyIsland(() => import('../components/DownloadHub').then((m) => m.DownloadHub)),
+
+    /* Plans & Supporter pages: each leaf loads only on the page that renders it. */
+    'money-sheet': lazyIsland(() => import('../components/MoneySheet').then((m) => m.MoneySheet)),
+    'github-star-pill': lazyIsland(() => import('../components/GitHubStarPill').then((m) => m.GitHubStarPill)),
+    'supporter-wall': lazyIsland(() => import('../components/SupporterWall').then((m) => m.SupporterWall)),
+    'supporter-code': lazyIsland(() => import('../components/SupporterCode').then((m) => m.SupporterCode)),
 };

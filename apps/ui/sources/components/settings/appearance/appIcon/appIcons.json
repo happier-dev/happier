@@ -1,0 +1,12 @@
+{
+    "icons": [
+        { "id": "default", "nativeName": null, "access": "everyone", "androidBackgroundColor": null },
+        { "id": "night", "nativeName": "Night", "access": "everyone", "androidBackgroundColor": "#09090B" },
+        { "id": "paper", "nativeName": "Paper", "access": "supporter", "androidBackgroundColor": "#F3EFE6" },
+        { "id": "gold", "nativeName": "Gold", "access": "supporter", "androidBackgroundColor": "#15120E" },
+        { "id": "aurora", "nativeName": "Aurora", "access": "supporter", "androidBackgroundColor": "#050507" },
+        { "id": "sunrise", "nativeName": "Sunrise", "access": "supporter", "androidBackgroundColor": "#FF8F78" },
+        { "id": "blueprint", "nativeName": "Blueprint", "access": "supporter", "androidBackgroundColor": "#0F2C4C" },
+        { "id": "pixel", "nativeName": "Pixel", "access": "supporter", "androidBackgroundColor": "#121214" }
+    ]
+}

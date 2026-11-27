@@ -5,6 +5,7 @@ import { reconcileAcpCatalogRows } from '@/agent/acp/reconcileAcpCatalogRows';
 import { logger } from '@/ui/logger';
 import type { AgentBackend, AgentMessage, McpServerConfig } from '@/agent';
 import type { AgentPromptPayload } from '@/agent/core/AgentPromptPayload';
+import type { AgentCancelOptions } from '@/agent/core/AgentBackend';
 import type { InFlightSteerPromptOptions } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { CatalogAgentId } from '@/backends/types';
 import {
@@ -283,7 +284,7 @@ export type AcpRuntime = Readonly<{
    */
   isTurnInFlight: () => boolean;
   beginTurn: () => void;
-  cancel: () => Promise<void>;
+  cancel: (options?: AgentCancelOptions) => Promise<void>;
   reset: () => Promise<void>;
   startOrLoad: (opts: { resumeId?: string | null; importHistory?: boolean; deferPendingDrain?: boolean }) => Promise<string>;
   /**
@@ -2574,7 +2575,7 @@ export function createAcpRuntime(params: {
       }
     },
 
-    async cancel(): Promise<void> {
+    async cancel(options?: AgentCancelOptions): Promise<void> {
       if (!sessionId) return;
       const providerSessionId = sessionId;
       const turn = turnState;
@@ -2586,7 +2587,7 @@ export function createAcpRuntime(params: {
       params.session.keepAlive(false, 'remote');
       try {
         const b = await ensureBackend();
-        await b.cancel(providerSessionId);
+        await b.cancel(providerSessionId, options);
       } finally {
         if (turnState === turn) await flushCapturedTurn(turn);
         else await pendingTurnSettlement;

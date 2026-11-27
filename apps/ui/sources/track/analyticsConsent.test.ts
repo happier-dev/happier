@@ -55,6 +55,18 @@ describe('analytics consent owner', () => {
         }));
     });
 
+    it('sends $screen events without person processing, and leaves every other event to the SDK', async () => {
+        await import('./tracking');
+        const beforeSend = posthog.options?.before_send as (event: { event: string; properties: Record<string, unknown> }) => unknown;
+
+        expect(beforeSend({ event: '$screen', properties: { $screen_name: 'settings', $process_person_profile: true } })).toEqual({
+            event: '$screen',
+            properties: { $screen_name: 'settings', $process_person_profile: false },
+        });
+        const other = { event: 'message_sent', properties: { $process_person_profile: true } };
+        expect(beforeSend(other)).toEqual(other);
+    });
+
     it('does not identify or register anything before the analytics setting is applied', async () => {
         const { track } = await loadWithActiveServer('https://api.happier.dev');
         track.initializeTracking('anon-1');
@@ -128,6 +140,20 @@ describe('analytics consent owner', () => {
         expect(callsNamed('register')).toEqual([]);
         track.applyAnalyticsOptOut(false);
         expect(callsNamed('identify')).toEqual([['identify', 'anon-2', { name: 'anon-2' }]]);
+    });
+
+    it('forgets which person and group properties were sent when logout resets PostHog', async () => {
+        const persistence = await import('@/sync/domains/state/persistence');
+        const { track } = await loadWithActiveServer('https://api.happier.dev');
+        track.initializeTracking('anon-1');
+        track.applyAnalyticsOptOut(false);
+        persistence.saveAnalyticsPropertiesSent('person', { subject: 'anon-1', fullSentAtMs: 1, properties: { a: 1 } });
+        persistence.saveAnalyticsPropertiesSent('device_user', { subject: 'anon-1:d', fullSentAtMs: 1, properties: { b: 2 } });
+
+        track.trackLogout();
+
+        expect(persistence.loadAnalyticsPropertiesSent('person')).toBeNull();
+        expect(persistence.loadAnalyticsPropertiesSent('device_user')).toBeNull();
     });
 });
 

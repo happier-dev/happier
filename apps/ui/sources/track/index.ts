@@ -51,52 +51,14 @@ export function trackPermissionResponse(allowed: boolean) {
 }
 
 /**
- * Paywall events
- */
-export function trackPaywallButtonClicked() {
-    tracking?.capture('paywall_button_clicked');
-}
-
-export function trackPaywallPresented() {
-    tracking?.capture('paywall_presented');
-}
-
-export function trackPaywallPurchased() {
-    tracking?.capture('paywall_purchased');
-}
-
-export function trackPaywallCancelled() {
-    tracking?.capture('paywall_cancelled');
-}
-
-export function trackPaywallRestored() {
-    tracking?.capture('paywall_restored');
-}
-
-/** A fixed reason only: the SDK's error text is not sent. */
-export type PaywallErrorReason = 'not_initialized' | 'present_failed' | 'exception';
-
-export function trackPaywallError(reason: PaywallErrorReason) {
-    tracking?.capture('paywall_error', { reason });
-}
-
-/**
  * Review request events
  */
-export function trackReviewPromptShown() {
-    tracking?.capture('review_prompt_shown');
-}
-
-export function trackReviewPromptResponse(likesApp: boolean) {
-    tracking?.capture('review_prompt_response', { likes_app: likesApp });
-}
-
 export function trackReviewStoreShown() {
     tracking?.capture('review_store_shown');
 }
 
-export function trackReviewRetryScheduled(daysUntilRetry: number) {
-    tracking?.capture('review_retry_scheduled', { days_until_retry: daysUntilRetry });
+export function trackStarAsk(outcome: 'shown' | 'starred' | 'already_starred' | 'opened_github' | 'dismissed') {
+    tracking?.capture('star_ask', { outcome });
 }
 
 /**

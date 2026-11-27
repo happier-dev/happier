@@ -49,7 +49,7 @@ installSessionFilesViewCommonModuleMocks({
 vi.mock('@/sync/http/client', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/sync/http/client')>()),
     serverFetch: async (path: string) => {
-        if (path !== '/v1/features') throw new Error(`Unexpected request: ${path}`);
+        if (path.split('?')[0] !== '/v1/features') throw new Error(`Unexpected request: ${path}`);
         return Response.json(createRootLayoutFeaturesResponse({
             features: {
                 machines: {

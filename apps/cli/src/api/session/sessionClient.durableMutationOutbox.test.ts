@@ -8,6 +8,7 @@ import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
+  AccountSettingsSchema,
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
@@ -47,17 +48,21 @@ const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
 let pendingConsumerModules: Awaited<ReturnType<typeof loadPendingConsumerModules>> | null = null;
 
 async function loadPendingConsumerModules() {
-  const [client, queue, consumer, logging] = await Promise.all([
+  const [client, queue, consumer, logging, settings] = await Promise.all([
     import('./sessionClient'),
     import('@/agent/runtime/modeMessageQueue'),
     import('@/agent/runtime/sessionInput/SessionProviderInputConsumer'),
     import('@/ui/logger'),
+    import('@/settings/accountSettings/activeAccountSettingsSnapshot'),
   ]);
   return {
     ApiSessionClient: client.ApiSessionClient,
     MessageQueue2: queue.MessageQueue2,
     createSessionProviderInputConsumer: consumer.createSessionProviderInputConsumer,
     logger: logging.logger,
+    getActiveAccountSettingsSnapshot: settings.getActiveAccountSettingsSnapshot,
+    setActiveAccountSettingsSnapshot: settings.setActiveAccountSettingsSnapshot,
+    resetActiveAccountSettingsSnapshotForTests: settings.resetActiveAccountSettingsSnapshotForTests,
   };
 }
 
@@ -1439,9 +1444,14 @@ describe('ApiSessionClient durable mutation outbox', () => {
       'publisher readiness',
       'version-mismatch acknowledgement and matching hint',
       'version-mismatch acknowledgement without another hint',
+      'idle revision required by fresher account settings',
+      'idle revision on an attached deferred client',
     ] as const)('delivers Pending through the real consumer after %s without another queue mutation', async (contract) => {
-      const versionMismatch = contract !== 'publisher readiness';
+      const versionMismatch = contract.startsWith('version-mismatch');
       const withoutSecondHint = contract === 'version-mismatch acknowledgement without another hint';
+      const fresherSettingsRequireIdle = contract === 'idle revision required by fresher account settings';
+      const usesDeferredClient = contract === 'idle revision on an attached deferred client';
+      const requiresIdleRevision = fresherSettingsRequireIdle || usesDeferredClient;
       useRealSupervisor = true;
       vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
         features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
@@ -1452,6 +1462,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
       const activityAck = createDeferred<void>();
       const metadata = { ...createPlainSessionFixture().metadata, machineId: 'machine-1' };
       let pendingClaims = 0;
+      const idleClaims: unknown[] = [];
       sessionSocketStub = createApiSessionSocketStub({
         connected: true,
         emit: (event, args) => {
@@ -1474,6 +1485,15 @@ describe('ApiSessionClient durable mutation outbox', () => {
           }
           if (event === 'pending-materialize-next') {
             pendingClaims += 1;
+            if (requiresIdleRevision) {
+              idleClaims.push(payload);
+              if ((payload as { expectedRuntimeActivityRevision?: number }).expectedRuntimeActivityRevision !== 1) {
+                return {
+                  ok: true, didMaterialize: false, deferredReason: 'runtime_activity_unknown',
+                  pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1,
+                };
+              }
+            }
             if (versionMismatch) {
               expect(payload).toMatchObject({
                 sid: 's1',
@@ -1515,7 +1535,10 @@ describe('ApiSessionClient durable mutation outbox', () => {
       }) } });
 
       if (!pendingConsumerModules) throw new Error('Missing real Pending consumer test preparation');
-      const { ApiSessionClient, MessageQueue2, createSessionProviderInputConsumer, logger } = pendingConsumerModules;
+      const {
+        ApiSessionClient, MessageQueue2, createSessionProviderInputConsumer, logger,
+        getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
+      } = pendingConsumerModules;
       const decisions = vi.spyOn(logger, 'infoFile');
       const client = new ApiSessionClient('tok', createPlainSessionFixture({
         id: 's1', pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0,
@@ -1523,9 +1546,36 @@ describe('ApiSessionClient durable mutation outbox', () => {
       }));
       const controller = new AbortController();
       const queue = new MessageQueue2<null>(() => 'mode');
-      const consumer = createSessionProviderInputConsumer({ messageQueue: queue, session: client });
+      let deferred: DeferredApiSessionClient | undefined;
+      if (usesDeferredClient) {
+        const { DeferredApiSessionClient } = await import('@/agent/runtime/startup/DeferredApiSessionClient');
+        deferred = new DeferredApiSessionClient({
+          placeholderSessionId: 'unattached', limits: { maxEntries: 10, maxBytes: 10_000 },
+        });
+      }
+      const consumer = createSessionProviderInputConsumer({
+        messageQueue: queue,
+        session: deferred ?? client,
+        pendingQueueDeliveryTiming: usesDeferredClient ? 'after_runtime_idle' : 'after_foreground_ready',
+        ...(fresherSettingsRequireIdle ? {
+          resolvePendingQueueDeliveryTiming: () => {
+            const current = getActiveAccountSettingsSnapshot();
+            if (current) return current.settings.sessionPendingQueueDeliveryTiming;
+            // The transport can observe a settings update after the consumer reads its option.
+            setActiveAccountSettingsSnapshot({
+              source: 'network',
+              settings: AccountSettingsSchema.parse({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }),
+              settingsVersion: 1,
+              loadedAtMs: 1,
+              settingsSecretsReadKeys: [],
+            });
+            return 'after_foreground_ready';
+          },
+        } : {}),
+      });
       let publication: Promise<void> | null = null;
       try {
+        await deferred?.attach(client as unknown as DeferredApiSessionTarget);
         client.onUserMessage((message, info) => queue.push(message.content.text, null, {
           userMessageLocalId: message.localId,
           userMessageSeq: info?.seq ?? null,
@@ -1533,7 +1583,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
         }));
         publication = client.getRuntimeActivitySnapshotPublisher().publish({ state: 'idle', activeCount: 0 });
         await activityRequest.promise;
-        if (versionMismatch) {
+        if (versionMismatch || requiresIdleRevision) {
           activityAck.resolve();
           await publication;
           // Finish the real connection callback so its readiness wake cannot rescue a later lost ACK wake.
@@ -1547,7 +1597,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
         const batch = consumer.waitForNextInput({ abortSignal: controller.signal });
         const received: Array<Awaited<typeof batch>> = [];
         void batch.then((value) => { received.push(value); });
-        if (!versionMismatch) {
+        if (!versionMismatch && !requiresIdleRevision) {
           // Observe the real consumer's bounded pre-readiness rejoin before releasing the OS/network ACK.
           await expect.poll(() => decisions.mock.calls.filter(([label, detail]) => (
             label === '[pendingQueue] input consumer materialization decision'
@@ -1556,7 +1606,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
           )).length).toBeGreaterThanOrEqual(2);
           expect(pendingClaims).toBe(0);
           activityAck.resolve();
-        } else {
+        } else if (versionMismatch) {
           await expect.poll(() => decisions.mock.calls.filter(([label, detail]) => (
             label === '[pendingQueue] input consumer materialization decision'
             && detail !== null && typeof detail === 'object'
@@ -1572,12 +1622,23 @@ describe('ApiSessionClient durable mutation outbox', () => {
             });
           }
         }
+        if (requiresIdleRevision) {
+          // A real claim reached the server boundary under the idle policy and was deferred.
+          await expect.poll(() => idleClaims[0]).toMatchObject({ deliveryTiming: 'after_runtime_idle' });
+          expect(idleClaims[0]).not.toHaveProperty('expectedRuntimeActivityRevision');
+        }
         await expect.poll(() => received).toEqual([expect.objectContaining({
           message: 'prompt accepted before publisher readiness',
           userMessageLocalIds: ['early-pending'], providerAcceptancePending: true,
         })]);
         await batch;
-        expect(pendingClaims).toBe(versionMismatch ? 2 : 1);
+        expect(pendingClaims).toBe(versionMismatch || requiresIdleRevision ? 2 : 1);
+        if (requiresIdleRevision) {
+          expect(idleClaims).toMatchObject([
+            { deliveryTiming: 'after_runtime_idle' },
+            { deliveryTiming: 'after_runtime_idle', expectedRuntimeActivityRevision: 1 },
+          ]);
+        }
         expect(queue.size()).toBe(0);
       } finally {
         controller.abort();
@@ -1586,6 +1647,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
         await consumer.closeProviderInputAdmissionAndWaitForDispatches();
         await client.close();
         decisions.mockRestore();
+        if (fresherSettingsRequireIdle) resetActiveAccountSettingsSnapshotForTests();
       }
     });
   });

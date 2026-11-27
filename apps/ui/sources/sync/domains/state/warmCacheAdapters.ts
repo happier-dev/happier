@@ -163,6 +163,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.active === previousEntry.active
         && nextEntry.activeAt === previousEntry.activeAt
         && nextEntry.archivedAt === previousEntry.archivedAt
+        && (nextEntry.cloudCopyLeftAt ?? null) === (previousEntry.cloudCopyLeftAt ?? null)
         && nextEntry.lastViewedSessionSeq === previousEntry.lastViewedSessionSeq
         && nextEntry.pendingCount === previousEntry.pendingCount
         && nextEntry.pendingBlockedCount === previousEntry.pendingBlockedCount
@@ -237,6 +238,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         active: entry.active,
         activeAt: entry.activeAt,
         archivedAt: entry.archivedAt,
+        cloudCopyLeftAt: entry.cloudCopyLeftAt ?? null,
         pendingCount: entry.pendingCount,
         pendingBlockedCount: entry.pendingBlockedCount,
         pendingVersion: entry.pendingVersion,
@@ -325,6 +327,7 @@ export function buildSessionListCacheEntryFromRenderable(
         active: session.active,
         activeAt: session.activeAt,
         archivedAt: session.archivedAt ?? null,
+        cloudCopyLeftAt: session.cloudCopyLeftAt ?? null,
         lastViewedSessionSeq: preserveReadState
             ? previousEntry.lastViewedSessionSeq ?? null
             : normalizeNonNegativeInteger(session.lastViewedSessionSeq),

@@ -11,6 +11,7 @@ import { registerAccountActivityBadgeSnapshotRoute } from "./registerAccountActi
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerAccountPetLibraryRoutes } from "@/app/pets/accountPetLibraryRoutes";
 import { registerSessionDraftRoutes } from "@/app/account/sessionDrafts/registerSessionDraftRoutes";
+import { registerAccountPlanRoute } from "@/app/plans/registerAccountPlanRoute";
 
 export function accountRoutes(app: Fastify): void {
     registerAccountProfileRoute(app);
@@ -24,4 +25,5 @@ export function accountRoutes(app: Fastify): void {
     registerAccountActivityBadgeSnapshotRoute(app);
     registerAccountPetLibraryRoutes(createServerFeatureGatedRouteApp(app, "pets.sync"));
     registerSessionDraftRoutes(createServerFeatureGatedRouteApp(app, "sessions.drafts"));
+    registerAccountPlanRoute(app);
 }

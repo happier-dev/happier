@@ -1,4 +1,4 @@
-import { type AgentId, getBuiltInAcpConfig, resolveAcpPermissionModeId } from '@happier-dev/agents';
+import { type AgentId, getBuiltInAcpConfig, resolveAcpSessionMode } from '@happier-dev/agents';
 
 import type { AcpBackendOptions, AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { HAPPIER_SESSION_ID_ENV_KEY, withCurrentHappierSessionId } from '@/agent/runtime/session/currentSessionIdEnv';
@@ -32,7 +32,11 @@ export type CatalogDefinedAcpBackendOptions = AgentFactoryOptions & Readonly<{
   launch?: CatalogLaunch | PrepareCatalogLaunch;
 }>;
 
-/** Compose catalog transport policy with launch/source ownership, applying the configured permission mode after native open or resume. */
+/**
+ * Compose catalog transport policy with launch/source ownership. Every native mode write for a mapped
+ * agent goes through the shared agent-mode/permission-mode resolution: after native open or resume,
+ * on a mode override, and when the override is cleared.
+ */
 export function createCatalogDefinedAcpBackend(
   agentId: AgentId,
   options: CatalogDefinedAcpBackendOptions,
@@ -86,18 +90,24 @@ export function createCatalogDefinedAcpBackend(
   };
   if (typeof configurable.setSessionMode !== 'function') return backend;
 
-  const applyPermissionMode = async (sessionId: SessionId): Promise<void> => {
+  const setNativeSessionMode = configurable.setSessionMode.bind(backend);
+  const applySessionMode = async (sessionId: SessionId, agentModeId: string | null): Promise<void> => {
     const permissionMode = options.getPermissionMode?.() ?? options.permissionMode ?? 'default';
-    const mapping = config.permissionModeMapping?.[permissionMode] ?? null;
-    // A null mapping delegates to provider policy; it does not imply a native reset token.
-    if (mapping === null) return;
-    const availableModes = configurable.getSessionModeState?.()?.availableModes ?? [];
-    const sessionModeId = resolveAcpPermissionModeId(mapping, availableModes);
-    if (!sessionModeId) {
+    const resolution = resolveAcpSessionMode({
+      agentId,
+      agentModeId,
+      permissionMode,
+      availableModes: configurable.getSessionModeState?.()?.availableModes ?? [],
+    });
+    // Provider policy delegates to the agent; it does not imply a native reset token.
+    if (resolution.kind === 'provider-policy') return;
+    if (resolution.kind === 'unavailable') {
       throw new Error(`Agent '${agentId}' has no advertised permission mode for '${permissionMode}'`);
     }
-    await configurable.setSessionMode?.(sessionId, sessionModeId);
+    await setNativeSessionMode(sessionId, resolution.modeId);
   };
+  const applyPermissionMode = (sessionId: SessionId): Promise<void> => applySessionMode(sessionId, null);
+  configurable.setSessionMode = applySessionMode;
   configurable.clearSessionModeOverride = applyPermissionMode;
 
   const applyMode = async (result: StartSessionResult): Promise<StartSessionResult> => {

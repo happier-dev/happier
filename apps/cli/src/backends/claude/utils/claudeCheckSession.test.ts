@@ -142,17 +142,14 @@ describe('claudeCheckSession', () => {
             expect(claudeCheckSession(sessionId, testDir)).toBe(false);
         });
 
-        it('should handle large session file with valid message at end', () => {
+        it('accepts a record spanning read chunks without a final newline', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
             const sessionFile = join(testDir, `${sessionId}.jsonl`);
 
-            // Create many invalid lines followed by one valid line
-            const lines = [];
-            for (let i = 0; i < 100; i++) {
-                lines.push(JSON.stringify({ type: 'other', index: i }));
-            }
-            lines.push(JSON.stringify({ uuid: 'found-it', type: 'user' }));
-            writeFileSync(sessionFile, lines.join('\n') + '\n');
+            writeFileSync(sessionFile, '{malformed}\r\n' + JSON.stringify({
+                content: '💬'.repeat(65_536),
+                uuid: 'found-it',
+            }));
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(true);
         });

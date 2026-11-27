@@ -1,4 +1,5 @@
 import { db } from "@/storage/db";
+import type { Tx } from "@/storage/inTx";
 import { ShareAccessLevel } from "@/storage/prisma";
 
 /**
@@ -33,10 +34,11 @@ export interface SessionAccess {
  */
 export async function checkSessionAccess(
     userId: string,
-    sessionId: string
+    sessionId: string,
+    client: Pick<Tx, "session" | "sessionShare"> = db,
 ): Promise<SessionAccess | null> {
     // First check if user owns the session
-    const session = await db.session.findUnique({
+    const session = await client.session.findUnique({
         where: { id: sessionId },
         select: {
             accountId: true,
@@ -61,7 +63,7 @@ export async function checkSessionAccess(
     }
 
     // Check if session is shared with user
-    const share = await db.sessionShare.findUnique({
+    const share = await client.sessionShare.findUnique({
         where: {
             sessionId_sharedWithUserId: {
                 sessionId,
@@ -142,9 +144,10 @@ export async function canSendMessages(
  */
 export async function canManageSharing(
     userId: string,
-    sessionId: string
+    sessionId: string,
+    client: Pick<Tx, "session" | "sessionShare"> = db,
 ): Promise<boolean> {
-    const access = await checkSessionAccess(userId, sessionId);
+    const access = await checkSessionAccess(userId, sessionId, client);
     if (!access) return false;
     return requireAccessLevel(access, 'admin');
 }
@@ -190,13 +193,14 @@ export async function canApprovePermissions(
 export async function canManagePermissionDelegation(
     userId: string,
     sessionId: string,
+    client: Pick<Tx, "session" | "sessionShare"> = db,
 ): Promise<boolean> {
-    const access = await checkSessionAccess(userId, sessionId);
+    const access = await checkSessionAccess(userId, sessionId, client);
     if (!access) return false;
     if (access.isOwner) return true;
     if (access.level !== 'admin') return false;
 
-    const share = await db.sessionShare.findUnique({
+    const share = await client.sessionShare.findUnique({
         where: {
             sessionId_sharedWithUserId: {
                 sessionId,

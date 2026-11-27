@@ -4,7 +4,13 @@ import { withCodexAppServerClient } from '../appServer/client/withCodexAppServer
 import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
 import { resolveConfiguredCodexSqliteHome } from '../connectedServices/codexStateFileNames';
 import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
-import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
+import {
+  canDecodeCompressedCodexRollouts,
+  isCompressedCodexRollout,
+  withCodexRolloutReadPaths,
+  type CodexRolloutReadPathResolver,
+} from '../rollout/openCompressedCodexRollout';
+import { collectCodexSessionRolloutFiles, type CodexRolloutFile } from './collectCodexSessionRolloutFiles';
 import { pageCodexRolloutStreams, readAfterCodexRolloutStreams } from './codexDirectTranscriptStreamPaging';
 import { decodeCodexNativeTranscriptCursor, pageCodexNativeTranscript } from './pageCodexNativeTranscript';
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
@@ -20,6 +26,7 @@ export async function readCodexDirectTranscript(params: Readonly<{
   maxBytes: number;
   maxItems: number;
   follow?: boolean;
+  resolveRolloutReadPath?: CodexRolloutReadPathResolver;
 }>): Promise<DirectSessionTranscriptPage> {
   const env = params.env ?? process.env;
   const homes = await resolveCodexHomesForDirectSessionsSource({ ...params, env });
@@ -29,9 +36,10 @@ export async function readCodexDirectTranscript(params: Readonly<{
   }
   let selectedNativeHome: string | undefined;
   let hasPaginatedRollout = false;
+  let requiresNativeCompressedRead = false;
   if (!nativeCursor) {
     const perHome = await Promise.all(homes.map(async home => ({ home,
-      files: await collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId }) })));
+      files: await collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId, includeCompressed: true }) })));
     const best = perHome.filter(entry => entry.files.length > 0).sort((left, right) =>
       Math.max(...right.files.map(file => file.mtimeMs)) - Math.max(...left.files.map(file => file.mtimeMs)))[0];
     // A paginated rollout can be only a local segment with an inherited history_base.
@@ -39,14 +47,37 @@ export async function readCodexDirectTranscript(params: Readonly<{
     hasPaginatedRollout = Boolean(best && (await Promise.all(best.files.map(file => readCodexSessionMetaFromRollout(file.filePath))))
       .some(metadata => metadata?.history_mode === 'paginated'));
     selectedNativeHome = best?.home;
-    if (best && !hasPaginatedRollout) {
-      const input = { ...params, codexHome: best.home, initialRolloutFiles: best.files };
-      if (params.follow) {
-        const page = await readAfterCodexRolloutStreams({ ...input, cursor: params.cursor! });
-        return { ...page, tailCursor: null, hasMore: page.truncationReason === 'page_limit' };
-      }
-      const page = await pageCodexRolloutStreams(input);
-      return { ...page, truncated: page.truncated === true };
+    requiresNativeCompressedRead = !canDecodeCompressedCodexRollouts
+      && best?.files.some(file => isCompressedCodexRollout(file.filePath)) === true;
+    if (best && !hasPaginatedRollout && !requiresNativeCompressedRead) {
+      const readRollouts = async (resolve: CodexRolloutReadPathResolver) => {
+        const prepare = async (files: readonly CodexRolloutFile[]) => {
+          const readable: CodexRolloutFile[] = [];
+          for (const file of files) {
+            if (!canDecodeCompressedCodexRollouts && isCompressedCodexRollout(file.filePath)) {
+              throw new DirectSessionsProviderUnavailableError('Compressed Codex sidechain requires a runtime with Zstandard support');
+            }
+            const source = await resolve(file.filePath).catch(() => {
+              throw new DirectSessionsProviderUnavailableError('The compressed Codex rollout could not be read');
+            });
+            readable.push({ ...file, filePath: source.path, fileIdentity: source.fileIdentity });
+          }
+          return readable;
+        };
+        const collectFiles = async (threadId: string) => prepare(await collectCodexSessionRolloutFiles({
+          codexHome: best.home, remoteSessionId: threadId, includeCompressed: true,
+        }));
+        const input = { ...params, collectFiles, initialRolloutFiles: await prepare(best.files) };
+        if (params.follow) {
+          const page = await readAfterCodexRolloutStreams({ ...input, cursor: params.cursor! });
+          return { ...page, tailCursor: null, hasMore: page.truncationReason === 'page_limit' };
+        }
+        const page = await pageCodexRolloutStreams(input);
+        return { ...page, truncated: page.truncated === true };
+      };
+      return params.resolveRolloutReadPath
+        ? await readRollouts(params.resolveRolloutReadPath)
+        : await withCodexRolloutReadPaths(readRollouts);
     }
   }
   let failure: unknown = new DirectSessionsProviderUnavailableError('Codex transcript source is unavailable');
@@ -56,7 +87,7 @@ export async function readCodexDirectTranscript(params: Readonly<{
         affinity: { home: params.source.kind === 'codexHome' ? params.source.home : 'user', homePath: home } });
       const reset = Boolean(params.cursor && params.cursor !== 'tail' && !nativeCursor);
       const page = await withCodexAppServerClient({ processEnv, run: client => pageCodexNativeTranscript({
-        ...params, client, home, sqliteHome: resolveConfiguredCodexSqliteHome(processEnv), hasPaginatedRollout, cursor: nativeCursor ? params.cursor : undefined,
+        ...params, client, home, sqliteHome: resolveConfiguredCodexSqliteHome(processEnv), hasPaginatedRollout: hasPaginatedRollout || requiresNativeCompressedRead, cursor: nativeCursor ? params.cursor : undefined,
         tailOnly: params.follow && (!nativeCursor || params.cursor === 'tail'),
       }) });
       return reset ? { ...page, items: [], truncated: true, truncationReason: 'source_discontinuity' } : page;

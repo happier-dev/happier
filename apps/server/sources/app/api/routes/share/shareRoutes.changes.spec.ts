@@ -61,6 +61,7 @@ const dbMocks = createDbMocks({
     sessionShare: ["upsert", "findFirst", "update"],
 } as const);
 const txDbMocks = createDbMocks({
+    session: ["findUnique", "updateMany"],
     sessionShare: ["upsert", "update", "findFirst", "delete"],
 } as const);
 
@@ -70,6 +71,7 @@ installDbModuleMock(() => ({
 
 vi.mock("@/storage/inTx", () => {
     const harness = createInTxHarness(() => ({
+            session: txDbMocks.db.session,
             sessionShare: txDbMocks.db.sessionShare,
         }));
     return { afterTx: harness.afterTx, inTx: harness.inTx };
@@ -82,6 +84,8 @@ describe("shareRoutes (AccountChange integration)", () => {
         vi.clearAllMocks();
         dbMocks.reset();
         txDbMocks.reset();
+        txDbMocks.db.session.findUnique.mockResolvedValue({ cloudCopyLeftAt: null, encryptionMode: "e2ee", updatedAt: new Date(1) });
+        txDbMocks.db.session.updateMany.mockResolvedValue({ count: 1 });
         dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "e2ee" });
         dbMocks.db.account.findUnique.mockResolvedValue({ id: "recipient" });
 

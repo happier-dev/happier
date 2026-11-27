@@ -4,7 +4,6 @@ import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { purchasesDefaults } from '@/sync/domains/purchases/purchases';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { createMachineFixture, createSessionFixture, renderScreen } from '@/dev/testkit';
@@ -114,8 +113,6 @@ async function setupHarness(options?: Readonly<{
         loadLocalSettings: () => ({ ...localSettingsDefaults }),
         saveLocalSettings: vi.fn(),
         loadThemePreference: () => 'adaptive',
-        loadPurchases: () => ({ ...purchasesDefaults }),
-        savePurchases: vi.fn(),
         loadSessionDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
         loadSessionReviewCommentsDrafts: () => ({}),

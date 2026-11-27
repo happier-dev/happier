@@ -1,7 +1,7 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { getBuiltInAcpConfig, parsePermissionIntentAlias } from '@happier-dev/agents';
+import { getBuiltInAcpConfig, parsePermissionIntentAlias, resolveAcpAgentModeId } from '@happier-dev/agents';
 import { resolveRequestedSessionModeId } from '@happier-dev/protocol';
 import { tLoose } from '@/text';
 
@@ -18,18 +18,31 @@ export type SessionModeOption = Readonly<{
     description?: string;
 }>;
 
-// The empty id uses the existing clear intent without hiding a provider's native Default.
+/** Agents whose native approval levels belong to the permission selector expose only agent modes in Mode. */
+function splitsAgentModesFromPermissions(agentId: AgentId): boolean {
+    return getBuiltInAcpConfig(agentId)?.agentModeIds !== undefined;
+}
+
+function filterAgentModeOptions(options: readonly SessionModeOption[], agentId: AgentId): readonly SessionModeOption[] {
+    return options.filter((option) => resolveAcpAgentModeId(agentId, option.id) !== null);
+}
+
+/** A selected mode id as Mode shows it: for a splitting agent, a stored approval level is Build (''). */
+export function resolveSessionModeSelectionId(agentId: AgentId, modeId: string): string {
+    return splitsAgentModesFromPermissions(agentId) ? resolveAcpAgentModeId(agentId, modeId) ?? '' : modeId;
+}
+
+// Build clears the mode override, so the permission mapping chooses the native approval mode.
+function buildModeOption(): SessionModeOption {
+    return { id: '', name: tLoose('agentInput.mode.build'), description: tLoose('agentInput.mode.buildDescription') };
+}
+
+// Without a native Default, the 'default' sentinel clears the override (see resolveRequestedSessionModeId).
 export function getSessionModePickerOptions(options: readonly SessionModeOption[], agentId: AgentId): readonly SessionModeOption[] {
     const nativeOptions = Array.from(new Map(options.map((option) => [option.id, option])).values());
-    const hasNativeDefault = nativeOptions.some((option) => option.id === 'default');
-    if (hasNativeDefault && !getBuiltInAcpConfig(agentId)?.permissionModeMapping) return nativeOptions;
-    return [
-        {
-            id: hasNativeDefault ? '' : 'default',
-            name: tLoose(hasNativeDefault ? 'agentInput.permissionMode.usePermissionSetting' : 'common.default'),
-        },
-        ...nativeOptions,
-    ];
+    if (splitsAgentModesFromPermissions(agentId)) return [buildModeOption(), ...filterAgentModeOptions(nativeOptions, agentId)];
+    if (nativeOptions.some((option) => option.id === 'default')) return nativeOptions;
+    return [{ id: 'default', name: tLoose('common.default') }, ...nativeOptions];
 }
 
 export type SessionModePickerControl = Readonly<{
@@ -123,21 +136,27 @@ function computeDynamicSessionModePickerControlInternal(params: {
     if (!matchesSessionControlProvider({ ...params, provider: state.provider })) return null;
     if (state.availableModes.length === 0) return null;
 
-    const options = state.availableModes;
-    const currentModeId = state.currentModeId;
-    if (!currentModeId) return null;
+    if (!state.currentModeId) return null;
+    // A splitting agent projects its native approval levels onto Build (the empty id).
+    const splits = splitsAgentModesFromPermissions(params.agentId);
+    const options = splits ? filterAgentModeOptions(state.availableModes, params.agentId) : state.availableModes;
+    // Build alone is no choice: an agent whose advertised modes are all approval levels has no Mode control.
+    if (options.length === 0) return null;
+    const namedOptions = splits ? [buildModeOption(), ...options] : options;
+    const currentModeId = resolveSessionModeSelectionId(params.agentId, state.currentModeId);
 
     const modeOverride = readSessionModeOverrideState(params.metadata);
+    const overrideModeId = modeOverride?.state === 'set'
+        ? (splits ? resolveAcpAgentModeId(params.agentId, modeOverride.value) : modeOverride.value)
+        : null;
     const legacy = computeLegacyRequestedModeIdFromPermissionMode(params.metadata, options);
-    const requestedModeId = modeOverride
-        ? (modeOverride.state === 'set' ? modeOverride.value : null)
-        : legacy ?? null;
+    const requestedModeId = modeOverride ? overrideModeId : legacy ?? null;
     const effectiveModeId = requestedModeId ?? currentModeId;
 
-    const currentMode = options.find((mode) => mode.id === currentModeId) ?? null;
+    const currentMode = namedOptions.find((mode) => mode.id === currentModeId) ?? null;
     const requestedMode = requestedModeId ? options.find((mode) => mode.id === requestedModeId) ?? null : null;
-    const effectiveMode = options.find((mode) => mode.id === effectiveModeId) ?? null;
-    const isPending = Boolean(requestedModeId && currentModeId && requestedModeId !== currentModeId);
+    const effectiveMode = namedOptions.find((mode) => mode.id === effectiveModeId) ?? null;
+    const isPending = Boolean(requestedModeId && requestedModeId !== currentModeId);
 
     return {
         agentId: params.agentId,
@@ -145,7 +164,7 @@ function computeDynamicSessionModePickerControlInternal(params: {
         currentModeId,
         currentModeName: currentMode?.name ?? currentModeId,
         requestedModeId,
-        isExplicitOverride: modeOverride?.state === 'set',
+        isExplicitOverride: overrideModeId !== null,
         requestedModeName: requestedMode?.name ?? requestedModeId,
         effectiveModeId,
         effectiveModeName: effectiveMode?.name ?? effectiveModeId,

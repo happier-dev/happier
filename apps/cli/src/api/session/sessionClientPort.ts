@@ -134,7 +134,7 @@ export interface SessionClientPort {
   updateAgentState(updater: (state: AgentState) => AgentState, options?: AgentStateWriteOptions): void | Promise<void>;
   /** Phase-5 transport seam; absent until a client owns a real journal-backed snapshot handle. */
   getRuntimeActivitySnapshotPublisher?(): SessionRuntimeActivitySnapshotPublisher | null;
-  readRuntimeActivitySnapshotTail?(): RuntimeActivitySnapshotTail;
+  readRuntimeActivitySnapshotTail?(): RuntimeActivitySnapshotTail | undefined;
   waitForRuntimeActivitySnapshotTailChange?(sequence: number, signal?: AbortSignal): Promise<boolean>;
   upsertSessionSystemRecord?(request: SessionSystemRecordUpsertRequest): Promise<void>;
   fetchSessionSystemRecord?(params: Readonly<{

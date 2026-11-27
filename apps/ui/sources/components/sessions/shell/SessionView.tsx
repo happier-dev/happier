@@ -373,6 +373,7 @@ import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getRes
 import { useInSessionAgentPickerControls } from '@/components/sessions/agentPicker/useInSessionAgentPickerControls';
 import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { hasDerivedRetainedSessionLink } from '@/sync/domains/session/directSessions/retainedSessionLink';
 import { readDirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -465,6 +466,7 @@ import {
 } from './pendingMessageComposerEditSnapshot';
 import { useSessionViewedLifecycle } from './view/useSessionViewedLifecycle';
 import { useSessionSurfaceActivation } from './view/useSessionSurfaceActivation';
+import { SessionSupporterAsk, touchSessionSupporterAsk } from './view/SessionSupporterAsk';
 import { resolveSessionAuthSurfaceState, type SessionAuthSurfaceState } from './sessionAuthSurfaceState';
 import { useSessionRuntimeStatusSource } from './useSessionRuntimeStatusSource';
 import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
@@ -1571,10 +1573,11 @@ export const SessionView = React.memo((props: SessionViewProps) => {
         routeAnchor: props.routeAnchorOverride,
     });
     const shouldRetainSessionSurface = Platform.OS === 'web' ? shouldRenderSessionSurface : true;
+    const retainedDirectReadingEnabled = useFeatureEnabled('sessions.direct');
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId,
         metadata: session?.metadata ?? null,
-        enabled: Boolean(session && shouldRenderSessionSurface),
+        enabled: Boolean(session && shouldRenderSessionSurface && (session.cloudCopyLeftAt == null || retainedDirectReadingEnabled)),
     });
     const sessionRunnerRuntimeStatusRetention = useSessionRunnerRuntimeStatusRetention({
         enabled: Boolean(session && shouldRenderSessionSurface),
@@ -2012,9 +2015,9 @@ function useSessionTranscriptRenderState({
             // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
             // still render the transcript so it can page backwards to find visible messages.
             // Keep the canonical footer visible even when an import has no visible messages.
-            forceRenderFooter: isForkedSessionV1 || hasDirectControlFooter || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
+            forceRenderFooter: session.cloudCopyLeftAt != null || isForkedSessionV1 || hasDirectControlFooter || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
         });
-    }, [committedMessageIds.length, hasDirectControlFooter, hasRetainedContent, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, pendingMessagesCount, session.seq]);
+    }, [committedMessageIds.length, hasDirectControlFooter, hasRetainedContent, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, pendingMessagesCount, session.cloudCopyLeftAt, session.seq]);
 
     return {
         committedMessagesCount: committedMessageIds.length,
@@ -2128,6 +2131,15 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
         hasDirectControlFooter: directControlFooter != null,
     });
 
+    const transcriptNotice = React.useMemo(() => {
+        if (bottomNotice || session.cloudCopyLeftAt == null || !isLoaded || committedMessagesCount > 0 || hasRetainedContent
+            || directControlFooter?.machineOnline !== true) return bottomNotice;
+        return {
+            title: t('transcriptExport.localUnavailable'),
+            body: new Date(session.cloudCopyLeftAt).toLocaleDateString(),
+        };
+    }, [bottomNotice, committedMessagesCount, directControlFooter?.machineOnline, hasRetainedContent, isLoaded, session.cloudCopyLeftAt]);
+
     React.useEffect(() => {
         if (!syncPerformanceTelemetry.isEnabled()) return;
         const state = openToTranscriptTelemetryRef.current;
@@ -2212,7 +2224,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
             {shouldRenderChatTimeline ? (
                 <ChatList
                     session={session}
-                    bottomNotice={bottomNotice}
+                    bottomNotice={transcriptNotice}
                     controlledByUserOverride={controlledByUserOverride}
                     controlSwitchTo={controlSwitchTo}
                     onRequestSwitchToRemote={onRequestSwitchToRemote}
@@ -4904,7 +4916,15 @@ function SessionViewLoaded({
     const providerName = getAgentCore(agentId).uiConnectedService.label ?? t('status.unknown');
     const machineName = session.metadata?.host ?? t('status.unknown');
 
+    const retainedDirectReadingEnabled = useFeatureEnabled('sessions.direct');
+    const retainedCopyLeftAt = session.cloudCopyLeftAt;
     const bottomNotice = React.useMemo(() => {
+        if (retainedCopyLeftAt != null && (!retainedDirectReadingEnabled || !directSessionLink)) {
+            return {
+                title: t('transcriptExport.localUnavailable'),
+                body: !retainedDirectReadingEnabled ? t('transcriptExport.directDisabled') : new Date(retainedCopyLeftAt).toLocaleDateString(),
+            };
+        }
         if (showInactiveNotResumableNotice) {
             return {
                 title: t('session.inactiveNotResumableNoticeTitle'),
@@ -4918,7 +4938,7 @@ function SessionViewLoaded({
             };
         }
         return null;
-    }, [machineName, providerName, showInactiveNotResumableNotice, showMachineOfflineNotice]);
+    }, [directSessionLink, machineName, providerName, retainedCopyLeftAt, retainedDirectReadingEnabled, showInactiveNotResumableNotice, showMachineOfflineNotice]);
 
     const isReadOnly = session.accessLevel === 'view';
     const transcriptInteraction = React.useMemo(() => {
@@ -5013,7 +5033,7 @@ function SessionViewLoaded({
         const canTakeOverDirect = Boolean(directSessionLink && status?.canTakeOverDirect);
         const canTakeOverPersist = Boolean(directSessionLink && status?.canTakeOverPersist);
         return {
-            machineOnline: status?.machineOnline ?? true,
+            machineOnline: status?.machineOnline ?? (retainedCopyLeftAt == null || machineOnline),
             runnerActive: status?.runnerActive ?? false,
             activity: status?.activity ?? 'unknown',
             canTakeOverDirect,
@@ -5026,11 +5046,14 @@ function SessionViewLoaded({
             onRequestTakeOverDirect: canTakeOverDirect
                 ? () => { void directSessionTakeover.requestTakeover('direct'); }
                 : undefined,
+            onPrepareRetainedConversion: hasWriteAccess && status?.machineOnline && hasDerivedRetainedSessionLink(session.metadata)
+                ? () => { void directSessionTakeover.requestTakeover('persisted'); }
+                : undefined,
             onRequestTakeOverPersist: canTakeOverPersist
                 ? () => { void directSessionTakeover.requestTakeover('persisted'); }
                 : undefined,
         } as const;
-    }, [directSessionLink, directSessionRuntime.status, directSessionTakeover, hasWriteAccess, isHiddenSystemSessionSession]);
+    }, [directSessionLink, directSessionRuntime.status, directSessionTakeover, hasWriteAccess, isHiddenSystemSessionSession, machineOnline, retainedCopyLeftAt, session.metadata]);
 
     const [followBottomIntentSeq, setFollowBottomIntentSeq] = React.useState(0);
     const requestMountedTranscriptFollow = React.useCallback(() => {
@@ -6223,8 +6246,15 @@ function SessionViewLoaded({
         if (resolved.kind !== 'send') return;
         void sendComposerText(resolved.text, composerMessage, sendOptions);
     });
+    const onSessionDraftChanged = React.useCallback((text: string) => {
+        touchSessionSupporterAsk();
+        setDraftValue(text);
+    }, [setDraftValue]);
     const input = shouldShowInput ? (
-        <View>
+        <View onTouchStart={touchSessionSupporterAsk}>
+            {!session.accessLevel ? (
+                <SessionSupporterAsk sessionId={sessionId} serverId={session.serverId ?? sessionRouteServerId} />
+            ) : null}
             {voiceEnabled && voiceProviderId !== 'off' && !isHiddenSystemSessionSession ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
             {authSurfaceState && !authRecoveryBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
@@ -6408,7 +6438,7 @@ function SessionViewLoaded({
                 sessionLatestUsage={session.latestUsage}
                 placeholder={isReadOnly ? t('session.sharing.viewOnlyMode') : t('session.inputPlaceholder')}
                 composerTextStore={composerTextStore}
-                onChangeText={setDraftValue}
+                onChangeText={onSessionDraftChanged}
                 sessionId={sessionId}
                 inputComposerClearTransientStateRef={inputComposerClearTransientStateRef}
                 inputComposerCaptureTransientStateRef={inputComposerCaptureTransientStateRef}
@@ -6558,6 +6588,7 @@ function SessionViewLoaded({
             {/* Main content area - no padding since header is overlay */}
             <View
                 onLayout={handleContentLayout}
+                onTouchStart={touchSessionSupporterAsk}
                 style={{
                     flexBasis: 0,
                     flexGrow: 1,

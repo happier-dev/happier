@@ -397,6 +397,23 @@ describe('BasePermissionHandler allowlist', () => {
     expect(session.agentState.requests['perm-2']).toBeTruthy();
   });
 
+  it('keeps a question pending when a notification sends approval without an answer', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as unknown as ApiSessionClient);
+    const pending = handler.request('question', 'AskUserQuestion', {
+      questions: [{ question: 'Which branch?', options: [{ label: 'main' }] }],
+    });
+    const occurrenceId = session.agentState.requests.question.occurrenceId;
+    const rpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_TO_OCCURRENCE_V1)!;
+    await expect(rpc({ id: 'question', occurrenceId, approved: true })).rejects.toMatchObject({
+      rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID,
+    });
+    expect(await settledState(pending)).toBe('pending');
+    expect(session.agentState.requests.question.occurrenceId).toBe(occurrenceId);
+    await rpc({ id: 'question', occurrenceId, approved: true, structuredAnswersV1: { 'Which branch?': ['main'] } });
+    await expect(pending).resolves.toMatchObject({ answers: { 'Which branch?': ['main'] } });
+  });
+
   it('returns structured answers for AskUserQuestion responses', async () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);

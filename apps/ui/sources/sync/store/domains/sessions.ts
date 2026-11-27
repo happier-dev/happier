@@ -77,6 +77,7 @@ import {
     resolveSessionRuntimePresenceFields,
     SESSION_RESUMING_PRESENTATION_TIMEOUT_MS,
 } from '../../domains/session/attention/deriveSessionRuntimePresentationState';
+import { projectRetainedSessionLink } from '@/sync/domains/session/directSessions/retainedSessionLink';
 import { reconcileSessionLifecycleProjection, reconcileSessionSnapshot, resolveSessionPresence } from '../../domains/session/sessionLifecycleProjection';
 import { setActiveServerSessionListCache, setServerSessionListCache } from '../sessionListCache';
 import { resolveSessionListCacheServerId } from '../../domains/session/listing/sessionListPresentation';
@@ -671,12 +672,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // Update sessions with calculated presence using centralized resolver
             sessions.forEach(incomingSession => {
                 const previousSession = state.sessions[incomingSession.id];
-                const session = stripLegacySessionDraftField(
+                const session = stripLegacySessionDraftField(projectRetainedSessionLink(
                     reconcileSessionLifecycleProjection(
                         state.sessionListRenderables[incomingSession.id],
                         reconcileSessionSnapshot(previousSession, incomingSession),
                     ),
-                );
+                ));
                 const presence = resolveSessionPresence(session);
 
                 // Preserve existing local mode selections, or load them from persisted local state.
