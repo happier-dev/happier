@@ -140,7 +140,7 @@ function withoutMirroredReplaySeedText(metadata: unknown): unknown {
 
 async function writeSessionMarkerUnlocked(
   marker: Omit<DaemonSessionMarker, 'createdAt' | 'updatedAt' | 'happyHomeDir'> & { createdAt?: number; updatedAt?: number },
-  options: WriteSessionMarkerOptions = {},
+  options: WriteSessionMarkerOptions & { preserveActiveTurn?: boolean } = {},
 ): Promise<void> {
   const currentDir = currentDaemonSessionsDir();
   await ensureDir(currentDir);
@@ -181,6 +181,12 @@ async function writeSessionMarkerUnlocked(
       : undefined;
   const payload: DaemonSessionMarker = DaemonSessionMarkerSchema.parse({
     ...marker,
+    // Routine metadata refreshes may have captured their snapshot before a turn
+    // settled. Only the lifecycle updater changes custody on an existing marker.
+    activeTurnId: options.preserveActiveTurn === true
+      && existingMarkerFromDisk?.happySessionId === marker.happySessionId
+        ? existingMarkerFromDisk.activeTurnId
+        : marker.activeTurnId,
     ...(preservedConnectedServiceRestartIntent
       ? { connectedServiceRestartIntent: preservedConnectedServiceRestartIntent }
       : {}),
@@ -199,7 +205,7 @@ export async function writeSessionMarker(
   marker: Omit<DaemonSessionMarker, 'createdAt' | 'updatedAt' | 'happyHomeDir'> & { createdAt?: number; updatedAt?: number },
   options: WriteSessionMarkerOptions = {},
 ): Promise<void> {
-  await runWithSessionMarkerMutationLock(marker.pid, () => writeSessionMarkerUnlocked(marker, options));
+  await runWithSessionMarkerMutationLock(marker.pid, () => writeSessionMarkerUnlocked(marker, { ...options, preserveActiveTurn: true }));
 }
 
 export async function updateSessionMarkerActiveTurn(params: Readonly<{

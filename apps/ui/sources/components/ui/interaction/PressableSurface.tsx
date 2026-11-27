@@ -164,7 +164,9 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
             onHoverIn={webTooltip && !disabled ? handleHoverIn : undefined}
             onHoverOut={webTooltip && !disabled ? handleHoverOut : undefined}
             // React Native Web disables its hover listeners along with activation.
-            {...(hoverDisabledTooltip ? { onPointerEnter: handleDisabledPointerEnter, onPointerLeave: handleHoverOut } : null)}
+            onPointerEnter={hoverDisabledTooltip ? handleDisabledPointerEnter : undefined}
+            // A button can become enabled after the pointer has already entered.
+            onPointerLeave={webTooltip ? handleHoverOut : undefined}
             hitSlop={props.hitSlop}
             disabled={disabled}
             accessibilityRole={props.accessibilityRole ?? 'button'}

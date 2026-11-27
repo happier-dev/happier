@@ -36,16 +36,10 @@ describe('getInstallablesRegistryEntries', () => {
         expect(entries.every((e) => e.supportsManagedOverrideInstall === false)).toBe(true);
         expect(entries.map((e) => [e.key, e.defaultPolicy])).toEqual(expect.arrayContaining([
             [INSTALLABLE_KEYS.CODEX_ACP, { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' }],
-            [INSTALLABLE_KEYS.AGY_ACP_SERVER, { autoInstallWhenNeeded: true, autoUpdateMode: 'auto' }],
             [INSTALLABLE_KEYS.GH, { autoInstallWhenNeeded: false, autoUpdateMode: 'notify' }],
             [INSTALLABLE_KEYS.LOCAL_EMBEDDINGS, { autoInstallWhenNeeded: true, autoUpdateMode: 'off' }],
             [INSTALLABLE_KEYS.DIFFTASTIC, { autoInstallWhenNeeded: true, autoUpdateMode: 'off' }],
         ]));
-        expect(entries.find((entry) => entry.key === INSTALLABLE_KEYS.AGY_ACP_SERVER)).toMatchObject({
-            title: 'Agy ACP server',
-            iconName: 'cpu',
-            groupTitleKey: 'newSession.agyAcpBanner.title',
-        });
         expect(entries.find((entry) => entry.key === INSTALLABLE_KEYS.GH)).toMatchObject({
             title: 'GitHub CLI',
             iconName: 'git-pull-request',

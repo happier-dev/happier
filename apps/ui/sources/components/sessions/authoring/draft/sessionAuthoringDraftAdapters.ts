@@ -218,20 +218,15 @@ function resolveNewSessionDraftAgentId(params: Readonly<{
     return null;
 }
 
-function resolveConnectedServicesFromAgentOptionState(params: Readonly<{
-    backendTarget: BackendTargetRefV1 | null;
-    agentOptionStateByAgentId?: Record<string, Record<string, unknown>> | null;
-}>): unknown {
-    if (!params.backendTarget || !params.agentOptionStateByAgentId) {
-        return null;
-    }
-    const targetKey = buildBackendTargetKey(params.backendTarget);
-    const targetOptions = params.agentOptionStateByAgentId[targetKey];
-    if (!targetOptions || typeof targetOptions !== 'object' || Array.isArray(targetOptions)) {
-        return null;
-    }
-    return Object.prototype.hasOwnProperty.call(targetOptions, 'connectedServices')
-        ? (targetOptions as Record<string, unknown>).connectedServices ?? null
+export function readSessionAuthoringBackendOptionState(
+    backendTarget: BackendTargetRefV1 | null,
+    optionStateByTarget: Readonly<Record<string, Record<string, unknown>>> | null | undefined,
+): Record<string, unknown> | null {
+    if (!backendTarget || !optionStateByTarget) return null;
+    const targetOptions = optionStateByTarget[buildBackendTargetKey(backendTarget)]
+        ?? (isBuiltInAgentTarget(backendTarget) ? optionStateByTarget[backendTarget.agentId] : undefined);
+    return targetOptions && typeof targetOptions === 'object' && !Array.isArray(targetOptions)
+        ? targetOptions
         : null;
 }
 
@@ -441,6 +436,8 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         backendTarget,
     });
 
+    const optionState = readSessionAuthoringBackendOptionState(backendTarget, source.source.agentNewSessionOptionStateByAgentId);
+
     return buildNewSessionAuthoringDraft({
         directory: resolveNewSessionSourceDirectory(source) ?? '/',
         checkoutCreationDraft: source.source.checkoutCreationDraft ?? null,
@@ -457,10 +454,11 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         modelId: resolveNewSessionSourceModelId(source),
         modelUpdatedAt: null,
         mcpSelection: source.source.mcpSelection ?? null,
-        connectedServices: normalizeSessionAuthoringConnectedServices(resolveConnectedServicesFromAgentOptionState({
-            backendTarget,
-            agentOptionStateByAgentId: source.source.agentNewSessionOptionStateByAgentId ?? null,
-        })),
+        connectedServices: normalizeSessionAuthoringConnectedServices(
+            optionState && Object.prototype.hasOwnProperty.call(optionState, 'connectedServices')
+                ? optionState.connectedServices
+                : null,
+        ),
         terminal: null,
         windowsRemoteSessionLaunchMode: null,
         windowsRemoteSessionConsole: null,

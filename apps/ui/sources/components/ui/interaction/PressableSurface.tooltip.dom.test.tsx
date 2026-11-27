@@ -177,16 +177,17 @@ describe('PressableSurface web tooltip', () => {
         }
     });
 
-    it('reveals a tooltip on a disabled button without activating it', async () => {
+    it('tracks a disabled button tooltip through re-enabling and pointer exit', async () => {
         installTooltipLayout();
         const container = document.createElement('div');
         document.body.appendChild(container);
         const root = createRoot(container);
         const onPress = vi.fn();
+        const renderButton = (disabled: boolean) => {
+            root.render(<PressableSurface testID="back" accessibilityLabel="Back" webTooltip="Back" disabled={disabled} onPress={onPress} />);
+        };
         try {
-            await act(async () => {
-                root.render(<PressableSurface testID="back" accessibilityLabel="Back" webTooltip="Back" disabled onPress={onPress} />);
-            });
+            await act(async () => renderButton(true));
             const trigger = container.querySelector<HTMLElement>('[data-testid="back"]')!;
             expect(trigger.getAttribute('aria-disabled')).toBe('true');
             await act(async () => {
@@ -196,8 +197,13 @@ describe('PressableSurface web tooltip', () => {
             await vi.waitFor(() => expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Back'));
             await act(async () => { trigger.click(); });
             expect(onPress).not.toHaveBeenCalled();
+
+            await act(async () => renderButton(false));
+            expect(trigger.hasAttribute('aria-disabled')).toBe(false);
             await act(async () => { trigger.dispatchEvent(new MouseEvent('pointerout', { bubbles: true })); });
             expect(document.querySelector('[role="tooltip"]')).toBeNull();
+            await act(async () => { trigger.click(); });
+            expect(onPress).toHaveBeenCalledOnce();
         } finally {
             await act(async () => root.unmount());
             container.remove();

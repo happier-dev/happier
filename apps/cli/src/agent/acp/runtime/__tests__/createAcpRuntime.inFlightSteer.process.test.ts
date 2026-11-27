@@ -95,6 +95,56 @@ function writeSteerableAcpAgentScript(params: { dir: string }): string {
   return scriptPath;
 }
 
+
+/**
+ * agy acp 1.5.18 steering, captured live: a second session/prompt during a running turn resolves the
+ * first prompt with end_turn at once, the agent keeps working on the combined turn, and the second
+ * prompt resolves when that work ends.
+ */
+function writeSupersedingSteerAcpAgentScript(params: { dir: string; rejectSteer?: boolean }): string {
+  const scriptPath = join(params.dir, 'fake-acp-agent-superseding-steer.mjs');
+  const rejectSteer = params.rejectSteer === true;
+  const src = `
+    let buf = '';
+    let primaryId = null;
+    let primary = '';
+    const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+    const emitMessage = (text) => send({ jsonrpc: '2.0', method: 'session/update', params: {
+      sessionId: 'test-session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } } } });
+    process.stdin.on('data', (chunk) => {
+      buf += chunk.toString();
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const req = JSON.parse(line);
+        if (req.id === undefined || typeof req.method !== 'string') continue;
+        if (req.method === 'initialize') { send({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: 1, authMethods: [] } }); continue; }
+        if (req.method === 'session/new') { send({ jsonrpc: '2.0', id: req.id, result: { sessionId: 'test-session' } }); continue; }
+        if (req.method === 'session/prompt') {
+          const text = req.params?.prompt?.[0]?.text ?? '';
+          if (primaryId === null) { primaryId = req.id; primary = text; continue; }
+          if (${JSON.stringify(rejectSteer)}) {
+            send({ jsonrpc: '2.0', id: req.id, error: { code: -32603, message: 'steer refused' } });
+            setTimeout(() => send({ jsonrpc: '2.0', id: primaryId, result: { stopReason: 'end_turn' } }), 50);
+            continue;
+          }
+          send({ jsonrpc: '2.0', id: primaryId, result: { stopReason: 'end_turn' } });
+          const steerId = req.id;
+          setTimeout(() => {
+            emitMessage('primary=' + primary + '; steer=' + text);
+            setTimeout(() => send({ jsonrpc: '2.0', id: steerId, result: { stopReason: 'end_turn' } }), 50);
+          }, 400);
+          continue;
+        }
+        send({ jsonrpc: '2.0', id: req.id, result: {} });
+      }
+    });
+  `;
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
 describe('createAcpRuntime (in-flight steer, real process)', () => {
   it('routes an exact steer ACK through the typed singleton outcome bridge without broad settlement', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-proc-'));
@@ -167,6 +217,120 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
       expect(message).not.toBeNull();
       expect((message as any)?.message).toContain('primary=hello');
       expect((message as any)?.message).toContain('steer=steer-now');
+    } finally {
+      await backend.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('publishes work that continues after a steer resolves the primary prompt early', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-supersede-'));
+    const backend = new AcpBackend({
+      agentName: 'test',
+      cwd: dir,
+      command: process.execPath,
+      args: [writeSupersedingSteerAcpAgentScript({ dir })],
+      transportHandler: {
+        agentName: 'test',
+        getInitTimeout: () => 1_000,
+        getToolPatterns: () => [] as ToolPattern[],
+        getIdleTimeout: () => 250,
+      } satisfies TransportHandler,
+    });
+    const sent: Array<{ type: string; [k: string]: unknown }> = [];
+    const session = {
+      keepAlive: () => {},
+      sendAgentMessage: () => {},
+      sendAgentMessageCommitted: async (_provider: string, msg: any) => { sent.push(msg); },
+      sendUserTextMessageCommitted: async () => {},
+      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
+      updateMetadata: () => {},
+    } as any;
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'codex',
+        directory: dir,
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend as any,
+        inFlightSteer: { enabled: true },
+      } as any);
+      runtime.beginTurn();
+      await (runtime as any).startOrLoad({});
+      const primaryPromise = (runtime as any).sendPrompt('hello');
+      await new Promise((r) => setTimeout(r, 10));
+      const events: string[] = [];
+      const hasPublishedMessage = () => sent.some((m) => m.type === 'message');
+      await (runtime as any).steerPrompt('steer-now', {
+        localId: 'local-steer-2',
+        userMessageSeq: 42,
+        onProviderPromptAccepted: () => events.push(hasPublishedMessage() ? 'accepted-after-message' : 'accepted'),
+      });
+      // The superseded primary prompt answering is the provider's acknowledgement of the steer;
+      // acceptance must not wait for the steer prompt's own response at the end of the combined turn.
+      await expect.poll(() => events, { timeout: 300 }).toContain('accepted');
+      await primaryPromise;
+      await runtime.flushTurn();
+      await expect.poll(
+        () => sent.find((m) => m.type === 'message' && typeof (m as any).message === 'string')?.message,
+        { timeout: 3_000 },
+      ).toContain('primary=hello; steer=steer-now');
+      expect(events).toEqual(['accepted']);
+    } finally {
+      await backend.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+  it('does not accept a steer the provider rejected even when the primary prompt then answers', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-reject-'));
+    const backend = new AcpBackend({
+      agentName: 'test',
+      cwd: dir,
+      command: process.execPath,
+      args: [writeSupersedingSteerAcpAgentScript({ dir, rejectSteer: true })],
+      transportHandler: {
+        agentName: 'test',
+        getInitTimeout: () => 1_000,
+        getToolPatterns: () => [] as ToolPattern[],
+        getIdleTimeout: () => 250,
+      } satisfies TransportHandler,
+    });
+    const session = {
+      keepAlive: () => {},
+      sendAgentMessage: () => {},
+      sendAgentMessageCommitted: async () => {},
+      sendUserTextMessageCommitted: async () => {},
+      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
+      updateMetadata: () => {},
+    } as any;
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'codex',
+        directory: dir,
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend as any,
+        inFlightSteer: { enabled: true },
+      } as any);
+      runtime.beginTurn();
+      await (runtime as any).startOrLoad({});
+      const primaryPromise = (runtime as any).sendPrompt('hello').catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 10));
+      const onProviderPromptAccepted = vi.fn();
+      await (runtime as any).steerPrompt('steer-now', {
+        localId: 'local-steer-3',
+        userMessageSeq: 43,
+        onProviderPromptAccepted,
+      }).catch(() => undefined);
+      await primaryPromise;
+      await new Promise((r) => setTimeout(r, 200));
+      expect(onProviderPromptAccepted).not.toHaveBeenCalled();
     } finally {
       await backend.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

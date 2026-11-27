@@ -947,7 +947,8 @@ jobs:
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          fetch-depth: 1
+          # Compare predecessor setup files against characterized immutable desktop tags.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node
