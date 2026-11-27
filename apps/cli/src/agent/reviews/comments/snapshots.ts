@@ -13,7 +13,7 @@ import {
     reviewCommentTextSnapshotHasBidiControlsV1,
     reviewCommentTextSnapshotIsLikelyMinifiedV1,
 } from '@happier-dev/protocol/reviews/comments/snapshots';
-import { parseUnifiedDiffHunks } from '@happier-dev/protocol';
+import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import { runGitCheckpointCommand } from '@/scm/checkpoints/gitCheckpointCommands';
 import { logger } from '@/ui/logger';
 
