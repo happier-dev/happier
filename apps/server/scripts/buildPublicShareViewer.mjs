@@ -56,7 +56,9 @@ export async function buildPublicShareViewerBundle({ projectDir = defaultProject
             await rm(staged, { force: true });
         }
     }
-    return { inputPaths: Object.keys(result.metafile?.inputs ?? {}).map(path => resolve(repoRoot, path)) };
+    // "(disabled):<module>" keys are esbuild stand-ins for browser-disabled modules, not files.
+    return { inputPaths: Object.keys(result.metafile?.inputs ?? {})
+        .filter(path => !path.startsWith('(disabled):')).map(path => resolve(repoRoot, path)) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
