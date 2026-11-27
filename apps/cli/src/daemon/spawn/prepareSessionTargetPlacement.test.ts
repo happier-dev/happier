@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { execFile as execFileCallback } from 'node:child_process';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { PassThrough } from 'node:stream';
+import { Duplex, PassThrough } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -41,6 +41,13 @@ function fakeCustody() {
             ensureWorkspaceRuntime: async () => ({ binaryPath: '/g/.happier/happier' }),
             openChannel: () => new PassThrough() };
     } };
+}
+
+function openShellChannel(argv: readonly string[], signal: AbortSignal): Duplex {
+    const child = spawn(argv[0]!, argv.slice(1), { signal, stdio: ['pipe', 'pipe', 'ignore'] });
+    const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+    child.once('error', error => channel.destroy(error));
+    return channel;
 }
 
 type SessionTargetAgent = NonNullable<Parameters<typeof deliverSessionTargetLaunch>[0]['agent']>;
@@ -148,7 +155,7 @@ describe('Session placement on a managed target at spawn', () => {
                 catch (error) { const result = error as { code?: number; stdout?: string; stderr?: string };
                     return { status: result.code ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }; }
             },
-            putFile: async (path: string, bytes: Uint8Array) => { await writeFile(path, bytes); },
+            openChannel: openShellChannel,
         };
         const launch = await deliverSessionTargetLaunch({ target, sessionKey: 'project', runnerEnvironment: {},
             materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
@@ -169,7 +176,9 @@ describe('Session placement on a managed target at spawn', () => {
                 try { return { status: 0, ...await execFile('sh', ['-c', command], { signal }) }; }
                 catch (error) { const result = error as { code?: number; stdout?: string; stderr?: string };
                     return { status: result.code ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }; }
-            }, putFile: async (path: string, bytes: Uint8Array) => { await writeFile(path, bytes); } };
+            },
+            openChannel: openShellChannel,
+        };
         const start = () => deliverSessionTargetLaunch({ target, sessionKey: 'sync-project', runnerEnvironment: {},
             materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
             workspace: { hostRoot, targetRoot: hostRoot }, onSessionEnd: () => undefined,
