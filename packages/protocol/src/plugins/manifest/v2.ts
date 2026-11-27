@@ -112,10 +112,12 @@ function uniqueArray<T extends z.ZodMiniType>(schema: T): z.ZodMiniArray<T> {
 function uniqueNonEmptyArray<T extends z.ZodMiniType>(schema: T): z.ZodMiniArray<T> {
   return uniqueArray(schema).check(z.minLength(1));
 }
-const PluginHostAccessCommonV2Schema = lazyZodSchema(() => z.object({
-  id: PluginHostAccessRequestIdV2Schema,
-  reason: PluginLocalizedStringV2Schema,
-}));
+function pluginHostAccessCommonV2Shape() {
+  return {
+    id: PluginHostAccessRequestIdV2Schema,
+    reason: PluginLocalizedStringV2Schema,
+  };
+}
 const PluginConnectedAccountsHostAccessScopeV2Schema = lazyZodSchema(() => z.strictObject({
   serviceRefs: uniqueNonEmptyArray(asProtocolZod(PluginContributionReferenceV2Schema)),
   accountScopes: z.optional(uniqueNonEmptyArray(z.string().check(z.trim(), z.minLength(1)))),
@@ -140,22 +142,25 @@ const PluginConnectedAccountsHostAccessScopeV2Schema = lazyZodSchema(() => z.str
     });
   }
 })));
-const PluginConnectedAccountsHostAccessRequestV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+const PluginConnectedAccountsHostAccessRequestV2Schema = lazyZodSchema(() => z.strictObject({
+  ...pluginHostAccessCommonV2Shape(),
   capability: z.literal('connectedAccounts'),
   scope: PluginConnectedAccountsHostAccessScopeV2Schema,
-})));
-const PluginSessionsHostAccessRequestV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+}));
+const PluginSessionsHostAccessRequestV2Schema = lazyZodSchema(() => z.strictObject({
+  ...pluginHostAccessCommonV2Shape(),
   capability: z.literal('sessions'),
   scope: z.strictObject({
     access: uniqueNonEmptyArray(z.enum(['read', 'write', 'control'])),
     machineIds: z.optional(uniqueNonEmptyArray(z.string().check(z.trim(), z.minLength(1)))),
     projectIds: z.optional(uniqueNonEmptyArray(z.string().check(z.trim(), z.minLength(1)))),
   }),
-})));
-const PluginAccountStorageHostAccessRequestV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+}));
+const PluginAccountStorageHostAccessRequestV2Schema = lazyZodSchema(() => z.strictObject({
+  ...pluginHostAccessCommonV2Shape(),
   capability: z.literal('storage.account'),
   scope: z.strictObject({ enabled: z.literal(true) }),
-})));
+}));
 const PluginMcpHostAccessScopeV2Schema = lazyZodSchema(() => z.strictObject({
   serverRefs: z._default(uniqueArray(asProtocolZod(PluginContributionReferenceV2Schema)), []),
   discoverySourceRefs: z._default(uniqueArray(asProtocolZod(PluginContributionReferenceV2Schema)), []),
@@ -199,10 +204,11 @@ const PluginMcpHostAccessScopeV2Schema = lazyZodSchema(() => z.strictObject({
     });
   }
 })));
-const PluginMcpHostAccessRequestV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+const PluginMcpHostAccessRequestV2Schema = lazyZodSchema(() => z.strictObject({
+  ...pluginHostAccessCommonV2Shape(),
   capability: z.literal('mcp'),
   scope: PluginMcpHostAccessScopeV2Schema,
-})));
+}));
 const PluginOptionalHostAccessRequestVariantsV2 = [
   PluginConnectedAccountsHostAccessRequestV2Schema,
   PluginSessionsHostAccessRequestV2Schema,
@@ -210,23 +216,26 @@ const PluginOptionalHostAccessRequestVariantsV2 = [
   PluginMcpHostAccessRequestV2Schema,
 ] as const;
 const PluginHostAccessRequestVariantsV2 = [
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('network'),
     scope: z.strictObject({
       targets: uniqueNonEmptyArray(PluginNetworkTargetV2Schema),
       methods: z.optional(uniqueNonEmptyArray(HttpMethodSchema)),
       privateNetwork: z.optional(z.boolean()),
     }),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('network.client'),
     scope: z.strictObject({
       targets: uniqueNonEmptyArray(PluginNetworkTargetV2Schema),
       transports: uniqueNonEmptyArray(z.enum(['websocket', 'webrtc'])),
       privateNetwork: z._default(z.boolean(), false),
     }),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('filesystem'),
     scope: z.strictObject({
       locations: uniqueNonEmptyArray(z.union([
@@ -237,41 +246,47 @@ const PluginHostAccessRequestVariantsV2 = [
       access: uniqueNonEmptyArray(z.enum(['read', 'write', 'delete'])),
     }).check(z.refine(scope => !scope.locations.some(location => location.root === 'machine')
       || scope.access.every(access => access === 'read'), 'Machine filesystem observation is read-only')),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('process'),
     scope: z.strictObject({
       executables: uniqueNonEmptyArray(PluginDeclaredExecutableRefSchema),
       envKeys: z.optional(uniqueNonEmptyArray(PluginEnvironmentKeySchema).check(z.maxLength(MAX_PLUGIN_ENVIRONMENT_KEYS))),
     }),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('environment'),
     scope: z.strictObject({
       keys: uniqueNonEmptyArray(PluginEnvironmentKeySchema).check(z.maxLength(MAX_PLUGIN_ENVIRONMENT_KEYS)),
     }),
-  }))),
+  })),
   PluginConnectedAccountsHostAccessRequestV2Schema,
   PluginSessionsHostAccessRequestV2Schema,
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('terminal'),
     scope: z.strictObject({ operations: uniqueNonEmptyArray(z.enum(['open', 'send', 'resize', 'close'])) }),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('browser'),
     scope: z.strictObject({
       operations: uniqueNonEmptyArray(z.enum(['read', 'navigate', 'interact', 'automate'])),
       origins: z.optional(uniqueNonEmptyArray(CanonicalHttpOriginSchema)),
     }),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('clipboard'),
     scope: z.strictObject({ access: uniqueNonEmptyArray(z.enum(['read', 'write'])) }),
-  }))),
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginHostAccessCommonV2Schema, {
+  })),
+  lazyZodSchema(() => z.strictObject({
+    ...pluginHostAccessCommonV2Shape(),
     capability: z.literal('externalLinks'),
     scope: z.strictObject({ origins: uniqueNonEmptyArray(CanonicalHttpOriginSchema) }),
-  }))),
+  })),
   PluginAccountStorageHostAccessRequestV2Schema,
   PluginMcpHostAccessRequestV2Schema,
 ] as const;
