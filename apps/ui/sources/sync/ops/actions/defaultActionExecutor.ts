@@ -1307,6 +1307,7 @@ type VoiceActionExecutorBinding = Readonly<{
     const requestId = context.actionRequestId ?? randomUUID();
     const issued = await executeOriginalAccountMachineAction({ account: accountContext,
       actionId: args.actionId, input: args.input, machineId,
+      ...(recovery ? { responseRecovery: recovery } : {}),
       requestId,
       actionCaller: context.actionCaller,
       machineTarget: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined,
@@ -1319,8 +1320,9 @@ type VoiceActionExecutorBinding = Readonly<{
         : {}),
       authority: context.authority, signal: context.signal,
       ...(context.onTransportIssued ? { onTransportIssued: context.onTransportIssued } : {}) });
-    const execution = await recoverUiDeploymentActionResult({ account: accountContext,
-      actionId: args.actionId, input: args.input, machineId, requestId, context, execution: issued });
+    const execution = await recoverUiDeploymentActionResult({ account: accountContext, actionId: args.actionId, input: args.input,
+      machineId, requestId, context, execution: issued });
+    if (recovery) return settleRecoveredRollback(execution);
     if (execution.ok && args.actionId === 'machines.agents.install.cancel') {
       const cancellation = DaemonAgentInstallCancelResponseSchema.safeParse(execution.result);
       if (cancellation.success && cancellation.data.ok && args.input && typeof args.input === 'object'
