@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -15,6 +16,9 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createProjectSetupReviewFixture } from '@/dev/testkit/fixtures/projectSetupReview';
+import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectSetupConsentFailure';
+import { ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -176,6 +180,7 @@ beforeEach(async () => {
     rpcResponses.set('selected-worker:projects.worker.status', { eligible: true,
         candidate: { serverId, machineId: 'selected-worker' }, load: { kind: 'unknown' }, explanation: 'eligible' });
     await homes.addHome({ name: 'Focused custodian', serverUrl: 'https://finite-custodian.test', accountId: 'custodian' });
+    homes.answer(requesterHomeId, '/v1/account/encryption', { body: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) });
     homes.answer(requesterHomeId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     answerOwnMachineActions(requesterHomeId, 'requester');
     const decodeHttpReply = Response.prototype.json;
@@ -340,8 +345,8 @@ describe('Project finite delivery through the default UI Action host', () => {
             scope: { accountId: 'requester', machineId: 'source' }, state: 'accepted', revision: 1, createdAt: 1,
             title: 'Prepare', cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'setup',
                 serverId, machineId: 'source', workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace },
-            setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: digest,
-                reviewedEffect: { commands: ['setup'] } },
+            setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required',
+                ...createProjectSetupReviewFixture(['setup'], digest) },
         } }).operation;
         let current = held;
         rpcResponses.set(`source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, { kind: 'found', operation: current });
@@ -512,7 +517,9 @@ describe('Project finite delivery through the default UI Action host', () => {
     it('keeps Script Run admission alive beyond the scoped worker status response cutoff', async () => {
         answerExplicitScriptWorkerPlacement();
         const workspace = { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' };
-        const details = { kind: 'pendingApproval', code: 'project_setup_effect_changed', reviewedEffectDigest: 'current-effect', reviewedEffect: { commands: ['setup'] } };
+        const details = ProjectSetupConsentFailureDetailsV1Schema.parse({
+            kind: 'pendingApproval', code: 'project_setup_effect_changed', ...createProjectSetupReviewFixture(['setup'], 'current-effect'),
+        });
         response = { ok: false, errorCode: 'project_setup_effect_changed', error: 'project_setup_effect_changed', details };
         let release!: (reply: unknown) => void;
         let issued = false;
@@ -547,6 +554,54 @@ describe('Project finite delivery through the default UI Action host', () => {
             await pending;
         }
     });
+    it('carries Script Run consent through placement and returns the selected Worker refusal', async () => {
+        homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
+            actionsSettingsV1: { v: 1, actions: {
+                'projects.script.run': { approvalRequiredSurfaces: ['ui'] },
+                'projects.inspect': { approvalRequiredSurfaces: ['ui'] },
+            } },
+        } } } });
+        answerExplicitScriptWorkerPlacement();
+        homes.answer(requesterHomeId, '/v1/projects/execution/config/read', { body: { status: 'present', revision: 1,
+            content: { t: 'plain', v: { ...createDefaultWorkspaceExecutionSettingsV1(), unavailable: 'fail' } },
+        } });
+        const workspace = { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' };
+        const sourceRead = { workspace, read: { kind: 'placement' } };
+        const sourceConfirmation = vi.fn();
+        const source = { machineId: 'source', installationId: 'source-installation' };
+        const worker = { machineId: 'selected-worker', installationId: 'selected-worker-installation' };
+        await answerExternalActionAccountForHome(homes, serverId, { actionId: 'projects.worker.status', ...worker,
+            additionalMachines: [source], tokenEpoch: 0, requesterInvocation: 'optional', execute: () =>
+                ProjectWorkerActionOutputSchemasV1['projects.worker.status'].parse({
+                    eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'not_accepting',
+                }),
+        });
+        await answerExternalActionAccountForHome(homes, serverId, { actionId: 'projects.inspect', ...source,
+            additionalMachines: [worker], tokenEpoch: 0, requesterInvocation: 'optional', execute: (input, context) => {
+                sourceConfirmation(context.invocation?.presentUserConfirmation);
+                expect(input).toEqual(sourceRead);
+                return ProjectDefinitionInspectOutputSchema.parse(
+                    rpcResponses.get(`source:${getActionSpec('projects.inspect').bindings!.rpcMethod}`));
+            },
+        });
+        const confirm = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(
+            async review => review.actionId === 'projects.script.run');
+        const result = await createDefaultActionExecutor({ presentUserActionConfirmation: confirm }).execute('projects.script.run', {
+            workspace, selection: { kind: 'named', name: 'check' },
+            choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } },
+        }, { serverId, surface: 'ui', authority: 'present_user', actionRequestId: 'script-worker-consent' });
+
+        expect(result).toMatchObject({ ok: false, errorCode: 'not_accepting',
+            details: { kind: 'no_worker_can_accept', reason: 'not_accepting', unavailable: 'fail' },
+        });
+        expect(homes.requestsFor('/v1/actions/projects.script.run')).toHaveLength(0);
+        expect(confirm).toHaveBeenCalledTimes(1);
+        expect(sourceConfirmation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            actionId: 'projects.inspect', target: { kind: 'machine', machineId: 'source' },
+            inputDigest: computeActionInputApprovalDigestV1('projects.inspect', sourceRead),
+        }));
+    });
+
     it('cancels project setup when the native confirmation presenter declines without dispatch', async () => {
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1 },
@@ -587,7 +642,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 version: 1, scripts: { check: { execution: 'portable', source: { kind: 'command', command: 'echo checked' } } },
             })) },
             detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
-            setupReview: { reviewedEffectDigest: 'a'.repeat(64), reviewedEffect: { commands: ['setup'] } },
+            setupReview: createProjectSetupReviewFixture(['setup']),
         }));
         const accepted = ProjectCommandActionOutputV1Schema.parse({ operation: {
             version: 1, operationId: 'held-setup', actionId,
@@ -1254,10 +1309,11 @@ describe('Project finite delivery through the default UI Action host', () => {
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.prepare': ['ui'] } },
         } } } });
-        response = { ok: false, errorCode: 'project_setup_consent_required', error: 'project_setup_consent_required', details: {
-            kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest,
-            reviewedEffect: { commands: ['setup'] }, consentScope,
-        } };
+        const setupReview = ProjectSetupConsentFailureDetailsV1Schema.parse({
+            kind: 'pendingApproval', code: 'project_setup_consent_required',
+            ...createProjectSetupReviewFixture(['setup'], reviewedEffectDigest), consentScope,
+        });
+        response = { ok: false, errorCode: 'project_setup_consent_required', error: 'project_setup_consent_required', details: setupReview };
         const project = { serverId, projectId: 'accepted-project' };
         if (consentScope === 'untilChanged') {
             const scope = { serverId, accountId: 'requester' };
@@ -1271,8 +1327,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 scope: { accountId: 'requester', machineId: 'source' }, state: 'accepted', revision: 1, createdAt: 1,
                 title: 'Prepare', cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'setup',
                     serverId, machineId: 'source', workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace },
-                setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest,
-                    reviewedEffect: { commands: ['setup'] }, consentScope },
+                setupReview,
             } }).operation;
             let issued = held;
             const operationReadMethod = `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`;
@@ -1472,7 +1527,9 @@ describe('Project finite delivery through the default UI Action host', () => {
         answerExplicitScriptWorkerPlacement();
         const input = { workspace: { serverId, workspaceId: 'source-workspace', machineId: 'source', rootPath: '/repo' },
             selection: { kind: 'named', name: 'check' }, choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } } };
-        const details = { kind: 'pendingApproval', code: 'project_setup_effect_changed', reviewedEffectDigest: 'current-effect', reviewedEffect: { commands: ['setup'] } };
+        const details = ProjectSetupConsentFailureDetailsV1Schema.parse({
+            kind: 'pendingApproval', code: 'project_setup_effect_changed', ...createProjectSetupReviewFixture(['setup'], 'current-effect'),
+        });
         response = { ok: false, errorCode: 'project_setup_effect_changed', error: 'project_setup_effect_changed', details };
         const executor = createDefaultActionExecutor();
         const client = createProjectManifestActionClient({ workspace: input.workspace, expectedAccountId: 'requester',

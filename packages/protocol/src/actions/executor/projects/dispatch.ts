@@ -7,7 +7,7 @@ import { ArtifactActionOutputSchemasV1 } from '../../../artifacts/artifactAction
 import { createActionExecuteFailureError } from '../../actionExecutionResult.js';
 import { isWorkspaceActionId } from '../../workspaceActionFamily.js';
 import { completeActionResult } from '../resultProjection.js';
-import { isProjectActionIdV1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../../projectActionIdsV1.js';
+import { isProjectActionIdV1, isProjectFiniteActionIdV1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../../projectActionIdsV1.js';
 import { isProjectSetupSetChildInputV1 } from '../../../projects/projectSetupSetV1.js';
 import { isProjectDefinitionActionId } from '../../projectDefinitionActionFamily.js';
 import type { ProjectContextUpdateInputV1Schema } from '../../../projects/projectContextV1.js';
@@ -16,6 +16,7 @@ import { prepareApprovalRequest } from '../approvalPreparation.js';
 import { computeActionReviewDigestV1 } from '../../decisionAuthority.js';
 import { isPresentUserHostInvocation, isHomeAdmittedPresentUserHostInvocation } from '../../invocationAuthority.js';
 import { projectNativeJsonValueForTransport } from '../../../json/strictJsonValue.js';
+import { invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '../deploymentRoleChild.js';
 import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../../rpc/errors.js';
 import { isPluginError } from '../../../plugins/errors.js';
 import { type ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../../projects/projectOrganizationV1.js';
@@ -95,10 +96,18 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
 
         if (isProjectActionIdV1(actionId)) {
           if (!deps.projectAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          const reviewedParent = isProjectFiniteActionIdV1(actionId)
+            ? readHostAdmittedReviewedParentV1(ctx.hostReviewedChild) : null;
           return completeActionResult(await deps.projectAction({ actionId, input: parsed.data, context: ctx,
-            // Like SCM's source reads, placement consumes this same admitted
-            // frontdoor and host context without lending a new target grant.
-            executeCanonicalAction: (nestedActionId, nestedInput) => executeHostChild(nestedActionId, nestedInput, ctx),
+            // The placement owner selects the exact Source and Worker reads.
+            // The parent's review covers these reads; their own Home and Machine still authorize access.
+            executeCanonicalAction: (nestedActionId, nestedInput) => reviewedParent
+              ? invokeHostReviewedChildV1({
+                parent: reviewedParent, context: ctx,
+                child: { action: nestedActionId, role: nestedActionId, input: projectNativeJsonValueForTransport(nestedInput) },
+                execute: (input, context, id) => executeHostChild(id, input, context),
+              })
+              : executeHostChild(nestedActionId, nestedInput, ctx),
           }));
         }
 
