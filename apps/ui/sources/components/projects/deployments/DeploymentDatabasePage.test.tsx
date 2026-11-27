@@ -1471,7 +1471,9 @@ describe('Environment → Data → Add (P10)', () => {
     if (!bundled || typeof bundled !== 'object' || !('apps' in bundled) || !Array.isArray(bundled.apps)) throw new Error('Expected bundled catalog');
     const entry: unknown = bundled.apps.find((value: { itemId: string }) => value.itemId === 'postgresql');
     if (!entry || typeof entry !== 'object' || !('app' in entry)) throw new Error('Expected bundled PostgreSQL');
-    const app = DeploymentTemplateV1Schema.parse(entry.app);
+    const listed = DeploymentTemplateV1Schema.parse(entry.app);
+    const app = DeploymentTemplateV1Schema.parse({ ...listed,
+      domains: [{ key: 'web', service: listed.compose.services[0], containerPort: 5432, protocol: 'https', required: false }] });
     homes.answer(serverId, '/apps.json', { body: { schemaVersion: 1, apps: [{ itemId: 'postgresql', app }] } });
     const account = await captureLazyActionAccountContext(serverId);
     const { storage } = await import('@/sync/domains/state/storage');
@@ -1512,7 +1514,7 @@ describe('Environment → Data → Add (P10)', () => {
     homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: {
       ok: true, environment: { ...detail.environment, controllerMachineId: member.machineId }, targetLinks: [] } });
     const applied: unknown[] = [];
-    const previews: unknown[] = [];
+    const previews: ReturnType<typeof DeploymentTemplateInstantiateInputV1Schema.parse>[] = [];
     const receivedApplyResults: Array<Readonly<{ ok: boolean; errorCode?: string }>> = [];
     const refusalDetails = outcome === 'deployment_conflict' ? { requiredFact: 'transaction_commit' } : undefined;
     const templateHost = (raw: unknown) => {
@@ -1612,9 +1614,19 @@ describe('Environment → Data → Add (P10)', () => {
       }
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled,
         screen.getTextContent()).toBe(false));
+      const domainField = 'project-deployments.add.choices.domain.web';
+      if (repository || update) {
+        expect(screen.findHostByTestId(domainField)).toBeNull();
+      } else {
+        expect(screen.findHostByTestId(domainField)).not.toBeNull();
+      }
+      const selectsDomain = outcome === 'applied' && !repository && !update && !choices;
+      const before = previews.length;
+      if (selectsDomain) {
+        await act(async () => { changeTextTestInstance(screen.findHostByTestId(domainField)!, 'db.example.test'); });
+      }
       if (choices) {
         const prefix = 'project-deployments.add.choices';
-        const before = previews.length;
         const user = screen.findHostByTestId(`${prefix}.variable.DB_USER`);
         expect(user).not.toBeNull();
         await act(async () => { changeTextTestInstance(user!, 'alice'); });
@@ -1629,6 +1641,8 @@ describe('Environment → Data → Add (P10)', () => {
           expect(replace).toBeTruthy();
           await act(async () => { replace!.props.onValueChange(true); });
         }
+      }
+      if (choices || selectsDomain) {
         expect(previews).toHaveLength(before);
         expect(applied).toEqual([]);
         // Changed choices are reviewed by the primary press itself, never a disabled Add with no reason (D27).
@@ -1639,6 +1653,11 @@ describe('Environment → Data → Add (P10)', () => {
         expect(applied).toEqual([]);
         await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.add.confirm')?.props.disabled).toBe(false));
         expect(previews).toHaveLength(before + 1);
+      }
+      const reviewedDeployment = previews.at(-1)?.deploy;
+      const selectedDomain = [{ templateDomainId: 'web', hostname: 'db.example.test' }];
+      if (selectsDomain) {
+        expect(previews.at(-1)).toMatchObject({ deploy: { requestKey: expect.any(String) }, domainBindings: selectedDomain });
       }
       if (update && !repository) {
         expect(screen.findByTestId('project-deployments.template.diff')).not.toBeNull();
@@ -1666,6 +1685,7 @@ describe('Environment → Data → Add (P10)', () => {
         ...(update ? {} : { generatedSecretAudience: { accountGrants: [], teamGrants: [], groupGrants: [] } }) })]);
       if (choices) expect(applied[0]).toMatchObject({ connectTo: { service: 'app' }, replace: ['DATABASE_URL', 'DIRECT_URL'],
         volumeBindings: [{ templateVolumeId: 'postgres-data', source: 'chosen-data' }] });
+      if (selectsDomain) expect(applied[0]).toMatchObject({ domainBindings: selectedDomain, deploy: reviewedDeployment });
       if (update || repository) expect(applied[0]).not.toHaveProperty('deploy');
       if (repository) {
         expect(applied[0]).toMatchObject({ destination: { kind: 'repositoryPullRequest', workspace: { kind: 'workspace-ref', serverId: serverIdentityId, id: 'checkout' },

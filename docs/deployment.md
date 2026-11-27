@@ -3601,6 +3601,10 @@ selections survive preset source copies and capture; authored Compose App
 intent does not accept template Domain selections.
 The signed intent projection and installer share `readDeploymentTemplateDeployIntentV1`
 to decide whether selected Domains imply a first deploy for a new Environment.
+Selecting Domains when installing into an existing stored Environment requires
+an explicit Deploy in the same review. Without it, preview and apply return
+`required_fact_unavailable` with `activeDomainMembers` before writing. A
+repository proposal changes the definition. Add Domains after merging and deploying.
 Preparation admits the selected
 hostnames as lowercase DNS labels (letters, digits and interior hyphens,
 separated by dots; IDNs use punycode). Other forms

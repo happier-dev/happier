@@ -43,6 +43,7 @@ import { createPublishCatalogPreparation } from '@/workspaces/publishProject';
 import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
 import { deploymentUnavailableError, projectDeploymentFailure } from '../deploymentFailure';
 import { readPinnedDeploymentTemplateForHost } from './readPinnedTemplateForHost';
+import { activeDomainMembersDetails } from '../targets/ownServer/domainRouteSelection';
 import type { CliAdmittedProjectRowsReader } from '@/session/actions/cliActionDeps/projectAdmission';
 import { resolveAdmittedRepositoryWorkspace, validateAdmittedRepositoryWorkspace } from '@/workspaces/admittedRepositoryWorkspace';
 import { prepareRepositoryFilesPullRequest, openRepositoryFilesPullRequest, type RepositoryFilesPullRequestHost } from '@/scm/actions/repositoryFilesPullRequest';
@@ -158,10 +159,15 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if (input.serverId !== host.serverId || input.environment.kind === 'create'
             && input.environment.controllerMachineId !== undefined
             && input.environment.controllerMachineId !== host.machineId) return refuse('target_mismatch');
-        if (!input.target && (input.domainBindings?.length || readDeploymentTemplateDeployIntentV1(input))) {
+        const deployIntent = readDeploymentTemplateDeployIntentV1(input);
+        if (!input.target && (input.domainBindings?.length || deployIntent)) {
             return refuse(actionInputIssueFailure({ code: 'custom', path: ['firstTargetLink'] }));
         }
         await host.assertCurrent(context);
+        if (input.domainBindings?.length && !deployIntent) {
+            return refuse({ ok: false, errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable',
+                details: activeDomainMembersDetails });
+        }
         const source = input.projectSourceId ? await readProjectSource(input.projectSourceId, context) : undefined;
         const current = input.environment.kind === 'existing'
             ? await host.readEnvironment({ environmentId: input.environment.environmentId, context }) : undefined;
@@ -261,7 +267,6 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         const definition = { ...candidateDefinition, contentRevision };
         await admitStoredComposeDefinition(definition);
         // Every install root reviews selected-Domain deployment before allocating its Environment.
-        const deployIntent = readDeploymentTemplateDeployIntentV1(input);
         if (!input.deploy && deployIntent) {
             input = { ...input, deploy: creationReview?.deploy ?? deployIntent };
         }

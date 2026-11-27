@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createEmptyActionAutomationPort, createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
@@ -358,7 +358,9 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         const installed = createDaemonDeploymentActionDeps({ credentials, serverId: 'srv_template_home', machineId: 'target', resolveRequesterIdentity,
             serverHttpBaseUrl: fixture.origin, savedSecretOperationContext: operation,
             runtime });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+        const actionAutomations = createEmptyActionAutomationPort(accountId);
+        onTestFinished(() => actionAutomations.dispose());
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), actionAutomations,
             prepareHostReviewedChildren: installed.prepareHostReviewedChildren,
             resolveEnvironmentApprovalScope: installed.resolveEnvironmentApprovalScope,
             prepareDeploymentEnvironmentCreate: ({ input, context, creationReview }) => templates.prepareCreate(input, context, creationReview),
@@ -506,28 +508,42 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
                     expectedRevision: link.revision, installationId: identity.installationId }, destination: { kind: 'stored',
                     contentRevision: definition.contentRevision, composeDigest: definition.composeDigest },
                 bindings: [], domainBindings: input.domainBindings, deploy: { requestKey: 'retry-deploy' } });
-            const retryEnvelope = { ...envelope, requestId: 'retry-root', input: retry };
-            const retryAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: { ...authorization.binding,
-                actionId: 'deployments.templates.instantiate', requestId: retryEnvelope.requestId,
-                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(retryEnvelope),
-                deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
-                    actionId: 'deployments.templates.instantiate', envelope: retryEnvelope }) } });
-            const retryRequester = await prepareRequesterAccountActionContext({ authorization: sealExternalActionRequesterAccountContextV1({
-                authorization: retryAuthorization, purpose: { kind: 'external_action' },
-                credentials: { token: credentials.token, secret: null, encryption: null },
-                installationPublicKey: Buffer.from(identity.publicKey, 'base64url'), randomBytes: size => new Uint8Array(randomBytes(size)) }),
-                purpose: { kind: 'external_action' }, machineId: 'target', installationId: identity.installationId,
-                installationPrivateKey: Buffer.from(identity.privateKey, 'base64url'), serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
-                serverHttpBaseUrl: fixture.origin, ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => executor });
-            if (!retryRequester) throw new Error('Expected retry requester custody');
-            onTestFinished(() => retryRequester.dispose());
-            sourceCanManage = true; sourceReads = 0;
-            const resumed = await executor.prepare('deployments.templates.instantiate', retry, { surface: 'ui', authority: 'present_user',
-                actionCaller: { kind: 'host' }, runtimeAccountId: accountId, serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
-                actionsSettings: retryRequester.actionsSettings,
-                actionRequestId: retryEnvelope.requestId, executionRunTargetMachineId: 'target', externalActionTarget: target,
-                originalActionEnvelope: retryEnvelope, externalActionExecutionAuthorization: retryRequester.authorization,
-                operationAcceptance: { operationId: 'retry-operation', accept() {} } });
+            const prepareRetry = async (input: typeof retry, requestId: string) => {
+                const retryEnvelope = { ...envelope, requestId, input };
+                const retryAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: { ...authorization.binding,
+                    actionId: 'deployments.templates.instantiate', requestId: retryEnvelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(retryEnvelope),
+                    deploymentPreparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+                        actionId: 'deployments.templates.instantiate', envelope: retryEnvelope }) } });
+                const retryRequester = await prepareRequesterAccountActionContext({ authorization: sealExternalActionRequesterAccountContextV1({
+                    authorization: retryAuthorization, purpose: { kind: 'external_action' },
+                    credentials: { token: credentials.token, secret: null, encryption: null },
+                    installationPublicKey: Buffer.from(identity.publicKey, 'base64url'), randomBytes: size => new Uint8Array(randomBytes(size)) }),
+                    purpose: { kind: 'external_action' }, machineId: 'target', installationId: identity.installationId,
+                    installationPrivateKey: Buffer.from(identity.privateKey, 'base64url'), serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
+                    serverHttpBaseUrl: fixture.origin, ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => executor });
+                if (!retryRequester) throw new Error('Expected retry requester custody');
+                onTestFinished(() => retryRequester.dispose());
+                return executor.prepare('deployments.templates.instantiate', input, { surface: 'ui', authority: 'present_user',
+                    actionCaller: { kind: 'host' }, runtimeAccountId: accountId, serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
+                    actionsSettings: retryRequester.actionsSettings,
+                    actionRequestId: retryEnvelope.requestId, executionRunTargetMachineId: 'target', externalActionTarget: target,
+                    originalActionEnvelope: retryEnvelope, externalActionExecutionAuthorization: retryRequester.authorization,
+                    operationAcceptance: { operationId: requestId, accept() {} } });
+            };
+            sourceCanManage = true;
+            const withoutDeploy = { ...retry };
+            delete withoutDeploy.deploy;
+            const refusal = { ok: false, effectAttempted: false, errorCode: 'required_fact_unavailable',
+                details: { requiredFact: 'activeDomainMembers' } };
+            expect.soft(await executor.execute('deployments.templates.instantiate', { ...withoutDeploy, mode: 'preview' }, {
+                surface: 'agent', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
+                serverId: input.serverId, actionRequestId: 'no-deploy-preview', executionRunTargetMachineId: 'target',
+            })).toMatchObject(refusal);
+            expect.soft(await prepareRetry(withoutDeploy, 'no-deploy-apply')).toMatchObject({ kind: 'settled', result: refusal });
+            expect(writes).toEqual(['deployments.environments.create', 'deployments.bindings.set', 'deployments.deploy']);
+            sourceReads = 0;
+            const resumed = await prepareRetry(retry, 'retry-root');
             expect(resumed).toMatchObject({ kind: 'ready' });
             if (resumed.kind !== 'ready') throw new Error('Expected retained Environment review');
             sourceCanManage = false;

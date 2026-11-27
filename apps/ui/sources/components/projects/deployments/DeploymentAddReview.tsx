@@ -36,7 +36,7 @@ import { DeploymentTemplateMappingCorrection } from './DeploymentTemplateMapping
 type Detail = DeploymentEnvironmentReadDetailV1;
 
 type AddOperands = Omit<Parameters<ReturnType<typeof createDeploymentActions>['instantiateTemplate']>[0],
-  'mode' | 'templateRef' | 'bindings' | 'generatedSecretAudience'>;
+  'mode' | 'templateRef' | 'bindings' | 'generatedSecretAudience' | 'deploy'>;
 type AddRefusal = Extract<DeploymentActionOutcome, { kind: 'refused' }>;
 type Preflight = (
   | Readonly<{ status: 'checking' }>
@@ -66,10 +66,12 @@ export function DeploymentAddReview(props: Readonly<{
   const app = read.kind === 'ready' ? read.app : null;
   const [choices, setChoices] = React.useState<DeploymentTemplateChoicesValue>({});
   const [reviewedChoices, setReviewedChoices] = React.useState<DeploymentTemplateChoicesValue>({});
-  const domainChoices = React.useMemo(() => app && !props.update
+  const [deployRequestKey] = React.useState(randomUUID);
+  const deployRequested = !props.update && props.operands.destination.kind !== 'repositoryPullRequest';
+  const domainChoices = React.useMemo(() => app && deployRequested
     ? projectDeploymentTemplateDomainChoices(app.domains, Object.fromEntries(
       choices.domainBindings?.map(binding => [binding.templateDomainId, binding.hostname]) ?? []))
-    : undefined, [app, choices.domainBindings, props.update]);
+    : undefined, [app, choices.domainBindings, deployRequested]);
   const invalidDomain = Boolean(domainChoices?.invalidKeys.size);
   const choicesChanged = !sameStrictJsonValue(choices, reviewedChoices);
   const reviewChoices = () => {
@@ -79,6 +81,7 @@ export function DeploymentAddReview(props: Readonly<{
     setReviewedChoices(normalized);
   };
   const operands = app ? { ...props.operands, ...reviewedChoices,
+    ...(deployRequested ? { deploy: { requestKey: deployRequestKey } } : {}),
     ...(read.kind === 'ready' && read.appMappingCorrection ? { appMappingCorrection: read.appMappingCorrection } : {}),
     ...(props.update ? { bindings: reviewedChoices.bindings ?? [] } : buildCatalogAppTemplateBindings(app, reviewedChoices.bindings)) } : null;
   const actions = React.useMemo(() => createDeploymentActions(props.lifetime, props.detail.environment.projectSourceId),
@@ -120,8 +123,7 @@ export function DeploymentAddReview(props: Readonly<{
   const add = () => {
     if (!templateRef || !operands) return;
     void press.press(async () => {
-      const result = await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef,
-        ...(props.update || operands.destination.kind === 'repositoryPullRequest' ? {} : { deploy: { requestKey: randomUUID() } }) }, { confirmed: true });
+      const result = await actions.instantiateTemplate({ ...operands, mode: 'apply', templateRef }, { confirmed: true });
       if (result.kind === 'pullRequest') setPullRequestUrl(result.pullRequest.url);
       return result.kind === 'partial' ? { ok: false, error: result.errorCode, details: result } : { ok: true };
     });

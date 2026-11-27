@@ -76,7 +76,7 @@ export function selectDomainMembershipMachines(members: readonly DomainMemberIde
     return members.filter(member => !draining.has(member.machineId)).map(({ machineId, installationId }) => ({ machineId, installationId }));
 }
 // The recovery owner (protocol deploymentFailureRecoveryV1) states this fact's one remedy, Deploy.
-const activeDomainMembersDetails = { requiredFact: 'activeDomainMembers' } as const;
+export const activeDomainMembersDetails = { requiredFact: 'activeDomainMembers' } as const;
 export type DomainRouteSelectionUnavailable = Readonly<{
     status: 'unavailable'; machineIds: readonly string[];
 }> & (Readonly<{ reason: 'required_fact_unavailable'; details: Readonly<{ requiredFact: string; remedy?: string }> }>
