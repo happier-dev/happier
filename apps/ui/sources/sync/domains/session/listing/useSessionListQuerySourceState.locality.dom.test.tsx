@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildConnectedServicesAccountChangeV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import { createSessionListQuerySourceHarness, waitForSessionListQueryState, type SessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
@@ -220,6 +221,78 @@ describe('session list query source: subscription locality', () => {
             for (const request of requests) request.answer.resolve();
             await screen.unmount();
         }
+    });
+
+    it('keeps the settled Session list through Machine and Connected Service wakes but re-reads Team access', async () => {
+        const serverId = boundary.focusedHome();
+        const machines = Array.from({ length: 446 }, (_, index) => createMachineFixture({ id: `idle-machine-${index}` }));
+        const sessions = Array.from({ length: 500 }, (_, index) => {
+            const id = `idle-session-${index}`;
+            const session = createSessionFixture({ id, active: true, activeAt: Date.now() });
+            return { ...createPlainSessionCurrentProjectionRecordFixture({ id, active: true, activeAt: session.activeAt }),
+                viewer: createSessionOwnerViewerFixture(session) };
+        });
+
+        let pageReads = 0;
+        let responseBytes = 0;
+        let revokeFirstSession = false;
+        boundary.http.answer(serverId, '/v2/sessions/query', { select(input) {
+            const cursor = input && typeof input === 'object' && 'cursor' in input ? Number(input.cursor ?? 0) : 0;
+            const visible = revokeFirstSession ? sessions.slice(1) : sessions;
+            const hasNext = cursor + 100 < visible.length;
+            const body = { sessions: visible.slice(cursor, cursor + 100),
+                nextCursor: hasNext ? String(cursor + 100) : null, hasNext,
+                attentionNextCursor: null, attentionHasNext: false };
+            pageReads++;
+            responseBytes += Buffer.byteLength(JSON.stringify(body));
+            return { body };
+        } });
+        const homes = [{ serverId, query: { ...QUERY, includeAttention: false, limit: 100 }, readMode: 'complete' as const }];
+        const state: { current: ReturnType<typeof useSessionListQueryHomeStates> | null } = { current: null };
+        function Host() {
+            state.current = useSessionListQueryHomeStates({ enabled: true, homes });
+            return null;
+        }
+        const screen = await mount(<Host />);
+        let cursor = 0;
+        const publish = async (change: Readonly<{ kind: 'account' | 'machine'; entityId: string; hint?: unknown }>) => {
+            const seq = ++cursor;
+            const planned = planSyncActionsFromChanges([{ ...change, cursor: seq, changedAt: seq }]);
+            await act(async () => publishHomeAccountChange(serverId, [change.entityId], {
+                changeKinds: [change.kind],
+                feedPageConsumed: true,
+                sessionListQueryAffects: plannedChangesAffectSessionListQuery(planned),
+            }));
+            await waitForSessionListQueryState(() => expect(state.current?.coverageComplete).toBe(true));
+        };
+        const totals = () => ({ pageReads, responseBytes });
+        try {
+            await waitForSessionListQueryState(() => expect(state.current?.coverageComplete).toBe(true));
+            expect(pageReads).toBe(5);
+            await act(async () => storage.getState().applyMachines(machines, false, { sourceServerId: serverId }));
+            expect(Object.keys(storage.getState().machineRecordsByServerId[serverId] ?? {})).toHaveLength(446);
+            const settled = totals();
+            await publish({ kind: 'machine', entityId: machines[0]!.id });
+            expect(totals(), 'the Machine wake').toEqual(settled);
+
+            const credential = buildConnectedServicesAccountChangeV1({
+                pluginId: 'happier.agent.claude', localId: 'claude-subscription',
+            });
+            await publish(credential);
+            await publish(credential);
+            const credentialTraffic = { pageReads: pageReads - settled.pageReads, responseBytes: responseBytes - settled.responseBytes };
+
+            revokeFirstSession = true;
+            const beforeTeam = totals();
+            await publish({ kind: 'account', entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+            await waitForSessionListQueryState(() => {
+                const ids = state.current?.statesByServerId[serverId]?.addresses.map(address => address.sessionId);
+                expect(ids).toHaveLength(sessions.length - 1);
+                expect(ids).not.toContain(sessions[0]!.id);
+            });
+            expect(pageReads - beforeTeam.pageReads).toBe(5);
+            expect(credentialTraffic, 'two Connected Service refresh wakes').toEqual({ pageReads: 0, responseBytes: 0 });
+        } finally { await screen.unmount(); }
     });
 
     it('keeps a never-successful query failed while its ordinary success fallback advances', async () => {

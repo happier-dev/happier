@@ -103,8 +103,8 @@ export type HomeAccountChangeEvent = Readonly<{
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     /**
      * Detailed focused-Home catch-up may publish the incumbent change planner's
-     * exact Session-list decision. Secondary row-only wakes with retained membership
-     * use that same planner; other socket-only wakes remain conservative.
+     * exact Session-list decision. Secondary wakes can use that same planner
+     * when the wake gives it enough information.
      * `'structural'` means only row-level Session writes: a
      * corpus the ordinary list can answer is unaffected, a structural filter may move.
      */
@@ -548,10 +548,12 @@ export function publishHomeAccountChangeForRouting(
     // Generic self/unknown keys need both incumbent readers. Authority changes
     // also retain the coarse wake that withdraws Session-record access; the
     // planner's access/list decisions must exclude those before narrowing.
-    const scopedAccountPlan = accountWakePlan && accountWakePlan.unsupportedChanges.length === 0
+    const accountSessionListUnaffected = accountWakePlan !== null
+        && accountWakePlan.unsupportedChanges.length === 0
         && !(accountWakePlan.invalidate.settings && accountWakePlan.invalidate.profile)
-        && !accountWakePlan.invalidate.savedSecretResources
-        && plannedChangesAffectSessionListQuery(accountWakePlan) === false ? accountWakePlan : null;
+        && plannedChangesAffectSessionListQuery(accountWakePlan) === false;
+    const scopedAccountPlan = accountSessionListUnaffected && !accountWakePlan.invalidate.savedSecretResources
+        ? accountWakePlan : null;
     // Known non-Account domains can exclude unrelated catalogs by kind. Reuse
     // the planner with conservative missing hints rather than widening every
     // Session publication into a Profile/Settings/Workflow refresh.
@@ -566,7 +568,7 @@ export function publishHomeAccountChangeForRouting(
         || (details?.publicProfileAffects ?? (unknownKinds || rawKinds === undefined
             || (rawKinds.includes('account') && (!accountWakePlan || accountWakePlan.invalidate.publicProfile))));
     const sessionListQueryAffects = details?.sessionListQueryAffects
-        ?? (routingPlan ? plannedChangesAffectSessionListQuery(routingPlan) : undefined);
+        ?? (accountSessionListUnaffected ? false : routingPlan ? plannedChangesAffectSessionListQuery(routingPlan) : undefined);
     const profileCatalogAffects = details?.profileCatalogAffects
         ?? (routingPlan ? plannedChangesAffectProfileCatalog(routingPlan) : undefined);
     const accountSettingsAffects = details?.accountSettingsAffects ?? routingPlan?.invalidate.settings;
@@ -639,7 +641,9 @@ export function publishHomeAccountChangeForRouting(
         ...(details?.sessionAccessAffects === false ? { sessionAccessAffects: false as const } : {}),
         ...(details?.sessionSystemRecords !== undefined
             ? { sessionSystemRecords: Object.freeze([...details.sessionSystemRecords]) } : {}),
-        ...(!coarse && sessionListQueryAffects !== undefined
+        // A known Connected Service wake can still need broad Saved Secret
+        // recovery while proving the Session list is unaffected.
+        ...((!coarse || accountSessionListUnaffected) && sessionListQueryAffects !== undefined
             ? { sessionListQueryAffects }
             : {}),
         ...(!coarse && routingPlan?.sessionRowRefreshIds.length

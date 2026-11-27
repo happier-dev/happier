@@ -1335,9 +1335,9 @@ function plannedChangesAffectEverySessionListQuery(planned: PlannedChangeActions
             change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
             || change.entityId === HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1
         ) return true;
-        if (readConnectedServicesAccountChangeV1(change)) return true;
-        // Linked identities and every non-settings `self` change can alter
-        // Account/credential currentness used by restricted-Team admission.
+        // Restricted-Team admission reads Home sign-in currentness. Dedicated
+        // Connected Service rows describe provider integration credentials;
+        // legacy `self` rows still carry the coarse Account currentness signal.
         return isAccountCurrentnessChangeV1(change);
     });
 }

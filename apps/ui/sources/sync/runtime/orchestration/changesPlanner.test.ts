@@ -690,7 +690,8 @@ describe('planSyncActionsFromChanges', () => {
             decision: 'critical', plannerOwner: 'session-system-records', materializationProof: 'session-system-records-invalidation',
         });
     });
-    it('refreshes connected-service currentness without waking encrypted Settings and retains the next settings-only fast path', () => {
+    it('refreshes Connected Service readers while retaining Session invalidation for coarse Account and Team access wakes', async () => {
+        const { publishHomeAccountChangeWake } = await import('./homeAccountChange');
         const serviceChanges = [
             buildConnectedServicesAccountChangeV1({ pluginId: 'acme.accounts', localId: 'service-a' }),
             buildConnectedServicesAccountChangeV1({ pluginId: 'acme.accounts', localId: 'service-b' }),
@@ -702,8 +703,22 @@ describe('planSyncActionsFromChanges', () => {
             expect(planned.invalidate.savedSecretResources, change.entityId).toBe(true);
             expect(planned.invalidate.profile, change.entityId).toBe(true);
             expect(planned.invalidate.settings, change.entityId).toBe(change.entityId === 'self');
-            expect(plannedChangesAffectSessionListQuery(planned), change.entityId).toBe(true);
+            expect(plannedChangesAffectSessionListQuery(planned), change.entityId).toBe(change.entityId === 'self');
             expect(plannedChangesAffectUsageQuery(planned), change.entityId).toBe(true);
+            const wake = publishHomeAccountChangeWake('home', {
+                t: 'account-change', changeKinds: ['account'], entityIds: [change.entityId],
+            }, 'socket');
+            expect(wake.sessionListQueryAffects, change.entityId).toBe(change.entityId === 'self' ? undefined : false);
+            expect(changePlanner.homeAccountChangeAffectsSavedSecretCatalog(wake), change.entityId).toBe(true);
+        }
+        const service = serviceChanges[0]!;
+        const team = buildChange({ cursor: 2, kind: 'account', entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 });
+        const mixed = planSyncActionsFromChanges([buildChange({ cursor: 1, ...service }), team]);
+        expect(plannedChangesAffectSessionListQuery(mixed)).toBe(true);
+        for (const entityId of [team.entityId, 'future-account-row']) {
+            expect(publishHomeAccountChangeWake('home', {
+                t: 'account-change', changeKinds: ['account'], entityIds: [service.entityId, entityId],
+            }, 'socket').sessionListQueryAffects).toBeUndefined();
         }
         const settings = planSyncActionsFromChanges([buildChange({
             cursor: 5, kind: 'account', entityId: 'self', hint: { settingsVersion: 8 },
