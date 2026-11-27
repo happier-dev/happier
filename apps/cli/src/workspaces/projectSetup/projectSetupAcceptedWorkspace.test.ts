@@ -21,9 +21,9 @@ describe('preparation accepted workspace association', () => {
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).resolves.toBeNull();
         await expect(resolveProjectSetupAcceptedWorkspace(input)).rejects.toMatchObject({ code: 'project_account_rows_unsupported' });
         post.mockResolvedValue({ status: 403, data: { error: 'forbidden' } });
-        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_account_rows_unavailable', response: { status: 403 } });
+        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'forbidden', response: { status: 403 } });
         post.mockResolvedValue({ status: 500, data: { error: 'internal' } });
-        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'project_account_rows_unavailable', response: { status: 500 } });
+        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'internal', response: { status: 500 } });
     });
 
     it('distinguishes an unassociated cold launch root from unavailable Account rows', async () => {
