@@ -40,14 +40,12 @@ import type { PrepareExternalActionRequesterAccountContext } from '../externalAc
 import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
 import type { ManagedGuestLocalStop } from '@/machines/managed/managedRetentionPolicy';
 import type { AcquireSessionIsolationSandbox } from '@/session/actions/cliActionDeps/types';
-import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { SESSION_MANAGED_TARGET_BUSY_CODE } from '@happier-dev/protocol/spawnSession';
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { managedCreationAcquisition, readManagedCreationContinuationResultPort,
     type ManagedCreationAcquisitionOptions, type ManagedCreationAcquisitionContext } from '@/machines/managed/creationContinuation';
-import axios from 'axios';
 import { prepareMachinePresetOnHost } from './machinePresetPreparation';
 import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -346,16 +344,15 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             const controller = { machineId: params.machineId, installationId: params.installationIdentity.installationId };
             const configured = 'configuredSandbox' in request ? request : undefined;
             let acquisition: ManagedAcquireInputV1;
+            let configuredPreset: ManagedCreationAcquisitionOptions['configuredPreset'];
             if ('acquisition' in request) acquisition = ManagedAcquireInputV1Schema.parse(request.acquisition);
             else {
-                const response = await axios.post<unknown>(`${params.serverBaseUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
-                    { homeId, id: request.configuredSandbox.presetId },
-                    { headers: { Authorization: `Bearer ${(params.controllerCredentials ?? params.credentials).token}` },
-                        ...(request.signal ? { signal: request.signal } : {}) });
-                const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
-                if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
+                const { readManagedAcquirePreset } = await import('@/machines/managed/acquire');
+                configuredPreset = await readManagedAcquirePreset({
+                    serverUrl: params.serverBaseUrl, credentials: params.controllerCredentials ?? params.credentials,
+                }, { homeId, id: request.configuredSandbox.presetId }, request.signal);
                 acquisition = ManagedAcquireInputV1Schema.parse({
-                    selection: { kind: 'preset', homeId, id: read.preset.id, revision: read.preset.revision }, controller,
+                    selection: { kind: 'preset', homeId, id: configuredPreset.id, revision: configuredPreset.revision }, controller,
                     ...(request.lifecycle === 'fresh' ? { creationScopeRetention: { effect: 'delete' as const } }
                         : { retention: { kind: 'until-delete' as const } }),
                 });
@@ -394,6 +391,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 acquisitionMode: 'resource-bound',
                 ...(preparedPlacement ? { sessionPresetPlacement: preparedPlacement } : {}),
                 ...(configured ? { expectedProvisioner: configured.configuredSandbox.provisioner } : {}),
+                ...(configuredPreset ? { configuredPreset } : {}),
                 onLocalSessionPlacement: (placement, projectFiles) => {
                     presetProjectFiles = projectFiles;
                     sandboxTypeSupportsNativeSandbox = placement.supportsAgentNativeSandbox === true;

@@ -148,23 +148,27 @@ async function qualifyManagedPresetAcquire(input: ManagedMachineAcquisitionDrive
     return provider;
 }
 
+export async function readManagedAcquirePreset(input: Pick<ManagedMachineAcquisitionDriverInput, 'serverUrl' | 'credentials'>,
+    selection: Readonly<{ homeId: string; id: string }>, signal?: AbortSignal): Promise<ManagedMachinePresetV1> {
+    const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
+        { homeId: selection.homeId, id: selection.id },
+        { headers: { Authorization: `Bearer ${input.credentials.token}` }, ...(signal ? { signal } : {}) });
+    const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
+    if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
+    return read.preset;
+}
+
 async function withManagedPresetDefinition<T>(input: ManagedMachineAcquisitionDriverInput,
     acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
     hydrator: ManagedPresetHydrator, read: (preset: ManagedMachinePresetV1,
         opened: ManagedMachinePresetContentV1, open: ManagedPresetDefinitionOpener) => Promise<T>, signal?: AbortSignal,
-    admittedRoot?: ExternalActionExecutionAuthorizationV1['binding']) {
+    admittedRoot?: ExternalActionExecutionAuthorizationV1['binding'], configuredPreset?: ManagedMachinePresetV1) {
     const scoped = admittedRoot?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? admittedRoot.sessionPresetAcquisition : undefined;
     const snapshot = scoped?.admission;
     if (scoped?.admission && (!isDeepStrictEqual(scoped.selection, acquisition.selection)
         || !isDeepStrictEqual(scoped.controller, acquisition.controller))) throw new ManagedMachineControllerError('request_conflict');
-    const preset = snapshot ? { ...snapshot.preset, ...snapshot.presetContent } : await (async () => {
-        const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
-            { homeId: acquisition.selection.homeId, id: acquisition.selection.id },
-            { headers: { Authorization: `Bearer ${input.credentials.token}` }, ...(signal ? { signal } : {}) });
-        const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
-        if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
-        return read.preset;
-    })();
+    const preset = snapshot ? { ...snapshot.preset, ...snapshot.presetContent }
+        : configuredPreset ?? await readManagedAcquirePreset(input, acquisition.selection, signal);
     if (preset.revision !== acquisition.selection.revision) throw new ManagedMachineControllerError('request_conflict');
     return await hydrator.withPresetDefinition(preset, (opened, open) => read(preset, opened, open), signal);
 }
@@ -202,7 +206,7 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
             ...((admittedRoot?.sessionPresetAcquisition?.admission?.delegated ?? delegated) ? {} : { machineOverride: { retention: acquisition.retention,
                 wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } }) });
         return await accept(policy, { provisioner, open, configurationRevision: preset.configurationRevision ?? 0 });
-    }, options.signal, admittedRoot);
+    }, options.signal, admittedRoot, options.configuredPreset);
 }
 
 async function openManagedPresetAdmissionWithHydrator(params: Readonly<{
@@ -255,6 +259,8 @@ export type ManagedMachineExecutionOptions = Readonly<{
     reuseIdle?: true;
     /** The receiving policy pins the provisioner behind its configured preset. */
     expectedProvisioner?: Readonly<{ pluginId: string; localId: string }>;
+    /** Preset already read by the receiving policy to pin the reviewed acquisition revision. */
+    configuredPreset?: ManagedMachinePresetV1;
     onLocalSessionPlacement?: (placement: NonNullable<MachineProvisionerContributionV1['sessionPlacement']>, projectFiles?: SessionProjectFilesV1) => void;
     context?: ActionExecutorContext;
     signal?: AbortSignal;

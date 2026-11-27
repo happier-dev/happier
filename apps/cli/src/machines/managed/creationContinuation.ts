@@ -6,7 +6,7 @@ import type { ManagedMachineExecutionOptions } from './acquire';
 /** One-call host preparation captured before the canonical managed child executor. */
 export const managedCreationAcquisition = Symbol('managedCreationAcquisition');
 export type ManagedCreationAcquisitionOptions = Pick<ManagedMachineExecutionOptions,
-  'acquisitionMode' | 'reuseIdle' | 'expectedProvisioner' | 'onLocalSessionPlacement' | 'runCreationContinuation' | 'sessionPresetPlacement'>
+  'acquisitionMode' | 'reuseIdle' | 'expectedProvisioner' | 'configuredPreset' | 'onLocalSessionPlacement' | 'runCreationContinuation' | 'sessionPresetPlacement'>
   & Partial<Pick<ManagedMachineExecutionOptions, 'requestId'>>;
 export type ManagedCreationContinuationResultPort = Readonly<{
   read(): ManagedCreationContinuationResult | undefined;

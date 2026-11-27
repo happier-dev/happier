@@ -150,6 +150,7 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
         });
         const isolationAdmissions: unknown[] = [];
         const isolationReports: unknown[] = [];
+        let presetReads = 0;
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const path = new URL(String(url)).pathname;
             if (path.endsWith('/execution-authorization')) {
@@ -161,7 +162,10 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
             }
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
             if (path === '/v1/sessions' && sharedBusy) return { status: 409, data: { error: 'session-managed-target-busy' } };
-            if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
+            if (path.endsWith('/presets/get')) {
+                presetReads += 1;
+                return { status: 200, data: { kind: 'found', preset } };
+            }
             if (path.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
             if (path.endsWith('/admit')) {
                 isolationAdmissions.push(body);
@@ -443,6 +447,7 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
             const retried = await start();
             expect(retried, JSON.stringify({ retried, isolationFailure, isolationChildResults, isolationAdmissions, isolationReports, roles, launched }))
                 .toMatchObject({ ok: true, result: { type: 'success' } });
+            expect(presetReads).toBe(2);
             expect(isolationAdmissions).toMatchObject([
                 { originalActionEnvelope: rootContext.originalActionEnvelope },
                 { originalActionEnvelope: rootContext.originalActionEnvelope },
