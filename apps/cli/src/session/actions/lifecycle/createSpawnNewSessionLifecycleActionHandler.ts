@@ -54,6 +54,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 || Object.hasOwn(rawParams, 'beforeSessionRunnerLaunch')
                 || Object.hasOwn(rawParams, 'resumeActionContext')
                 || Object.hasOwn(rawParams, 'spawnActionContext')
+                || Object.hasOwn(rawParams, 'hostReviewedChild')
                 || Object.hasOwn(rawParams, 'projectSetupOperation')
                 || Object.hasOwn(rawParams, 'requesterSessionCredentialFile')
                 || Object.hasOwn(rawParams, 'requesterSessionRuntimeContext')
@@ -430,12 +431,47 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         const spawnSession = createSessionStartupProjectSpawn({ context, spawnSession: params.spawnSession,
             ...(params.stopSession ? { stopSession: params.stopSession } : {}),
             ...(params.awaitAgentSessionOpen ? { awaitAgentSessionOpen: params.awaitAgentSessionOpen } : {}) });
+        const hasReviewedChildContext = Boolean(
+            context?.localActionContext?.reviewedChildActionContext
+            || (context && 'reviewedChildActionContext' in context && context.reviewedChildActionContext),
+        );
+        const hostReviewedChild = hasReviewedChildContext ? undefined : context?.localActionContext?.hostReviewedChild;
+        const hasRpcActionPair = Boolean(context?.callerInputAuthorization && context.originalActionEnvelope);
+        const hasLocalActionPair = Boolean(
+            context?.localActionContext?.externalActionExecutionAuthorization
+            && context?.localActionContext?.originalActionEnvelope,
+        );
+        const localActionContext = context?.localActionContext && !hasLocalActionPair
+            ? {
+                ...context.localActionContext,
+                externalActionExecutionAuthorization: undefined,
+                originalActionEnvelope: undefined,
+            }
+            : context?.localActionContext;
+        const spawnActionContext = hasRpcActionPair
+            ? {
+                ...buildActionExecutorContextForRpc({ ...context, serverId: params.serverId,
+                    actionId: 'session.spawn_new', externalActionExecutionAuthorization: context!.callerInputAuthorization }),
+                ...(hostReviewedChild ? { hostReviewedChild } : {}),
+            }
+            : hostReviewedChild
+                ? {
+                    ...buildActionExecutorContextForRpc({
+                        ...context,
+                        localActionContext,
+                        callerInputAuthorization: undefined,
+                        originalActionEnvelope: hasLocalActionPair
+                            ? context?.localActionContext?.originalActionEnvelope
+                            : undefined,
+                        serverId: params.serverId ?? context?.localActionContext?.serverId,
+                        actionId: 'session.spawn_new',
+                    }),
+                    hostReviewedChild,
+                }
+                : undefined;
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
             ...admittedSpawnOptions,
-            ...(context?.callerInputAuthorization && context.originalActionEnvelope ? {
-                spawnActionContext: buildActionExecutorContextForRpc({ ...context, serverId: params.serverId,
-                    actionId: 'session.spawn_new', externalActionExecutionAuthorization: context.callerInputAuthorization }),
-            } : {}),
+            ...(spawnActionContext ? { spawnActionContext } : {}),
             ...(context?.requesterSessionBootstrap ? { requesterSessionBootstrap: context.requesterSessionBootstrap } : {}),
             ...(context?.beforeSessionRunnerLaunch ? { beforeSessionRunnerLaunch: context.beforeSessionRunnerLaunch } : {}),
             ...(requesterWorkAttribution ? {

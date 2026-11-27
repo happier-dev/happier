@@ -17,6 +17,9 @@ import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creat
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
+import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewedProjectOpen';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -756,5 +759,278 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
+  });
+
+  it('forwards admitted localActionContext.hostReviewedChild on spawnActionContext for reviewed target projects.open', async () => {
+    const input = { directory: '/repo', backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } };
+    const target = { kind: 'machine' as const, machineId: 'guest' };
+    const originalActionEnvelope = { v: 1 as const, requestId: 'spawn-target-open', target, input };
+    const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-home-proof', binding: {
+      serverIdentityId: 'home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 },
+      actionId: 'session.spawn_new', requestId: 'spawn-target-open', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+      machineId: 'guest', custodianAccountId: 'member', installationId: 'guest-installation', target, accountEncryptionMode: 'plain',
+    } });
+    const machineAdmission = { actorAccountId: 'member', custodianAccountId: 'member', machineId: 'guest',
+      installationId: 'guest-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+    const verifyMachineAdmissionCurrent = async () => true;
+    const openRequest = {
+      serverId: 'home',
+      machineId: 'guest',
+      source: { kind: 'folder' as const, path: '/workspace' },
+      materialization: { kind: 'attach' as const, targetManaged: { managedId: 'devcontainer-1', controller: { machineId: 'host', installationId: 'host-inst' } } },
+    };
+    const opened = {
+      kind: 'opened' as const,
+      workspace: {
+        v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'ws-target',
+        managedId: 'devcontainer-1', controller: { machineId: 'host', installationId: 'host-inst' }, rootPath: '/workspace',
+      },
+      directory: '/workspace',
+      setup: 'notRequired' as const,
+    };
+    const executeChild = vi.fn(async () => ({ ok: true as const, result: opened }));
+    const hostReviewedChild = createHostReviewedChildPortV1({
+      actionId: 'session.spawn_new',
+      input,
+      context: { surface: 'ui', authority: 'present_user', runtimeAccountId: 'member', externalActionTarget: target, externalActionExecutionAuthorization: callerInputAuthorization },
+      plan: { children: [{ action: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.action, role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role }] },
+      reviewAdmitted: true,
+      execute: executeChild,
+    });
+
+    // Path A: RPC session.spawn_new ingress + localActionContext.hostReviewedChild from cliActionDeps directTransport
+    let launchedFromRpc: SpawnSessionOptions | undefined;
+    const rpcHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedFromRpc = options;
+      return { type: 'success', sessionId: 'session-target-open-rpc' };
+    } });
+    expect(await rpcHandler(input, {
+      machineAdmission,
+      verifyMachineAdmissionCurrent,
+      callerInputAuthorization,
+      originalActionEnvelope,
+      localActionContext: { surface: 'ui', authority: 'present_user', hostReviewedChild },
+    })).toMatchObject({ type: 'success', sessionId: 'session-target-open-rpc' });
+    expect(launchedFromRpc?.spawnActionContext).toMatchObject({ callerInputAuthorization, originalActionEnvelope, machineAdmission });
+    expect(launchedFromRpc?.spawnActionContext?.verifyMachineAdmissionCurrent).toBe(verifyMachineAdmissionCurrent);
+    expect(launchedFromRpc?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    await expect(invokeReviewedProjectOpen({
+      request: openRequest,
+      role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role,
+      invokeReviewedChild: launchedFromRpc?.spawnActionContext?.hostReviewedChild?.invoke,
+    })).resolves.toEqual({ ok: true, opened });
+    expect(executeChild).toHaveBeenCalledTimes(1);
+
+    // Path B: in-process directTransport (e.g. sessionServerStartMachineBinding) carrying localActionContext.hostReviewedChild without top-level RPC envelope
+    let launchedFromDirect: SpawnSessionOptions | undefined;
+    const directHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedFromDirect = options;
+      return { type: 'success', sessionId: 'session-target-open-direct' };
+    } });
+    expect(await directHandler(input, {
+      localActionContext: { surface: 'cli', authority: 'account_automation', serverId: 'home', hostReviewedChild },
+    })).toMatchObject({ type: 'success', sessionId: 'session-target-open-direct' });
+    expect(launchedFromDirect?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedFromDirect?.spawnActionContext?.callerInputAuthorization).toBeUndefined();
+    await expect(invokeReviewedProjectOpen({
+      request: openRequest,
+      role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role,
+      invokeReviewedChild: launchedFromDirect?.spawnActionContext?.hostReviewedChild?.invoke,
+    })).resolves.toEqual({ ok: true, opened });
+    expect(executeChild).toHaveBeenCalledTimes(2);
+
+    // Half-bound callerInputAuthorization without originalActionEnvelope must not be promoted into spawnActionContext
+    let launchedHalfBound: SpawnSessionOptions | undefined;
+    const halfBoundHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedHalfBound = options;
+      return { type: 'success', sessionId: 'session-half-bound' };
+    } });
+    expect(await halfBoundHandler(input, {
+      callerInputAuthorization,
+      localActionContext: { surface: 'cli', authority: 'account_automation', hostReviewedChild },
+    })).toMatchObject({ type: 'success', sessionId: 'session-half-bound' });
+    expect(launchedHalfBound?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedHalfBound?.spawnActionContext?.callerInputAuthorization).toBeUndefined();
+    expect(launchedHalfBound?.spawnActionContext?.externalActionExecutionAuthorization).toBeUndefined();
+    expect(launchedHalfBound?.spawnActionContext?.originalActionEnvelope).toBeUndefined();
+
+    // Vice-versa RPC half-bound: originalActionEnvelope without callerInputAuthorization must not leak
+    let launchedRpcEnvelopeOnly: SpawnSessionOptions | undefined;
+    const rpcEnvelopeOnlyHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedRpcEnvelopeOnly = options;
+      return { type: 'success', sessionId: 'session-rpc-envelope-only' };
+    } });
+    expect(await rpcEnvelopeOnlyHandler(input, {
+      originalActionEnvelope,
+      localActionContext: { surface: 'cli', authority: 'account_automation', hostReviewedChild },
+    })).toMatchObject({ type: 'success', sessionId: 'session-rpc-envelope-only' });
+    expect(launchedRpcEnvelopeOnly?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedRpcEnvelopeOnly?.spawnActionContext?.originalActionEnvelope).toBeUndefined();
+    expect(launchedRpcEnvelopeOnly?.spawnActionContext?.externalActionExecutionAuthorization).toBeUndefined();
+
+    // Cross-source mismatch: unpaired RPC originalActionEnvelope + localActionContext.externalActionExecutionAuthorization must not pair
+    let launchedCrossSource: SpawnSessionOptions | undefined;
+    const crossSourceHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedCrossSource = options;
+      return { type: 'success', sessionId: 'session-cross-source' };
+    } });
+    expect(await crossSourceHandler(input, {
+      originalActionEnvelope,
+      localActionContext: {
+        surface: 'cli',
+        authority: 'account_automation',
+        externalActionExecutionAuthorization: callerInputAuthorization,
+        hostReviewedChild,
+      },
+    })).toMatchObject({ type: 'success', sessionId: 'session-cross-source' });
+    expect(launchedCrossSource?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedCrossSource?.spawnActionContext?.originalActionEnvelope).toBeUndefined();
+    expect(launchedCrossSource?.spawnActionContext?.externalActionExecutionAuthorization).toBeUndefined();
+
+    // directTransport localActionContext half-bound vs paired authorization/envelope
+    // (a) only externalActionExecutionAuthorization (no originalActionEnvelope)
+    let launchedLocalAuthOnly: SpawnSessionOptions | undefined;
+    const localAuthOnlyHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedLocalAuthOnly = options;
+      return { type: 'success', sessionId: 'session-local-auth-only' };
+    } });
+    expect(await localAuthOnlyHandler(input, {
+      localActionContext: {
+        surface: 'cli',
+        authority: 'account_automation',
+        externalActionExecutionAuthorization: callerInputAuthorization,
+        hostReviewedChild,
+      },
+    })).toMatchObject({ type: 'success', sessionId: 'session-local-auth-only' });
+    expect(launchedLocalAuthOnly?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedLocalAuthOnly?.spawnActionContext?.externalActionExecutionAuthorization).toBeUndefined();
+    expect(launchedLocalAuthOnly?.spawnActionContext?.originalActionEnvelope).toBeUndefined();
+
+    // (b) only originalActionEnvelope (no externalActionExecutionAuthorization)
+    let launchedLocalEnvOnly: SpawnSessionOptions | undefined;
+    const localEnvOnlyHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedLocalEnvOnly = options;
+      return { type: 'success', sessionId: 'session-local-env-only' };
+    } });
+    expect(await localEnvOnlyHandler(input, {
+      localActionContext: {
+        surface: 'cli',
+        authority: 'account_automation',
+        originalActionEnvelope,
+        hostReviewedChild,
+      },
+    })).toMatchObject({ type: 'success', sessionId: 'session-local-env-only' });
+    expect(launchedLocalEnvOnly?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedLocalEnvOnly?.spawnActionContext?.externalActionExecutionAuthorization).toBeUndefined();
+    expect(launchedLocalEnvOnly?.spawnActionContext?.originalActionEnvelope).toBeUndefined();
+
+    // (c) both externalActionExecutionAuthorization and originalActionEnvelope present in localActionContext
+    let launchedLocalPaired: SpawnSessionOptions | undefined;
+    const localPairedHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedLocalPaired = options;
+      return { type: 'success', sessionId: 'session-local-paired' };
+    } });
+    expect(await localPairedHandler(input, {
+      localActionContext: {
+        surface: 'cli',
+        authority: 'account_automation',
+        externalActionExecutionAuthorization: callerInputAuthorization,
+        originalActionEnvelope,
+        hostReviewedChild,
+      },
+    })).toMatchObject({ type: 'success', sessionId: 'session-local-paired' });
+    expect(launchedLocalPaired?.spawnActionContext?.hostReviewedChild).toBe(hostReviewedChild);
+    expect(launchedLocalPaired?.spawnActionContext?.externalActionExecutionAuthorization).toBe(callerInputAuthorization);
+    expect(launchedLocalPaired?.spawnActionContext?.originalActionEnvelope).toBe(originalActionEnvelope);
+
+    // Reviewed child context must never inherit the parent's localActionContext.hostReviewedChild port
+    let launchedReviewedChildRpc: SpawnSessionOptions | undefined;
+    const reviewedChildRpcHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedReviewedChildRpc = options;
+      return { type: 'success', sessionId: 'session-reviewed-child-rpc' };
+    } });
+    expect(await reviewedChildRpcHandler(input, {
+      machineAdmission,
+      verifyMachineAdmissionCurrent,
+      callerInputAuthorization,
+      originalActionEnvelope,
+      reviewedChildActionContext: {},
+      localActionContext: { surface: 'ui', authority: 'present_user', hostReviewedChild },
+    } as Parameters<typeof reviewedChildRpcHandler>[1])).toMatchObject({ type: 'success', sessionId: 'session-reviewed-child-rpc' });
+    expect(launchedReviewedChildRpc?.spawnActionContext?.hostReviewedChild).toBeUndefined();
+
+    let launchedReviewedChildDirect: SpawnSessionOptions | undefined;
+    const reviewedChildDirectHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedReviewedChildDirect = options;
+      return { type: 'success', sessionId: 'session-reviewed-child-direct' };
+    } });
+    expect(await reviewedChildDirectHandler(input, {
+      localActionContext: { surface: 'cli', authority: 'account_automation', hostReviewedChild, reviewedChildActionContext: {} },
+    })).toMatchObject({ type: 'success', sessionId: 'session-reviewed-child-direct' });
+    expect(launchedReviewedChildDirect?.spawnActionContext).toBeUndefined();
+  });
+
+  it('fails closed with credential_scope_denied when hostReviewedChild is absent from localActionContext', async () => {
+    const input = { directory: '/repo', backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } };
+    const target = { kind: 'machine' as const, machineId: 'guest' };
+    const originalActionEnvelope = { v: 1 as const, requestId: 'spawn-no-child', target, input };
+    const callerInputAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-home-proof', binding: {
+      serverIdentityId: 'home', accountId: 'member', authentication: { kind: 'account', tokenEpoch: 0 },
+      actionId: 'session.spawn_new', requestId: 'spawn-no-child', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+      machineId: 'guest', custodianAccountId: 'member', installationId: 'guest-installation', target, accountEncryptionMode: 'plain',
+    } });
+    const openRequest = {
+      serverId: 'home',
+      machineId: 'guest',
+      source: { kind: 'folder' as const, path: '/workspace' },
+      materialization: { kind: 'attach' as const, targetManaged: { managedId: 'devcontainer-1', controller: { machineId: 'host', installationId: 'host-inst' } } },
+    };
+
+    // Case 1: remote spawn-happy-session with authorization/envelope but no hostReviewedChild
+    let launchedRemote: SpawnSessionOptions | undefined;
+    const handler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedRemote = options;
+      return { type: 'success', sessionId: 'session-remote' };
+    } });
+    expect(await handler(input, { callerInputAuthorization, originalActionEnvelope })).toMatchObject({ type: 'success' });
+    expect(launchedRemote?.spawnActionContext?.hostReviewedChild).toBeUndefined();
+    await expect(invokeReviewedProjectOpen({
+      request: openRequest,
+      role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role,
+      invokeReviewedChild: launchedRemote?.spawnActionContext?.hostReviewedChild?.invoke,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'credential_scope_denied',
+      error: 'credential_scope_denied',
+      effectAttempted: false,
+    });
+
+    // Case 2: localActionContext without hostReviewedChild and without authorization/envelope
+    let launchedLocal: SpawnSessionOptions | undefined;
+    const localHandler = createSpawnNewSessionLifecycleActionHandler({ serverId: 'home', spawnSession: async options => {
+      launchedLocal = options;
+      return { type: 'success', sessionId: 'session-local' };
+    } });
+    // Authored DTO cannot smuggle hostReviewedChild
+    expect(await localHandler({ ...input, hostReviewedChild: { invoke: async () => ({ ok: true, result: {} }) } }, {
+      localActionContext: { surface: 'cli', authority: 'present_user' },
+    })).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    expect(launchedLocal).toBeUndefined();
+
+    // Valid spawn with localActionContext lacking hostReviewedChild yields no spawnActionContext and fails closed
+    expect(await localHandler(input, {
+      localActionContext: { surface: 'cli', authority: 'present_user' },
+    })).toMatchObject({ type: 'success' });
+    expect(launchedLocal?.spawnActionContext).toBeUndefined();
+    await expect(invokeReviewedProjectOpen({
+      request: openRequest,
+      role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role,
+      invokeReviewedChild: launchedLocal?.spawnActionContext?.hostReviewedChild?.invoke,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'credential_scope_denied',
+      error: 'credential_scope_denied',
+      effectAttempted: false,
+    });
   });
 });

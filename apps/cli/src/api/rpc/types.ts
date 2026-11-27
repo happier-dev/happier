@@ -37,7 +37,7 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     | 'presentUserApproval' | 'actionRequestAttributionV1' | 'handoffTargetReplacementApproval'
     | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'
     | 'agentStartContext' | 'agentStartWorkDepth' | 'agentStartWorkspaceWrites' | 'sessionAgentSpawnPolicyV1' | 'actionAutomationPort'
-    | 'authenticatedLocalRootCustody' | 'admittedHostWorkflowRequester'
+    | 'authenticatedLocalRootCustody' | 'admittedHostWorkflowRequester' | 'hostReviewedChild'
 >> & {
     /** Admitted headless Resume invocation, retained only through the in-process native launcher. */
     resumeActionContext?: ActionExecutorContext;
