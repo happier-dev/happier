@@ -188,7 +188,7 @@ describe('backend exception capture through the authenticated collector receiver
       expect(rows.every(row => 'httpStatusCode' in row && row.httpStatusCode === 500 && 'durationMs' in row && row.durationMs === 412)).toBe(true);
       expect(f.sqlite.statements).toHaveLength(1);
       expect(JSON.stringify(rows)).not.toContain('sourceContext');
-      const details = await Promise.all(rows.map(row => f.runtime.store.detail(f.partition, row.id)));
+      const details = await Promise.all(rows.map(row => f.runtime.store.detail(f.partition, row.id, { fingerprint: row.fingerprint })));
       expect(JSON.stringify(details)).toContain('sourceContext');
       expect(JSON.stringify(details)).toContain('before();');
       expect(JSON.stringify(details)).not.toContain('hunter2');
@@ -283,6 +283,7 @@ describe('backend exception capture through the authenticated collector receiver
       const detail = await f.runtime.store.detail(
         f.partition,
         occurrences[0]!.id,
+        { fingerprint: userGroup.fingerprint },
       );
       expect(JSON.stringify(detail)).toContain('at loadUser');
       const spanDetail = await f.runtime.store.detail(

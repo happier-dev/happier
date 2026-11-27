@@ -243,7 +243,8 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 traceId: input.traceId, worktree: selected.partition, databaseMember: selected.databaseMember, kind: 'query' }), input.page.limit);
         },
         async getCapturedQuery(input: database.DatabaseCaptureQueryGetInputV1) {
-            const detail = await selected.runtime.store.detail(selected.partition, input.id, selected.databaseMember);
+            const detail = await selected.runtime.store.detail(selected.partition, input.id,
+                selected.databaseMember && { databaseMember: selected.databaseMember });
             // App log text has known patterns masked, but the producer cannot identify arbitrary app secrets.
             return { ok: true as const, source: selected.source,
                 detail: detail?.log === undefined ? detail : { ...detail, secretMasking: 'incomplete' } };

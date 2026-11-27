@@ -381,13 +381,16 @@ ORDER BY selected.at DESC,selected.id DESC`, [input.worktree, ...params], Math.m
     after = rows[rows.length - 1]!.spanId;
    }
   },
-  async detail(worktree: string, id: string, databaseMember?: DatabaseWorktreeTargetV1): Promise<Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>['detail']> {
-   const selectedQuery = databaseMember === undefined ? '' : ` AND EXISTS (
-    SELECT 1 FROM captureSummaries WHERE worktree = captureDetails.worktree AND id = captureDetails.id
-    AND kind = 'query' AND databaseMemberKey = ?
-   )`;
-   const rows = await db.query(`SELECT body FROM captureDetails WHERE worktree = ? AND id = ?${selectedQuery}`,
-    databaseMember === undefined ? [worktree, id] : [worktree, id, createCanonicalJsonSigningInput(databaseMember)]);
+  async detail(worktree: string, id: string, selection?: Readonly<{ fingerprint: string } | { databaseMember: DatabaseWorktreeTargetV1 }>)
+  : Promise<Extract<DatabaseCaptureQueryGetResultV1, { ok: true }>['detail']> {
+   // Retention can remove the owning summary or occurrence before it removes the body.
+   const scope = selection && 'fingerprint' in selection
+    ? { table: 'captureExceptions', predicate: 'AND fingerprint = ?', params: [selection.fingerprint] }
+    : { table: 'captureSummaries', predicate: selection ? "AND kind = 'query' AND databaseMemberKey = ?" : '',
+     params: selection ? [createCanonicalJsonSigningInput(selection.databaseMember)] : [] };
+   const rows = await db.query(`SELECT body FROM captureDetails WHERE worktree = ? AND id = ? AND EXISTS (
+    SELECT 1 FROM ${scope.table} WHERE worktree = captureDetails.worktree AND id = captureDetails.id ${scope.predicate}
+   )`, [worktree, id, ...scope.params]);
    return typeof rows[0]?.body === 'string' ? JSON.parse(rows[0].body) : null;
   },
   async clear(worktree: string) {

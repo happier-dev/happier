@@ -160,9 +160,17 @@ describe('native exception Actions on the collector', () => {
         stacktrace: expect.stringContaining('at total'),
         sourceContext: '3 before();\n4 throw error;\n5 after();',
       });
-      expect(await read({ occurrenceId: 'exception:a' })).toMatchObject({ sourceContext: null });
+      expect(await read({ occurrenceId: 'exception:a' })).toMatchObject({
+        items: [{ id: 'exception:b' }], stacktrace: expect.stringContaining('at total'), sourceContext: null,
+      });
       expect(await read()).not.toHaveProperty('sourceContext');
       expect(await read({ occurrenceId: 'not-retained' })).toMatchObject({ sourceContext: null, stacktrace: null });
+      expect.soft(await read({ occurrenceId: 'exception:b', fingerprint: 'another-group' }))
+        .toMatchObject({ status: 'ok', items: [], sourceContext: null, stacktrace: null });
+      const readCaptureDetail = () => host.invokeAction(local(database.DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1), {
+        source: { kind: 'environment', serverId: 'home', environmentId: 'env' }, id: 'exception:b',
+      });
+      expect.soft(await readCaptureDetail()).toMatchObject({ ok: true, detail: null });
       // J2 detail: the 7-day trend and Requests affected come from the same retained occurrences.
       expect(await read({ window: { since: 0, until: 3000, bucketMs: 1000 } })).toMatchObject({
         status: 'ok',
@@ -248,7 +256,15 @@ describe('native exception Actions on the collector', () => {
         code: 'deployment_access_denied',
       });
       expect(published).toHaveLength(2);
-      expect(admissions).toBe(12);
+      expect(admissions).toBe(14);
+
+      refuse = false;
+      // Retention removes group rows and detail bodies in separate chunks.
+      await fixture.db.execute('DELETE FROM captureExceptions WHERE worktree = ? AND id = ?', ['environment:env', 'exception:b']);
+      expect.soft(await read({ occurrenceId: 'exception:b' })).toMatchObject({
+        status: 'ok', items: [{ id: 'exception:a' }], sourceContext: null, stacktrace: null,
+      });
+      expect.soft(await readCaptureDetail()).toMatchObject({ ok: true, detail: null });
     } finally {
       projection?.stop();
       await lease.release();

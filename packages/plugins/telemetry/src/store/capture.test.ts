@@ -107,7 +107,7 @@ describe('capture store through SQLite', () => {
    const [retained] = await store.exceptionGroups({ worktree: 'chosen', limit: 10 });
    expect(retained).toMatchObject({ fingerprint: 'retained-fp', count: 1 });
    expect(retained).not.toMatchObject({ applicationOrigin: 'browser' });
-   expect(await store.detail('chosen', 'retained')).toEqual({ retained: true });
+   expect(await store.detail('chosen', 'retained', { fingerprint: retained!.fingerprint })).toEqual({ retained: true });
    // Reach the genuine SQLite column after the append-only migration.
    expect(await f.db.query('SELECT applicationOrigin FROM captureExceptions WHERE id = ?', ['retained']))
     .toEqual([{ applicationOrigin: null }]);

@@ -76,7 +76,8 @@ it('F18b app-owned reference captures actual throws and rejections outside spans
         const group = groups.find(value => value.type === 'TypeError')!;
         expect(group).toMatchObject({ serviceName: 'web', lastServiceVersion: 'build-41', count: 1 });
         const occurrences = await runtime.store.exceptionOccurrences({ worktree: 'environment:production', fingerprint: group.fingerprint, limit: 10 });
-        expect(JSON.stringify(await runtime.store.detail('environment:production', occurrences[0]!.id))).toContain('app.min.js:1:');
+        expect(JSON.stringify(await runtime.store.detail('environment:production', occurrences[0]!.id,
+            { fingerprint: group.fingerprint }))).toContain('app.min.js:1:');
         const stored = JSON.stringify(await sqlite.db.query('SELECT body FROM captureDetails'));
         expect(stored).not.toContain('hunter2');
         expect(stored).toContain('ignore previous instructions'); // Preserved as evidence data.

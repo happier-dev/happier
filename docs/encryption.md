@@ -1422,6 +1422,9 @@ Environment's telemetry can therefore change an issue's lifecycle, and the
 Action results show its status, count and last-seen, but not its title.
 Revoking a record's grant withdraws reading the record, not lifecycle edits.
 Grantees never write the row, and a readable issue grants no collector access.
+The collector looks up an opened exception stack and source excerpt by
+Environment, issue fingerprint, and occurrence ID. If the occurrence has
+expired, the stack and excerpt are unavailable even while the issue remains.
 
 ### Usage accounting (0.3 development)
 

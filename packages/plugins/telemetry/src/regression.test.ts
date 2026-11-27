@@ -85,6 +85,7 @@ describe('retained regression Actions', () => {
         let liveFinish = 2000;
         let repeatFinish: number | null = null;
         let repeatHasLabel = true;
+        let fixedFinish: number | null = null;
         let metricsEnabled = true;
         let windowMs = 1000;
         const actions = { execute: async (id: string, input: { cursor?: string; deploymentId?: string; projection?: string }) => {
@@ -92,12 +93,14 @@ describe('retained regression Actions', () => {
             if (id === 'deployments.receipts.get') {
                 expect(input.projection).toBe('investigation');
                 const sourceLabel = input.deploymentId === 'old' ? oldLabel
+                    : input.deploymentId === 'fixed' ? { kind: 'repository', sha: 'c'.repeat(40) }
                     : input.deploymentId === 'repeat' && !repeatHasLabel ? null : liveLabel;
                 return { ok: true, investigation: { sourceLabel } };
             }
             if (id !== 'deployments.receipts.list') throw new Error(`Unexpected effect: ${id}`);
             return input.cursor ? { ok: true, items: [{ id: 'old', state: 'succeeded', operation: 'deploy', settledAtMs: 500 }], nextCursor: null }
                 : { ok: true, items: [
+                    ...(fixedFinish === null ? [] : [{ id: 'fixed', state: 'succeeded', operation: 'deploy', settledAtMs: fixedFinish }]),
                     ...(repeatFinish === null ? [] : [{ id: 'repeat', state: 'succeeded', operation: 'deploy', settledAtMs: repeatFinish }]),
                     { id: 'live', state: 'succeeded', operation: 'deploy', settledAtMs: liveFinish },
                 ], nextCursor: 'older' };
@@ -149,6 +152,29 @@ describe('retained regression Actions', () => {
             expect(await compare()).toMatchObject({ status: 'comparable', changePercent: 0,
                 before: { measurements: { window: { since: 1000, until: 2000 } } },
                 after: { measurements: { window: { since: 3000, until: 4000 }, value: expect.closeTo(9.5) } } });
+
+            // Advance the storage boundary past the old interval while preserving deployment history and current traffic.
+            await fixture.db.transaction(async tx => {
+                await tx.execute('DELETE FROM metricBuckets WHERE at < ?', [3000]);
+                await tx.execute('DELETE FROM metricPoints WHERE at < ?', [3000]);
+            });
+            const expired = await compare();
+            expect(expired).toMatchObject({ status: 'inconclusive', reasons: ['no_traffic'],
+                liveDeploymentId: 'live', previousDeploymentId: 'old',
+                before: { measurements: { window: { since: 1000, until: 2000 }, reasons: ['no_traffic'] } },
+                after: { measurements: { window: { since: 3000, until: 4000 }, value: expect.closeTo(9.5) } } });
+            expect(expired).not.toHaveProperty('change');
+
+            fixedFinish = 4000;
+            vi.setSystemTime(5000);
+            await lease.runtime.store.write([
+                { id: 'fixed', worktree: 'environment:env', kind: 'metric', source: 'otlp', at: 5000,
+                    metric: histogram(4000, 5000, 'fixed', ['0', '1', '0']) },
+            ]);
+            expect(await compare()).toMatchObject({ status: 'comparable', liveDeploymentId: 'fixed', previousDeploymentId: 'live',
+                before: { measurements: { window: { since: 3000, until: 4000 }, value: expect.closeTo(9.5) } },
+                after: { measurements: { window: { since: 4000, until: 5000 }, value: expect.closeTo(95.5) } } });
+            fixedFinish = null;
             vi.setSystemTime(3000);
             // A deploy between arming and firing changes the windows at firing.
             liveFinish = 3000;

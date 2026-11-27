@@ -122,6 +122,7 @@ export const exceptionActions = {
           const detail = await runtime.store.detail(
             selected.partition,
             input.occurrenceId,
+            { fingerprint: input.fingerprint },
           );
           const exception =
             detail && typeof detail === 'object' && 'exception' in detail
