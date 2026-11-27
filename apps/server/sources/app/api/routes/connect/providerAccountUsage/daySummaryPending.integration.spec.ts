@@ -213,10 +213,6 @@ it('accepted observations own pending days, exact publication clears them and em
             value: { recordId: snapshot.recordId, dayStartAtMs, payload } }, tx)).toBe(true);
     });
     expect(await metadata()).toMatchObject({ daySummaryPendingDays: [] });
-    await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: snapshot.recordId } },
-        data: { metadata: { materialFingerprint: 'fixture' } } });
-    await expect(write(snapshot)).resolves.toBe('noop');
-    expect(await metadata()).toMatchObject({ daySummaryPendingDays: [] });
     const history = await db.providerAccountUsageHistory.findMany({ where: { accountId: account.id } });
     expect(history[0]!.payload).not.toHaveProperty('metadata.daySummaryPendingDays');
     await inTx(async tx => {
@@ -255,6 +251,9 @@ it('accepted observations own pending days, exact publication clears them and em
     const { daySummaryPendingDays: _legacy, ...legacyMetadata } = raw;
     await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: snapshot.recordId } },
         data: { metadata: legacyMetadata } });
+    await expect(write(tomorrow)).resolves.toBe('noop');
+    const afterReplay = await metadata();
+    expect(isRecord(afterReplay) && 'daySummaryPendingDays' in afterReplay).toBe(false);
     const refreshedTomorrow = { ...tomorrow, fetchedAtMs: tomorrow.fetchedAtMs + 1000, observedAtMs: tomorrow.observedAtMs + 1000 };
     await expect(write(refreshedTomorrow)).resolves.toBe('written');
     expect(await metadata()).toMatchObject({ daySummaryPendingDays: [dayStartAtMs + 86_400_000], pageProjection: { recordId: snapshot.recordId } });

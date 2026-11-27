@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TransactionClient } from '@/storage/prisma';
+import { buildProviderAccountUsagePageProjectionV1, packProviderAccountUsagePageProjectionV1,
+    PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 
 const database = vi.hoisted(() => ({ transaction: vi.fn() }));
 vi.mock('@/storage/db', async importOriginal => ({
@@ -11,21 +13,38 @@ import { createUsageSnapshot } from '../providerAccountUsageTestkit';
 import { writeProviderAccountUsageRecordWithPolicy } from './routeWritePolicy';
 import { ProviderAccountUsagePayloadInvariantError } from './types';
 
-function databaseBoundary(meterCount: number) {
+function databaseBoundary(meterCount: number, projectionEntryCount = 0) {
     const first = createUsageSnapshot({ fetchedAt: Date.now() - 10_000 });
     const snapshot = { ...first, meters: Array.from({ length: meterCount }, (_, index) => ({
         ...first.meters[0]!, meterId: `meter-${index}`,
     })) };
+    const range = { startAtMs: snapshot.fetchedAtMs - projectionEntryCount, endAtMs: snapshot.fetchedAtMs };
+    const entries = Array.from({ length: projectionEntryCount }, (_, index) => {
+        const observedAtMs = range.startAtMs + index;
+        return { id: `accepted-observation-${index}`, observedAtMs,
+            snapshot: { ...snapshot, fetchedAtMs: observedAtMs, observedAtMs } };
+    });
+    const last = entries.at(-1);
+    const projection = last ? {
+        recordId: snapshot.recordId, encoding: PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
+        demand: { range, resolution: 'accepted_observations' as const },
+        frontier: { id: last.id, observedAtMs: last.observedAtMs }, observationCount: entries.length,
+        content: { t: 'plain' as const, v: packProviderAccountUsagePageProjectionV1(
+            buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range, history: { entries, nextCursor: null } })) },
+    } : undefined;
     const operations: string[] = [];
     let mode = 'plain';
     const stored = { accountId: 'owner', recordId: snapshot.recordId, recordKeyJson: snapshot.recordKey,
         payloadMode: 'plain_json_v1', status: 'ok', snapshot,
         sealedPayload: null, fetchedAt: new Date(snapshot.fetchedAtMs),
-        staleAfterMs: snapshot.staleAfterMs, refreshRequestedAt: null, metadata: { materialFingerprint: 'fixture', daySummaryPendingDays: [] },
+        staleAfterMs: snapshot.staleAfterMs, refreshRequestedAt: null, metadata: { materialFingerprint: 'fixture', daySummaryPendingDays: [], ...(projection ? { pageProjection: projection } : {}) },
         history: [{ id: 'retained' }] };
     const retained: unknown[] = [];
     const parentUpdate = vi.fn(async () => { operations.push('record.update'); return { id: 'record' }; });
-    const updateMany = vi.fn(async () => { operations.push('record.update'); return { count: 1 }; });
+    const updateMany = vi.fn(async (_args: { data: { metadata?: unknown } }) => {
+        operations.push('record.update');
+        return { count: 1 };
+    });
     const insertHistory = vi.fn(async (args: { data: unknown }) => {
         operations.push('history.insert'); retained.push(args.data); return { id: 'history' };
     });
@@ -102,6 +121,15 @@ describe('provider usage write cost and Account admission', () => {
         expect(boundary.retained).toHaveLength(observations);
         expect(boundary.operations.filter(operation => operation === 'summary.invalidate')).toHaveLength(observations);
         expect(boundary.operations.filter(operation => operation === 'pending.update')).toHaveLength(observations);
+    });
+
+    it('advances the observation clock without rewriting an unchanged stored projection', async () => {
+        const boundary = databaseBoundary(8, 8_000);
+        await expect(boundary.write('freshness')).resolves.toBe('written');
+        expect(boundary.retained).toHaveLength(1);
+        const metadataBytesByUpdate = boundary.updateMany.mock.calls.map(([{ data }]) =>
+            data.metadata === undefined ? 0 : Buffer.byteLength(JSON.stringify(data.metadata)));
+        expect(metadataBytesByUpdate).toEqual([0]);
     });
 
     it('refuses old-mode content after Account admission without writing a record, history or publication', async () => {

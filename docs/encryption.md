@@ -1684,10 +1684,10 @@ The server's `daySummaryPendingStorage` owner tracks pending UTC days in the
 server-only `ProviderAccountUsageRecord.metadata.daySummaryPendingDays` leaf.
 Accepted material writes add their day, and a summary write clears its day only
 when coverage matches. An explicit empty list means no pending work. Records
-without this leaf use legacy missing-day discovery until the next normal write
-initializes it from retained detail; reads need not wait for that write. This
-metadata is preserved across current-record updates and excluded from retained
-history payloads. Normal initialized discovery transfers only pending days and
+without this leaf discover missing days from retained detail. The next accepted
+current-record update initializes the leaf in the same write. An exact
+same-clock replay leaves it untouched. The leaf is preserved across
+current-record updates and excluded from retained history payloads. Normal initialized discovery transfers only pending days and
 their required predecessor summaries.
 The day-summary reader can request `includeCoverage: true` to receive all
 selected envelopes together with the pending days and their accepted count/frontier

@@ -15,7 +15,6 @@ import {
     readProviderAccountUsageRecordWithCurrentGuard,
     updateProviderAccountUsageRecordIfCurrent,
     retainProviderAccountUsageHistory,
-    updateProviderAccountUsageRecordMetadataIfCurrent,
 } from "./recordStorage";
 import type {
     LegacyQuotaCompatibilityProjection,
@@ -185,7 +184,7 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
     // Concurrent material writes retry within the containing transaction's
     // existing deadline; this phase must not fail valid work after five CAS misses.
     for (;;) {
-        let captured = await readProviderAccountUsageRecordWithCurrentGuard({
+        const captured = await readProviderAccountUsageRecordWithCurrentGuard({
             accountId: params.accountId,
             recordId: params.recordId,
         }, params.client);
@@ -222,20 +221,7 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             }
         }
 
-        let existing = captured.record;
-        if (existing.metadata?.daySummaryPendingDays === undefined) {
-            // Initialize once at the normal-write owner, including freshness and
-            // no-op writes. The existing parent CAS retries concurrent changes.
-            const pending = await readProviderAccountUsageLegacyPendingDays(params, params.client);
-            const rawMetadata = captured.rawMetadata && typeof captured.rawMetadata === 'object' && !Array.isArray(captured.rawMetadata)
-                ? captured.rawMetadata : {};
-            const metadata = { ...rawMetadata, daySummaryPendingDays: pending };
-            if (!await updateProviderAccountUsageRecordMetadataIfCurrent({ accountId: params.accountId,
-                recordId: params.recordId, metadata }, captured.guard, params.client)) continue;
-            existing = { ...existing, metadata: { ...existing.metadata, daySummaryPendingDays: pending } };
-            captured = { ...captured, record: existing, rawMetadata: metadata,
-                guard: { ...captured.guard, content: { ...captured.guard.content, metadata: { equals: metadata } } } };
-        }
+        const existing = captured.record;
 
         const existingFingerprint = normalizeFingerprint(existing.metadata?.materialFingerprint);
         const existingFetchedAt = existing.fetchedAt ?? null;
@@ -320,10 +306,12 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             ...(preservesRefreshRequest ? { refreshRequestedAt: existing.refreshRequestedAt } : {}),
         });
 
-        if (existing.metadata?.pageProjection) nextWrite = { ...nextWrite,
-            metadata: { ...nextWrite.metadata, pageProjection: existing.metadata.pageProjection } };
-        if (existing.metadata?.daySummaryPendingDays !== undefined) nextWrite = { ...nextWrite,
-            metadata: { ...nextWrite.metadata, daySummaryPendingDays: existing.metadata.daySummaryPendingDays } };
+        // Bring legacy pending days forward in the first accepted head update.
+        // Equal replays leave metadata untouched and readers can discover legacy days.
+        const daySummaryPendingDays = existing.metadata?.daySummaryPendingDays
+            ?? await readProviderAccountUsageLegacyPendingDays(params, params.client);
+        nextWrite = { ...nextWrite, metadata: { ...nextWrite.metadata, daySummaryPendingDays,
+            ...(existing.metadata?.pageProjection ? { pageProjection: existing.metadata.pageProjection } : {}) } };
         await params.beforeWrite?.();
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, captured.guard, params.client);
         if (updated) {

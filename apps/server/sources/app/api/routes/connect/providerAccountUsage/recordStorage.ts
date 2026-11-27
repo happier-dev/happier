@@ -400,9 +400,13 @@ export async function updateProviderAccountUsageRecordIfCurrent(
     client: ProviderAccountUsageRecordClient = db,
 ): Promise<boolean> {
     const parsed = parseProviderAccountUsageRecordWrite(raw);
+    const { metadata, ...data } = buildProviderAccountUsageRecordUpdateData(parsed);
+    // Keep the captured metadata in the CAS, while letting storage reuse its
+    // current value when the observation only changes other columns.
+    const metadataUnchanged = isDeepStrictEqual(guard.content?.metadata, { equals: metadata });
     const updated = await client.providerAccountUsageRecord.updateMany({
         where: buildProviderAccountUsageRecordCurrentWhere(parsed, guard),
-        data: buildProviderAccountUsageRecordUpdateData(parsed),
+        data: metadataUnchanged ? data : { ...data, metadata },
     });
     // The write policy consumes only this acknowledgement. Its qualified
     // caller reads the final record after history/source settlement; reading
