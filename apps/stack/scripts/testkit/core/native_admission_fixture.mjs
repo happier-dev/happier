@@ -279,6 +279,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
       `}`,
       'export const readProcessJobScopeWorkingSetKiB = () => null;',
       'export const readProcessJobScopeCpuUsageUsec = () => null;',
+      'export const readProcessJobScopeOomCount = () => 0;',
+      // No dedicated jobs scope in the fixture: report an uncapped scope so the
+      // compiler MemoryMax step keeps the class ceiling without a systemctl call.
+      `export const readOwnJobScopeMemoryMax = () => ({ unit: 'fixture.scope', bytes: 0 });`,
       '',
     ].join('\n'));
     await copyFile(join(dirname(admissionClientSourcePath), '../dev_targets/command_resources.mjs'), join(targets, 'command_resources.mjs'));
