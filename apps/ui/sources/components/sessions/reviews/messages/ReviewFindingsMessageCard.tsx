@@ -45,6 +45,8 @@ import { useOptionalSessionTranscriptSource, useSessionTranscriptSource } from '
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { Typography } from '@/constants/Typography';
 import { useSessionMessages } from '@/sync/domains/state/storage';
 import {
@@ -222,7 +224,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         members, reviewerCount, scope, accountLifetime, serverId, sessionId, draftRunId: runId,
         canAct, pending: allPending, onDecideComment,
     });
-    const { rows, followUp, implement, dockMembers, dockRecipient, error, approval } = model;
+    const { rows, followUp, implement, dockMembers, dockRecipient, error, failure, approval } = model;
+    const failurePresentation = failure ? presentActionExecutionFailure(failure) : null;
     const rowFindings = React.useMemo(() => rows.map((row) => row.finding), [rows]);
     const headline = React.useMemo(() => formatReviewFindingsHeadline(rowFindings), [rowFindings]);
     const highCount = React.useMemo(() => rowFindings.filter((finding) => isHighReviewSeverity(finding.severity)).length, [rowFindings]);
@@ -494,7 +497,10 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                     message={t('approvals.title')}
                     onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} />
             ) : null}
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? <SurfaceStateCard kind="error" size="line" title={t('common.error')} reason={error}
+                diagnosticCode={failure?.errorCode}
+                diagnosticDetail={failurePresentation?.technicalDetails.filter(detail => detail.key !== 'code')
+                    .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined} /> : null}
         </ExecutionRunResultLayout>
     );
 }
@@ -599,9 +605,5 @@ const stylesheet = StyleSheet.create((theme) => ({
     caption: {
         color: theme.colors.text.secondary,
         ...Typography.variant('meta'),
-    },
-    errorText: {
-        color: theme.colors.state.danger.textForeground,
-        ...Typography.variant('body'),
     },
 }));

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -23,6 +24,8 @@ import { useSessionAgentActivityRoster } from '@/hooks/session/useSessionAgentAc
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import type { WalkthroughFindingView } from './reviewWalkthroughOverlay';
 import type { WalkthroughReviewState } from './useWalkthroughReview';
@@ -85,7 +88,14 @@ export function useSessionWalkthroughReviewPresentation(params: Readonly<{
                 onDecide={(next: ReviewFindingDecision) => {
                     if (!comment) return;
                     fireAndForget(decideReviewRunFinding({ scope, sessionId, runId: view.runId,
-                        ...(comment.reviewId ? { reviewId: comment.reviewId } : {}), commentId: comment.id, decision: next }), { tag: 'SessionWalkthroughReview.decide' });
+                        ...(comment.reviewId ? { reviewId: comment.reviewId } : {}), commentId: comment.id, decision: next }).catch(error => {
+                        const failure = readActionFailureEnvelope(error) ?? readActionFailureEnvelope(error instanceof Error ? error.cause : null);
+                        const presentation = failure ? presentActionExecutionFailure(failure, t('runPage.review.couldNotSaveChoice')) : null;
+                        alertActionFailure({ reason: presentation?.reason ?? t('runPage.review.couldNotSaveChoice'), code: failure?.errorCode ?? null,
+                            requestId: failure?.requestId, context: Object.fromEntries(presentation?.technicalDetails
+                                .filter(detail => detail.key !== 'code' && detail.key !== 'requestId')
+                                .map(detail => [detail.key, detail.value]) ?? []) });
+                    }), { tag: 'SessionWalkthroughReview.decide' });
                 }}
             />
         );

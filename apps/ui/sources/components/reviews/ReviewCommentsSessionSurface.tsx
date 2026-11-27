@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -24,6 +26,7 @@ import { Modal } from '@/modal';
 import { t, usePreferredLanguage } from '@/text';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useReviewCommentsWindow } from '@/components/sessions/reviews/findings/useReviewRunComments';
 import type { ReviewRunCommentsTarget } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { randomUUID } from '@/platform/randomUUID';
@@ -135,7 +138,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
     const panelOpen = externalHeader ? props.open === true : ownPanelOpen;
     const [showHistory, setShowHistory] = React.useState(false);
     // The last action that failed: on the card it was taken on (null for a bulk action), with its retry.
-    const [mutationFailure, setMutationFailure] = React.useState<Readonly<{ commentId: string | null; retry: () => void }> | null>(null);
+    const [mutationFailure, setMutationFailure] = React.useState<Readonly<{ commentId: string | null; failure: ActionExecuteFailure | null; retry: () => void }> | null>(null);
     // Comments are read when the panel opens; until then the count is unknown, never "0".
     const [bulkTransitionResult, setBulkTransitionResult] = React.useState<ReviewCommentBulkTransitionResult | null>(null);
     const [selectedActiveStates, setSelectedActiveStates] = React.useState<readonly ReviewCommentStateV1[]>(
@@ -358,8 +361,9 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         setMutationFailure(null);
         try {
             await operation();
-        } catch {
-            setMutationFailure({ commentId, retry: () => void runMutation(operation, commentId) });
+        } catch (error) {
+            const failure = readActionFailureEnvelope(error) ?? readActionFailureEnvelope(error instanceof Error ? error.cause : null);
+            setMutationFailure({ commentId, failure, retry: () => void runMutation(operation, commentId) });
         }
     };
     /** A card's action runs on the comment as currently held, so a retry after a refresh uses its new revision. */
@@ -368,12 +372,18 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
         comment.id,
     );
     const failureTestID = `${props.testID ?? 'review-comments'}-mutation-error`;
+    const failurePresentation = mutationFailure?.failure
+        ? presentActionExecutionFailure(mutationFailure.failure, t('errors.operationFailed')) : null;
     const renderMutationFailure = () => mutationFailure ? (
         <View testID={failureTestID} accessibilityRole="alert">
             <SurfaceStateCard
                 size="line"
                 kind="error"
                 title={mutationFailure.commentId ? t('files.reviewComments.durable.actionFailed') : t('errors.operationFailed')}
+                reason={failurePresentation?.reason}
+                diagnosticCode={mutationFailure.failure?.errorCode}
+                diagnosticDetail={failurePresentation?.technicalDetails.filter(detail => detail.key !== 'code')
+                    .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined}
                 action={{ label: t('common.retry'), onPress: mutationFailure.retry, testID: `${failureTestID}-retry` }}
                 secondaryAction={{ label: t('files.reviewComments.durable.refresh'), onPress: () => { setMutationFailure(null); void loadComments(); },
                     testID: `${failureTestID}-refresh` }}

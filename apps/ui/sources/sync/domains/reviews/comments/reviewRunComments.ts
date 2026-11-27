@@ -3,6 +3,8 @@ import { REVIEW_COMMENT_LIST_PAGE_LIMIT_MAX_V1, type ReviewCommentListResponseV1
 import type { ReviewCommentScopeV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { readReviewFindingDecisionV1, type ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 import { randomUUID } from '@/platform/randomUUID';
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -80,7 +82,7 @@ function scopedExecutor(scope: ServerAccountScope): ReviewCommentUiActionExecuto
             expectedAccountId: scope.accountId,
             ...(options?.signal ? { signal: options.signal } : {}),
         });
-        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        if (!result.ok) throw createActionExecuteFailureError(result);
         return result.result;
     };
 }
@@ -311,8 +313,8 @@ export function ensureReviewRunComments(params: ReviewRunCommentsTarget & Readon
 
 /**
  * Records a finding's decision on its comment. Resolves `true` once the server confirms it; on a
- * conflict or failure the comments are reloaded (so the latest decision shows) and it resolves
- * `false`.
+ * conflict or failure the comments are reloaded (so the latest decision shows), then the original
+ * failure reaches the caller. The write queue remains available for its next decision.
  */
 export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonly<{
     commentId: string;
@@ -326,7 +328,6 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
     const chain: CommentWriteChain = { write: previous, pending: params.decision };
     writeChains.set(writeKey, chain);
     setPending(entry, params.commentId, params.decision);
-    let confirmed = false;
     const write = previous.then(async () => {
         const comment = entry.snapshot.comments.find((item) => item.id === params.commentId);
         try {
@@ -339,25 +340,25 @@ export function decideReviewRunFinding(params: ReviewRunCommentsTarget & Readonl
             const sameDecision = readReviewFindingDecisionV1(comment.reviewTriageStatus, comment.state) === params.decision
                 || (params.decision === 'needs_refinement' && comment.reviewTriageStatus === params.decision);
             if (sameDecision && request.toState === comment.state) {
-                confirmed = true;
                 return;
             }
             const response = await execute('reviews.comments.transition', request) as ReviewCommentTransitionResponseV1;
             upsert(entry, response.comment);
             recordReviewCommentWrites([response.comment], params.scope);
-            confirmed = true;
-        } catch {
+        } catch (error) {
             await loadReviewRunComments({ ...entry.target, execute }).catch(() => undefined);
+            throw error;
         } finally {
             // A later decision for the same comment owns the pending value once it has been made.
             if (writeChains.get(writeKey) === chain) setPending(entry, params.commentId, null);
         }
     });
-    chain.write = write;
-    return write.then(() => confirmed);
+    // Failed writes settle this caller, while later decisions still enter the same queue.
+    chain.write = write.catch(() => undefined);
+    return write.then(() => true);
 }
 
-export type ReviewFindingBulkDecisionResult = Readonly<{ updated: readonly string[]; failed: readonly string[] }>;
+export type ReviewFindingBulkDecisionResult = Readonly<{ updated: readonly string[]; failed: readonly string[]; failure?: ActionExecuteFailure }>;
 
 /** Selected roots share the same per-comment write chains and confirmed windows as a single decision. */
 export function decideReviewRunFindings(params: ReviewRunCommentsTarget & Readonly<{
@@ -395,6 +396,7 @@ export function decideReviewRunFindings(params: ReviewRunCommentsTarget & Readon
             group.revisions[id] = comment.serverRevision;
         }
         let reload = false;
+        let failure: ActionExecuteFailure | null = null;
         try {
             for (const group of groups.values()) {
                 const { commentId: _id, expectedServerRevision: _revision, ...request } = group.request;
@@ -403,10 +405,14 @@ export function decideReviewRunFindings(params: ReviewRunCommentsTarget & Readon
                         commentIds: group.ids, expectedServerRevisions: group.revisions }) as ReviewCommentBulkTransitionResponseV1;
                     recordReviewCommentWrites(result.updated, params.scope);
                     for (const comment of result.updated) updated.add(comment.id);
-                } catch { reload = true; }
+                } catch (error) {
+                    reload = true;
+                    failure ??= readActionFailureEnvelope(error) ?? readActionFailureEnvelope(error instanceof Error ? error.cause : null);
+                }
             }
             if (reload) await loadReviewRunComments({ ...entry.target, execute }).catch(() => undefined);
-            return { updated: ids.filter(id => updated.has(id)), failed: ids.filter(id => !updated.has(id)) };
+            return { updated: ids.filter(id => updated.has(id)), failed: ids.filter(id => !updated.has(id)),
+                ...(failure ? { failure } : {}) };
         } finally {
             for (const [index, id] of ids.entries()) {
                 if (writeChains.get(commentWriteKey(params.scope, id)) === chains[index]) setPending(entry, id, null);

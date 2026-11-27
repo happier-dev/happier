@@ -78,6 +78,39 @@ async function serveTwoHomes() {
 }
 
 describe('review run comments (one cache, bound to its Home and Account)', () => {
+    it('preserves a refused decision and permits retry on the same comment through the Action front door', async () => {
+        let refuse = false;
+        const served = await serveActionHomes({
+            homes: [{ key: 'review', serverUrl: 'https://review-refusal.test', accountId: 'account-b' }],
+            route: request => {
+                if (request.path === '/v1/reviews/comments') return Response.json({ items: [storePlainReviewCommentFixture(comment('account-b'))], cursor: null });
+                if (request.path.endsWith('/bulkTransition')) return Response.json({ error: 'review_comment_conflict',
+                    failureCause: { phase: 'reviews.comments.bulkTransition', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } }, { status: 409 });
+                if (request.path.endsWith('/transition')) {
+                    if (refuse) return Response.json({ error: 'review_comment_conflict', requestId: 'decision-refusal',
+                        failureCause: { phase: 'reviews.comments.transition', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } }, { status: 409 });
+                    const body = request.body as { toState: ReviewCommentV1['state']; reviewTriageStatus: ReviewCommentV1['reviewTriageStatus'] };
+                    return Response.json({ comment: comment('account-b', { state: body.toState, reviewTriageStatus: body.reviewTriageStatus, serverRevision: 4 }) });
+                }
+                return undefined;
+            },
+        });
+        dispose = served.dispose;
+        const target = { scope: { serverId: served.homes.review!.id, accountId: 'account-b' }, sessionId: 'sess_1', runId: 'run_1' };
+        await loadReviewRunComments(target);
+        expect(await decideReviewRunFinding({ ...target, commentId: 'comment-f1', decision: 'accept' })).toBe(true);
+        refuse = true;
+        await expect(decideReviewRunFinding({ ...target, commentId: 'comment-f1', decision: 'reject' }))
+            .rejects.toMatchObject({ errorCode: 'review_comment_conflict', requestId: expect.any(String),
+                failureCause: { phase: 'reviews.comments.transition', httpStatus: 409 } });
+        expect(readReviewRunComments(target).pending).toEqual({});
+        refuse = false;
+        expect(await decideReviewRunFinding({ ...target, commentId: 'comment-f1', decision: 'reject' })).toBe(true);
+        const bulk = await commentWindows.decideReviewRunFindings({ ...target, commentIds: ['comment-f1'], decision: 'defer' });
+        expect(bulk).toMatchObject({ updated: [], failed: ['comment-f1'], failure: { errorCode: 'review_comment_conflict',
+            requestId: expect.any(String), failureCause: { phase: 'reviews.comments.bulkTransition', httpStatus: 409 } } });
+        expect(readReviewRunComments(target).pending).toEqual({});
+    });
     it('bulk-decides selected roots through the real mutation transport and shares only confirmed partial successes', async () => {
         const selected = ['selected-first', 'selected-conflict'];
         const roots = ['selected-first', 'selected-conflict', 'unselected'].map(id =>
@@ -370,9 +403,8 @@ describe('review run comments (one cache, bound to its Home and Account)', () =>
         await loadReviewRunComments({ scope: before, sessionId: 'sess_1', runId: 'run_1' });
 
         await served.switchAccount('other', 'account-c');
-        const saved = await decideReviewRunFinding({ scope: before, sessionId: 'sess_1', runId: 'run_1', commentId: 'comment-f1', decision: 'accept' });
-
-        expect(saved).toBe(false);
+        await expect(decideReviewRunFinding({ scope: before, sessionId: 'sess_1', runId: 'run_1', commentId: 'comment-f1', decision: 'accept' }))
+            .rejects.toMatchObject({ errorCode: 'action_account_scope_changed' });
         expect(served.requests.some((request) => request.path.endsWith('/transition'))).toBe(false);
         // The new Account's view starts from its own read, never the previous Account's snapshot.
         const after = { serverId: served.homes.other!.id, accountId: 'account-c' };

@@ -308,7 +308,10 @@ describe('ReviewCommentsSessionSurface', () => {
             if (actionId === 'reviews.comments.list') {
                 return { items: [comment({ id: 'other-comment' }), comment({ id: 'failed-comment' })], cursor: null };
             }
-            if (reject) throw Object.assign(new Error('private diagnostic'), { code: 'review_comment_conflict' });
+            if (reject) throw Object.assign(new Error('private diagnostic'), { ok: false, errorCode: 'review_comment_conflict',
+                error: 'Refresh the Review before saving this decision.', requestId: 'mutation-refusal',
+                details: { reason: 'revision_changed', privateDiagnostic: 'secret transport detail' },
+                failureCause: { phase: 'reviews.comments.transition', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } });
             const request = ReviewCommentTransitionRequestV1Schema.parse(input);
             return { comment: comment({ id: request.commentId, state: request.toState, serverRevision: 2 }) };
         });
@@ -320,6 +323,14 @@ describe('ReviewCommentsSessionSurface', () => {
         const otherCard = screen.findHostByTestId('review-comment-other-comment');
         expect(failedCard?.findAll((node) => node.props.testID === 'comments-mutation-error').length).toBeGreaterThan(0);
         expect(otherCard?.findAll((node) => node.props.testID === 'comments-mutation-error').length).toBe(0);
+        expect(screen.getTextContent()).toContain('Refresh the Review before saving this decision.');
+        expect(screen.getTextContent()).not.toContain('private diagnostic');
+        const failureCard = screen.findAllByType((await import('@/components/ui/surfaces/SurfaceStateCard')).SurfaceStateCard)
+            .find(node => node.props.diagnosticCode === 'review_comment_conflict');
+        expect(failureCard?.props.diagnosticDetail).toContain('mutation-refusal');
+        expect(failureCard?.props.diagnosticDetail).toContain('reviews.comments.transition');
+        expect(failureCard?.props.diagnosticDetail).not.toContain('private diagnostic');
+        expect(failureCard?.props.diagnosticDetail).not.toContain('secret transport detail');
         reject = false;
         await screen.pressByTestIdAsync('comments-mutation-error-retry');
         await flushHookEffects();

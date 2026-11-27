@@ -19,7 +19,7 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { ReviewChangesHost } from '../ReviewChangesHost';
 import { formatReviewCommentAnchor, resolveReviewCommentBodyPromptDefault } from '../content';
 import { formatCodeCommitShortOid } from '@/components/projects/files/code/codeEntryHistoryPresentation';
@@ -396,6 +396,11 @@ export function ReviewDetailHost(props: Readonly<{
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
     selectedRowIds: selectedRowIds.length > 0 ? selectedRowIds : undefined,
     onDecideComment: decide, onBulkDecideComments: comments.decideMany });
+  const findingsFailurePresentation = findings.failure ? presentActionExecutionFailure(findings.failure) : null;
+  const findingsErrorNotice = findings.error ? <SurfaceStateCard kind="error" size="line" title={t('common.error')}
+    reason={findings.error} diagnosticCode={findings.failure?.errorCode}
+    diagnosticDetail={findingsFailurePresentation?.technicalDetails.filter(detail => detail.key !== 'code')
+      .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined} /> : null;
   const findingById = React.useMemo(() => new Map(findings.rows.map(row => [row.rowId, row])), [findings.rows]);
   const findingListRows = React.useMemo(() => findings.rows.map(row => ({ rowId: row.rowId, title: row.finding.title,
     severity: row.finding.severity, decision: row.decision, fixed: row.fixed })), [findings.rows]);
@@ -578,7 +583,7 @@ export function ReviewDetailHost(props: Readonly<{
               pendingQuestion={findings.pendingQuestionByRowId[row.rowId] ?? null} expanded onToggleExpanded={toggleFinding}
               askContext={row.askContext} onAsk={findings.onAsk} ask={message => findings.onAsk(row.rowId, message)} />
           </ItemGroup>
-          {findings.error ? <SurfaceStateCard kind="error" size="line" title={t('common.error')} reason={findings.error} /> : null}
+          {findingsErrorNotice}
           {decisionBar ? <View style={{ height: SELECTION_ACTION_BAR_RESERVE_PX }} /> : null}
         </ItemList>
         {decisionBar ? <SelectionActionBar placement="pinned" testID="review-detail:decision-bar" visible
@@ -724,7 +729,7 @@ export function ReviewDetailHost(props: Readonly<{
           sessionId={findings.dockMembers[0]?.sessionId ?? null} serverId={scope?.serverId ?? null} accountLifetime={binding}
           draftRunId={findings.dockMembers[0]?.runId ?? null} members={findings.dockMembers}
           recipient={findings.dockRecipient} followUp={findings.followUp} onSend={findings.askReviewers} /> : null}
-        {findings.error ? <SurfaceStateCard kind="error" size="line" title={t('common.error')} reason={findings.error} /> : null}
+        {findingsErrorNotice}
         {findings.approval.approvalPending && findings.approval.approvalId && scope ? <ActionApprovalPendingNotice
           testID="review-detail:approval" message={t('approvals.title')}
           onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(findings.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
@@ -830,10 +835,14 @@ export function ReviewRoundRuns(props: Readonly<{
         const model = reviewer.run ? resolveExecutionRunSelectionLabel(reviewer.run.resolvedSelection, () => null, null,
           resolveRunNativeModelLabel(reviewer.run.backendTarget, undefined, reviewer.run.resolvedSelection)) : null;
         const didntFinish = unfinished.has(reviewer.reviewerId);
+        const failure = reviewer.failure ? presentActionExecutionFailure(reviewer.failure) : null;
         return <Item key={reviewer.reviewerId} testID={`review-detail:run:${reviewer.runId ?? reviewer.reviewerId}`}
           title={joinHappierFacts(reviewer.name, model)} icon={<ReviewerMark reviewer={reviewer} size={20} />}
           // How it ended and, when it didn't finish, why ("Didn't finish · Usage limit reached"), from the outcome owner.
-          subtitle={joinHappierFacts(reviewer.outcome === null ? unfinished.has(reviewer.reviewerId)
+          subtitle={failure ? <SurfaceStateCard kind="error" size="line" title={reviewer.reason ?? failure.message}
+            diagnosticCode={reviewer.failure?.errorCode}
+            diagnosticDetail={failure.technicalDetails.filter(detail => detail.key !== 'code')
+              .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined} /> : joinHappierFacts(reviewer.outcome === null ? unfinished.has(reviewer.reviewerId)
             ? reviewRoundReviewerOutcomeLabel('partial') : null : reviewRoundReviewerStateLabel(reviewer), reviewer.outcome === 'failed' ? null : reviewer.reason) || undefined}
           // Its findings and how long it took sit in the row's right-aligned meta column (lab `detail-runs`).
           detail={joinHappierFacts(reviewer.findingsCount === null ? null

@@ -7,6 +7,7 @@ import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { useReviewFindingsModel } from './useReviewFindingsModel';
 import type { ReviewFindingsMember } from './useReviewFindingsModel';
@@ -23,10 +24,21 @@ it('sends selected durable root identities to one bulk writer and refuses View w
         finding: { id: 'engine-local', title: 'Selected finding', summary: 'Selected', severity: 'high', category: 'correctness' } });
     const other = { ...root, id: 'other-root', threadId: 'other-root', findingIdentity: '2'.repeat(64) };
     const writes: unknown[] = [];
+    let refused = false;
+    let returnRefusal = false;
+    const failure = parseActionExecuteFailure({ ok: false, errorCode: 'review_comment_conflict', error: 'Refresh the Review before changing these decisions.',
+        requestId: 'bulk-refusal', details: { reason: 'revision_changed', privateDiagnostic: 'secret transport detail' },
+        failureCause: { phase: 'reviews.comments.bulkTransition', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } })!;
     const hook = await renderHook(({ canAct }) => useReviewFindingsModel({ members: [], reviewerCount: 0,
         record: { round: { reviewId: root.reviewId!, roundOrdinal: 1, state: 'completed', reviewerIds: [] }, comments: [root, other] },
         scope: null, accountLifetime: null, serverId: null, sessionId: null, canAct, pending: {}, onDecideComment: async () => false,
-        onBulkDecideComments: async (commentIds, decision) => { writes.push({ commentIds, decision }); return { updated: [...commentIds], failed: [] }; },
+        onBulkDecideComments: async (commentIds, decision) => {
+            if (refused) {
+                if (returnRefusal) return { updated: [], failed: [...commentIds], failure };
+                throw failure;
+            }
+            writes.push({ commentIds, decision }); return { updated: [...commentIds], failed: [] };
+        },
     }), { initialProps: { canAct: false } });
     try {
         await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'defer'); });
@@ -34,6 +46,19 @@ it('sends selected durable root identities to one bulk writer and refuses View w
         await hook.rerender({ canAct: true });
         await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'defer'); });
         expect(writes).toEqual([{ commentIds: [root.id], decision: 'defer' }]);
+        refused = true;
+        await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'accept'); });
+        expect(hook.getCurrent().error).toBe('Refresh the Review before changing these decisions.');
+        expect(hook.getCurrent()).toMatchObject({ failure: { errorCode: 'review_comment_conflict', requestId: 'bulk-refusal',
+            details: { reason: 'revision_changed' }, failureCause: { phase: 'reviews.comments.bulkTransition' } } });
+        returnRefusal = true;
+        await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'accept'); });
+        expect(hook.getCurrent().error).toBe(failure.error);
+        expect(hook.getCurrent().failure).toEqual(failure);
+        refused = false;
+        await act(async () => { await hook.getCurrent().onDecideMany([root.id], 'accept'); });
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().failure).toBeNull();
     } finally { await hook.unmount(); }
 });
 

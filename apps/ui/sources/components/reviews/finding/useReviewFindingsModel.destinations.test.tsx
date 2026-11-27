@@ -13,6 +13,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
 import { useReviewFindingsModel } from './useReviewFindingsModel';
+import type { ReviewFindingsMember } from './useReviewFindingsModel';
 
 const effects = vi.hoisted(() => ({ copy: vi.fn<(text: string) => Promise<boolean>>(), push: vi.fn() }));
 // OS clipboard, navigation and authenticated HTTP are the boundaries. Policy, Review Apply and drafts stay real.
@@ -52,12 +53,12 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-async function mountModel(canAct = true, selectedRowIds?: readonly string[], comments = [root]) {
+async function mountModel(canAct = true, selectedRowIds?: readonly string[], comments = [root], members: readonly ReviewFindingsMember[] = []) {
     let bound = false;
     const hook = await renderHook(() => {
         const { binding } = useServerCredentialAccountScopeBinding(serverId);
         bound = binding !== null;
-        return useReviewFindingsModel({ members: [], reviewerCount: 1,
+        return useReviewFindingsModel({ members, reviewerCount: 1,
             record: { round: { reviewId, roundOrdinal: 1, state: 'completed', reviewerIds: ['first'] }, comments },
             serverId, scope: binding?.scope ?? null, accountLifetime: binding, sessionId: null,
             canAct, pending: {}, selectedRowIds, onDecideComment: async () => false });
@@ -65,6 +66,22 @@ async function mountModel(canAct = true, selectedRowIds?: readonly string[], com
     await waitForHomeGovernance(() => expect(bound).toBe(true));
     return hook;
 }
+
+it('retains the admitted Action refusal when asking a reviewer or implementing accepted findings', async () => {
+    await homes.setActionPolicy(serverId, 'execution.run.action', 'ui', 'off');
+    await homes.setActionPolicy(serverId, 'review.apply', 'ui', 'off');
+    const member: ReviewFindingsMember = { runId: 'reviewer-run', backendId: 'codex', reviewerLabel: 'Codex',
+        sessionId: 'retained-session', followUp: { available: true }, questions: [], assumptions: [], findings: [],
+        commentByFindingId: new Map(), originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {} };
+    const hook = await mountModel(true, undefined, [root], [member]);
+    try {
+        await act(async () => { expect(await hook.getCurrent().askReviewers('Please explain this finding.')).toBe(false); });
+        expect(hook.getCurrent()).toMatchObject({ failure: { errorCode: 'action_disabled', requestId: expect.any(String) } });
+        await act(async () => { hook.getCurrent().implement.runInSession('target-session'); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().implement.busy).toBe(false));
+        expect(hook.getCurrent()).toMatchObject({ failure: { errorCode: 'action_disabled', requestId: expect.any(String) } });
+    } finally { await hook.unmount(); }
+});
 
 it('prepares only selected canonical accepted findings while leaving the other accepted finding out', async () => {
     const other = { ...root, id: 'unselected-comment', threadId: 'unselected-comment', findingIdentity: 'b'.repeat(64),

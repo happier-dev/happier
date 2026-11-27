@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { Platform } from 'react-native';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
@@ -168,7 +170,15 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
 
     const [pendingQuestionByRowId, setPendingQuestionByRowId] = React.useState<Readonly<Record<string, string>>>({});
     const [replyToQuestion, setReplyToQuestion] = React.useState<Readonly<{ member: Member; question: ReviewQuestion }> | null>(null);
-    const [error, setError] = React.useState<string | null>(null);
+    const [errorState, setError] = React.useState<string | ActionExecuteFailure | null>(null);
+    const failure = typeof errorState === 'object' ? errorState : null;
+    const error = typeof errorState === 'string' ? errorState
+        : errorState ? resolveActionExecutionErrorMessage(errorState, t('runPage.review.couldNotSaveChoice')) : null;
+    const recordFailure = React.useCallback((cause: unknown, fallback = t('runPage.review.couldNotSaveChoice')) => {
+        const failure = readActionFailureEnvelope(cause) ?? readActionFailureEnvelope(cause instanceof Error ? cause.cause : null);
+        setError(failure ?? fallback);
+        return failure;
+    }, []);
     const [isApplying, setIsApplying] = React.useState(false);
     const threadEntriesByRowId = React.useMemo(() => {
         const entriesByRowId = new Map<string, ReviewFindingThreadEntryView[]>();
@@ -219,7 +229,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             setError(null);
             fireAndForget(onDecideComment({ comment: root }, decision).then(saved => {
                 if (!saved) setError(t('runPage.review.couldNotSaveChoice'));
-            }), { tag: 'useReviewFindingsModel.decide' });
+            }).catch(error => { recordFailure(error); }), { tag: 'useReviewFindingsModel.decide' });
             return;
         }
         const row = rowById.get(rowId);
@@ -234,11 +244,11 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             fireAndForget(
                 onDecideComment({ comment: source.comment, runId: source.member.runId }, decision).then((saved) => {
                     if (!saved) setError(t('runPage.review.couldNotSaveChoice'));
-                }),
+                }).catch(error => { recordFailure(error); }),
                 { tag: 'useReviewFindingsModel.decide' },
             );
         }
-    }, [onDecideComment, pending, rootById, rowById]);
+    }, [onDecideComment, pending, recordFailure, rootById, rowById]);
 
     const bulkDecide = React.useCallback(async (rowIds: readonly string[], decision: ReviewTriageStatus): Promise<ReviewFindingBulkDecisionResult> => {
         const ids = [...new Set(rowIds)];
@@ -250,13 +260,13 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             const result = await params.onBulkDecideComments(commentIds, decision);
             const updated = new Set(result.updated);
             const failed = ids.filter(id => !updated.has(id));
-            if (failed.length > 0) setError(t('runPage.review.couldNotSaveChoice'));
-            return { updated: ids.filter(id => updated.has(id)), failed };
-        } catch {
-            setError(t('runPage.review.couldNotSaveChoice'));
-            return { updated: [], failed: ids };
+            if (failed.length > 0) setError(result.failure ?? t('runPage.review.couldNotSaveChoice'));
+            return { updated: ids.filter(id => updated.has(id)), failed, ...(result.failure ? { failure: result.failure } : {}) };
+        } catch (error) {
+            const failure = recordFailure(error);
+            return { updated: [], failed: ids, ...(failure ? { failure } : {}) };
         }
-    }, [params.onBulkDecideComments, rootById]);
+    }, [params.onBulkDecideComments, recordFailure, rootById]);
 
     const sendFollowUp = React.useCallback(async (params: Readonly<{
         sessionId: string | null;
@@ -285,14 +295,14 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             if (result.ok) return true;
             if (!accountLifetime.isCurrent() || !followUpExecution.isCurrent()) return false;
             const code = ReviewFollowUpFailureCodeSchema.safeParse('errorCode' in result ? result.errorCode : undefined);
-            setError(describeReviewFollowUpFailure(code.success ? code.data : undefined));
+            recordFailure(result, describeReviewFollowUpFailure(code.success ? code.data : undefined));
             return false;
-        } catch {
+        } catch (error) {
             if (!accountLifetime.isCurrent() || !followUpExecution.isCurrent()) return false;
-            setError(describeReviewFollowUpFailure(undefined));
+            recordFailure(error, describeReviewFollowUpFailure(undefined));
             return false;
         }
-    }, [accountLifetime, followUpExecution.execute, followUpExecution.isCurrent, scope]);
+    }, [accountLifetime, followUpExecution.execute, followUpExecution.isCurrent, recordFailure, scope]);
 
     /** Sends to each target; accepted when at least one reviewer took it (the others say why not). */
     const sendToEach = React.useCallback(async (targets: readonly Parameters<typeof sendFollowUp>[0][]) => {
@@ -364,12 +374,12 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
                     })) }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') });
                 }
             } catch (e) {
-                setError(e instanceof Error ? e.message : t('session.reviewFindings.errors.applyAcceptedFailed'));
+                recordFailure(e, t('session.reviewFindings.errors.applyAcceptedFailed'));
             } finally {
                 setIsApplying(false);
             }
         })(), { tag: 'useReviewFindingsModel.implementFixes' });
-    }, [acceptedCount, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, reviewId, scope, selectedCommentIds]);
+    }, [acceptedCount, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, recordFailure, reviewId, scope, selectedCommentIds]);
 
     /** The Review Action prepares one fresh prompt; each destination keeps its own admission and approval. */
     const applyPreparedPrompt = React.useCallback(async (destination: 'newSession' | 'clipboard'): Promise<boolean> => {
@@ -398,15 +408,14 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             await followUpExecution.executeValue('clipboard.write', { text: result.prompt });
             return true;
         } catch (error) {
-            if (followUpExecution.isCurrent()) setError(resolveActionExecutionErrorMessage(error,
-                t('session.reviewFindings.errors.applyAcceptedFailed')));
+            if (followUpExecution.isCurrent()) recordFailure(error, t('session.reviewFindings.errors.applyAcceptedFailed'));
             return false;
         } finally {
             await webWrite?.refuse();
             setIsApplying(false);
         }
     }, [acceptedCount, accountLifetime, followUpExecution.execute, followUpExecution.executeValue,
-        followUpExecution.isCurrent, hasPendingDecisions, reviewId, scope, selectedCommentIds]);
+        followUpExecution.isCurrent, hasPendingDecisions, recordFailure, reviewId, scope, selectedCommentIds]);
 
     const questions = React.useMemo(() => members.flatMap(member => member.questions
         .filter(question => question.status !== 'superseded').map(question => ({ member, question }))), [members]);
@@ -493,12 +502,12 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             if (result.ok && result.result && typeof result.result === 'object' && 'status' in result.result
                 && result.result.status === 'applied') return true;
             if (!followUpExecution.isCurrent()) return false;
-            setError(resolveActionExecutionErrorMessage(result, t('common.error')));
+            recordFailure(result, t('common.error'));
         } catch (error) {
-            if (followUpExecution.isCurrent()) setError(resolveActionExecutionErrorMessage(error, t('common.error')));
+            if (followUpExecution.isCurrent()) recordFailure(error, t('common.error'));
         }
         return false;
-    }, [followUpExecution.execute, followUpExecution.isCurrent, rowViews]);
+    }, [followUpExecution.execute, followUpExecution.isCurrent, recordFailure, rowViews]);
 
     const createTaskForRow = React.useCallback(async (rowId: string) => { await createTask([rowId]); }, [createTask]);
 
@@ -530,5 +539,6 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         },
         approval: followUpExecution.approval,
         error,
+        failure,
     };
 }

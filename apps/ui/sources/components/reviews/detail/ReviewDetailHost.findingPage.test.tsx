@@ -35,6 +35,51 @@ afterEach(async () => {
   fixture = undefined;
 });
 
+it.each(['finding', 'overview'] as const)('shows the typed decision refusal safely on the %s page', async page => {
+  const reviewId = `decision-refusal-${page}`;
+  const root = buildReviewCommentFixture({ id: 'refused-root', threadId: 'refused-root', reviewId,
+    accountId: 'alice', state: 'open', roundOrdinal: 1, findingIdentity: 'd'.repeat(64),
+    finding: { id: 'refused-finding', title: 'Retained finding', summary: 'Still needs a decision', severity: 'high', category: 'correctness' } });
+  fixture = await createSessionFilesViewFixture({ serverUrl: `https://${reviewId}.test`, request: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/reviews/comments') return Response.json({ items: [storePlainReviewCommentFixture(root)], cursor: null });
+    if (path.endsWith('/transition') || path.endsWith('/bulkTransition') || path.endsWith('/mutations/prepare')) {
+      return Response.json({ error: 'review_comment_conflict', details: { privateDiagnostic: 'secret transport detail' },
+        failureCause: { phase: 'reviews.comments.transition', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } }, { status: 409 });
+    }
+    return Response.json({}, { status: 404 });
+  } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Refused decision', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Refused decision' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}}
+    focusThreadId={page === 'finding' ? root.id : undefined} />);
+  try {
+    if (page === 'overview') {
+      await vi.waitFor(() => expect(screen.findHostByTestId('review-findings:select-mode')).not.toBeNull());
+      await screen.pressByTestIdAsync('review-findings:select-mode');
+      await screen.pressByTestIdAsync(`review-findings:select:${root.id}`);
+    }
+    const decision = page === 'finding' ? 'review-detail:decision:reject' : 'review-detail:bulk:reject';
+    await vi.waitFor(() => expect(screen.findHostByTestId(decision)).not.toBeNull());
+    await screen.pressByTestIdAsync(decision);
+    await vi.waitFor(() => {
+      const notice = screen.findAllByType(SurfaceStateCard).find(node => node.props.diagnosticCode === 'review_comment_conflict');
+      expect(notice).toBeDefined();
+      expect(notice?.props.diagnosticDetail).toContain('reviews.comments.transition');
+      expect(notice?.props.diagnosticDetail).not.toContain('secret transport detail');
+    });
+    expect(screen.getTextContent()).toContain(root.finding!.title);
+    expect(screen.getTextContent()).not.toContain('secret transport detail');
+    // A refused decision releases pending state, so the same visible choice remains available.
+    await vi.waitFor(() => expect(screen.findHostByTestId(decision)?.props.accessibilityState?.disabled).not.toBe(true));
+  } finally { await screen.unmount(); }
+});
+
 it('titles a pushed finding with the finding itself under its severity and place, and pins its decision bar', async () => {
   const reviewId = 'pushed-finding-review';
   const first = buildReviewCommentFixture({
