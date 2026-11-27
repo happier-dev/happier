@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { connectUiTriageActionClient } from '@happier-tests/ui-action-client';
 import githubPackage from '../../../plugins/scm-github/package.json';
 import { PLUGIN_MANIFEST as githubManifest } from '../../../plugins/scm-github/src/manifest';
@@ -10,7 +12,17 @@ import { activate as activateGithub } from '../../../plugins/scm-github/src/acco
 import { GITHUB_PLUGIN_ID, GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../../../plugins/scm-github/src/observations/githubProviderContracts';
 import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../../plugins/scm-github/src/triage/contribution';
 import { encodeGithubTriageConfiguration, GITHUB_TRIAGE_ACCOUNT_SCOPE_V1, GITHUB_TRIAGE_LOCAL_INSTANCE_KEY_V1 } from '../../../plugins/scm-github/src/triage/configuration';
-import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
+  TriageSourceAdministrationActionResultV1Schema, type TriageConfiguredSourceInstanceV1,
+} from '@happier-dev/triage-protocol/v1';
+import { GITHUB_SCM_HOSTING_PROVIDER_ID } from '../../../plugins/scm-github/src/adapter';
+import { GITHUB_TRIAGE_INSTANCE_KEY_STABILITY_V1 } from '../../../plugins/scm-github/src/triage/configuration';
+import {
+  TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema,
+} from '../../../plugins/triage/src/actions/entryDetailProtocol';
+import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
+import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { GITHUB_ISSUE_RESPONSE, GITHUB_OTHER_REPOSITORY_RESPONSE, GITHUB_PULL_REQUEST_RESPONSE, GITHUB_REPOSITORY_RESPONSE } from '../../../plugins/scm-github/src/triage/__fixtures__/githubResponses';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -86,7 +98,8 @@ beforeAll(async () => {
   const auth = await createTestAuth(server.baseUrl);
   accountSecret = auth.accountSigningSeed;
   machineId = (await seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: server.baseUrl, auth, mode: 'dataKey' })).machineId;
-  const env = { ...process.env, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: server.baseUrl, HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_DISABLE_CAFFEINATE: '1', HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1', NODE_OPTIONS: `${sourceOptions} --import ${pathToFileURL(join(repoRootDir(), 'packages/tests/suites/core-e2e/triage.runtime.github.preload.mjs')).href}`, HAPPIER_E2E_TRIAGE_GITHUB_PROXY: github.url, HAPPIER_E2E_TRIAGE_GITHUB_CA: github.caCertPath, GH_CONFIG_DIR: join(testDir, 'gh-home'), GH_HOST: 'github.com', GH_TOKEN: 'constructed-detail-token', GITHUB_TOKEN: '', HTTPS_PROXY: github.url, https_proxy: github.url, NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', SSL_CERT_FILE: github.caCertPath };
+  const env = { ...process.env, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: server.baseUrl, HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_DISABLE_CAFFEINATE: '1', HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1', NODE_OPTIONS: `${sourceOptions} --import ${pathToFileURL(join(repoRootDir(), 'packages/tests/suites/core-e2e/triage.runtime.github.preload.mjs')).href}`, HAPPIER_E2E_TRIAGE_GITHUB_PROXY: github.url, HAPPIER_E2E_TRIAGE_GITHUB_CA: github.caCertPath, GH_CONFIG_DIR: join(testDir, 'gh-home'), GH_HOST: 'github.com', GH_TOKEN: 'constructed-detail-token', GITHUB_TOKEN: '',
+    HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(), HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'review-json', HTTPS_PROXY: github.url, https_proxy: github.url, NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', SSL_CERT_FILE: github.caCertPath };
   daemon = await startTestDaemon({ testDir, happyHomeDir: homeDir, env, requireMachineControlReady: true });
 }, 0);
 
@@ -131,4 +144,55 @@ it('reads PR overview, files and timeline, handles issue sibling and typed refre
   expect(await invoke(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview, base)).toMatchObject({ ok: true, result: {
     kind: 'unavailable', failure: { class: 'unsupportedContract', code: 'github_api_response_invalid' },
   } });
+});
+
+// Board p381 (2026-11-27 12:01 UTC): direct UI starts lack host-owned private After delivery.
+it.skip('links a Review started directly through the UI Action executor to the current PR entry', async ({ signal }) => {
+  const ui = await connectUiTriageActionClient({ serverUrl: server!.baseUrl, accountSecret,
+    additionalPlugins: [githubAccountPlugin] });
+  try {
+    await waitFor(() => ui.isAccountReady() && ui.isMachineControlReady(machineId));
+    await ui.waitForPluginAccountAvailability();
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: ui.serverId, defaultSessionMachineId: machineId, signal } as const;
+    const triage = async (localId: string, input: unknown) => {
+      const action = await ui.executeConfirmed('action.invoke', { action: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId }, input }, context);
+      if (!action.ok) throw new Error(`Triage Action refused: ${action.errorCode}`);
+      return action.result;
+    };
+    const { binding, localInstanceKey, configuration, locator } = source;
+    const created = TriageSourceAdministrationActionResultV1Schema.parse(await triage(
+      TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, {
+        v: 1, kind: 'create', source: source.instance.source,
+        draft: { v: 1, binding, localInstanceKey, configuration, locator, keyStability: GITHUB_TRIAGE_INSTANCE_KEY_STABILITY_V1 },
+      }));
+    if (created.kind !== 'active') throw new Error(`GitHub source setup settled ${created.kind}`);
+    const entryRef = { source: source.instance.source, ...pullRequestRef };
+    const readDetail = async () => TriageReadEntryDetailResultV1Schema.parse(await triage(
+      TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, { v: 1, entryRef, sourceInstanceId: created.sourceInstanceId }));
+    const before = await readDetail();
+    expect(before.kind).toBe('read');
+    expect(before).not.toHaveProperty('admittedReview');
+
+    const cwd = join(testDir, 'direct-review');
+    await initGitRepo({ repoDir: cwd });
+    execGit(cwd, ['commit', '--allow-empty', '-m', 'Direct Review fixture']);
+    const pr = GITHUB_PULL_REQUEST_RESPONSE;
+    const input = {
+      target: { kind: 'detached' }, cwd, instructions: 'Review this pull request.',
+      reviewers: reviewReviewersForEngineIdsV1(['claude']),
+      source: { kind: 'pullRequest', locator: { providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
+        repository: GITHUB_REPOSITORY_RESPONSE.full_name, number: pr.number, baseOid: pr.base.sha, headOid: pr.head.sha } },
+    } as const;
+    const start = await ui.executeConfirmed('review.start', input,
+      { ...context, executionRunTargetMachineId: machineId, externalActionTarget: { kind: 'machine', machineId } });
+    if (!start.ok) throw new Error(`Direct Review start refused: ${start.errorCode}`);
+    const admitted = readReviewStartActionResultV1(start.result, input);
+    if (admitted.kind !== 'native' || !admitted.reviewRound) throw new Error('Direct Review start did not return a round');
+    expect(admitted.failed).toEqual([]);
+    expect(admitted.runs).toHaveLength(1);
+    expect(await readDetail()).toMatchObject({ kind: 'read', admittedReview: admitted.reviewRound });
+  } finally {
+    await ui.close();
+  }
 });
