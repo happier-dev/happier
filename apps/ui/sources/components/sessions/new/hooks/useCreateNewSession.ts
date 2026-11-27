@@ -2151,7 +2151,7 @@ export function useCreateNewSession(params: Readonly<{
                 presentedFirstTurn.settle({ final: false });
                 const spawnFailure = actionResult.ok
                     ? actionResult.result.type === 'error' ? actionResult.result : null
-                    : actionResult.errorCode === 'spawn_failed' ? readSessionSpawnNewFailure(actionResult) : null;
+                    : readSessionSpawnNewFailure(actionResult);
                 if (spawnFailure && isSessionSpawnGuestReconnectFailure(spawnFailure)) {
                     launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
                         phase: 'spawning', error: new Error('spawn_failed'), retryable: true,
@@ -2172,6 +2172,34 @@ export function useCreateNewSession(params: Readonly<{
                             } }] : []),
                             { text: t('common.cancel'), style: 'cancel' },
                         ]);
+                    }
+                    current.setIsCreating(false);
+                    return;
+                }
+                if (spawnFailure?.code === 'machine_offline') {
+                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
+                        phase: 'spawning', error: new Error(spawnFailure.code), retryable: spawnFailure.retryable,
+                    });
+                    if (spawnFailure.retryable) {
+                        submittedLaunch.attempt(launchAttempt);
+                    } else {
+                        endLaunchAttemptWithoutSession();
+                        if (manualActionCustody?.terminalResult) {
+                            await completeManualSessionSpawnNewActionCustody(manualActionCustody);
+                        }
+                    }
+                    if (!launcherLeftForDestination) {
+                        showDaemonUnavailableAlert({
+                            titleKey: 'errors.daemonUnavailableTitle',
+                            bodyKey: 'newSession.daemonRpcUnavailableBody',
+                            machine: current.selectedMachine,
+                            onRetry: spawnFailure.retryable && launcherCanRetry ? () => { void handleCreateSession(opts); } : null,
+                            shouldContinue: () => (
+                                isLaunchScopeStillActive()
+                                && readLaunchIntent(latestParamsRef.current) === submittedIntent.signature
+                                && areServerAccountScopesEqual(current.draftScope, latestParamsRef.current.draftScope)
+                            ),
+                        });
                     }
                     current.setIsCreating(false);
                     return;
@@ -2248,22 +2276,6 @@ export function useCreateNewSession(params: Readonly<{
                                 host: actionResult.result.terminalHostError.host === 'herdr' ? 'Herdr' : 'Zellij',
                             }),
                         );
-                        current.setIsCreating(false);
-                        return;
-                    }
-                    if (actionResult.result.code === 'machine_offline') {
-                        showDaemonUnavailableAlert({
-                            titleKey: 'errors.daemonUnavailableTitle',
-                            bodyKey: 'newSession.daemonRpcUnavailableBody',
-                            machine: current.selectedMachine,
-                            // The launcher is gone after presentation; its draft owns the retry.
-                            onRetry: actionResult.result.retryable && launcherCanRetry ? () => { void handleCreateSession(opts); } : null,
-                            shouldContinue: () => (
-                                isLaunchScopeStillActive()
-                                && readLaunchIntent(latestParamsRef.current) === submittedIntent.signature
-                                && areServerAccountScopesEqual(current.draftScope, latestParamsRef.current.draftScope)
-                            ),
-                        });
                         current.setIsCreating(false);
                         return;
                     }
