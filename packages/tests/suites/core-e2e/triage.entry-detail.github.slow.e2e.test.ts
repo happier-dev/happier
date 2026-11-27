@@ -211,7 +211,10 @@ it('links a Review started directly through the UI Action executor to the curren
     if (admitted.kind !== 'native' || !admitted.reviewRound) throw new Error('Direct Review start did not return a round');
     expect(admitted.failed).toEqual([]);
     expect(admitted.runs).toHaveLength(1);
-    expect(await readDetail()).toMatchObject({ kind: 'read', admittedReview: admitted.reviewRound });
+    await waitFor(async () => {
+      expect(await readDetail()).toMatchObject({ kind: 'read', admittedReview: admitted.reviewRound });
+      return true;
+    }, { context: 'direct Review round linked to the PR entry' });
   } finally {
     await ui.close();
   }
