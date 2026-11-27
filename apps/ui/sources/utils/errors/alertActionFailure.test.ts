@@ -46,3 +46,18 @@ it('offers the supplied recovery action beside deliberate technical details', ()
     expect(onPress).toHaveBeenCalledOnce();
     expect(buttons?.some(button => button.text === t('approvals.technicalDetails'))).toBe(true);
 });
+
+// The presenter receives the closed typed cause intact; its scalar context stays separate.
+it('keeps the offline-delete cause code and phase alongside the operation result', () => {
+    alertActionFailure({ reason: 'Not allowed', code: RPC_ERROR_CODES.FORBIDDEN,
+        failureCause: { phase: 'session.delete', errorClass: 'Error', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            httpStatus: 403, nativeErrorCode: 'PERMISSION_DENIED' }, context: { effectAttempted: false } });
+    const technical = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+    technical?.onPress?.();
+    const details = String(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]);
+    expect(details).toContain(`${t('approvals.failureTechnicalLabels.causeCode')}: ${RPC_ERROR_CODES.FORBIDDEN}`);
+    expect(details).toContain(`${t('approvals.failureTechnicalLabels.phase')}: session.delete`);
+    expect(details).toContain(`${t('approvals.failureTechnicalLabels.httpStatus')}: 403`);
+    expect(details).toContain(`${t('approvals.failureTechnicalLabels.effectAttempted')}: false`);
+    expect(details).toContain('nativeErrorCode: PERMISSION_DENIED');
+});

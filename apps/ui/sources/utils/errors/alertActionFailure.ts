@@ -1,6 +1,6 @@
 import { Modal } from '@/modal';
 import { t, type TranslationKeyNoParams } from '@/text';
-import { ActionRefusalDiagnosticV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionFailureCauseV1, ActionRefusalDiagnosticV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 export type ActionFailureContext = Readonly<Record<string, string | number | boolean | null>>;
@@ -46,16 +46,31 @@ export const ACTION_FAILURE_DETAIL_LABELS = {
 } as const satisfies Record<string, TranslationKeyNoParams>;
 
 /** Technical details as one labelled line per reference ("Error: outcome_unknown"), never a JSON dump. */
-export function formatActionFailureDetails(failure: Readonly<{ code: string; context?: ActionFailureContext }>): string {
+type ActionFailureDetails = Readonly<{ code: string; context?: ActionFailureContext; failureCause?: ActionFailureCauseV1 }>;
+
+export function formatActionFailureDetails(failure: ActionFailureDetails): string {
+    const cause = failure.failureCause;
+    const causeContext: Record<string, string | number | boolean | null> = {};
+    // Preserve the closed cause's scalar facts; nested payloads are never coerced to prose.
+    if (cause) {
+        for (const [key, value] of Object.entries(cause)) {
+            if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                causeContext[key === 'errorCode' ? 'causeCode' : key] = value;
+            }
+        }
+        Object.assign(causeContext, readSafeFailureDetails('diagnostic' in cause ? { diagnostic: cause.diagnostic } : undefined));
+    }
     const labels: Readonly<Record<string, TranslationKeyNoParams>> = ACTION_FAILURE_DETAIL_LABELS;
-    return Object.entries({ code: failure.code, ...failure.context })
+    return Object.entries({ code: failure.code, ...failure.context,
+        ...causeContext,
+    })
         .filter(([, value]) => value !== null && value !== undefined && value !== '')
         .map(([key, value]) => `${labels[key] ? t(labels[key]) : key}: ${String(value)}`)
         .join('\n');
 }
 
 /** The deliberate reveal shared by inline recovery and failure alerts. */
-export function showActionFailureDetails(failure: Readonly<{ code: string; context?: ActionFailureContext }>): void {
+export function showActionFailureDetails(failure: ActionFailureDetails): void {
     Modal.alert(t('approvals.technicalDetails'), formatActionFailureDetails(failure));
 }
 
@@ -66,6 +81,7 @@ export function alertActionFailure(failure: Readonly<{
     code: string | null;
     requestId?: string | null;
     context?: ActionFailureContext;
+    failureCause?: ActionFailureCauseV1;
     recovery?: Readonly<{ label: string; onPress: () => void }>;
 }>): void {
     const code = failure.code;
@@ -79,7 +95,7 @@ export function alertActionFailure(failure: Readonly<{
         uncertain ? t('toolView.pending.unknownDescription') : failure.reason,
         [
             ...(failure.recovery ? [{ text: failure.recovery.label, onPress: failure.recovery.onPress }] : []),
-            { text: t('approvals.technicalDetails'), quiet: true, onPress: () => showActionFailureDetails({ code, context: {
+            { text: t('approvals.technicalDetails'), quiet: true, onPress: () => showActionFailureDetails({ code, failureCause: failure.failureCause, context: {
                 ...failure.context,
                 ...(failure.requestId ? { requestId: failure.requestId } : {}),
             } }) },
