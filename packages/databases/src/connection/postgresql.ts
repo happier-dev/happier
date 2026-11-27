@@ -5,7 +5,7 @@ import { statsOperationResultV1 } from '../stats.js';
 import { databaseConnectionUrlWithoutOptions, databaseTlsVerification, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
     executePostgresqlOperation, normalizePostgresqlStatement, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
-    compilePostgresqlSetupV1, decodePostgresqlSetupV1,
+    compilePostgresqlSetupV1, decodePostgresqlSetupV1, postgresqlStatsExecutionOptions,
     type PostgresqlCompiledStatement, type PostgresqlNativeResult, type PostgresqlSetupFactsV1,
     type PostgresqlExecutionOptions,
 } from '../postgresql/index.js';
@@ -131,8 +131,6 @@ export async function openPostgresqlConnection(connectionString: string, signal?
     }
     catch (error) { await close().catch(() => {}); throw error; }
     finally { signal?.removeEventListener('abort', onConnectAbort); }
-    const databaseIdentity = JSON.stringify({ database: setup.database, databaseOid: setup.databaseOid,
-        serverAddress: setup.serverAddress, serverPort: setup.serverPort, engineStartedAt: setup.engineStartedAt });
     const onAbort = () => {
         if (!activeQuery) { void close().catch(() => {}); return; }
         void cancelActive().catch(() => { void close().catch(() => {}); });
@@ -149,13 +147,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         const indexAdvice = input.operation === 'stats.read' && input.request.group === 'indexAdvice';
         let transaction = false;
         let committing = false;
-        const executionOptions: PostgresqlExecutionOptions = input.operation === 'stats.read' ? { stats: {
-            database: setup.database, pgStatStatements: setup.pgStatStatements,
-            ...(backendKey.processID == null ? {} : { nativeBackendPid: backendKey.processID }),
-            intervalBasis: { databaseIdentity, engineStartedAt: setup.engineStartedAt,
-                bindingKey: JSON.stringify({ target: input.target, databaseIdentity, currentUser: setup.currentUser }),
-                selectionKey: JSON.stringify(input.request) },
-        } } : {};
+        const executionOptions: PostgresqlExecutionOptions = input.operation === 'stats.read'
+            ? postgresqlStatsExecutionOptions(setup, input, backendKey.processID ?? undefined)
+            : {};
         operationSignal?.addEventListener('abort', onAbort, { once: true });
         try {
             if (signalsBackend) return await executePostgresqlOperation(input, query);

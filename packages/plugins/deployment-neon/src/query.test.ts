@@ -86,6 +86,23 @@ const read = DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.ru
   statement: { sql: input.sql, parameters: [{ type: 'text', value: 'hello' }] } });
 
 describe('Neon qualified read-only SQL', () => {
+  it('advertises reviewed Enable and returns typed recovery for a missing statistics extension', async () => {
+    const fields = ['database', 'database_oid', 'current_user', 'server_address', 'server_port',
+      'server_version', 'engine_started_at', 'extension_schema', 'extension_version'];
+    const h = await host({ body: { results: [{ command: 'DO' }, { command: 'SELECT', rowCount: 1,
+      fields: fields.map(name => ({ name, dataTypeID: 25 })),
+      rows: [['neondb', '16384', 'happier_ro', '192.0.2.1', '5432', '160000', '2026-01-01', null, null]] }] } });
+    try {
+      const described = await invokeManaged(h, { operation: 'describe', target });
+      expect(described).toMatchObject({ ok: true, descriptor: { capabilities: expect.arrayContaining([
+        { operation: 'stats.read', available: true }, { operation: 'stats.enable', available: true },
+      ]) } });
+      expect(await invokeManaged(h, { operation: 'stats.read', target,
+        request: { kind: 'stats.read', group: 'statements', selection: { page: { rows: 10 }, order: 'calls' } } }))
+        .toMatchObject({ ok: true, operation: 'stats.read', observation: { status: 'unavailable', reason: 'extension_missing' } });
+    } finally { await h.kit.dispose(); }
+  });
+
   it('runs the registered selected transport through the shared dialect without losing native field types', async () => {
     const h = await host({ body: { results: [{ command: 'DO' }, { command: 'SELECT', rowCount: 1,
       fields: [{ name: 'duplicate', dataTypeID: 20 }, { name: 'duplicate', dataTypeID: 25 }, { name: 'absent', dataTypeID: 25 }],

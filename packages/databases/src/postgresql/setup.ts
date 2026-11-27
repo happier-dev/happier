@@ -1,4 +1,5 @@
-import type { PostgresqlCompiledStatement, PostgresqlNativeResult } from './operations.js';
+import type { PostgresqlCompiledStatement, PostgresqlExecutionOptions, PostgresqlNativeResult } from './operations.js';
+import type { DatabaseStatsOperationInputV1 } from '@happier-dev/plugin-sdk/database';
 import type { PostgresqlStatsCompilationV1 } from './stats.js';
 import { statsNativeRowsV1, statsText } from '../stats.js';
 
@@ -44,4 +45,18 @@ export function decodePostgresqlSetupV1(native: PostgresqlNativeResult): Postgre
         serverAddress: statsText(row, 'server_address') ?? null, serverPort: statsText(row, 'server_port') ?? null,
         serverVersion: required('server_version'), engineStartedAt: required('engine_started_at'),
         pgStatStatements: schema === undefined ? null : { schema, version: required('extension_version') } };
+}
+
+/** The same native facts bind a statistics interval on direct and provider transports. */
+export function postgresqlStatsExecutionOptions(setup: PostgresqlSetupFactsV1, input: DatabaseStatsOperationInputV1,
+    nativeBackendPid?: number): PostgresqlExecutionOptions {
+    const databaseIdentity = JSON.stringify({ database: setup.database, databaseOid: setup.databaseOid,
+        serverAddress: setup.serverAddress, serverPort: setup.serverPort, engineStartedAt: setup.engineStartedAt });
+    return { stats: {
+        database: setup.database, pgStatStatements: setup.pgStatStatements,
+        ...(nativeBackendPid == null ? {} : { nativeBackendPid }),
+        intervalBasis: { databaseIdentity, engineStartedAt: setup.engineStartedAt,
+            bindingKey: JSON.stringify({ target: input.target, databaseIdentity, currentUser: setup.currentUser }),
+            selectionKey: JSON.stringify(input.request) },
+    } };
 }

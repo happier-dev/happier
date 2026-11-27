@@ -2,7 +2,8 @@ import { PluginError, type DeploymentTargetDatabaseRuntimeV1 } from '@happier-de
 import type { DatabaseDescriptorV1, DatabaseFailureV1 } from '@happier-dev/plugin-sdk/database';
 import {
   executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
-  type PostgresqlNativeResult,
+  compilePostgresqlSetupV1, decodePostgresqlSetupV1, postgresqlStatsExecutionOptions,
+  type PostgresqlNativeResult, type PostgresqlQuery,
 } from '@happier-dev/databases/postgresql';
 import { record, request } from './provider.js';
 import { openNeonReadOnlyTransport } from './transport.js';
@@ -18,7 +19,7 @@ function descriptor(target: DatabaseDescriptorV1['target'], placement: DatabaseD
       { operation: 'cell.read', available: true }, { operation: 'statement.run', available: true },
       { operation: 'statement.explain', available: true },
       { operation: 'edits.apply', available: true },
-      { operation: 'stats.read', available: false, code: 'database_operation_unavailable', reason: 'Statistics require the target statistics adapter' },
+      { operation: 'stats.read', available: true }, { operation: 'stats.enable', available: true },
     ] };
 }
 
@@ -78,18 +79,22 @@ export const neonDatabaseRuntime: DeploymentTargetDatabaseRuntimeV1 = {
         const operationSignal = signal ? AbortSignal.any([context.signal, signal]) : context.signal;
         if (operationSignal.aborted) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
         if (input.operation === 'describe') return { ok: true, operation: 'describe', descriptor: description };
-        if (input.operation === 'edits.apply' || input.operation === 'stats.read'
+        if (input.operation === 'edits.apply' || input.operation === 'stats.enable'
           || input.operation === 'statement.run' && input.mode === 'write'
           || input.operation === 'statement.explain' && input.accessMode === 'write') return unsupported();
         try {
-          return await executePostgresqlOperation(input, async statement => {
+          const query: PostgresqlQuery = async statement => {
             if (!selected.ok) throw new PostgresqlOperationError(selected);
             const response = await selected.execute({ sql: statement.text,
               parameters: statement.values.map(value => value instanceof Uint8Array
                 ? `\\x${Array.from(value, byte => byte.toString(16).padStart(2, '0')).join('')}` : value) }, operationSignal);
             if (!response.ok) throw new PostgresqlOperationError(response);
             return nativeResult(response.native);
-          });
+          };
+          const options = input.operation === 'stats.read'
+            ? postgresqlStatsExecutionOptions(decodePostgresqlSetupV1(await query(compilePostgresqlSetupV1())), input)
+            : undefined;
+          return await executePostgresqlOperation(input, query, options);
         } catch (error) {
           if (operationSignal.aborted) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
           if (error instanceof PostgresqlOperationError) return error.failure;
