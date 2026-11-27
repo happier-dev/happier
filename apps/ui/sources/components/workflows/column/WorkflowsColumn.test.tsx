@@ -1179,11 +1179,12 @@ describe('WorkflowsColumn', () => {
     });
 
     // HUNT3-1125 pattern B: an inline Workflow's Run reads that Workflow's name by exact id, never the inline page.
-    it.each(['scope', 'unshown edit', 'shown edit', 'wide open', 'wide reconnect', 'reopen settled', 'latest answer', 'demand ended', 'unmounted'] as const)(
+    it.each(['scope', 'unshown edit', 'shown edit', 'wide open', 'wide reconnect', 'reopen settled', 'latest answer', 'demand ended', 'retained hide', 'unmounted'] as const)(
         'reads 15 inline Workflow names by exact ID and handles %s', async scenario => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
-        const { publishHomeAccountChangeForRouting } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { publishHomeAccountChangeForRouting, publishHomeAccountChangeWake } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { Freeze } = await import('react-freeze');
         const [{ AutomationDefinitionDetailSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },
             { createWorkflowDefinitionFixture }] = await Promise.all([import('@happier-dev/protocol/automations/automationApiV3'),
             import('@happier-dev/protocol/automations/automationWorkflowRecipeV2'), import('@/dev/testkit/fixtures/workflowRunFixtures')]);
@@ -1238,12 +1239,15 @@ describe('WorkflowsColumn', () => {
             ...settings.collectionDisplayPreferencesV1, workflowRun: { groupBy: 'workflow' },
         } } });
         routeState.pathname = '/workflows/runs';
-        const renderRuns = (presented: boolean, showColumn = false) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
-            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+        const renderRuns = (presented: boolean, showColumn = false) => {
+            const runs = <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
                 <WorkflowsRunsRoute />
                 {showColumn && <WorkflowsColumn initialView="runs" />}
-            </AppShellColumnContext.Provider>
-        </PluginSurfaceFocusEligibilityProvider>;
+            </AppShellColumnContext.Provider>;
+            return <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                {scenario === 'retained hide' ? <Freeze freeze={!presented}>{runs}</Freeze> : runs}
+            </PluginSurfaceFocusEligibilityProvider>;
+        };
         const screen = await renderScreen(renderRuns(true), { wrapper: TestAuth });
         const shownReads = named.map(([id]) => `GET /v3/automations/${id}`).sort();
         const publish = async (id: string) => {
@@ -1256,12 +1260,11 @@ describe('WorkflowsColumn', () => {
         };
         const { planSyncActionsFromChanges, plannedChangesAffectWorkflowDefinitions, plannedChangesAffectWorkflowTriggers, plannedWorkflowDefinitionAutomationIds } =
             await import('@/sync/runtime/orchestration/changesPlanner');
-        const publishEdit = (id: string) => act(async () => {
-            // A consumed feed page can hold other rows alongside the Automation write.
-            const changes = [
-                { kind: 'automation' as const, entityId: id, cursor: 1, changedAt: 1 },
-                { kind: 'session' as const, entityId: 'other-session', cursor: 2, changedAt: 1 },
-            ];
+        const { APPROVAL_ARTIFACT_KINDS_V1 } = await import('@happier-dev/protocol/approvals/approvalArtifactKindV1');
+        const { encodeArtifactKindV1 } = await import('@happier-dev/protocol/artifacts/artifactKindV1');
+        const approvalId = '10000000-0000-4000-8000-000000000003';
+        const artifactKinds = [encodeArtifactKindV1({ kind: 'other', kindHint: APPROVAL_ARTIFACT_KINDS_V1.builtIn })];
+        const publishPage = (changes: Parameters<typeof planSyncActionsFromChanges>[0]) => act(async () => {
             const planned = planSyncActionsFromChanges(changes);
             publishHomeAccountChangeForRouting(boundary!.serverId, changes.map(change => change.entityId), {
                 feedPageConsumed: true,
@@ -1271,6 +1274,34 @@ describe('WorkflowsColumn', () => {
                 workflowDefinitionAutomationIds: plannedWorkflowDefinitionAutomationIds(planned),
             });
         });
+        const publishApprovalHop = async (cursor: number) => {
+            await act(async () => {
+                publishHomeAccountChangeWake(boundary!.serverId, {
+                    t: 'account-change', changeKinds: ['artifact'], entityIds: [approvalId], artifactKinds,
+                }, 'catch-up-pending');
+                // The focused socket also publishes an Artifact wake before its kind is known.
+                publishHomeAccountChangeForRouting(boundary!.serverId, [approvalId], {
+                    source: 'socket', changesCatchUp: true, changeKinds: ['artifact'],
+                });
+            });
+            await publishPage([{ kind: 'artifact', entityId: approvalId, cursor, changedAt: cursor, hint: { artifactKinds } }]);
+            await flushHookEffects({ frames: 2 });
+        };
+        const publishEdit = async (id: string) => {
+            // Cut 54 sent the same approval Artifact three times before the edit and once after.
+            for (const cursor of [1, 2, 3]) await publishApprovalHop(cursor);
+            await act(async () => {
+                publishHomeAccountChangeWake(boundary!.serverId, {
+                    t: 'account-change', changeKinds: ['automation'], entityIds: [id],
+                }, 'catch-up-pending');
+            });
+            await publishPage([
+                { kind: 'automation', entityId: id, cursor: 4, changedAt: 4 },
+                { kind: 'session', entityId: 'other-session', cursor: 5, changedAt: 4 },
+            ]);
+            await flushHookEffects({ frames: 2 });
+            await publishApprovalHop(6);
+        };
         let mounted = true;
         try {
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('Digest 14'));

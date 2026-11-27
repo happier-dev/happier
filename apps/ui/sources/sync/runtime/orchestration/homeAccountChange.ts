@@ -592,8 +592,12 @@ export function publishHomeAccountChangeForRouting(
     const sessionReadinessChanges = details?.source === 'connected' || details?.source === 'snapshot'
         ? 'all' : details?.sessionReadinessChanges ?? (unknownKinds ? 'all' : readinessWakePlan
             ? plannedSessionReadinessChanges(readinessWakePlan) : planSessionReadinessWake(rawKinds, entityIds));
+    // A focused Home's Artifact notification precedes the classified feed page
+    // that decides which Workflow readers need to refresh.
+    const artifactChangeAwaitingFeed = details?.source === 'socket' && details.changesCatchUp === true
+        && rawKinds?.length === 1 && rawKinds[0] === 'artifact';
     const definitionsAffect = details?.source === 'connected' || details?.source === 'snapshot'
-        || (!disclosureOnly && (coarse
+        || (!disclosureOnly && !artifactChangeAwaitingFeed && (coarse
             || (workflowDefinitionsAffect ?? accountChangeKindsAffectWorkflowDefinitions(changeKinds))));
     const managedMachineChangedIds = details?.source !== 'connected' && details?.source !== 'snapshot' && !unknownKinds
         && details?.managedMachineChangedIds !== undefined ? new Set(details.managedMachineChangedIds) : undefined;
@@ -672,11 +676,11 @@ export function publishHomeAccountChangeForRouting(
             ? { usageAccountingChange: Object.freeze({ ...details.usageAccountingChange }) } : {}),
         ...(details?.usageSourcesMachineIds !== undefined
             ? { usageSourcesMachineIds: Object.freeze([...new Set(details.usageSourcesMachineIds)]) } : {}),
-        workflowTriggersAffect: !disclosureOnly && (details?.source === 'connected' || coarse
+        workflowTriggersAffect: !disclosureOnly && !artifactChangeAwaitingFeed && (details?.source === 'connected' || coarse
             || (workflowTriggersAffect ?? accountChangeKindsAffectWorkflowTriggers(changeKinds))),
         workflowDefinitionsAffect: definitionsAffect,
         // Saved definitions carry their plugin sources; a Machine row can change only the sources.
-        workflowPluginSourcesAffect: definitionsAffect || (!disclosureOnly
+        workflowPluginSourcesAffect: definitionsAffect || (!disclosureOnly && !artifactChangeAwaitingFeed
             && (workflowPluginSourcesAffect ?? accountChangeKindsAffectWorkflowPluginSources(changeKinds))),
         ...(definitionsAffect && !coarse && details?.source !== 'connected' && details?.source !== 'snapshot'
             && workflowDefinitionAutomationIds?.length

@@ -150,7 +150,10 @@ export function useWorkflowTriggerSetsById(automationIds: readonly string[], opt
     }), [owner, notify]);
 
     React.useEffect(() => () => owner?.observe(reader, NO_EXACT_TRIGGER_IDS, false), [owner, reader]);
-    React.useEffect(() => {
+    // Retained workspace panels disconnect layout effects when hidden. Drop
+    // active demand then, and keep settled names until the reader unmounts.
+    React.useLayoutEffect(() => () => owner?.observe(reader, reader.ids, false), [owner, reader]);
+    React.useLayoutEffect(() => {
         // Demand loss empties the Run rows upstream. Keep their settled names and
         // change observation until this surface is presented again or unmounts.
         owner?.observe(reader, options.demanded ? ids : reader.ids, options.demanded);
