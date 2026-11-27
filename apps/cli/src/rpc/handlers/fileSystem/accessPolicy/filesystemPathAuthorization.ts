@@ -140,22 +140,21 @@ export async function confineWorkspaceTargetPath(input: Readonly<{
   rootPath: string;
   platform: NodeJS.Platform;
 }> & (Readonly<{ facts: WorkspacePathFacts }> | Readonly<{
-  resolvePaths(target: string, root: string): Promise<readonly [target: string, root: string]>;
+  /** Null records an unavailable path. The reader owns any execution refusal. */
+  resolvePaths(target: string, root: string): Promise<readonly [target: string, root: string] | null>;
 }>)): Promise<FilesystemPathAuthorizationResult> {
   const resolved = resolveFilesystemTargetPath({ targetPath: input.targetPath, defaultDirectory: input.rootPath, platform: input.platform });
   if (!resolved.valid) return resolved;
-  try {
-    const [target, root] = 'resolvePaths' in input
-      ? await input.resolvePaths(resolved.resolvedPath, input.rootPath)
-      : await Promise.all([
-        resolveRealPathForAuthorizationAsync(resolved.resolvedPath, input.platform, input.facts),
-        resolveRealPathForAuthorizationAsync(input.rootPath, input.platform, input.facts),
-      ]);
-    if (isWithinResolvedRoot(filesystemPathComparisonKey(target, input.platform),
-      filesystemPathComparisonKey(root, input.platform), input.platform)) return resolved;
-  } catch {
-    return { valid: false, error: 'Access denied: Path could not be resolved', errorCode: 'access_denied' };
-  }
+  const paths = 'resolvePaths' in input
+    ? await input.resolvePaths(resolved.resolvedPath, input.rootPath)
+    : await Promise.all([
+      resolveRealPathForAuthorizationAsync(resolved.resolvedPath, input.platform, input.facts),
+      resolveRealPathForAuthorizationAsync(input.rootPath, input.platform, input.facts),
+    ]).catch(() => null);
+  if (!paths) return { valid: false, error: 'Access denied: Path could not be resolved', errorCode: 'access_denied' };
+  const [target, root] = paths;
+  if (isWithinResolvedRoot(filesystemPathComparisonKey(target, input.platform),
+    filesystemPathComparisonKey(root, input.platform), input.platform)) return resolved;
   return { valid: false, errorCode: 'access_denied',
     error: `Access denied: Path '${input.targetPath}' is outside the workspace root` };
 }

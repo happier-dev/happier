@@ -1224,7 +1224,8 @@ export async function authorizeResolvedProjectExecLaunchForHost(input: Readonly<
             const prepared = await input.prepareAgentNativeLaunch(input.signal, input.launch.cwd, input.launch.env,
                 createMemberProjectAccess({ context: input.agentIsolation, requesterIdentity,
                     personBreakGlass: input.executionKind === 'person_break_glass', agentNativeLaunch: input.agentNativeLaunch,
-                    sessionMcpContext: input.sessionMcpContext, mcpLaunchMaterial: input.mcpLaunchMaterial }));
+                    agentLaunchKind: input.agentLaunchKind, sessionMcpContext: input.sessionMcpContext,
+                    mcpLaunchMaterial: input.mcpLaunchMaterial }));
             assertCurrent();
             projectLaunch = prepared?.projectLaunch;
             nativeExecutableOwner = prepared?.nativeExecutableOwner;
@@ -1973,7 +1974,7 @@ export function createStablePluginExecService(params: Readonly<{
             if (prepare && !projectLaunch) {
                 const prepared = await prepare(signal, cwd, environment, createMemberProjectAccess({
                     context: isolationContext, requesterIdentity, personBreakGlass: params.executionKind === 'person_break_glass',
-                    agentNativeLaunch, ...readNativeMaterial(),
+                    agentNativeLaunch, agentLaunchKind: params.agentLaunchKind, ...readNativeMaterial(),
                 }));
                 assertCurrent();
                 projectLaunch = prepared?.projectLaunch;

@@ -513,18 +513,35 @@ export async function resolveHostRequesterExecutionIdentityForLaunch(input: Read
     return identity;
 }
 
+function createHostLaunchRefusal(input: Readonly<{
+    requesterIdentity?: HostRequesterExecutionIdentity;
+    agentNativeLaunch?: boolean;
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
+}>, status: HostAgentIsolationLaunchSnapshot['status']) {
+    const code = input.requesterIdentity || input.agentNativeLaunch ? 'agent_isolation_unavailable' : 'workspace_exec_isolation_unavailable';
+    const launchKind = input.agentLaunchKind ?? (input.agentNativeLaunch ? 'exec' : 'workspaceExec');
+    return { code, launchKind, refuse(reason: HostAgentIsolationRefusalReason): never {
+        throwNativeAdmissionRefusal(new PluginError({ code, message: 'Agent isolation cannot admit this launch', retryable: false,
+            details: { reason, status: status.kind, launchKind } }), reason, launchKind);
+    } };
+}
+
 function resolveMemberLaunchCwd(managedBinary: string, member: AgentIsolationMemberNativeIdentity,
-    cwd: string, workspaceRoots: string[], signal?: AbortSignal) {
+    cwd: string, workspaceRoots: string[], refuseProbe: () => never, signal?: AbortSignal) {
     return resolveUnixAgentLaunchCwd(managedBinary, {
         v: 1, action: 'resolve_cwd', cwd, workspaceRoots,
         nativeIdentity: { username: member.username, agentUid: member.agentUid, agentGid: member.agentGid, home: member.home },
-    }, signal);
+    }, signal).catch(() => {
+        signal?.throwIfAborted();
+        return refuseProbe();
+    });
 }
 
 /** Prepare Project reads under the same retained member binding as the eventual launch. */
 export function createMemberProjectAccess(input: Readonly<{
     context?: HostAgentIsolationLaunchContext;
     personBreakGlass?: boolean;
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
 }> & Omit<Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0], 'signal'>) {
     if (input.personBreakGlass || !input.context) return undefined;
     const context = input.context;
@@ -533,7 +550,8 @@ export function createMemberProjectAccess(input: Readonly<{
     return async (signal: AbortSignal) => {
         const prepared = context.prepareLaunch ? await context.prepareLaunch({ ...input, signal }) : context;
         const snapshot = prepared.read();
-        if (!snapshot?.memberIdentity || !snapshot.launch || !snapshot.localTransport) throw new Error('Member path reader unavailable');
+        const refuseProbe = () => createHostLaunchRefusal(input, held.status).refuse('launch_probe_failed');
+        if (!snapshot?.memberIdentity || !snapshot.launch || !snapshot.localTransport) return refuseProbe();
         const { memberIdentity, launch } = snapshot;
         return {
             memberIdentity,
@@ -550,8 +568,8 @@ export function createMemberProjectAccess(input: Readonly<{
                 } }),
             } satisfies HostAgentIsolationLaunchContext,
             async resolvePaths(cwd: string, root: string) {
-                const result = await resolveMemberLaunchCwd(launch.managedHappierBinaryPath, memberIdentity, cwd, [root], signal);
-                if (result.status === 'unavailable') throw new Error('Member Project path unavailable');
+                const result = await resolveMemberLaunchCwd(launch.managedHappierBinaryPath, memberIdentity, cwd, [root], refuseProbe, signal);
+                if (result.status === 'unavailable') return null;
                 return [result.cwd, result.workspaceRoots[0]!] as const;
             },
         };
@@ -588,14 +606,9 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
     // the daemon's cwd; explicit cwd and Agent/Project intent still require proof.
     if (!identity && input.hostNativeSystemTool && input.cwd === undefined && input.requestedCwd === undefined
         && !input.agentNativeLaunch && input.agentLaunchKind === undefined) return undefined;
-    const launchKind = input.agentLaunchKind ?? (input.agentNativeLaunch ? 'exec' : 'workspaceExec');
-    const code = identity || input.agentNativeLaunch ? 'agent_isolation_unavailable' : 'workspace_exec_isolation_unavailable';
     const admittedSnapshot = snapshot;
+    const { code, launchKind, refuse } = createHostLaunchRefusal({ ...input, requesterIdentity: identity }, admittedSnapshot.status);
     let onNativeLaunchFailure = input.context?.onNativeLaunchFailure;
-    const refuse = (reason: HostAgentIsolationRefusalReason): never => {
-        throwNativeAdmissionRefusal(new PluginError({ code, message: 'Agent isolation cannot admit this launch', retryable: false,
-            details: { reason, status: admittedSnapshot.status.kind, launchKind } }), reason, launchKind);
-    };
     const requestedCwd = input.requestedCwd ?? input.cwd ?? process.cwd();
     const workspaceNotReady = (branch: 'requested_cwd_invalid' | 'cwd_unavailable' | 'workspace_roots_empty' | 'root_invalid' | 'root_unavailable' | 'root_escape', root?: string): never => {
         try {
@@ -643,10 +656,7 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
             && (isCanonicalAbsolutePathInsideRoot(member.home, root)
                 || isCanonicalAbsolutePathInsideRoot(member.workspaceRoot, root)));
         const result = await resolveMemberLaunchCwd(snapshot.launch.managedHappierBinaryPath, member, launchCwd,
-            workspaceRoots, input.signal).catch(() => {
-            input.signal?.throwIfAborted();
-            return refuse('launch_probe_failed');
-        });
+            workspaceRoots, () => refuse('launch_probe_failed'), input.signal);
         if (result.status === 'unavailable') return workspaceNotReady(result.reason,
             result.reason === 'root_unavailable' ? workspaceRoots[result.rootIndex] : undefined);
         canonicalCwd = result.cwd;

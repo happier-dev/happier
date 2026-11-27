@@ -570,12 +570,16 @@ it.skipIf(process.platform !== 'linux')('confines an isolated native launch with
     return realpathSync(path);
   });
   const { execFileWithDeadline } = await vi.importActual<typeof nativeProcess>('@happier-dev/cli-common/process');
+  let memberPathProbeUnavailable = false;
   vi.mocked(nativeProcess.execFileWithDeadline).mockImplementation(async (...request) => {
     const [command, args, options] = request;
     if (command === 'sudo' && args?.includes('/managed/happier') && options?.inputBytes) {
       const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }), undefined, true);
-      if ('action' in frame && frame.action === 'resolve_cwd' && frame.cwd === join(h.cwd, 'missing')) {
-        return { stdout: JSON.stringify({ status: 'unavailable', reason: 'cwd_unavailable' }), stderr: '' };
+      if ('action' in frame && frame.action === 'resolve_cwd') {
+        if (memberPathProbeUnavailable) throw Object.assign(new Error('RunAs probe failed'), { code: 'ENOENT' });
+        if (frame.cwd === join(h.cwd, 'missing')) {
+          return { stdout: JSON.stringify({ status: 'unavailable', reason: 'cwd_unavailable' }), stderr: '' };
+        }
       }
       const result = await runAgentIsolationMemberReadinessBoundary({ request, nativeHome: { path: home, uid: member.agentUid } });
       if (result) return result;
@@ -606,6 +610,10 @@ it.skipIf(process.platform !== 'linux')('confines an isolated native launch with
   const unassociated = await h.launch(h.cwd, isolation);
   await unassociated.release();
   await expect(h.launch(join(h.cwd, 'missing'), isolation)).rejects.toMatchObject({ code: 'outside_root' });
+  memberPathProbeUnavailable = true;
+  await expect(h.launch(h.cwd, isolation)).rejects.toMatchObject({
+    code: 'agent_isolation_unavailable', retryable: false, details: { reason: 'launch_probe_failed', status: 'effective', launchKind: 'exec' },
+  });
   expect(h.nativeEffects()).toBe(2);
 });
 
