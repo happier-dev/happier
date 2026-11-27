@@ -13,7 +13,10 @@ export type PostgresqlStatsCompilationV1 = Readonly<{
     /** Catalog facts already held by the dialect connection owner; null means absent. */
     pgStatStatements?: Readonly<{ schema: string; version: string }> | null;
 }>;
-export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabilities: PostgresqlStatsCompilationV1 = {}): DatabaseStatsSqlPlanV1 {
+export function compilePostgresqlStatsV1(
+    operation: DatabaseStatsReadV1, capabilities: PostgresqlStatsCompilationV1 = {},
+    options: Readonly<{ diagnoseHiddenSelection?: true }> = {},
+): DatabaseStatsSqlPlanV1 {
     const parameters: (string | number)[] = [];
     const bind = (value: string | number) => { parameters.push(value); return `$${parameters.length}`; };
     const page = () => 'page' in operation.selection ? ` LIMIT ${bind(operation.selection.page.rows + 1)} OFFSET ${bind(operation.selection.page.offset ?? 0)}` : '';
@@ -25,7 +28,7 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
     };
     const metadata = `pg_catalog.pg_postmaster_start_time()::text AS engine_started_at,
         (SELECT stats_reset::text FROM pg_catalog.pg_stat_database WHERE datname = current_database()) AS stats_reset`;
-    if (operation.group === 'indexAdvice') return { status: 'unavailable', reason: 'extension_metadata_required' };
+    if (operation.group === 'indexAdvice') return { status: 'unavailable', reason: 'unsupported_transport' };
     if (operation.group === 'size') {
         const relation = operation.selection.relation;
         if (!relation) return statsSqlPlan('postgresql', operation, {
@@ -48,7 +51,17 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
         const topLevel = minor >= 9 ? 's.toplevel' : 'TRUE';
         const time = minor >= 8 ? 's.total_exec_time' : 's.total_time';
         const key = `s.dbid::text || ':' || s.userid::text || ':' || s.queryid::text || ':' || ${topLevel}::text`;
-        const predicate = operation.selection.statementKey === undefined ? '' : ` AND (${key}) = ${bind(operation.selection.statementKey)}`;
+        const selected = operation.selection.statementKey;
+        // pg_stat_statements removes the query ID together with its text. If the
+        // owner has hidden rows in this DB, the exact key cannot settle eviction.
+        const hiddenIdentity = options.diagnoseHiddenSelection ? selected?.match(/^(\d+):(\d+):-?\d+:(true|false)$/u) : undefined;
+        const exact = selected === undefined ? '' : `(${key}) = ${bind(selected)}`;
+        const hidden = hiddenIdentity
+            ? ` OR (s.queryid IS NULL AND s.dbid::text = ${bind(hiddenIdentity[1]!)}
+                AND s.userid::text = ${bind(hiddenIdentity[2]!)} AND ${topLevel}::text = ${bind(hiddenIdentity[3]!)})`
+            : '';
+        const predicate = exact ? ` AND ${hidden ? `(${exact}${hidden})` : exact}` : '';
+        const preferExact = hiddenIdentity ? 's.queryid IS NULL, ' : '';
         const order = { totalTime: time, calls: 's.calls', rows: 's.rows' }[operation.selection.order];
         const pagination = page();
         const info = minor >= 9 ? `LEFT JOIN ${namespace}."pg_stat_statements_info" info ON TRUE` : '';
@@ -63,7 +76,7 @@ export function compilePostgresqlStatsV1(operation: DatabaseStatsReadV1, capabil
                 ${minor >= 8 ? ', s.total_plan_time AS planning_time_ms' : ''}
                 ${minor >= 11 ? ', s.stats_since::text AS stats_started_at' : ''}
                 FROM ${namespace}."pg_stat_statements" s WHERE s.dbid = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database())
-                ${predicate} ORDER BY ${order} DESC, s.dbid, s.userid, s.queryid${minor >= 9 ? ', s.toplevel' : ''}${pagination}) r ON TRUE
+                ${predicate} ORDER BY ${preferExact}${order} DESC, s.dbid, s.userid, s.queryid${minor >= 9 ? ', s.toplevel' : ''}${pagination}) r ON TRUE
             `, parameters }, rows => rows.filter(row => row.key !== undefined).map(row => ({
             key: statsText(row, 'key'), database: statsText(row, 'database'), ...statsOptional('user', statsText(row, 'user_id')),
             topLevel: statsBoolean(row, 'top_level'), ...statsShape(statsText(row, 'query'), normalizePostgresqlStatement),

@@ -22,6 +22,7 @@ import { fitDatabaseOperationResult } from '../resultEnvelope.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { quotePostgresqlIdentifier } from './identifiers.js';
 import { POSTGRESQL_STATISTICS_ENABLE_SQL_V1 } from './setup.js';
+import { readPostgresqlIndexAdvice } from './indexAdvice.js';
 import { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
 import { statsNativeRowsV1, statsOperationResultV1, statsSize, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 export { quotePostgresqlIdentifier } from './identifiers.js';
@@ -35,12 +36,16 @@ export interface PostgresqlNativeResult {
 export interface PostgresqlCompiledStatement {
     text: string;
     values: Array<string | boolean | Buffer | null>;
+    /** PostgreSQL 16 handles unbound EXPLAIN GENERIC_PLAN placeholders in the simple protocol. */
+    simpleProtocol?: true;
     /** Ordered projection for catalog transports that return records instead of positional rows. */
     resultFields?: PostgresqlNativeResult['fields'];
 }
 export type PostgresqlQuery = (statement: PostgresqlCompiledStatement) => Promise<PostgresqlNativeResult>;
 export type PostgresqlExecutionOptions = Readonly<{
-    stats?: DatabaseStatsExecutionContextV1 & PostgresqlStatsCompilationV1;
+    stats?: DatabaseStatsExecutionContextV1 & PostgresqlStatsCompilationV1 & Readonly<{
+        nativeBackendPid?: number;
+    }>;
 }>;
 
 const schemaCatalogFields = [{ name: 'nspname', dataTypeID: 19 }] as const;
@@ -408,6 +413,7 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
         }
         case 'stats.read': {
             if (!options.stats) return unavailable('Statistics require native connection setup facts');
+            if (input.request.group === 'indexAdvice') return readPostgresqlIndexAdvice(input.request, query, options.stats);
             const plan = compilePostgresqlStatsV1(input.request, options.stats);
             const resultSets: (readonly DatabaseStatsNativeRowV1[])[] = [];
             if (plan.status === 'compiled') for (const statement of plan.statements) {

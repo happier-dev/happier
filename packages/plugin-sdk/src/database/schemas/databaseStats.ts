@@ -13,6 +13,7 @@ export const DatabaseStatsReasonV1Schema = z.enum([
     'preload_restart_required', 'instrumentation_disabled', 'visibility_restricted',
     'previous_sample_required', 'comparison_unavailable', 'counter_reset', 'row_evicted',
     'partial_observation', 'parameters_required', 'unsupported_extension_version', 'extension_metadata_required',
+    'hypopg_missing', 'index_advice_statement_unsupported',
     'reset_marker_unavailable', 'eviction_possible', 'digest_overflow', 'dbstat_unavailable',
 ]);
 export type DatabaseStatsReasonV1 = z.infer<typeof DatabaseStatsReasonV1Schema>;
@@ -72,6 +73,9 @@ export const DatabaseStatsObservationV1Schema = z.union([
     z.strictObject({ ...available, group: z.literal('indexes'), data: z.array(DatabaseStatsIndexV1Schema) }),
     z.strictObject({ ...available, group: z.literal('activity'), data: z.array(DatabaseStatsActivityV1Schema) }),
     z.strictObject({ ...available, group: z.literal('size'), data: DatabaseStatsSizeV1Schema }),
+    z.strictObject({ ...available, group: z.literal('indexAdvice'), data: z.array(z.strictObject({
+        relation: DatabaseStatsRelationV1Schema, column: name, baselineCost: nonnegative, candidateCost: nonnegative,
+    })) }),
     z.strictObject({ ...common, status: z.literal('unavailable'), group: DatabaseStatsGroupV1Schema,
         reason: DatabaseStatsReasonV1Schema, remediation: z.optional(z.string()) }),
 ]);

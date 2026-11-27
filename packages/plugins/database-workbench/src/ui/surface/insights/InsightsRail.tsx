@@ -234,7 +234,7 @@ function StatementDetailsTab(props: Readonly<{ context: RenderContext; targetKey
       />
     );
   }
-  return <StatementDetail view={view} target={descriptor.target} onOpenConsole={async sql => {
+  return <StatementDetail view={view} descriptor={descriptor} onOpenConsole={async sql => {
     await instance.console(props.targetKey).setText(sql);
     await openWorkbenchPage(props.context.hostApi, descriptor, { mode: 'console' });
   }} />;

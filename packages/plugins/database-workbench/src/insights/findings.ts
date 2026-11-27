@@ -19,7 +19,7 @@ import { workbenchTargetKey } from '../targetIdentity.js';
 import { buildDatabaseFindingBriefV1 } from './brief.js';
 import { selectDatabaseStatement } from './presentation.js';
 
-type AvailableStats = Extract<DatabaseStatsObservationV1, { status: 'available' }>;
+type AvailableStats = Exclude<Extract<DatabaseStatsObservationV1, { status: 'available' }>, { group: 'indexAdvice' }>;
 type Summary = DatabaseFindingObservationV1['summary'];
 type FindingRow = Readonly<{ recordKey: string; summary: Summary;
     object?: DatabaseFindingV1['object'];
@@ -162,6 +162,8 @@ export function createDatabaseInsightProducers(options: Readonly<{
     admit: DatabaseOperationAdmission;
 }>): Required<Pick<DatabaseActionProducers, 'listFindings' | 'readFinding' | 'readInsightSource' | 'dismissFinding' | 'buildInsightBrief'>> {
     async function read(input: DatabaseFindingsListInputV1, context: PluginInvocationContext) {
+        if (input.request.group === 'indexAdvice') return { ok: false as const, status: 'unavailable' as const,
+            code: 'database_stats_unavailable', reason: 'unsupported_group' };
         // The existing operation owner pairs this operand with its stats result;
         // its broader union does not express the input/output correspondence.
         const execution = await options.executeResolvedOperation({ operation: 'stats.read', target: input.target,
@@ -171,6 +173,8 @@ export function createDatabaseInsightProducers(options: Readonly<{
         const stats = result.observation;
         if (stats.status === 'unavailable') return { ok: false as const, status: 'unavailable' as const,
             code: 'database_stats_unavailable', reason: stats.reason };
+        if (stats.group === 'indexAdvice') return { ok: false as const, status: 'unavailable' as const,
+            code: 'database_stats_unavailable', reason: 'unsupported_group' };
         const rows = rowsFor(stats);
         const observation = projectDatabaseFindingObservation(stats, execution.sourceScope, context, rows);
         return { ok: true as const, observation, rows, stats };

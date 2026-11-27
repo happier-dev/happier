@@ -49,7 +49,8 @@ export function createDatabaseRuntime(options: Readonly<{
         let result: DatabaseOperationResultV1;
         let sourceScope: DatabaseOperationExecution['sourceScope'];
         let writeAudit: Readonly<Record<string, JsonValue>> | undefined;
-        if (access === 'read' && input.subscriptionId) {
+        const indexAdvice = input.operation === 'stats.read' && input.request.group === 'indexAdvice';
+        if (access === 'read' && input.subscriptionId && !indexAdvice) {
             // The demand was opened for whoever subscribed; this request is admitted for its own requester first.
             await options.admit({ input, context, access });
             // A host-owned demand validates its captured target and keeps its existing connection.
@@ -76,7 +77,8 @@ export function createDatabaseRuntime(options: Readonly<{
                 }
             }
         }
-        if (result.ok && result.operation === 'stats.read' && result.observation.status === 'available') {
+        if (result.ok && result.operation === 'stats.read' && result.observation.status === 'available'
+            && result.observation.group !== 'indexAdvice') {
             try {
                 const observation = projectDatabaseFindingObservation(result.observation, sourceScope, context);
                 const subject = readAutomationDatabaseSubjectV1(observation.sourceScope.serverId, input.target);

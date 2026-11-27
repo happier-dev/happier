@@ -241,6 +241,18 @@ it('P4-F6-known-good-stats', async () => {
       expect(DatabaseOperationResultV1Schema.parse(agentRead.result)).toMatchObject({
         ok: true, operation: 'stats.read', observation: { status: 'available', scope: { database: 'dbw_selected' } },
       });
+      const adviceInput = DatabaseStatsOperationInputV1Schema.parse({
+        operation: 'stats.read', target: targets.selected, request: {
+          kind: 'stats.read', group: 'indexAdvice', selection: { statementKey: workload.key },
+        },
+      });
+      const agentAdvice = await agent.execute(DATABASE_STATS_READ_ACTION_ID_V1, adviceInput);
+      if (!agentAdvice.ok) throw new Error(`F6 Agent index advice refused (${agentAdvice.errorCode})`);
+      expect(DatabaseOperationResultV1Schema.parse(agentAdvice.result)).toMatchObject({
+        ok: true, operation: 'stats.read', observation: {
+          group: 'indexAdvice', status: 'unavailable', reason: 'hypopg_missing',
+        },
+      });
       expect(await observeOperation(await agent.execute(DATABASE_ACTIVITY_CANCEL_ACTION_ID_V1, cancelInput)))
         .toMatchObject({ ok: false, errorCode: 'database_agent_access_read_only' });
       expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, {

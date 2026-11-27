@@ -218,6 +218,42 @@ draft when the target needs help with setup. For a worktree, **Add telemetry
 to this app** prepares an editable draft for the selected checkout, even when
 the Insights rail has no database yet. Review the draft before sending it.
 
+### Check for index suggestions
+
+In **Insights**, open **Statements**, select a PostgreSQL statement, and choose
+**Check for index suggestions**. The check uses a direct connection to PostgreSQL
+16 or later and the database's existing read login. It handles simple
+schema-qualified `SELECT *` statements with an integer equality filter, an
+integer sort column, or both. The statement text must be visible to that login.
+
+A suggestion names the table and column and shows the estimated planner cost
+before and after the hypothetical index. The check tests one B-tree at a time
+and shows candidates that at least halve that cost. Planner costs can differ
+from actual latency. The check leaves the database's indexes intact.
+
+If Insights shows **Index suggestions need the hypopg extension**, ask a
+database administrator to set it up in the selected database, then choose
+**Retry**.
+
+| PostgreSQL host | Administrator setup |
+| --- | --- |
+| Your own server | Install HypoPG for the server's PostgreSQL major version and run `CREATE EXTENSION hypopg`. [HypoPG installation](https://hypopg.readthedocs.io/en/rel1_stable/installation.html) |
+| Docker | Build an image with the matching HypoPG extension files and run `CREATE EXTENSION hypopg` in the database. [PostgreSQL Docker image extensions](https://github.com/docker-library/docs/blob/master/postgres/README.md#additional-extensions) |
+| Supabase | Enable HypoPG in **Database → Extensions** or run `CREATE EXTENSION hypopg WITH SCHEMA extensions`. Connect through the direct PostgreSQL endpoint. [Supabase HypoPG](https://supabase.com/docs/guides/database/extensions/hypopg) |
+| Neon | Run `CREATE EXTENSION hypopg` in the selected database on the branch and use the direct endpoint. [Neon extensions](https://neon.com/docs/extensions/pg-extensions) |
+| Railway | Deploy a custom PostgreSQL image with matching HypoPG extension files, then run `CREATE EXTENSION hypopg`. [Railway PostgreSQL extensions](https://docs.railway.com/databases/postgresql#extensions) |
+
+If your administrator restricts extension permissions, the read login needs
+`USAGE` on the HypoPG schema and `EXECUTE` on `hypopg_create_index(text)` and
+`hypopg_reset()`, along with its existing access to the table and statistics.
+
+**Optional administrator step.** PostgreSQL hides statement text and query IDs
+for workload run by other logins. An administrator can run
+`GRANT pg_read_all_stats TO happier_ro` if that read login should see other
+users' query text, query IDs, and restricted statistics across the PostgreSQL
+instance. Grant this only after reviewing that broader visibility. Happier
+never grants this role automatically. [PostgreSQL statement statistics](https://www.postgresql.org/docs/16/pgstatstatements.html)
+
 In **Insights**, open **Findings** and select a statement, table, index, or
 activity item to see its evidence. **Prepare brief** opens a preview for a
 Session. **Create workflow from finding** opens a draft with the selected

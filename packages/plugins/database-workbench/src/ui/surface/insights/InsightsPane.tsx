@@ -282,7 +282,7 @@ function StatementsPanel(
       ) : null}
       <StatementsView
         views={views}
-        target={props.descriptor.target}
+        descriptor={props.descriptor}
         complete={available?.completeness.complete === true}
         loading={stats.status === 'loading'}
         onOpenConsole={props.onOpenConsole}

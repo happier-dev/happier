@@ -867,8 +867,28 @@ describe('Database Insights surfaces', () => {
     }
   });
 
-  it('rereads the opened statement by key and says how much of it was read from memory', async () => {
-    const executeAction = daemon(statements);
+  it('reads index suggestions only on demand and retries without losing the statement detail', async () => {
+    const normalStats = daemon(statements);
+    let adviceReads = 0;
+    const executeAction = vi.fn(async (call: PluginUiTestkitExecuteActionInput) => {
+      const input = call.input;
+      if (!input || typeof input !== 'object' || !('request' in input)
+        || !(input.request && typeof input.request === 'object' && 'group' in input.request)
+        || input.request.group !== 'indexAdvice') {
+        return normalStats(call);
+      }
+      expect(input).toMatchObject({ target: descriptor.target,
+        request: { group: 'indexAdvice', selection: { statementKey: 'q-slow' } } });
+      expect(input).not.toHaveProperty('subscriptionId');
+      adviceReads++;
+      return projectNativeJsonValueForTransport({ ok: true, operation: 'stats.read',
+        observation: { v: 1, observedAtMs: 1, engineId: 'postgresql', scope: { database: 'billing_dev' },
+          intervalBasis: basis, group: 'indexAdvice', ...(adviceReads === 1
+            ? { status: 'unavailable', reason: 'hypopg_missing' }
+            : { status: 'available', coverage: { status: 'complete' }, completeness: { complete: true },
+                data: [{ relation: { schema: 'public', name: 'invoice' }, column: 'buyer_id',
+                  baselineCost: 250, candidateCost: 12.5 }] }) } });
+    });
     const details = await createPluginUiTestkit({
       identity: { instanceId: 'details', mountNonce: 'details' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -900,9 +920,22 @@ describe('Database Insights surfaces', () => {
       expect(await details.queryByRole('group', {
         name: 'Read from memory: 99.2%, of the blocks it read',
       })).toBeTruthy();
+      expect(adviceReads).toBe(0);
+      const check = await details.queryByRole('button', { name: 'Check for index suggestions' });
+      expect(check).toBeTruthy();
+      await act(async () => { await details.press(check!); });
+      expect(adviceReads).toBe(1);
+      expect(await details.queryByRole('button', { name: 'Open in Console' })).toBeTruthy();
+      const retry = await details.queryByRole('button', { name: 'Retry' });
+      expect(retry).toBeTruthy();
+      await act(async () => { await details.press(retry!); });
+      expect(adviceReads).toBe(2);
+      expect(await details.queryByRole('group', { name: 'Estimated cost before: 250' })).toBeTruthy();
+      expect(await details.queryByRole('group', { name: 'Estimated cost after: 12.5' })).toBeTruthy();
     } finally {
       await details.dispose();
     }
+    expect(adviceReads).toBe(2);
   });
 
   it('prepares the selected finding once before handing its editable brief to the Session Composer', async () => {

@@ -50,6 +50,9 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         } catch (error) { await transport?.close(); throw error; }
     };
     const { client, transport } = await openClient();
+    // pg stores the PID supplied in PostgreSQL's BackendKeyData startup message.
+    // The driver does not expose it in @types/pg.
+    const backendKey = client as Client & { readonly processID?: number };
     let closed = false;
     let closing: Promise<void> | undefined;
     let terminalError: unknown;
@@ -95,7 +98,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
     client.on('error', error => { terminalError = error; });
     const query = (statement: PostgresqlCompiledStatement): Promise<PostgresqlNativeResult> => {
         const config = { text: statement.text, values: statement.values, rowMode: 'array' as const,
-            queryMode: 'extended', types: { getTypeParser: () => (value: string) => value } };
+            ...(statement.simpleProtocol ? {} : { queryMode: 'extended' }), types: { getTypeParser: () => (value: string) => value } };
         return new Promise((resolve, reject) => {
             let settled!: () => void;
             activeCompletion = new Promise<void>(resolve => { settled = resolve; });
@@ -143,10 +146,12 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             || input.operation === 'stats.enable'
             || (input.operation === 'statement.run' && input.mode === 'write')
             || (input.operation === 'statement.explain' && input.accessMode === 'write');
+        const indexAdvice = input.operation === 'stats.read' && input.request.group === 'indexAdvice';
         let transaction = false;
         let committing = false;
         const executionOptions: PostgresqlExecutionOptions = input.operation === 'stats.read' ? { stats: {
             database: setup.database, pgStatStatements: setup.pgStatStatements,
+            ...(backendKey.processID == null ? {} : { nativeBackendPid: backendKey.processID }),
             intervalBasis: { databaseIdentity, engineStartedAt: setup.engineStartedAt,
                 bindingKey: JSON.stringify({ target: input.target, databaseIdentity, currentUser: setup.currentUser }),
                 selectionKey: JSON.stringify(input.request) },
@@ -157,7 +162,11 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             await query({ text: write ? 'BEGIN' : 'BEGIN READ ONLY', values: [] });
             transaction = true;
             if (write && writeRoleSql) await query({ text: writeRoleSql, values: [] });
-            const result = await executePostgresqlOperation(input, query, executionOptions);
+            const queryOperation: typeof query = indexAdvice ? statement => {
+                operationSignal?.throwIfAborted();
+                return query(statement);
+            } : query;
+            const result = await executePostgresqlOperation(input, queryOperation, executionOptions);
             operationSignal?.throwIfAborted();
             if (!result.ok || (input.operation === 'statement.explain' && input.accessMode === 'write')) {
                 await query({ text: 'ROLLBACK', values: [] });
@@ -168,15 +177,16 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             transaction = false;
             return result;
         } catch (error) {
-            if (transaction && !closed) {
+            if (transaction && !closed && !indexAdvice) {
                 try { await query({ text: 'ROLLBACK', values: [] }); }
                 catch { await close().catch(() => {}); }
             }
-            if ((committing || signalsBackend) && (closed || operationSignal?.aborted || postgresqlFailureCause(error).source === 'transport')) return { ok: false, status: 'outcome_unknown', code: 'database_outcome_unknown', cause: postgresqlFailureCause(error) };
+            if (!indexAdvice && (committing || signalsBackend) && (closed || operationSignal?.aborted || postgresqlFailureCause(error).source === 'transport')) return { ok: false, status: 'outcome_unknown', code: 'database_outcome_unknown', cause: postgresqlFailureCause(error) };
             if (operationSignal?.aborted || closed) return { ok: false, status: 'cancelled', code: 'database_cancelled' };
             if (error instanceof PostgresqlOperationError) return error.failure;
             if (error instanceof PostgresqlInputError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
-            const failureCause = postgresqlFailureCause(error);
+            const cause = postgresqlFailureCause(error);
+            const failureCause = indexAdvice ? { ...cause, message: 'The index estimate failed' } : cause;
             if (input.operation === 'stats.enable' && failureCause.code === '42501') {
                 return { ok: false, status: 'unavailable', code: 'database_statistics_extension_privilege_required',
                     reason: 'Use a database login that can install pg_stat_statements, or ask your database administrator to enable it.' };
@@ -188,7 +198,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             // Installed pg_stat_statements reports 55000 when its shared library
             // was not loaded. Settle after rollback, preserving this connection
             // for ordinary reads and leaving user-authored SQL failures intact.
-            if (input.operation === 'stats.read' && input.request.group === 'statements'
+            if (input.operation === 'stats.read' && (input.request.group === 'statements' || indexAdvice)
                 && failureCause.code === '55000' && executionOptions.stats) {
                 return statsOperationResultV1('postgresql', input.request,
                     { status: 'unavailable', reason: 'preload_restart_required' }, [], executionOptions.stats);
@@ -196,8 +206,13 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             return { ok: false, status: 'failed', code: failureCause.source === 'engine' ? 'database_engine_error' : 'database_transport_error', cause: failureCause };
         } finally {
             operationSignal?.removeEventListener('abort', onAbort);
-            if (cancellation) await cancellation;
-            if (operationSignal?.aborted) await close().catch(() => {});
+            // HypoPG state is backend-local and can survive transaction rollback.
+            if (indexAdvice && (transaction || operationSignal?.aborted)) {
+                await close().catch(() => {});
+            } else {
+                if (cancellation) await cancellation;
+                if (operationSignal?.aborted) await close().catch(() => {});
+            }
         }
     };
     // The same queue owns ordinary transactions and read-role setup on this native session.

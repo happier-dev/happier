@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import {
   Button,
   CodeBlock,
@@ -19,6 +19,7 @@ import type { StatementView } from './statements.js';
 import { projectDatabaseStatementMetrics } from '../../../insights/presentation.js';
 import { workbenchTargetKey } from '../../../targetIdentity.js';
 import { FindingBrief } from './FindingBrief.js';
+import { StatementIndexAdvice } from './StatementIndexAdvice.js';
 
 /**
  * One statement: its shape, what it costs, what changed since your last look, and where to go next. The same body
@@ -27,13 +28,15 @@ import { FindingBrief } from './FindingBrief.js';
 export function StatementDetail(
   props: Readonly<{
     view: StatementView;
-    target: DatabaseTargetV1;
+    descriptor: DatabaseDescriptorV1;
     /** Opens the shape in the Console beside its tables; absent where the Console isn't reachable. */
     onOpenConsole?: (sql: string) => void;
   }>,
 ) {
   const translate = usePluginTranslation();
   const { row, change } = props.view;
+  const { engine, target } = props.descriptor;
+  const detailKey = JSON.stringify([workbenchTargetKey(target), row.key]);
   const hit = projectDatabaseStatementMetrics(row).bufferHitRatio;
   const mean = formatDuration(props.view.meanMs);
   const changedMean = change ? formatDuration(change.meanTimeMs) : null;
@@ -144,7 +147,8 @@ export function StatementDetail(
           />
         </Row>
       ) : null}
-      <FindingBrief key={JSON.stringify([workbenchTargetKey(props.target), row.key])} target={props.target} recordKey={row.key} />
+      {engine === 'postgresql' && shape ? <StatementIndexAdvice key={`advice:${detailKey}`} target={target} statementKey={row.key} /> : null}
+      <FindingBrief key={detailKey} target={target} recordKey={row.key} />
     </Stack>
   );
 }
