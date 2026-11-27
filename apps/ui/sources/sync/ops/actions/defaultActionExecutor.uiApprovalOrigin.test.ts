@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ACCOUNT_ERASURE_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountErasure';
@@ -453,12 +453,20 @@ describe('present-user UI approval origin at the Action host', () => {
         const serverIdentityId = 'srv_filesystem_review';
         const serverId = await harness.addHome({ name: 'Filesystem Home', serverUrl: 'https://filesystem-review.test',
             accountId: 'alice', serverIdentityId, currentAccount: true });
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const { createUiActionAutomationPortV1 } = await import('./actionAutomations');
+        const account = await captureLazyActionAccountContext(serverId);
+        onTestFinished(account.dispose);
+
         let effects = 0;
-        // Only the native filesystem effect and HTTP transport are replaced.
-        const receiver = createActionExecutor({ filesystemActionExecute: async () => {
-            effects++;
-            return actionId === 'daemon.filesystem.writeFile' ? { success: true, hash: 'a'.repeat(64) } : { success: true };
-        } });
+        // The Home harness serves the automation index over the existing HTTP boundary.
+        const receiver = createActionExecutor({
+            actionAutomations: createUiActionAutomationPortV1(account),
+            filesystemActionExecute: async () => {
+                effects++;
+                return actionId === 'daemon.filesystem.writeFile' ? { success: true, hash: 'a'.repeat(64) } : { success: true };
+            },
+        });
         await answerExternalActionAccountForHome(harness, serverId, { machineId, actionId, tokenEpoch: 0,
             requesterInvocation: 'optional',
             failure: result => {
