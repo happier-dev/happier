@@ -132,7 +132,7 @@ export async function forkCodexAppServerConversationNative(
           ? {
               // A tracked action operation owns cancellation. Do not turn a slow-but-live
               // provider initialization into a false fork failure at the generic startup limit.
-              initializeRequestOptions: { signal: params.signal },
+              initializeRequestOptions: { signal: params.signal, timeoutMs: null },
             }
           : {}),
       });
@@ -153,7 +153,7 @@ export async function forkCodexAppServerConversationNative(
 
     await reconcileCodexResumeRolloutPath({
       env: params.processEnv ?? process.env, vendorResumeId: parentCodexSessionId, cwd: params.directory,
-      sqliteHome: await client.readRuntimeSqliteHome?.(params.signal ? { signal: params.signal, timeoutMs: null } : undefined) ?? null,
+      sqliteHome: await client.readRuntimeSqliteHome?.(params.signal ? { signal: params.signal } : undefined) ?? null,
     });
     params.signal?.throwIfAborted();
     for (const method of ['thread/fork', 'conversation/fork'] as const) {
