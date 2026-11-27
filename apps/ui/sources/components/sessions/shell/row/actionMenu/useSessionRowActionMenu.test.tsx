@@ -122,19 +122,20 @@ describe('useSessionRowActionMenu', () => {
             '#123456',
         ]);
         expect(swatches.filter((item) => item.swatch!.checked).map((item) => item.swatch!.color)).toEqual(['#00FF00']);
-        // Remove is a struck-through swatch in the custom row; Custom color… is the one text row.
-        expect(submenu.filter((item) => !item.swatch)).toHaveLength(1);
-        expect(swatches.filter((item) => item.swatch!.empty)).toHaveLength(1);
+        // Reset colour is a labelled action beside Custom color…, rather than an unlabelled swatch.
+        const remove = submenu.find((item) => item.id === `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`)!;
+        expect(remove).toBeDefined();
+        expect(remove.swatch).toBeUndefined();
+        expect(remove.title).toBeTruthy();
+        expect(submenu.filter((item) => !item.swatch)).toHaveLength(2);
 
         const red = swatches.find((item) => item.swatch!.color === '#FF0000')!;
         const custom = swatches.find((item) => item.swatch!.color === '#123456')!;
         // Screen readers hear what the swatch is, not a bare hex code.
         expect(custom.title).toContain('#123456');
         expect(custom.title).not.toBe('#123456');
-        const remove = swatches.find((item) => item.swatch!.empty)!;
-        // One continuous grid: presets, then colours in use, then Remove last.
+        // One continuous grid: presets, then colours in use; Reset is a separate action.
         expect(new Set(swatches.map((item) => item.swatch!.group)).size).toBe(1);
-        expect(swatches.at(-1)).toBe(remove);
         await act(async () => {
             await hook.getCurrent().handleMoreMenuSelect(red.id);
             await hook.getCurrent().handleMoreMenuSelect(custom.id);
@@ -155,6 +156,7 @@ describe('useSessionRowActionMenu', () => {
             .find((item) => item.id === SESSION_ACTION_SET_APPEARANCE_COLOR_ID)!.submenu!.items;
         expect(submenu.filter((item) => item.swatch?.checked)).toHaveLength(0);
         expect(submenu.filter((item) => item.swatch?.empty)).toHaveLength(0);
+        expect(submenu.some((item) => item.id === `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`)).toBe(false);
     });
 
     it('hides the session colour action when the server cannot store it', async () => {
@@ -181,6 +183,7 @@ describe('useSessionRowActionMenu', () => {
         expect(orange.subtitle).toBeTruthy();
         expect(submenu.filter((item) => item.swatch?.inherited)).toHaveLength(1);
         expect(submenu.filter((item) => item.swatch?.empty)).toHaveLength(0);
+        expect(submenu.some((item) => item.id === `${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:remove`)).toBe(false);
 
         await act(async () => {
             await hook.getCurrent().handleMoreMenuSelect(orange.id);

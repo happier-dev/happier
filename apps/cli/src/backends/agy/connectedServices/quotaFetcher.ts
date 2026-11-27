@@ -1,7 +1,11 @@
-import { AGY_ACP_SERVER_VERSION, ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
+import { ConnectedServiceQuotaSnapshotV1Schema, type ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
 import { ConnectedServiceQuotaFetchError, type ConnectedServiceQuotaFetcher, type ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import { requestGoogleCodeAssist, type GoogleCodeAssistFetchRuntime } from '@/daemon/connectedServices/quotas/googleCodeAssistRequest';
 import { readConnectedServiceQuotaStaleAfterMs } from '@/daemon/connectedServices/quotas/configuration';
+
+// The Antigravity ACP 1.3.0 useragent.py client surface. Without this product token Google returns
+// UNSUPPORTED_CLIENT instead of the entitlement. It describes this read-only request, not a runtime.
+const QUOTA_USER_AGENT = 'antigravity/acp/1.3.0 (aidev_client; host_path=happier; proxy_client=antigravity/sdk)';
 
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -62,9 +66,7 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
       throw new ConnectedServiceQuotaFetchError('missing_antigravity_oauth_record', { quotaFetchErrorCode: 'missing_auth' });
     }
     const explicitProject = text(object(record.oauth.raw)?.project_id);
-    // ACP's useragent.py identifies the Antigravity client surface. Without this
-    // product token, Google returns UNSUPPORTED_CLIENT instead of its entitlement.
-    const userAgent = `antigravity/acp/${AGY_ACP_SERVER_VERSION} (aidev_client; host_path=happier; proxy_client=antigravity/sdk)`;
+    const userAgent = QUOTA_USER_AGENT;
     const request = { fetchRuntime: deps.fetchRuntime ?? fetch, accessToken: record.oauth.accessToken, userAgent, signal };
     // ACP 1.3.0 onboard.py bootstraps on prod and selects daily only for consumer tiers.
     // Quota refresh reads the entitlement; it never invokes onboardUser or changes billing.

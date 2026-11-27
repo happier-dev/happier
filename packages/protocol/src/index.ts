@@ -1607,8 +1607,6 @@ export {
   GH_BINARY_NAME,
   GH_DEP_ID,
   GH_GITHUB_REPO,
-  AGY_ACP_SERVER_DEP_ID,
-  AGY_ACP_SERVER_VERSION,
   type InstallableAutoUpdateMode,
   type InstallableCatalogEntry,
   type InstallableDefaultPolicy,

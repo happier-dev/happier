@@ -157,7 +157,12 @@ export function buildSystemdUserScopedLaunchSpec(params: Readonly<{
 }>): SystemdUserScopedLaunchSpec {
   // Raising an inherited nice value requires privileges that agent runners may not have.
   const niceValue = Math.max(10, getPriority());
-  return buildSystemdUserScopedLaunchSpecForSlice(params, HAPPIER_JOBS_SLICE_NAME, [`--nice=${niceValue}`]);
+  // A scope's default OOMPolicy=stop tears down the runner and its agent when the kernel OOM-kills any
+  // one process inside it, such as a tool command; with continue only the killed process fails.
+  return buildSystemdUserScopedLaunchSpecForSlice(params, HAPPIER_JOBS_SLICE_NAME, [
+    `--nice=${niceValue}`,
+    '--property=OOMPolicy=continue',
+  ]);
 }
 
 /**
