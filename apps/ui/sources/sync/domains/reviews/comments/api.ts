@@ -9,6 +9,7 @@ import type { ReviewCommentAttachEvidenceRequestV1, ReviewCommentCreateRequestV1
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionMode, type AccountEncryptionReadUsage } from '@/sync/api/account/apiAccountEncryptionMode';
+import { readReviewJsonResponse } from '@/sync/api/reviews/readReviewJsonResponse';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { serverFetch, type ServerFetch } from '@/sync/http/client';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -78,25 +79,13 @@ function withoutField<TObject extends object, TKey extends keyof TObject>(
     return rest;
 }
 
-async function readReviewCommentJsonResponse(response: Response): Promise<unknown> {
-    const payload = await response.json();
-    if (response.ok) return payload;
-    const parsed = typeof payload === 'object' && payload !== null ? payload as Record<string, unknown> : {};
-    const code = typeof parsed.errorCode === 'string' ? parsed.errorCode
-        : typeof parsed.error === 'string' ? parsed.error : null;
-    const message = typeof parsed.message === 'string' ? parsed.message : null;
-    throw Object.assign(new Error(code ?? message ?? 'review_comment_request_failed'), {
-        code: code ?? 'review_comment_request_failed',
-    });
-}
-
 async function requestReviewCommentJson(
     request: ServerFetch,
     path: string,
     init?: RequestInit,
 ): Promise<unknown> {
     const response = await request(path, init, { includeAuth: true });
-    return await readReviewCommentJsonResponse(response);
+    return await readReviewJsonResponse(response, 'review_comment_request_failed');
 }
 
 function requestReviewCommentTransport(request: ServerFetch, transport: ReviewCommentTransportRequestV1, signal?: AbortSignal): Promise<unknown> {

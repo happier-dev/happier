@@ -1,6 +1,7 @@
 import { createReviewHumanActionExecutorV1, type ReviewHumanResourceV1 } from '@happier-dev/protocol/reviews/reviewHumanTransportV1';
 import type { ReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { readReviewJsonResponse } from '@/sync/api/reviews/readReviewJsonResponse';
 
 /** The admitted Artifact codec owns mode/key handling for every Review human reader and writer. */
 export async function readReviewHumanResource(account: Pick<LazyActionAccountContext, 'readArtifactContent'>,
@@ -21,13 +22,7 @@ export function createReviewHumanHttpActionExecutor(account: Pick<LazyActionAcco
             request: async (method, path, body) => {
                 const response = await account.request(path, { method, signal: args.signal,
                     ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
-                const payload: unknown = await response.json();
-                if (!response.ok) {
-                    const code = typeof payload === 'object' && payload !== null && 'error' in payload && typeof payload.error === 'string'
-                        ? payload.error : 'action_failed';
-                    throw Object.assign(new Error(code), { code });
-                }
-                return payload;
+                return readReviewJsonResponse(response, 'action_failed');
             },
             resolveResource: reviewId => readReviewHumanResource(account, reviewId, args.signal),
         });

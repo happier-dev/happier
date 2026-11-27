@@ -4,6 +4,7 @@ import { REVIEW_HUMAN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/action
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import { ReviewVerdictContentV1Schema, type ReviewHumanStateV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { createReviewHumanHttpActionExecutor } from './humanApi';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 describe('Review human answering-client transport', () => {
     it('sends a prose-free person verdict through the captured HTTP Account and preserves server refusals', async () => {
@@ -28,6 +29,30 @@ describe('Review human answering-client transport', () => {
         refused = true;
         await expect(execute(args)).rejects.toMatchObject({ code: 'review_reviewer_not_requested' });
     });
+    it.each([true, false])('retains the typed refusal envelope when the server separates its code from error prose (message: %s)', async includeMessage => {
+        const failureCause = { phase: 'execution_authorization', errorClass: 'HttpStatusError',
+            errorCode: 'review_reviewer_not_requested', httpStatus: 403 };
+        const reason = includeMessage ? 'Request a reviewer verdict first.' : 'Verdict submission refused';
+        const execute = createReviewHumanHttpActionExecutor({ accountId: 'person', assertCurrent: () => {},
+            readArtifactContent: async () => null,
+            request: async () => Response.json({ error: 'Verdict submission refused',
+                errorCode: 'review_reviewer_not_requested', ...(includeMessage ? { message: reason } : {}),
+                requestId: 'verdict-refusal', details: { reason: 'reviewer_not_requested' },
+                failureCause, effectAttempted: false }, { status: 403 }),
+        });
+        const refusal: unknown = await execute({ actionId: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+            input: { reviewId: 'review', roundOrdinal: 1, verdict: 'approve' } })
+            .then(() => null, (error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'review_reviewer_not_requested', message: reason,
+                status: 403, requestId: 'verdict-refusal', details: { reason: 'reviewer_not_requested' },
+                failureCause, effectAttempted: false });
+        expect(normalizeActionExecutorThrownError(refusal)).toMatchObject({
+            errorCode: 'review_reviewer_not_requested', error: reason,
+            requestId: 'verdict-refusal', details: { reason: 'reviewer_not_requested' },
+            failureCause, effectAttempted: false,
+        });
+    });
+
     it('rejects verdict prose replayed under a different author', async () => {
         const execute = createReviewHumanActionExecutorV1({ accountId: 'person',
             request: async () => ({ reviewId: 'review', roundOrdinal: 1, requests: [],
