@@ -4,9 +4,9 @@ description: Every HAPPIER_FEATURE_* variable the server reads, generated from t
 ---
 
 This is the complete list of environment variables the server reads to decide
-what it advertises and how much of it a client may use. There are **169**, of
-which **68** are on/off switches and the rest are limits, timeouts,
-policies and header names. **169** of them can also be set by a Home owner
+what it advertises and how much of it a client may use. There are **172**, of
+which **70** are on/off switches and the rest are limits, timeouts,
+policies and header names. **172** of them can also be set by a Home owner
 in Home Administration; an explicit env value still wins there and is shown as fixed.
 
 - **Switches** (`…__ENABLED`) turn a capability on or off. When the capability
@@ -226,6 +226,13 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_PETS_SYNC__MAX_IMPORTED_PETS_PER_ACCOUNT` | Setting | int ≥ 1 | `20` | Restart | Home settings or env | Most imported pets one account may keep. |
 | `HAPPIER_FEATURE_PETS_SYNC__MAX_MANIFEST_BYTES` | Setting | int ≥ 1 | `16384` | Restart | Home settings or env | Largest pet manifest accepted, in bytes. |
 
+### Plans
+
+| Variable | Kind | Type | Default | Applies | Set from | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HAPPIER_FEATURE_PLANS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Plan limits, usage and offers for this server (Plans & Supporter page). |
+| `HAPPIER_PLANS__CONFIG` | Setting | string | — | Live | Home settings or env | Versioned JSON defining paid plans, grace, Team limits and supporter offers. |
+
 ### Plugins
 
 | Variable | Kind | Type | Default | Applies | Set from | Description |
@@ -266,6 +273,12 @@ Grouped by feature family.
 | --- | --- | --- | --- | --- | --- | --- |
 | `HAPPIER_FEATURE_SEARCH__ENABLED` | Switch | boolean | `true` | Restart | Home settings or env | Personal Home plaintext transcript search indexing and authenticated query route. |
 
+### Session
+
+| Variable | Kind | Type | Default | Applies | Set from | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HAPPIER_SESSION_PINS__MAX` | Setting | int ≥ 0 | — | Live | Home settings or env | Maximum personal Session pins on the base tier. |
+
 ### Sessions
 
 | Variable | Kind | Type | Default | Applies | Set from | Description |
@@ -288,6 +301,12 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME` | Setting | boolean | `true` | Live | Home settings or env | Let people find friends by username as well as by linked identity. |
 | `HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Friends and related social feature availability. |
 | `HAPPIER_FEATURE_SOCIAL_FRIENDS__IDENTITY_PROVIDER` | Setting | string | `github` | Live | Home settings or env | Identity provider used to match friends. |
+
+### Supporter
+
+| Variable | Kind | Type | Default | Applies | Set from | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HAPPIER_FEATURE_SUPPORTER__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Supporter offer, avatar ring, credits, the GitHub star ask and the supporter prompt. |
 
 ### Teams
 
@@ -315,7 +334,6 @@ Grouped by feature family.
 | Variable | Kind | Type | Default | Applies | Set from | Description |
 | --- | --- | --- | --- | --- | --- | --- |
 | `HAPPIER_FEATURE_VOICE__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Happier voice assistant feature availability. |
-| `HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION` | Setting | boolean | — | Live | Home settings or env | Require a subscription for voice. When unset: required in production, not otherwise. |
 
 ### Workflows
 

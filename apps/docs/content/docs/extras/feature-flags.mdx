@@ -18,8 +18,8 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 147 features in the catalog. 29 of them have a switch you can
-reach; the other 118 are decided before you get there.
+There are 149 features in the catalog. 29 of them have a switch you can
+reach; the other 120 are decided before you get there.
 
 ## Features you can turn on yourself
 
@@ -151,6 +151,7 @@ behaviour but still needs the server to advertise the capability.
 | `machines.tunnel.directPeer` | Direct peer machine TCP tunnel capability. | server | `machines.tunnel` | `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` |
 | `machines.tunnel.serverRouted` | Server-routed machine TCP tunnel fallback capability. | server | `machines.tunnel` | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` |
 | `pets.sync` | Synced account pet library and cross-device pet package references. | server | — | `HAPPIER_FEATURE_PETS_SYNC__ENABLED` |
+| `plans` | Plan limits, usage and offers for this server (Plans & Supporter page). | server | — | `HAPPIER_FEATURE_PLANS__ENABLED` |
 | `plugins` | Plugin platform surfaces and contribution projection. | server | — | `HAPPIER_FEATURE_PLUGINS__ENABLED` |
 | `plugins.ui` | Plugin UI descriptor and executable UI tier projection. | server | `plugins` | `HAPPIER_FEATURE_PLUGINS_UI__ENABLED` |
 | `plugins.ui.hostedWeb` | Hosted web plugin UI surfaces embedded through host-owned preview frames and bridges. | server | `plugins.ui` | `HAPPIER_FEATURE_PLUGINS_UI_HOSTED_WEB__ENABLED` |
@@ -188,6 +189,7 @@ behaviour but still needs the server to advertise the capability.
 | `sharing.public` | Public sharing link support for session content. | server | — | — |
 | `sharing.session` | Session sharing with Accounts, Teams and Groups: access grants, responsibility and atomic initial access. | server | — | — |
 | `social.friends` | Friends and related social feature availability. | server | — | `HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED` |
+| `supporter` | Supporter offer, avatar ring, credits, the GitHub star ask and the supporter prompt. | server | — | `HAPPIER_FEATURE_SUPPORTER__ENABLED` |
 | `teams.credentialResources` | Team shared credential resource administration and use. | server | `teams` | `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED` |
 | `teams.credentialResources.externalApi` | External API access to Team credential resources. | server | `teams.credentialResources` | `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES_EXTERNAL_API__ENABLED` |
 | `terminal.renderer.androidTermux` | Optional Android Termux-based native terminal renderer. | client | `terminal.renderer.native` | — |

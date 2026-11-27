@@ -294,6 +294,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `currentPassword` (json): Current password
 - `proof` (json): Proof
 
+## `account.plan.get`
+
+**Get account plan** — Read the account plan, its limits and the offers available on this server.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
 ## `account.plugins.availability.intent.set`
 
 **Set the Projects that can use a plugin** — Set the plugin’s Project scope on your Account. Use null to allow every Project and supply the revision of the intent you are editing.
@@ -965,6 +979,35 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `limit` (text): Max results
 - `serverId` (json): Server id
 - `probe` (json): Probe
+
+## `app.icon.list`
+
+**List app icons** — List the app icons on this device, with locked icons marked.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
+## `app.icon.set`
+
+**Set app icon** — Set the app icon on this device.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `iconId` (text, required): Icon
+- `clientId` (text): Client id
 
 ## `app.updates.check`
 
@@ -1940,6 +1983,66 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `runId` (text, required): Occurrence Run ID
 - `expectedRevision` (number, required): Reviewed Run revision
+
+## `billing.checkout.open`
+
+**Open checkout** — Open checkout for an offer on this device. Spends money, so agents ask first by default.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `offerId` (text, required): Offer
+- `interval` (select, required): Interval
+- `amountMinor` (text): Amount (minor units)
+- `clientId` (text): Client id
+
+## `billing.manage.open`
+
+**Manage billing** — Open the billing provider’s email-code portal on this device. The result never carries the portal URL.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `target` (text): Target
+- `clientId` (text): Client id
+
+## `billing.refresh`
+
+**Refresh billing** — Re-check purchases for this account with the billing provider.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
+## `billing.restore`
+
+**Restore purchases** — Re-read store purchases on this device. Unsupported on web.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
 
 ## `boards.apply`
 
@@ -6268,7 +6371,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `voice`, `api`.
 
 ### Input guidance
 
@@ -8599,6 +8702,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `uid` (text, required): Account id
 
+## `github.star.status`
+
+**Get GitHub star status** — Check whether the machine GitHub CLI account has starred the Happier repository.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
 ## `home.accounts.delete`
 
 **Delete Home Account** — Erase one Account through the Home's single erasure owner. Incomplete cleanup is reported explicitly.
@@ -8786,7 +8903,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `projection` (text): Projection
+- `projection` (select): Projection
 
 ## `home.hub.layout.get`
 
@@ -9060,7 +9177,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `cli`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -9889,7 +10006,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `rpc`, `api`.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `voice`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -9923,7 +10040,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `rpc`, `api`.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `voice`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -10693,7 +10810,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -20839,7 +20956,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -21424,6 +21541,24 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `decision` (select, required): Control
 - `additionalTurns` (number): Additional turns
 - `observedRevision` (text): Observed revision
+
+## `session.export`
+
+**Export sessions** — Export one session, selected messages of it, or every session as a Markdown or JSON file on this device.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `sessionId` (text): Session id
+- `all` (boolean): Every session
+- `seqs` (text_list): Message seqs
+- `format` (select, required): Format
+- `clientId` (text): Client id
 
 ## `session.fork`
 
@@ -22475,6 +22610,49 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `candidate.turnId` (json): Turn id
 - `candidate.parts` (json): Parts
 - `confirmation` (json): Confirmation
+
+## `session.retention.leaving.dismiss`
+
+**Dismiss leaving notice** — Hide the sessions-leaving notice on this device until the given time.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `through` (text, required): Dismiss through (epoch ms)
+- `clientId` (text): Client id
+
+## `session.retention.leaving.list`
+
+**List sessions leaving** — List sessions due to leave the cloud under the retention policy, with titles decrypted on this device.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
+## `session.retention.summary.get`
+
+**Get retention summary** — Read the account session retention summary.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
 
 ## `session.role.set`
 
@@ -24381,6 +24559,81 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionConfigOptionOverrides` (json): Session config option overrides
 - `target` (json): Target
 
+## `supporter.ask.close`
+
+**Close supporter ask** — Close the star ask or the supporter prompt for this account for good.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `ask` (select, required): Ask
+- `clientId` (text): Client id
+
+## `supporter.credits.list`
+
+**List supporter credits** — List the public supporter credits.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
+## `supporter.profile.get`
+
+**Get supporter profile** — Read the supporter profile: public name, public link and issue label.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `clientId` (text): Client id
+
+## `supporter.profile.update`
+
+**Update supporter profile** — Change what the public supporter wall and credits show. Null turns a field off. Public, so agents ask first by default.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `publicName` (text): Public name
+- `publicLink` (text): Public link
+- `label` (boolean): Supporter issue label
+- `clientId` (text): Client id
+
+## `supporter.ring.set`
+
+**Show supporter ring** — Show or hide the supporter ring others see on your avatar. Agents ask first by default.
+
+- Safety: `safe`; side effect: `write`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`.
+
+### Input guidance
+
+- `visible` (boolean, required): Visible
+- `clientId` (text): Client id
+
 ## `tasks.internal.create`
 
 **Create personal Happier task** — Create one task in the authenticated Account. An uncertain result must not be replayed blindly.
@@ -26019,7 +26272,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
@@ -28395,6 +28648,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `automationId` (text): Automation id
 - `triggerId` (text): Trigger id
 - `machineId` (text): Machine id
+- `includeRunDisplay` (boolean): Include run display
 
 ## `workflow.authoring.conversation.bind`
 
