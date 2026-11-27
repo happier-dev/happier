@@ -61,7 +61,10 @@ export function applyDeploymentPreviewHeadV1(preview: Readonly<{
   state: ReturnType<typeof projectDeploymentPreviewStateV1>;
   servingSha: string;
   targetUrl: string | null;
-}>, headSha: string) {
+}>, headSha: string): Readonly<{
+  state: ReturnType<typeof projectDeploymentPreviewStateV1> | 'outdated';
+  targetUrl: string | null;
+}> {
   const state = deploymentPreviewHeadNeedsRedeployV1(preview.servingSha, headSha) ? 'outdated' : preview.state;
   return { state, targetUrl: state === 'ready' ? preview.targetUrl : null };
 }
