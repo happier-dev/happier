@@ -64,6 +64,24 @@ it('keeps the typed phase and request of a failed mounted Console write without 
     expect(text.get().history).toEqual([]);
 });
 
+it('keeps the native write outcome unknown when the driver loses the COMMIT acknowledgement', async () => {
+    const text = createConsoleState({ read: async () => null, write: async () => {} });
+    const console = createConsole({ consoleState: () => text, target: () => descriptor,
+        statementRanges: sql => [{ start: 0, end: sql.length }],
+        client: { presentDeviceStorageError(error) { throw error; } } }, 'target');
+    await console.setText('update selected set flag = 1');
+    console.setMode('write');
+    const binding = console.run();
+    await binding.controller.prepare({ signal: new AbortController().signal });
+    const result = { ok: false as const, status: 'outcome_unknown', code: 'database_outcome_unknown',
+        cause: { source: 'transport', code: 'ECONNRESET', message: 'Connection reset during COMMIT' } };
+    binding.controller.onSettled({ ok: true, result });
+    expect(console.execution.get('run')).toMatchObject({ running: false, result, error: {
+        code: 'database_outcome_unknown', outcomeUnknown: true,
+    } });
+    expect(text.get().history).toEqual([]);
+});
+
 it('stops the exact host control signal and leaves the same console ready for another deliberate run', async () => {
     const text = createConsoleState({ read: async () => null, write: async () => {} });
     const console = createConsole({ consoleState: () => text, target: () => descriptor,

@@ -372,7 +372,7 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
             kind="error"
             title={sql.error.message}
             details={[nativeErrorCode ?? sql.error.code, sql.error.phase, sql.error.requestId].filter(Boolean).join(' · ') || undefined}
-            {...(sql.mode === 'write' && (engineIsMysql || sql.error.outcomeUnknown) ? {} : {
+            {...(sql.error.outcomeUnknown || (sql.mode === 'write' && engineIsMysql) ? {} : {
               description: translate('plugins.database.console.nothingChanged', 'Nothing was changed.'),
             })}
           />

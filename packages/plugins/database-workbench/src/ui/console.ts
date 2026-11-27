@@ -82,6 +82,7 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
                         const offset = cause?.position && statement ? characters.slice(0, cause.position - 1).join('').length + statement.range.start : undefined;
                         execution.set('run', { mode, running: false, result, error: { code: result.code,
                             message: cause?.message ?? ('reason' in result ? result.reason ?? result.code : result.code),
+                            ...(result.status === 'outcome_unknown' ? { outcomeUnknown: true } : {}),
                             ...(statement ? { statementRange: statement.range } : {}),
                             ...(offset === undefined ? {} : { positionedIn: submittedSql,
                                 range: { start: offset, end: offset + (characters[(cause?.position ?? 1) - 1]?.length ?? 0) } }) } });

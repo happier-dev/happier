@@ -1514,6 +1514,11 @@ describe('Database workbench surfaces', () => {
               source: 'engine', code: '42601', message: 'syntax error at or near "WHERE"', position: 13, statementIndex: 0,
             } } };
           }
+          if (request.requestId === 'run-unknown-console') {
+            return { ok: true, result: { ok: false, status: 'outcome_unknown', code: 'database_outcome_unknown', cause: {
+              source: 'transport', code: 'ECONNRESET', message: 'Connection reset during COMMIT',
+            } } };
+          }
           if (request.requestId !== 'run-console') return;
           expect(request.preparation?.input).toMatchObject({ statement: { sql } });
           return { ok: true, result: { ok: true, operation: 'statement.run', results: [{
@@ -1553,6 +1558,11 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.queryByText('syntax error at or near "WHERE"')).toBeTruthy();
       await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
       expect(await fixture.queryByText('42601')).toBeTruthy();
+
+      await act(async () => { run?.publish({ kind: 'prepare', requestId: 'run-unknown-console' }); });
+      await settle();
+      expect(await fixture.queryByText('Connection reset during COMMIT')).toBeTruthy();
+      expect(await fixture.queryByText('Nothing was changed.')).toBeFalsy();
     } finally { await fixture.dispose(); }
   });
   it('replaces the dotenv row in mounted Dev servers when the worktree bindings change', async () => {
