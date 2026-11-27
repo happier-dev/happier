@@ -455,6 +455,9 @@ export function doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
     !!handoff &&
     routing.target.targetMachineId === handoff.targetMachineId &&
     routing.target.accountServerId === authorization.binding.serverIdentityId &&
+    (routing.target.phase !== 'release' ||
+      routing.target.operationId === routing.source.operationId ||
+      routing.target.operationId === deriveWorkspaceSyncRelationshipId(routing.source.operationId)) &&
     (!admission ||
       (admission.machineId === handoff.targetMachineId &&
         admission.installationId === handoff.targetInstallationId &&
@@ -506,11 +509,10 @@ export function doesWorkspaceSyncSeedRootMatchRouting(
       seed.target,
       seed.sourceWriterTarget,
     )) return false;
-  const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(authorization.binding.actionId);
   const seedProof = readWorkspaceSyncSeedProofKindV1(authorization.binding.actionId);
   if (!seedProof) return false;
   if (operationId !== undefined && operationId !== seed.sourceWriterTarget.source.operationId
-      && !(relationshipWrite && operationId === deriveWorkspaceSyncRelationshipId(seed.sourceWriterTarget.source.operationId))) return false;
+      && !(seedProof === 'writer_target' && operationId === deriveWorkspaceSyncRelationshipId(seed.sourceWriterTarget.source.operationId))) return false;
   if (authorization.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1
       && authorization.binding.custodianAccountId !== authorization.binding.accountId
       && authorization.binding.admittedMachineRole !== 'manage'
@@ -956,6 +958,13 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
             (Boolean(targetRouting || sourceExecution)
               || (originalRoot ? !doesWorkspaceSyncCopyRetirementRootMatchV1(originalRoot, writerTarget)
                 : writerTarget.target.phase === 'remove'))) ||
+          (writerTarget.target.phase === 'release' && originalRoot !== undefined &&
+            (Boolean(targetRouting || sourceExecution)
+              || originalRoot.binding.actionId !== SESSION_HANDOFF_ACTION_ID_V1
+              || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
+                originalRoot,
+                writerTarget,
+              ))) ||
           (!isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) &&
             (!originalRoot ||
               !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
@@ -972,7 +981,8 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
           writerTarget.sourceWriter.machineId ||
         writerTargetReceiver.installationId !==
           writerTarget.sourceWriter.installationId ||
-        (!isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) &&
+        ((!isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase)
+            || writerTarget.target.phase === 'release' && originalRoot !== undefined) &&
           !sameStrictJsonValue(
             context,
             writerTarget.source.sourceContext.machineAdmission,
@@ -1585,7 +1595,9 @@ export async function authorizeMachineRpcRequest(
         ...routing.data.target,
         targetContext: routing.data.source.sourceContext,
       }, request.method.slice(machine.machineId.length + 1)) ||
-      (!isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) &&
+      ((!isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) ||
+        (routing.data.target.phase === 'release' &&
+          request.callerInputAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1)) &&
         (!request.callerInputAuthorization ||
           !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
             request.callerInputAuthorization,
@@ -1594,8 +1606,11 @@ export async function authorizeMachineRpcRequest(
           )))
     )
       return forbidden();
+    const signedHandoffRelease = routing.data.target.phase === 'release' &&
+      request.callerInputAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
     if (
       isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) &&
+      !signedHandoffRelease &&
       !request.workspaceSyncTargetRouting &&
       (request.machineAdmission.machineId !==
         routing.data.sourceWriter.machineId ||

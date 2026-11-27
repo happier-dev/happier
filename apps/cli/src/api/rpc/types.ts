@@ -32,7 +32,7 @@ import type {
  */
 export type RpcLocalActionContext = Readonly<Partial<Pick<
     ActionExecutorContext,
-    'surface' | 'authority' | 'callerPermissionMode' | 'causalPermissionAuthority' | 'callerInputConstraints' | 'actionRequestId' | 'actionCaller'
+    'surface' | 'authority' | 'callerPermissionMode' | 'causalPermissionAuthority' | 'workspaceWrites' | 'callerInputConstraints' | 'actionRequestId' | 'actionCaller'
     | 'externalActionExecutionAuthorization' | 'approvalOrigin' | 'approvedActionReplay' | 'presentUserConfirmation'
     | 'presentUserApproval' | 'actionRequestAttributionV1' | 'handoffTargetReplacementApproval'
     | 'originalActionEnvelope' | 'signExternalActionApprovalInput' | 'externalActionTarget' | 'runtimeAccountId' | 'serverId'

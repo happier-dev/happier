@@ -1,6 +1,7 @@
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { z } from 'zod/mini';
 import { isDeepStrictEqual } from 'node:util';
+import { SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -242,7 +243,9 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
         }
         if (writerRouting) {
-            const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(writerRouting.target.phase);
+            const signedHandoffRelease = writerRouting.target.phase === 'release'
+                && callerInputAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
+            const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(writerRouting.target.phase) && !signedHandoffRelease;
             if (purpose || custodySubjectAccountId || workspaceSyncSourceRouting
                 || writerRouting.source.accountServerId !== await getOrCreateServerIdentityId()
                 || !isWorkspaceSyncSourceWriterTargetMethodV1(writerRouting.target.phase, method.slice(method.indexOf(':') + 1))
@@ -335,6 +338,14 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 }
                 destinationId = route.parentMachineId;
                 destinationInstallationId = route.parentInstallationId;
+            } else if (signedHandoffRelease
+                && receiver.id === target.machineId && receiver.installationId === target.installationId) {
+                const { kind: _kind, ...targetAdmission } = target;
+                if (method !== `${target.machineId}:${readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)}`
+                    || !isDeepStrictEqual(context, targetAdmission)) {
+                    return reply.code(403).send({ error: 'access_denied' });
+                }
+                return reply.send({ v: 1, ok: true });
             } else if (receiver.id !== writer.machineId || receiver.installationId !== writer.installationId
                 || method !== `${target.machineId}:${readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)}`
                 || !isDeepStrictEqual(context, writerRouting.source.sourceContext.machineAdmission)) {

@@ -275,6 +275,9 @@ export function buildActionExecutorContextForRpc(
         ...(hasLocalCausalPermissionAuthority
             ? { causalPermissionAuthority: localActionContext?.causalPermissionAuthority ?? null }
             : {}),
+        ...(localActionContext?.workspaceWrites
+            ? { workspaceWrites: localActionContext.workspaceWrites }
+            : {}),
         ...(originalHandoffAuthorization ? {
             actionRequestId: originalHandoffAuthorization.binding.requestId,
             externalActionExecutionAuthorization: originalHandoffAuthorization,

@@ -33,6 +33,8 @@ import nacl from 'tweetnacl';
 import { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
+import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
@@ -1393,5 +1395,124 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         sessionId: 'session-1', targetMachineId: 'target-1', targetPath: '/target/workspace',
       },
     }));
+  });
+
+  it('forwards present_user authority, Agent sessionActionOrigin, PAT callerInputConstraints, and permission ceilings into workspaceSyncContext for H02 handoffs', async () => {
+    const policyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const action = { kind: 'copy_once' as const,
+      contentPolicy: { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) } };
+    const machineAdmission = { actorAccountId: 'guest-b', custodianAccountId: 'owner-a', machineId: 'source-1',
+      installationId: 'source-installation', role: 'use' as const, encryptionMode: 'plain' as const };
+    const keys = nacl.sign.keyPair();
+    const requester = { credentials: { token: 'guest-b-token', encryption: null }, serverHttpBaseUrl: 'https://home.test',
+      attribution: { serverId: 'server-1', accountId: 'guest-b', machineId: 'source-1', installationId: 'source-installation' },
+      getBoundSessionId: () => 'session-1', isCurrent: async () => true,
+      projectExternalActionAuthorization: async <T>(authorization: T) => authorization } as unknown as AdmittedRequesterSessionBootstrap;
+    const handoffRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-root-token', binding: {
+      accountId: 'guest-b', custodianAccountId: 'owner-a', admittedMachineRole: 'use',
+      authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      serverIdentityId: 'server-1', machineId: 'source-1', installationId: 'source-installation',
+      actionId: 'session.handoff', requestId: 'operation-1', requestEnvelopeDigest: 'A'.repeat(43),
+      target: { kind: 'machine', machineId: 'source-1' },
+      handoffAdmission: { sessionId: 'session-1', sourceMachineId: 'source-1', sourceInstallationId: 'source-installation',
+        targetMachineId: 'target-1', targetInstallationId: 'target-installation' },
+    } });
+    vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      return { status: 200, data: { v: 1, token: 'target-preflight-child', binding: { ...handoffRoot.binding,
+        machineId: 'target-1', custodianAccountId: 'guest-b', installationId: 'target-installation', target: request.envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        handoffPreflight: { rootRequestId: handoffRoot.binding.requestId, rootRequestEnvelopeDigest: handoffRoot.binding.requestEnvelopeDigest },
+      } } };
+    });
+    const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const };
+    const sessionActionOrigin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'turn-1', requestId: 'req-agent', callerPermissionMode: 'read-only' as const,
+      causalPermissionAuthority, workspaceWrites: 'deny' as const };
+    const callerInputConstraints = { models: null, permissionModes: ['default'] as const };
+
+    const captureContext = async (contextOverrides: Record<string, unknown>) => {
+      let receivedContext: RpcHandlerContext | undefined;
+      const prepare = vi.fn(async (_input: unknown, _authority?: unknown, context?: RpcHandlerContext) => {
+        receivedContext = context;
+        throw Object.assign(new Error('Workspace preparation reached'), { code: 'workspace_preparation_reached' });
+      });
+      const coordinate = createTrackedSessionHandoffCoordinator({
+        expectedAccountServerId: 'server-1',
+        readCredentials: async () => ({ token: 'owner-a-token', encryption: null }),
+        resolveSource: async () => ({ ok: true, sourceMachineId: 'source-1', sourceRootPath: '/source/workspace', sessionStorageMode: 'persisted' }),
+        handoffAuthorization: {
+          sourceExportStore: { load: async () => null } as never,
+          serverHttpBaseUrl: 'https://home.test',
+          readSourceInstallation: () => ({ machineId: 'source-1', installationId: 'source-installation', privateKey: keys.secretKey }),
+        },
+        callMachine: vi.fn(async (input: MachineCallInput) => {
+          if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
+          if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) return { ok: true, capture: 'not_required' };
+          throw Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
+        }),
+        workspaceSyncAdapter: { prepareBetween: vi.fn(), prepare, finalize: vi.fn(), commit: vi.fn(), abort: vi.fn(async () => undefined) },
+      });
+      const result = await coordinate({
+        operationId: 'operation-1',
+        actionInput: { sessionId: 'session-1', targetMachineId: 'target-1', targetPath: '/target/workspace',
+          accountServerId: 'server-1', workspaceAction: action },
+        start: vi.fn(), signal: new AbortController().signal, publishOwnerUpdate: vi.fn(),
+        context: {
+          surface: 'rpc' as const,
+          requesterSessionBootstrap: requester,
+          machineAdmission,
+          externalActionExecutionAuthorization: handoffRoot,
+          verifyMachineAdmissionCurrent: async () => true,
+          ...contextOverrides,
+        } as never,
+      });
+      expect(result).toMatchObject({ ok: false, errorCode: 'workspace_preparation_reached' });
+      expect(receivedContext).toBeDefined();
+      return {
+        raw: receivedContext!,
+        projected: projectWorkspaceSyncPhysicalContextFromActionContext(buildActionExecutorContextForRpc(receivedContext!)),
+      };
+    };
+
+    // 1. Present-user H02 handoff preserves present_user (never downgraded to account_automation) plus permission ceilings.
+    const presentUser = await captureContext({
+      authority: 'present_user' as const,
+      callerPermissionMode: 'default' as const,
+      causalPermissionAuthority,
+      workspaceWrites: 'allow' as const,
+    });
+    expect(presentUser.raw.callerAuthority).toBe('present_user');
+    expect(presentUser.projected).toMatchObject({
+      callerAuthority: 'present_user',
+      callerPermissionMode: 'default',
+      causalPermissionAuthority,
+      workspaceWrites: 'allow',
+    });
+
+    // 2. Agent-origin H02 handoff preserves sessionActionOrigin and its permission/write ceilings.
+    const agentOrigin = await captureContext({
+      authority: 'account_automation' as const,
+      sessionActionOrigin,
+    });
+    expect(agentOrigin.raw.sessionActionOrigin).toEqual(sessionActionOrigin);
+    expect(agentOrigin.projected).toMatchObject({
+      callerAuthority: 'account_automation',
+      sessionActionOrigin,
+      callerPermissionMode: 'read-only',
+      causalPermissionAuthority,
+      workspaceWrites: 'deny',
+    });
+
+    // 3. PAT-origin H02 handoff preserves callerInputConstraints and account_automation authority.
+    const patOrigin = await captureContext({
+      authority: 'account_automation' as const,
+      callerInputConstraints,
+    });
+    expect(patOrigin.raw.callerInputConstraints).toEqual(callerInputConstraints);
+    expect(patOrigin.projected).toMatchObject({
+      callerAuthority: 'account_automation',
+      callerInputConstraints,
+    });
   });
 });

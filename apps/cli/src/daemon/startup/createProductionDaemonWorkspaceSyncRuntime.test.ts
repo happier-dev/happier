@@ -3687,6 +3687,157 @@ describe('captured immutable Home across distinct local Sync profiles', () => {
     }
   });
 
+  it('routes cross-Account copy_once openMachineCarrierTunnel through requester custody instead of custodian carrier', async () => {
+    const serverId = 'srv_copy_once_carrier';
+    const serverUrl = 'https://server.example.test';
+    const descriptor = HomeConnectionDescriptorV1Schema.parse({
+      v: 1,
+      homeServerIdentityId: serverId,
+      canonicalServerUrl: serverUrl,
+      revision: 1,
+      endpoints: [{ kind: 'https', url: serverUrl }],
+    });
+    const homeTarget = resolveHomeTargetFromDescriptor({
+      descriptor,
+      authority: 'saved_profile',
+      profile: { id: serverId, serverUrl, webappUrl: serverUrl, homeConnectionDescriptor: descriptor },
+    });
+    const guestCredentials = { token: 'guest-token', encryption: null };
+    const copyOperationId = 'bec54a97-67f2-4be4-854b-45cad7315dae';
+    const relationshipId = 'relationship_7c6c1c6f265f72c79613985a4ba12a751d5517f6f6c80171c1d0e6d0c902ddad';
+    const retainedCopy = {
+      phase: 'open' as const,
+      input: { operationId: copyOperationId },
+      execution: {
+        credentials: guestCredentials,
+        accountRowsCustody: { serverId, accountId: 'guest-account', serverHttpBaseUrl: 'https://server.example.test', isCurrent: async () => true },
+        getSnapshot: () => ({ workspaceRefs: [], relationships: [] }),
+        assertTransferCurrent: vi.fn(async () => undefined),
+      },
+    };
+    const retainedRelationship = {
+      phase: 'open' as const,
+      relationshipId,
+      input: { operationId: 'keep-updated-op' },
+      execution: {
+        credentials: guestCredentials,
+        accountRowsCustody: { serverId, accountId: 'guest-account', serverHttpBaseUrl: 'https://server.example.test', isCurrent: async () => true },
+        getSnapshot: () => ({ workspaceRefs: [], relationships: [] }),
+        assertTransferCurrent: vi.fn(async () => undefined),
+      },
+    };
+    const resolvePrivateExecution = vi.fn((query: Readonly<{ operationId?: string; relationshipId?: string }>) => {
+      if (query.operationId === copyOperationId) return retainedCopy;
+      if (query.relationshipId === relationshipId) return retainedRelationship;
+      return null;
+    });
+    let capturedRuntimeInput: Parameters<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>[0] | undefined;
+    const createDaemonRuntime = vi.fn((deps: Parameters<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>[0]) => {
+      capturedRuntimeInput = deps;
+      return {
+        start: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+        handoffAdapter: { resolvePrivateExecution },
+        managedWorkspaceSync: { getStatus: vi.fn(() => null) },
+        readProcessRoots: vi.fn(() => []),
+      };
+    });
+    const custodianOpen = vi.fn(async () => ({ localPort: 41_001, localCapability: 'c'.repeat(64), observedPath: 'direct' as const, close: vi.fn(async () => undefined) }));
+    const requesterOpen = vi.fn(async () => ({ localPort: 42_002, localCapability: 'r'.repeat(64), observedPath: 'direct' as const, close: vi.fn(async () => undefined) }));
+    const createRequesterMachineCarrierTunnel = vi.fn(() => requesterOpen);
+    const factories = {
+      createDaemonRuntime,
+      createTargetAuthority: vi.fn(() => ({
+        reconcileRetainedBootstraps: vi.fn(async () => undefined),
+        releaseAllRetainedBootstraps: vi.fn(async () => undefined),
+        prepareBootstrapHere: vi.fn(),
+        releaseBootstrapHere: vi.fn(),
+        prepareSourceSeedExport: vi.fn(),
+        prepareConflictResolutionExport: vi.fn(),
+        stageConflictResolutionHere: vi.fn(),
+        applyStagedConflictResolutionHere: vi.fn(),
+        discardStagedConflictResolutionHere: vi.fn(),
+        recoverConflictResolutionHere: vi.fn(),
+        readFileHere: vi.fn(),
+        observeEntryHere: vi.fn(),
+        preflightHandoffTargetReplacementHere: vi.fn(),
+        previewCommittedCopyHere: vi.fn(),
+        removeCommittedCopyHere: vi.fn(),
+      })),
+      createRootOwnershipManager: vi.fn(() => ({ tryAcquire: vi.fn() })),
+      resolveRootOwnershipDirectory: vi.fn(() => join('/happier-home', 'locks')),
+      createPeerIdentityValidator: vi.fn(() => vi.fn()),
+      createBroker: vi.fn(),
+      spawnSidecar: vi.fn(),
+      launchLocalAgent: vi.fn(),
+      stopRetainedNativeProcesses: vi.fn(),
+      prepareGitTarget: vi.fn(),
+      createRelationshipOwner: vi.fn(() => ({ materializeEndpoints: vi.fn(), prepareCreate: vi.fn(), setEnabled: vi.fn(), stop: vi.fn() })),
+      createRelationshipForProject: vi.fn(),
+      refreshProjectRows: vi.fn(),
+      getProjectSnapshot: vi.fn(() => null),
+      subscribeProjectSnapshot: vi.fn(() => vi.fn()),
+      callMachineRpc: vi.fn(),
+      inspectLegacyState: vi.fn(),
+      materializeSeedExport: vi.fn(),
+      materializeLocalSeed: vi.fn(),
+      prepareSourceSeedExport: vi.fn(),
+      startManagedSyncChannel: vi.fn(),
+      warn: vi.fn(),
+    } as unknown as ProductionDaemonWorkspaceSyncFactories;
+
+    await createProductionDaemonWorkspaceSyncRuntime({
+      happyHomeDir: '/happier-home',
+      activeServerDir: join('/happier-home', 'servers', serverId),
+      activeServerId: serverId,
+      homeTarget,
+      localMachineId: 'owner-machine',
+      releaseChannel: 'publicdev',
+      credentials: { token: 'owner-token', encryption: null },
+      openMachineCarrierTunnel: custodianOpen as never,
+      createRequesterMachineCarrierTunnel: createRequesterMachineCarrierTunnel as never,
+    }, factories);
+
+    const openTunnel = capturedRuntimeInput?.openMachineCarrierTunnel;
+    expect(openTunnel).toBeDefined();
+
+    // Cross-Account copy_once handoff resolves by operationId -> guest requester carrier, never custodian carrier.
+    const copyTunnel = await openTunnel!({
+      flow: 'workspace_sync',
+      operationId: copyOperationId,
+      sourceMachineId: 'owner-machine',
+      targetMachineId: 'guest-machine',
+    });
+    expect(copyTunnel.localPort).toBe(42_002);
+    expect(createRequesterMachineCarrierTunnel).toHaveBeenCalledWith({
+      credentials: guestCredentials,
+      accountId: 'guest-account',
+    });
+    expect(requesterOpen).toHaveBeenCalledTimes(1);
+    expect(custodianOpen).not.toHaveBeenCalled();
+
+    // Keep-updated relationship lookup still resolves by relationshipId -> guest requester carrier.
+    const relTunnel = await openTunnel!({
+      flow: 'workspace_sync',
+      operationId: relationshipId,
+      sourceMachineId: 'owner-machine',
+      targetMachineId: 'guest-machine',
+    });
+    expect(relTunnel.localPort).toBe(42_002);
+    expect(requesterOpen).toHaveBeenCalledTimes(2);
+    expect(custodianOpen).not.toHaveBeenCalled();
+
+    // Unretained operation falls back to custodian carrier.
+    const custodianTunnel = await openTunnel!({
+      flow: 'workspace_sync',
+      operationId: 'unretained-op',
+      sourceMachineId: 'owner-machine',
+      targetMachineId: 'owner-other-machine',
+    });
+    expect(custodianTunnel.localPort).toBe(41_001);
+    expect(custodianOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a fresh foreign immutable Home before bind custody or filesystem effects', async () => {
     const fixture = await composeHomeFixture('srv_foreign_home');
     await expect(fixture.child.handoffAdapter.prepare(fixture.prepareInput))

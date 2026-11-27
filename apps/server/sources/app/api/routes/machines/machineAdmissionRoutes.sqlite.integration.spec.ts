@@ -2,8 +2,11 @@ import { randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainMachineStoredContent, signMachineInstallationProof } from '@happier-dev/protocol';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
+import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+import { auth } from '@/app/auth/auth';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db } from '@/storage/db';
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -367,6 +370,292 @@ describe('Machine receiver current admission on SQLite', () => {
             const revokedSocket = await callSocket(victimMachine, victimReleaseMethod, legitimateRouting);
             expect(revokedSocket.forwarded).toEqual([]);
             expect(revokedSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+        } finally { await app.close(); }
+    });
+
+    it('admits signed H02 use-guest target bootstrap release across custodian accounts while rejecting wrong target, operationId, method, cross-account, and revoked principals', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const ownerA = await db.account.create({ data: { publicKey: `h02-owner-a-${randomUUID()}`, encryptionMode: 'plain' } });
+        const guestB = await db.account.create({ data: { publicKey: `h02-guest-b-${randomUUID()}`, encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { publicKey: `h02-stranger-${randomUUID()}`, encryptionMode: 'plain' } });
+
+        const createMachine = (accountId: string, key: ReturnType<typeof tweetnacl.sign.keyPair>) =>
+            db.machine.create({
+                data: {
+                    id: randomUUID(),
+                    accountId,
+                    active: true,
+                    metadata: encodePlainMachineStoredContent({
+                        host: 'h02-release-host', platform: 'linux', happyCliVersion: 'test',
+                        homeDir: '/home/h02', happyHomeDir: '/home/h02/.happier',
+                    }),
+                    dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
+                    installationId: randomUUID(),
+                    installationPublicKey: new Uint8Array(key.publicKey),
+                },
+            });
+
+        const sourceKey = tweetnacl.sign.keyPair();
+        const targetKey = tweetnacl.sign.keyPair();
+        const bystanderKey = tweetnacl.sign.keyPair();
+        const sourceMachine = await createMachine(ownerA.id, sourceKey);
+        const targetMachine = await createMachine(guestB.id, targetKey);
+        const bystanderMachine = await createMachine(stranger.id, bystanderKey);
+
+        // H02 topology: guestB has ONLY `use` ('view') grant on ownerA's SOURCE M1; ownerA has ZERO grant on guestB's TARGET M2.
+        await db.machineGrant.create({ data: {
+            principalKind: 'account', machineId: sourceMachine.id, accountId: guestB.id,
+            accessLevel: 'view', createdByAccountId: ownerA.id,
+        } });
+        const session = await db.session.create({
+            data: { accountId: guestB.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' },
+        });
+        await db.accessKey.create({
+            data: { accountId: guestB.id, machineId: sourceMachine.id, sessionId: session.id, data: 'h02-source' },
+        });
+
+        const handoffRoot = await auth.mintExternalActionExecutionAuthorization({
+            accountId: guestB.id,
+            serverIdentityId: homeId,
+            authentication: { kind: 'account', tokenEpoch: guestB.tokenEpoch },
+            actionId: 'session.handoff',
+            admittedMachineRole: 'use',
+            machineId: sourceMachine.id,
+            target: { kind: 'machine', machineId: sourceMachine.id },
+            requestId: randomUUID(),
+            requestEnvelopeDigest: 'a'.repeat(43),
+            handoffAdmission: {
+                sessionId: session.id,
+                sourceMachineId: sourceMachine.id,
+                sourceInstallationId: sourceMachine.installationId!,
+                targetMachineId: targetMachine.id,
+                targetInstallationId: targetMachine.installationId!,
+            },
+        });
+
+        const sourceContext = {
+            actorAccountId: guestB.id, custodianAccountId: ownerA.id, machineId: sourceMachine.id,
+            installationId: sourceMachine.installationId!, role: 'use' as const, encryptionMode: 'plain' as const,
+        };
+        const targetContext = {
+            actorAccountId: guestB.id, custodianAccountId: guestB.id, machineId: targetMachine.id,
+            installationId: targetMachine.installationId!, role: 'manage' as const, encryptionMode: 'plain' as const,
+        };
+        const buildReleaseRouting = (overrides?: Readonly<{
+            targetMachineId?: string;
+            targetOperationId?: string;
+            sourceWriterMachineId?: string;
+            sourceWriterInstallationId?: string;
+        }>) => WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({
+            v: 1,
+            sourceWriter: {
+                machineId: overrides?.sourceWriterMachineId ?? sourceMachine.id,
+                installationId: overrides?.sourceWriterInstallationId ?? sourceMachine.installationId!,
+            },
+            source: {
+                v: 1, phase: 'prepare', operationId: handoffRoot.binding.requestId,
+                accountServerId: homeId, sourceMachineId: sourceMachine.id, sourceSessionId: session.id,
+                sourceRootPath: '/source/workspace',
+                sourceContext: { machineAdmission: sourceContext, callerAuthority: 'present_user' },
+            },
+            target: {
+                v: 1, phase: 'release', operationId: overrides?.targetOperationId ?? handoffRoot.binding.requestId,
+                accountServerId: homeId, targetMachineId: overrides?.targetMachineId ?? targetMachine.id,
+                targetRootPath: '/target/workspace',
+            },
+        });
+
+        const app = createAuthenticatedTestApp();
+        machinesRoutes(app);
+        const ownerAToken = await createAccountTokenForTests(ownerA.id, { kind: 'account', authority: 'present_user' });
+        const strangerToken = await createAccountTokenForTests(stranger.id, { kind: 'account', authority: 'present_user' });
+        try {
+            const verifyHttp = (
+                machine: { id: string; installationId: string | null; accountId: string },
+                key: ReturnType<typeof tweetnacl.sign.keyPair>,
+                context: typeof sourceContext | typeof targetContext,
+                method: string,
+                routing: ReturnType<typeof buildReleaseRouting>,
+                callerInputAuthorization?: typeof handoffRoot,
+                callerAccountId = machine.accountId,
+            ) => {
+                const proof = signMachineInstallationProof({
+                    payload: {
+                        version: 1, machineId: machine.id, installationId: machine.installationId!, accountId: machine.accountId,
+                        rpcAdmission: {
+                            context, method, workspaceSyncSourceWriterTargetRouting: routing,
+                            ...(callerInputAuthorization ? { callerInputAuthorization } : {}),
+                        },
+                    },
+                    privateKey: key.secretKey,
+                });
+                return app.inject({
+                    method: 'POST',
+                    url: `/v1/machines/${machine.id}/admission/verify`,
+                    headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': callerAccountId },
+                    payload: {
+                        v: 1, context, method, workspaceSyncSourceWriterTargetRouting: routing,
+                        ...(callerInputAuthorization ? { callerInputAuthorization } : {}),
+                        proof,
+                    },
+                });
+            };
+
+            const callSocket = async (
+                targetMachineArg: { id: string; installationId: string | null; accountId: string },
+                method: string,
+                routing: ReturnType<typeof buildReleaseRouting>,
+                options?: Readonly<{
+                    authorization?: typeof handoffRoot | null;
+                    callerUserId?: string;
+                    callerToken?: string;
+                    callerMachine?: { id: string; installationId: string | null };
+                    signerKey?: ReturnType<typeof tweetnacl.sign.keyPair>;
+                }>,
+            ) => {
+                const compat = evaluateAccountStoredContentSocketCompatibility({ accountStoredContentCompatibility: { v: 1, protocolVersion: 2 } }).evaluation;
+                const forwarded: Array<Record<string, unknown>> = [];
+                const targetDaemon = createAuthenticatedFakeSocket({
+                    id: `daemon-${targetMachineArg.id}`,
+                    data: {
+                        clientType: 'machine-scoped', userId: targetMachineArg.accountId, machineId: targetMachineArg.id,
+                        verifiedMachineInstallationId: targetMachineArg.installationId!,
+                        accountStoredContentCompatibility: compat,
+                    },
+                    timeout: () => ({ emitWithAck: async (_event: string, packet: unknown) => { forwarded.push(packet as Record<string, unknown>); return { ok: true }; } }),
+                });
+                const io = createSocketRoomDiscoveryHarness(async room =>
+                    room === targetDaemon.id || room === `rpc:${targetMachineArg.accountId}:${method}` ? [targetDaemon] : []);
+                const callerMachine = options?.callerMachine ?? sourceMachine;
+                const callerUserId = options?.callerUserId ?? ownerA.id;
+                const caller = Object.assign(createAuthenticatedFakeSocket({
+                    id: `h02-caller-socket-${randomUUID()}`,
+                    data: {
+                        clientType: 'machine-scoped', userId: callerUserId, machineId: callerMachine.id,
+                        verifiedMachineInstallationId: callerMachine.installationId!,
+                        authTokenKind: 'account', authAuthority: 'present_user',
+                        accountStoredContentCompatibility: compat,
+                    },
+                }), { handshake: { auth: { token: options?.callerToken ?? ownerAToken } } });
+                registerSocketRpcHandlers({ userId: callerUserId, socket: caller as unknown as Socket, io });
+                const requestId = randomUUID();
+                const params = 'opaque-release-params';
+                const authorization = options?.authorization === undefined ? handoffRoot : options.authorization;
+                const externalActionExecution = authorization ? {
+                    v: 1 as const,
+                    authorization,
+                    effectActionId: authorization.binding.actionId,
+                    target: authorization.binding.target,
+                    installationId: callerMachine.installationId!,
+                    machineSignature: signExternalActionMachineRpcRequestV1({
+                        authorizationToken: authorization.token,
+                        effectActionId: authorization.binding.actionId,
+                        target: authorization.binding.target,
+                        installationId: callerMachine.installationId!,
+                        event: SOCKET_RPC_EVENTS.CALL,
+                        method,
+                        requestId,
+                        params,
+                        workspaceSyncSourceWriterTargetRouting: routing,
+                        privateKey: (options?.signerKey ?? sourceKey).secretKey,
+                    }),
+                } : undefined;
+                const cb = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+                    method, params, requestId, workspaceSyncSourceWriterTargetRouting: routing,
+                    ...(externalActionExecution ? { externalActionExecution } : {}),
+                }, cb);
+                return { result: cb.mock.calls[0]?.[0], forwarded };
+            };
+
+            const releaseMethod = `${targetMachine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`;
+            const rawRouting = buildReleaseRouting();
+
+            // 1. Positive (raw operationId): discovery, receiver verify, and signed socket release all succeed across custodians!
+            const okDiscovery = await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, rawRouting, handoffRoot);
+            expect(okDiscovery.statusCode, JSON.stringify(okDiscovery.json())).toBe(200);
+            expect(okDiscovery.json()).toMatchObject({
+                v: 1, ok: true,
+                destinationInstallation: { machineId: targetMachine.id, installationId: targetMachine.installationId },
+            });
+            const okReceiver = await verifyHttp(targetMachine, targetKey, targetContext, releaseMethod, rawRouting, handoffRoot);
+            expect(okReceiver.statusCode, JSON.stringify(okReceiver.json())).toBe(200);
+            expect(okReceiver.json()).toEqual({ v: 1, ok: true });
+            const okSocket = await callSocket(targetMachine, releaseMethod, rawRouting);
+            expect(okSocket.result, JSON.stringify(okSocket.result)).toMatchObject({ ok: true });
+            expect(okSocket.forwarded).toHaveLength(1);
+            expect(okSocket.forwarded[0]).toMatchObject({
+                machineAdmission: targetContext,
+                callerInputAuthorization: { token: handoffRoot.token },
+            });
+
+            // 2. Positive (derived relationshipId): create_relationship abort/commit release also succeeds!
+            const derivedRouting = buildReleaseRouting({
+                targetOperationId: deriveWorkspaceSyncRelationshipId(handoffRoot.binding.requestId),
+            });
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, derivedRouting, handoffRoot)).statusCode).toBe(200);
+            expect((await verifyHttp(targetMachine, targetKey, targetContext, releaseMethod, derivedRouting, handoffRoot)).statusCode).toBe(200);
+            const okDerivedSocket = await callSocket(targetMachine, releaseMethod, derivedRouting);
+            expect(okDerivedSocket.result).toMatchObject({ ok: true });
+            expect(okDerivedSocket.forwarded).toHaveLength(1);
+
+            // 3. Negative — unsigned release (Account A has no grant on guestB's M2): refused!
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, rawRouting, undefined)).statusCode).toBe(403);
+            const unsignedSocket = await callSocket(targetMachine, releaseMethod, rawRouting, { authorization: null });
+            expect(unsignedSocket.forwarded).toEqual([]);
+            expect(unsignedSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 4. Negative — wrong operationId: refused!
+            const wrongOpRouting = buildReleaseRouting({ targetOperationId: randomUUID() });
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, wrongOpRouting, handoffRoot)).statusCode).toBe(403);
+            expect((await verifyHttp(targetMachine, targetKey, targetContext, releaseMethod, wrongOpRouting, handoffRoot)).statusCode).toBe(403);
+            const wrongOpSocket = await callSocket(targetMachine, releaseMethod, wrongOpRouting);
+            expect(wrongOpSocket.forwarded).toEqual([]);
+            expect(wrongOpSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 5. Negative — wrong targetMachineId (bystander in routing OR method prefix): refused!
+            const wrongTargetRouting = buildReleaseRouting({ targetMachineId: bystanderMachine.id });
+            const bystanderReleaseMethod = `${bystanderMachine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`;
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, bystanderReleaseMethod, wrongTargetRouting, handoffRoot)).statusCode).toBe(403);
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, bystanderReleaseMethod, rawRouting, handoffRoot)).statusCode).toBe(403);
+            const wrongTargetSocket = await callSocket(bystanderMachine, bystanderReleaseMethod, wrongTargetRouting);
+            expect(wrongTargetSocket.forwarded).toEqual([]);
+            expect(wrongTargetSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 6. Negative — wrong method (PREPARE sent with phase === 'release'): refused!
+            const wrongMethod = `${targetMachine.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`;
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, wrongMethod, rawRouting, handoffRoot)).statusCode).toBe(403);
+            const wrongMethodSocket = await callSocket(targetMachine, wrongMethod, rawRouting);
+            expect(wrongMethodSocket.forwarded).toEqual([]);
+            expect(wrongMethodSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 7. Negative — cross-account caller (stranger): refused!
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, rawRouting, handoffRoot, stranger.id)).statusCode).toBe(403);
+            const strangerSocket = await callSocket(targetMachine, releaseMethod, rawRouting, {
+                callerUserId: stranger.id, callerToken: strangerToken, callerMachine: bystanderMachine, signerKey: bystanderKey,
+            });
+            expect(strangerSocket.forwarded).toEqual([]);
+            expect(strangerSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 8. Negative — instant revocation via deleting guestB's machineGrant on SOURCE M1: refused!
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: sourceMachine.id, accountId: guestB.id } } });
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, rawRouting, handoffRoot)).statusCode).toBe(403);
+            expect((await verifyHttp(targetMachine, targetKey, targetContext, releaseMethod, rawRouting, handoffRoot)).statusCode).toBe(403);
+            const revokedGrantSocket = await callSocket(targetMachine, releaseMethod, rawRouting);
+            expect(revokedGrantSocket.forwarded).toEqual([]);
+            expect(revokedGrantSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+
+            // 9. Negative — instant revocation via bumping guestB's tokenEpoch (even after re-granting M1): refused!
+            await db.machineGrant.create({ data: {
+                principalKind: 'account', machineId: sourceMachine.id, accountId: guestB.id,
+                accessLevel: 'view', createdByAccountId: ownerA.id,
+            } });
+            await db.account.update({ where: { id: guestB.id }, data: { tokenEpoch: guestB.tokenEpoch + 1 } });
+            expect((await verifyHttp(sourceMachine, sourceKey, sourceContext, releaseMethod, rawRouting, handoffRoot)).statusCode).toBe(403);
+            expect((await verifyHttp(targetMachine, targetKey, targetContext, releaseMethod, rawRouting, handoffRoot)).statusCode).toBe(403);
+            const revokedEpochSocket = await callSocket(targetMachine, releaseMethod, rawRouting);
+            expect(revokedEpochSocket.forwarded).toEqual([]);
+            expect(revokedEpochSocket.result).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
         } finally { await app.close(); }
     });
 });

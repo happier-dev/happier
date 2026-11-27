@@ -175,7 +175,7 @@ import { WorkspaceSyncSeedExportPrepareV1Schema, type WorkspaceSyncSeedExportPre
 import { buildActionExecutorContextForRpc, projectWorkspaceSyncPhysicalContextFromActionContext, type RpcActionExecutor, type RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceSyncRelationshipWriteActionId, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -5024,6 +5024,9 @@ export class ApiMachineClient {
         const retainedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
             && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE && input.physicalEndpoint !== undefined
             && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
+        const signedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
+            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
+            && signedAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
         const retainedWriterCopyPhase = !forwardWork && writerTarget !== undefined
             && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) && writerTarget.target.phase !== 'release' && !targetRouting
             && isWorkspaceSyncSourceWriterTargetMethodV1(writerTarget.target.phase, input.method);
@@ -5216,7 +5219,7 @@ export class ApiMachineClient {
                 ...removalContinuation,
                 ...(projectSourceExecution ? { workspaceSyncSourceExecution: projectSourceExecution } : {}),
                 ...(jointTarget ? { workspaceSyncTargetRouting: targetRouting } : {}), timeoutMs: null,
-                ...((forwardWork || retainedWriterCopyPhase) && authorizationForTarget ? { createExternalActionExecution: wire => {
+                ...((forwardWork || retainedWriterCopyPhase || signedWriterRelease) && authorizationForTarget ? { createExternalActionExecution: wire => {
                     const execution = createExternalActionMachineRpcExecution({ context: { ...input.context,
                         externalActionExecutionAuthorization: authorizationForTarget, externalActionTarget: authorizationForTarget.binding.target },
                         effectActionId: authorizationForTarget.binding.actionId, installationId: installation.installationId,

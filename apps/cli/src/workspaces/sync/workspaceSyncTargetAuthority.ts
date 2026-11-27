@@ -1159,7 +1159,20 @@ export function createWorkspaceSyncTargetAuthority(
       }
     } else {
       const admission = context?.machineAdmission;
-      if (context?.workspaceSyncTargetRouting || !admission
+      const signedHandoffRelease = phase === 'release'
+        && context?.callerInputAuthorization?.binding.actionId === 'session.handoff'
+        && context.callerInputAuthorization.binding.handoffAdmission !== undefined;
+      if (signedHandoffRelease) {
+        const handoff = context.callerInputAuthorization!.binding.handoffAdmission!;
+        if (context?.workspaceSyncTargetRouting || !admission
+          || admission.machineId !== routing.target.targetMachineId
+          || admission.machineId !== handoff.targetMachineId
+          || admission.installationId !== handoff.targetInstallationId
+          || admission.actorAccountId !== context.callerInputAuthorization!.binding.accountId
+          || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
+          throw authorityError('workspace_sync_child_unavailable', 'The installed source writer cleanup transport is unavailable');
+        }
+      } else if (context?.workspaceSyncTargetRouting || !admission
         || admission.machineId !== routing.sourceWriter.machineId
         || admission.installationId !== routing.sourceWriter.installationId
         || admission.actorAccountId !== admission.custodianAccountId

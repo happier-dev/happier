@@ -675,11 +675,29 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       // session.handoff root and this ingress's admission currentness ride in-process only: the link that
       // handoff creates is theirs, signed with that root (ruling 2026-11-24 23:16Z (a)). The SOURCE
       // owner's own handoff keeps today's context.
-      ...(requester ? { workspaceSyncContext: { signal: hostInput.signal, requesterSessionBootstrap: requester,
-        ...(admission ? { machineAdmission: admission } : {}),
-        ...(personHandoffRoot && hostInput.context?.verifyMachineAdmissionCurrent ? {
-          verifyMachineAdmissionCurrent: hostInput.context.verifyMachineAdmissionCurrent,
-          localActionContext: { externalActionExecutionAuthorization: personHandoffRoot } } : {}) } } : {}),
+      ...(requester ? { workspaceSyncContext: (() => {
+        const localActionContext = {
+          ...(personHandoffRoot && hostInput.context?.verifyMachineAdmissionCurrent
+            ? { externalActionExecutionAuthorization: personHandoffRoot } : {}),
+          ...(hostInput.context?.callerPermissionMode !== undefined
+            ? { callerPermissionMode: hostInput.context.callerPermissionMode } : {}),
+          ...(hostInput.context?.causalPermissionAuthority !== undefined
+            ? { causalPermissionAuthority: hostInput.context.causalPermissionAuthority } : {}),
+          ...(hostInput.context?.workspaceWrites
+            ? { workspaceWrites: hostInput.context.workspaceWrites } : {}),
+        };
+        return {
+          signal: hostInput.signal,
+          requesterSessionBootstrap: requester,
+          ...(admission ? { machineAdmission: admission } : {}),
+          ...(hostInput.context?.authority ? { callerAuthority: hostInput.context.authority } : {}),
+          ...(hostInput.context?.sessionActionOrigin ? { sessionActionOrigin: hostInput.context.sessionActionOrigin } : {}),
+          ...(hostInput.context?.callerInputConstraints ? { callerInputConstraints: hostInput.context.callerInputConstraints } : {}),
+          ...(personHandoffRoot && hostInput.context?.verifyMachineAdmissionCurrent
+            ? { verifyMachineAdmissionCurrent: hostInput.context.verifyMachineAdmissionCurrent } : {}),
+          ...(Object.keys(localActionContext).length > 0 ? { localActionContext } : {}),
+        };
+      })() } : {}),
       ...(hostInput.localPreparation && targetMachineId === hostInput.localPreparation.machineId
         && !hostInput.context?.externalActionExecutionAuthorization
         ? { wait: (signal: AbortSignal, status: SessionHandoffStatus) => hostInput.localPreparation!.waitForChange(status, signal) }

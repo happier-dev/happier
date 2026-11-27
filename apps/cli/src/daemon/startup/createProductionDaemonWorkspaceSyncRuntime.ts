@@ -1709,9 +1709,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   ): NonNullable<WorkspaceSyncPrivateExecution['callTargetPhase']> => {
     let preparedTargetEndpoint: MachineInstallationPublicIdentityV1 | undefined;
     return async descriptor => {
+      const signedHandoffRelease = descriptor.routing.phase === 'release'
+        && context.callerInputAuthorization?.binding.actionId === 'session.handoff'
+        && context.callerInputAuthorization.binding.accountId !== context.callerInputAuthorization.binding.custodianAccountId;
       if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase)
         && descriptor.routing.targetMachineId !== input.localMachineId
-        && (descriptor.routing.phase !== 'release' || preparedTargetEndpoint)
+        && (descriptor.routing.phase !== 'release' || (preparedTargetEndpoint && !signedHandoffRelease))
         && context.workspaceSyncSourceRouting) {
         return await input.callWorkspaceTargetPhase!(
           { ...descriptor, ...(preparedTargetEndpoint ? { physicalEndpoint: preparedTargetEndpoint } : {}) },
@@ -2599,7 +2602,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     stopRetainedNativeProcesses: factories.stopRetainedNativeProcesses,
     ...(input.openMachineCarrierTunnel || input.createRequesterMachineCarrierTunnel
       ? { openMachineCarrierTunnel: async (request, transferAdmission) => {
-          const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: request.operationId });
+          const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
+            ?? runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: request.operationId });
           if (retained) {
             if (transferAdmission) await transferAdmission;
             else await admitPrivateTransfer(request.operationId, request.signal);

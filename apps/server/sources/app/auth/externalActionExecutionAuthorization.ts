@@ -89,7 +89,7 @@ import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@ha
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { isProjectAccountRowActionIdV1, isSessionListActionId, isSessionSurfaceReadRootActionIdV1, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, readWorkspaceSyncSeedProofKindV1, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveManagedSessionDefaultsTeamId } from '@happier-dev/protocol/teams/managedDefaults';
-import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { deriveWorkspaceSyncRelationshipId, readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
     DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentPromoteInputV1Schema,
     DeploymentPromoteAdmissionInputV1Schema, DeploymentTeardownActionAdmissionInputV1Schema,
@@ -5822,7 +5822,11 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     physicalTarget: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncEndpointInTx>>>;
     targetRoute?: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>>;
     receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1 }> | null> {
-    if (routing.target.phase === 'release') return null;
+    const signedHandoffRelease = routing.target.phase === 'release';
+    if (signedHandoffRelease && (authorization.binding.actionId !== SESSION_HANDOFF_ACTION_ID_V1
+        || targetReceiver || sourceExecution
+        || (routing.target.operationId !== routing.source.operationId
+            && routing.target.operationId !== deriveWorkspaceSyncRelationshipId(routing.source.operationId)))) return null;
     const machines = prefetchedMachines ?? await prefetchWorkspaceSyncMachines([
         authorization.binding.machineId,
         routing.source.sourceMachineId,
@@ -5841,6 +5845,19 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
         : relationshipWrite ? relationshipSource?.verified
         : !sourceExecution && await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source, machines);
     if (!verified || !relationshipWrite && (project ? verified.binding.machineId : verified.binding.handoffAdmission?.targetMachineId) !== routing.target.targetMachineId) return null;
+    if (signedHandoffRelease) {
+        const [credentialCurrent, sourceAccess, targetAccess] = await Promise.all([
+            'authentication' in verified.binding
+                ? auth.isSignedCredentialCurrent(db, verified.binding.accountId, verified.binding.authentication.tokenEpoch)
+                : auth.verifyCurrentApiTokenPrincipal(verified.binding, undefined, db)
+                    .then(principal => Boolean(principal && isApiTokenGrantWithinV1(verified.binding.grant, principal.grant))),
+            resolveMachineAdmissionWithPrefetch({ actorAccountId: verified.binding.accountId,
+                machineId: routing.source.sourceMachineId, requiredRole: 'use' }, machines),
+            resolveMachineAdmissionWithPrefetch({ actorAccountId: verified.binding.accountId,
+                machineId: routing.target.targetMachineId, requiredRole: 'use' }, machines),
+        ]);
+        if (!credentialCurrent || sourceAccess.kind !== 'admitted' || targetAccess.kind !== 'admitted') return null;
+    }
     if (!matchesWorkspaceSyncWriterTargetOperands(verified.binding, routing, sourceExecution)) return null;
     const writer = await resolveMachineAdmissionWithPrefetch({ actorAccountId: routing.source.sourceContext.machineAdmission.custodianAccountId,
         machineId: routing.sourceWriter.machineId, requiredRole: 'manage' }, machines);
@@ -6394,7 +6411,8 @@ export async function verifyExternalActionMachineRpcExecution(
             request.workspaceSyncTargetRouting ? { routing: request.workspaceSyncTargetRouting,
                 machineId: request.method.slice(0, request.method.indexOf(':')) } : undefined, request.workspaceSyncSourceExecution, machines);
         const phaseMethod = routing.target.phase === 'preflight' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT
-            : routing.target.phase === 'prepare' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE : null;
+            : routing.target.phase === 'prepare' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+            : routing.target.phase === 'release' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE : null;
         if (!admitted || execution.effectActionId !== admitted.verified.effectActionId || !phaseMethod
             || request.method !== `${admitted.targetRoute?.parentMachineId ?? routing.target.targetMachineId}:${phaseMethod}`) return null;
         const signer = request.workspaceSyncTargetRouting ? admitted.target : admitted.writer;

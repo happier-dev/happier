@@ -13,7 +13,7 @@ import { SESSION_WORKSPACE_RETURN_WRITE_SCOPED_ACTION_IDS_V1 } from '@happier-de
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
   resolveSocketRpcSessionWriteAuthorizationMethod, type WorkspaceSyncSourceRoutingV1 } from '@happier-dev/protocol/socketRpc';
 
-import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, type MachineRpcAdmissionBoundary } from './machineRpcAuthorization';
+import { authorizeMachineRpcRequest, doesWorkspaceSyncSeedRootMatchRouting, verifyMachineRpcAdmissionCurrent, type MachineRpcAdmissionBoundary } from './machineRpcAuthorization';
 import { logger } from '@/ui/logger';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
@@ -21,7 +21,9 @@ import { collectActionSpecRpcMethodsForScopes, SESSION_SPAWN_NEW_RPC_SCOPES,
   MACHINE_SESSION_LIFECYCLE_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { PRIVATE_SPAWN_SESSION_RPC_METHODS } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+import { WorkspaceSyncSeedRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
+import { ApiMachineClient } from '@/api/apiMachine';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -1229,4 +1231,341 @@ describe('authorizeMachineRpcRequest', () => {
     })).resolves.toEqual({ ok: true });
   });
 
+  it('admits derived relationshipId for session.handoff Git seed export while rejecting mismatched ids, foreign targets, and project_source derivations', async () => {
+    const buildHandoffSeed = (options?: Readonly<{
+      targetCustodian?: string;
+      sourceRole?: 'use' | 'manage';
+      bindingRole?: 'use' | 'manage' | 'omit';
+      operationId?: string;
+    }>) => {
+      const targetCustodian = options?.targetCustodian ?? 'guest';
+      const sourceRole = options?.sourceRole ?? 'use';
+      const bindingRole = options?.bindingRole ?? sourceRole;
+      const sourceOperationId = options?.operationId ?? 'handoff-op';
+      const sourceAdmission = {
+        actorAccountId: 'guest',
+        custodianAccountId: 'owner',
+        machineId: 'source-machine',
+        installationId: 'source-installation',
+        role: sourceRole,
+        encryptionMode: 'plain' as const,
+      };
+      const targetAdmission = {
+        actorAccountId: 'guest',
+        custodianAccountId: targetCustodian,
+        machineId: 'target-machine',
+        installationId: 'target-installation',
+        role: targetCustodian === 'guest' ? 'manage' as const : 'use' as const,
+        encryptionMode: 'plain' as const,
+      };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1,
+        token: 'handoff-root',
+        binding: {
+          accountId: 'guest',
+          custodianAccountId: 'owner',
+          ...(bindingRole !== 'omit' ? { admittedMachineRole: bindingRole } : {}),
+          authentication: { kind: 'account', tokenEpoch: 1 },
+          accountEncryptionMode: 'plain',
+          serverIdentityId: 'home',
+          machineId: 'source-machine',
+          installationId: 'source-installation',
+          actionId: 'session.handoff',
+          requestId: sourceOperationId,
+          requestEnvelopeDigest: 'A'.repeat(43),
+          target: { kind: 'machine', machineId: 'source-machine' },
+          handoffAdmission: {
+            sessionId: 'guest-session',
+            sourceMachineId: 'source-machine',
+            sourceInstallationId: 'source-installation',
+            targetMachineId: 'target-machine',
+            targetInstallationId: 'target-installation',
+          },
+        },
+      });
+      const source = {
+        v: 1 as const,
+        phase: 'prepare' as const,
+        operationId: sourceOperationId,
+        accountServerId: 'home',
+        sourceSessionId: 'guest-session',
+        sourceMachineId: 'source-machine',
+        sourceRootPath: '/source/repo',
+        sourceContext: { machineAdmission: sourceAdmission, callerAuthority: 'present_user' as const },
+      };
+      const targetPhase = {
+        v: 1 as const,
+        phase: 'prepare' as const,
+        operationId: sourceOperationId,
+        accountServerId: 'home',
+        targetMachineId: 'target-machine',
+        targetRootPath: '/guest/repo',
+      };
+      const sourceWriterTarget = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({
+        v: 1,
+        source,
+        sourceWriter: { machineId: 'source-machine', installationId: 'source-installation' },
+        target: targetPhase,
+      });
+      const target = {
+        ...targetPhase,
+        targetContext: { machineAdmission: targetAdmission, callerAuthority: 'present_user' as const },
+      };
+      const seed = WorkspaceSyncSeedRoutingV1Schema.parse({ v: 1, sourceWriterTarget, target });
+      return { authorization, seed, sourceWriterTarget, target };
+    };
+
+    const own = buildHandoffSeed();
+    const derivedRelId = deriveWorkspaceSyncRelationshipId('handoff-op');
+    // session.handoff Keep-updated + git_worktree uses derived relationshipId as seed operationId.
+    expect(doesWorkspaceSyncSeedRootMatchRouting(own.authorization, own.seed, undefined, derivedRelId)).toBe(true);
+    expect(doesWorkspaceSyncSeedRootMatchRouting(own.authorization, own.seed, undefined, 'handoff-op')).toBe(true);
+
+    // callWorkspaceSyncSeedExport passes the routing gate with derived relationshipId and rejects mismatched operationId.
+    const physicalSpy = vi.fn(async () => ({ success: true, transferId: derivedRelId }));
+    const stubClient = Object.assign(Object.create(ApiMachineClient.prototype), {
+      machine: { id: 'target-machine' },
+      callWorkspaceSyncPhysicalMachineRpc: physicalSpy,
+    }) as ApiMachineClient;
+    const content = {
+      v: 1 as const,
+      selection: 'git_worktree' as const,
+      extraIgnorePatterns: [] as string[],
+      extraIncludePatterns: [] as string[],
+    };
+    const contentPolicy = {
+      ...content,
+      policyDigest: computeWorkspaceSyncPolicyDigest(content),
+    };
+    const seedContext = {
+      signal: new AbortController().signal,
+      authority: 'present_user' as const,
+      machineAdmission: own.target.targetContext.machineAdmission,
+      callerInputAuthorization: own.authorization,
+      workspaceSyncSourceWriterTargetRouting: own.sourceWriterTarget,
+      workspaceSyncTargetRouting: own.target,
+    };
+    await expect(stubClient.callWorkspaceSyncSeedExport({
+      machineId: 'source-machine',
+      credentials: { token: 'guest-token', encryption: null },
+      context: seedContext as never,
+      request: {
+        t: 'workspace_sync_seed_v1',
+        operationId: derivedRelId,
+        sourceWorkspaceRefId: 'source-ref',
+        targetMachineId: 'target-machine',
+        contentPolicy,
+      },
+    })).resolves.toEqual({ success: true, transferId: derivedRelId });
+    expect(physicalSpy).toHaveBeenCalledTimes(1);
+    expect(physicalSpy).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'source-machine',
+      method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+      routing: { workspaceSyncSeedRouting: own.seed },
+    }));
+
+    // Negative falsifier 1: mismatched raw or derived operationId is refused at both predicate and ApiMachineClient.
+    expect(doesWorkspaceSyncSeedRootMatchRouting(own.authorization, own.seed, undefined, 'other-op')).toBe(false);
+    expect(doesWorkspaceSyncSeedRootMatchRouting(own.authorization, own.seed, undefined, deriveWorkspaceSyncRelationshipId('other-op'))).toBe(false);
+    await expect(stubClient.callWorkspaceSyncSeedExport({
+      machineId: 'source-machine',
+      credentials: { token: 'guest-token', encryption: null },
+      context: seedContext as never,
+      request: {
+        t: 'workspace_sync_seed_v1',
+        operationId: deriveWorkspaceSyncRelationshipId('other-op'),
+        sourceWorkspaceRefId: 'source-ref',
+        targetMachineId: 'target-machine',
+        contentPolicy,
+      },
+    })).rejects.toMatchObject({ code: 'peer_unavailable' });
+    expect(physicalSpy).toHaveBeenCalledTimes(1);
+
+    // Negative falsifier 2: cross-Account Use guest targeting foreign Machine or forging role='manage' still fails for derived relationshipId.
+    const foreign = buildHandoffSeed({ targetCustodian: 'other-owner' });
+    expect(doesWorkspaceSyncSeedRootMatchRouting(foreign.authorization, foreign.seed, undefined, derivedRelId)).toBe(false);
+    const forgedManage = buildHandoffSeed({ targetCustodian: 'other-owner', sourceRole: 'manage', bindingRole: 'use' });
+    expect(doesWorkspaceSyncSeedRootMatchRouting(forgedManage.authorization, forgedManage.seed, undefined, derivedRelId)).toBe(false);
+
+    // Negative falsifier 3: projects.open (seedProof === 'project_source') still rejects derived relationshipId while accepting exact source.operationId.
+    const openAdmission = {
+      actorAccountId: 'owner',
+      custodianAccountId: 'owner',
+      machineId: 'source-machine',
+      installationId: 'source-installation',
+      role: 'manage' as const,
+      encryptionMode: 'plain' as const,
+    };
+    const openTargetAdmission = {
+      actorAccountId: 'owner',
+      custodianAccountId: 'owner',
+      machineId: 'target-machine',
+      installationId: 'target-installation',
+      role: 'manage' as const,
+      encryptionMode: 'plain' as const,
+    };
+    const openEnvelope = {
+      v: 1 as const,
+      requestId: 'open-op',
+      target: { kind: 'machine' as const, machineId: 'target-machine' },
+      input: { serverId: 'home', machineId: 'target-machine' },
+    };
+    const openAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'open-root',
+      binding: {
+        accountId: 'owner',
+        custodianAccountId: 'owner',
+        admittedMachineRole: 'manage',
+        authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain',
+        serverIdentityId: 'home',
+        machineId: 'target-machine',
+        installationId: 'target-installation',
+        actionId: 'projects.open',
+        requestId: openEnvelope.requestId,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(openEnvelope),
+        target: openEnvelope.target,
+      },
+    });
+    const openKey = tweetnacl.sign.keyPair();
+    const openMethod = `source-machine:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+    const openSourceExec = WorkspaceSyncSourceExecutionV1Schema.parse({
+      method: openMethod,
+      requestId: 'open-req',
+      params: 'sealed-params',
+      externalActionExecution: {
+        v: 1,
+        authorization: openAuthorization,
+        effectActionId: 'projects.open',
+        target: openAuthorization.binding.target,
+        installationId: 'target-installation',
+        machineSignature: signExternalActionMachineRpcRequestV1({
+          authorizationToken: openAuthorization.token,
+          effectActionId: 'projects.open',
+          target: openAuthorization.binding.target,
+          installationId: 'target-installation',
+          method: openMethod,
+          requestId: 'open-req',
+          params: 'sealed-params',
+          privateKey: openKey.secretKey,
+        }),
+      },
+    });
+    const openSource = {
+      v: 1 as const,
+      phase: 'prepare' as const,
+      operationId: 'open-op',
+      accountServerId: 'home',
+      sourceMachineId: 'source-machine',
+      sourceRootPath: '/source/repo',
+      originalActionEnvelope: openEnvelope,
+      sourceContext: { machineAdmission: openAdmission, callerAuthority: 'present_user' as const },
+    };
+    const openTargetPhase = {
+      v: 1 as const,
+      phase: 'prepare' as const,
+      operationId: 'open-op',
+      accountServerId: 'home',
+      targetMachineId: 'target-machine',
+      targetRootPath: '/target/repo',
+    };
+    const openSeed = WorkspaceSyncSeedRoutingV1Schema.parse({
+      v: 1,
+      sourceWriterTarget: {
+        v: 1,
+        source: openSource,
+        sourceWriter: { machineId: 'source-machine', installationId: 'source-installation' },
+        target: openTargetPhase,
+      },
+      target: {
+        ...openTargetPhase,
+        targetContext: { machineAdmission: openTargetAdmission, callerAuthority: 'present_user' as const },
+      },
+    });
+    expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, openSeed, openSourceExec, 'open-op')).toBe(true);
+    expect(doesWorkspaceSyncSeedRootMatchRouting(openAuthorization, openSeed, openSourceExec, deriveWorkspaceSyncRelationshipId('open-op'))).toBe(false);
+  });
+
+
+  it('admits signed H02 use-guest target bootstrap release at TARGET M2 for raw operationId and derived relationshipId while rejecting mismatched operationId, target, method, or unsigned cross-account release', async () => {
+    const targetAdmission = {
+      actorAccountId: 'guest-b', custodianAccountId: 'guest-b', machineId: 'target-m2',
+      installationId: 'target-installation', role: 'manage' as const, encryptionMode: 'plain' as const,
+    };
+    const sourceAdmission = {
+      actorAccountId: 'guest-b', custodianAccountId: 'owner-a', machineId: 'source-m1',
+      installationId: 'source-installation', role: 'use' as const, encryptionMode: 'plain' as const,
+    };
+    const handoffRoot = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1, token: 'h02-guest-handoff-root',
+      binding: {
+        accountId: 'guest-b', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+        custodianAccountId: 'owner-a', admittedMachineRole: 'use', serverIdentityId: 'home',
+        machineId: 'source-m1', installationId: 'source-installation',
+        actionId: 'session.handoff', requestId: 'handoff-op-1', requestEnvelopeDigest: 'A'.repeat(43),
+        target: { kind: 'machine', machineId: 'source-m1' },
+        handoffAdmission: {
+          sessionId: 'session-1', sourceMachineId: 'source-m1', sourceInstallationId: 'source-installation',
+          targetMachineId: 'target-m2', targetInstallationId: 'target-installation',
+        },
+      },
+    });
+    const buildReleaseRequest = (overrides?: Readonly<{
+      targetOperationId?: string;
+      bootstrapOperationId?: string;
+      targetMachineId?: string;
+      method?: string;
+      machineAdmission?: typeof targetAdmission;
+      callerInputAuthorization?: typeof handoffRoot | undefined;
+    }>) => {
+      const targetOpId = overrides?.targetOperationId ?? handoffRoot.binding.requestId;
+      const bootstrapOpId = overrides?.bootstrapOperationId ?? targetOpId;
+      const targetMachineId = overrides?.targetMachineId ?? 'target-m2';
+      const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({
+        v: 1,
+        sourceWriter: { machineId: 'source-m1', installationId: 'source-installation' },
+        source: {
+          v: 1, phase: 'prepare', operationId: handoffRoot.binding.requestId, accountServerId: 'home',
+          sourceMachineId: 'source-m1', sourceRootPath: '/source/workspace', sourceSessionId: 'session-1',
+          sourceContext: { machineAdmission: sourceAdmission, callerAuthority: 'present_user' },
+        },
+        target: {
+          v: 1, phase: 'release', operationId: targetOpId, accountServerId: 'home',
+          targetMachineId, targetRootPath: '/target/workspace',
+        },
+      });
+      return {
+        method: overrides?.method ?? `target-m2:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`,
+        params: { v: 1, bootstrapOperationId: bootstrapOpId, targetWorkspaceRefId: 'target-ref', reason: 'abort' },
+        callerAuthority: 'present_user' as const,
+        machineAdmission: overrides?.machineAdmission ?? targetAdmission,
+        ...('callerInputAuthorization' in (overrides ?? {})
+          ? (overrides?.callerInputAuthorization ? { callerInputAuthorization: overrides.callerInputAuthorization } : {})
+          : { callerInputAuthorization: handoffRoot }),
+        workspaceSyncSourceWriterTargetRouting: routing,
+      };
+    };
+
+    const boundary: MachineRpcAdmissionBoundary = {
+      machineId: 'target-m2',
+      resolveInstallationId: () => 'target-installation',
+      resolveCustodianAccountId: async () => 'guest-b',
+      resolveHomeServerIdentityId: async () => 'home',
+      verifyMachineAdmission: async () => true,
+    };
+
+    // Positive: raw operationId (copy_once abort/commit) and derived relationshipId (create_relationship abort/commit)
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest(), boundary, 'authenticated_home_socket')).toEqual({ ok: true });
+    const derivedId = deriveWorkspaceSyncRelationshipId(handoffRoot.binding.requestId);
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ targetOperationId: derivedId, bootstrapOperationId: derivedId }), boundary, 'authenticated_home_socket')).toEqual({ ok: true });
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ targetOperationId: handoffRoot.binding.requestId, bootstrapOperationId: derivedId }), boundary, 'authenticated_home_socket')).toEqual({ ok: true });
+
+    // Negatives: wrong operationId, wrong target machine, wrong method, foreign actor, unsigned cross-account release
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ targetOperationId: 'unrelated-op', bootstrapOperationId: 'unrelated-op' }), boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ targetMachineId: 'bystander-m3' }), boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ method: `target-m2:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}` }), boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ machineAdmission: { ...targetAdmission, actorAccountId: 'stranger' } }), boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+    expect(await authorizeMachineRpcRequest(buildReleaseRequest({ callerInputAuthorization: undefined }), boundary, 'authenticated_home_socket')).toMatchObject({ ok: false });
+  });
 });
