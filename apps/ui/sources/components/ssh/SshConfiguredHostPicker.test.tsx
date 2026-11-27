@@ -169,6 +169,34 @@ describe('SshConfiguredHostPicker', () => {
         await screen.unmount();
     });
 
+    it('names loopback suggestions by port when they share a title', async () => {
+        const hosts: SshConfiguredHostSuggestion[] = [53210, 53617].map((port) => ({
+            id: String(port),
+            source: 'known-hosts',
+            alias: '127.0.0.1',
+            hostname: '127.0.0.1',
+            port,
+            username: null,
+        }));
+        const onSelectSuggestion = vi.fn();
+        const screen = await renderScreen(<SshConfiguredHostPicker
+            testID="ssh-suggestions"
+            presentation="suggestions"
+            suggestions={hosts}
+            loading={false}
+            refreshing={false}
+            unsupported={false}
+            error={null}
+            onRefresh={() => {}}
+            onSelectSuggestion={onSelectSuggestion}
+        />);
+
+        expect(screen.getTextContent()).toContain('127.0.0.1:53210');
+        expect(screen.getTextContent()).toContain('127.0.0.1:53617');
+        await screen.pressByTestIdAsync('ssh-suggestions-53617');
+        expect(onSelectSuggestion).toHaveBeenCalledWith(hosts[1]);
+    });
+
     it('passes selected suggestions to the caller without applying them itself', async () => {
         const onSelectSuggestion = vi.fn();
         const onRefresh = vi.fn();

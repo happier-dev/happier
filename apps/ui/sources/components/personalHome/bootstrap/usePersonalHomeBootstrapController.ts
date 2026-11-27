@@ -41,6 +41,12 @@ export type PersonalHomeBootstrapController = Readonly<{
     execute: (runner: PersonalHomeBootstrapOperationRunner) => Promise<boolean>;
 }>;
 
+type BootstrapFailure = Readonly<{
+    error: Error;
+    target?: string;
+    existingRuntimeOperation?: boolean;
+}>;
+
 function checkingSnapshot(): PersonalHomeBootstrapSnapshot {
     return {
         shouldGateShell: true,
@@ -63,7 +69,11 @@ function operationForSnapshot(snapshot: PersonalHomeBootstrapSnapshot): Personal
     }
 }
 
-function errorSnapshot(snapshot: PersonalHomeBootstrapSnapshot, error: Error): PersonalHomeBootstrapSnapshot {
+function errorSnapshot(
+    snapshot: PersonalHomeBootstrapSnapshot,
+    error: Error,
+    existingRuntimeOperation: boolean,
+): PersonalHomeBootstrapSnapshot {
     const code = readOperationErrorCode(error);
     if (
         code === 'personal_home_existing_runtime_conflict'
@@ -84,7 +94,7 @@ function errorSnapshot(snapshot: PersonalHomeBootstrapSnapshot, error: Error): P
         };
     }
     if (
-        code === 'personal_home_existing_runtime_operation_failed'
+        existingRuntimeOperation
         || snapshot.action === 'choose-existing-runtime'
     ) {
         return {
@@ -92,7 +102,7 @@ function errorSnapshot(snapshot: PersonalHomeBootstrapSnapshot, error: Error): P
             phase: 'blocked',
             action: 'choose-existing-runtime',
             detail: {
-                code: 'existing_runtime_operation_failed',
+                code: code ?? 'existing_runtime_operation_failed',
                 message: error.message,
                 retryable: true,
             },
@@ -123,17 +133,16 @@ export function usePersonalHomeBootstrapController(
 ): PersonalHomeBootstrapController {
     const enabled = options.enabled !== false;
     const [facts, setFacts] = React.useState<PersonalHomeFacts | null>(options.initialFacts ?? null);
-    const [error, setError] = React.useState<Error | null>(null);
+    // An issued operation's failure survives a facts refresh for the same Home and sign-in.
+    // Healthy readback alone cannot establish that the operation finished.
+    const [failure, setFailure] = React.useState<BootstrapFailure | null>(null);
+    const error = failure?.error ?? null;
     const [isChecking, setIsChecking] = React.useState(options.initialFacts == null);
     const [hasAuthoritativeFacts, setHasAuthoritativeFacts] = React.useState(false);
     const [isOperating, setIsOperating] = React.useState(false);
     const [refreshVersion, setRefreshVersion] = React.useState(0);
     const operationKeyRef = React.useRef<string | null>(null);
     const operationInFlightRef = React.useRef(false);
-    // An issued operation's failure outlives successful status reads: facts that merely look healthy
-    // do not prove the mutation's unfinished work succeeded. A retry or a refresh clears it, and so do
-    // facts showing a different Home or sign-in than the one the failed operation was acting on.
-    const operationFailureTargetRef = React.useRef<string | null>(null);
     const mountedRef = React.useRef(true);
     const latestReadFactsRef = React.useRef(options.readFacts);
     const factsReadSequenceRef = React.useRef(0);
@@ -149,9 +158,8 @@ export function usePersonalHomeBootstrapController(
     const refresh = React.useCallback(() => {
         if (operationInFlightRef.current) return;
         operationKeyRef.current = null;
-        operationFailureTargetRef.current = null;
         setHasAuthoritativeFacts(false);
-        setError(null);
+        setFailure(null);
         setRefreshVersion((value) => value + 1);
     }, []);
 
@@ -165,16 +173,13 @@ export function usePersonalHomeBootstrapController(
                 if (cancelled || !mountedRef.current || readSequence !== factsReadSequenceRef.current) return;
                 setFacts(nextFacts);
                 setHasAuthoritativeFacts(true);
-                const failureTarget = operationFailureTargetRef.current;
-                if (failureTarget === null || failureTarget !== operationTargetOf(nextFacts)) {
-                    operationFailureTargetRef.current = null;
-                    setError(null);
-                }
+                const target = operationTargetOf(nextFacts);
+                setFailure((current) => current?.target === target ? current : null);
             })
             .catch((cause: unknown) => {
                 if (cancelled || !mountedRef.current || readSequence !== factsReadSequenceRef.current) return;
                 const nextError = cause instanceof Error ? cause : new Error(String(cause));
-                setError(nextError);
+                setFailure({ error: nextError });
             })
             .finally(() => {
                 if (!cancelled && mountedRef.current && readSequence === factsReadSequenceRef.current) setIsChecking(false);
@@ -188,7 +193,9 @@ export function usePersonalHomeBootstrapController(
         () => facts ? derivePersonalHomeBootstrapSnapshot(facts) : checkingSnapshot(),
         [facts],
     );
-    const snapshot = error ? errorSnapshot(derivedSnapshot, error) : derivedSnapshot;
+    const snapshot = failure
+        ? errorSnapshot(derivedSnapshot, failure.error, failure.existingRuntimeOperation === true)
+        : derivedSnapshot;
 
     const execute = React.useCallback(async (
         runner: PersonalHomeBootstrapOperationRunner,
@@ -197,24 +204,13 @@ export function usePersonalHomeBootstrapController(
         if (!enabled || !facts || operationInFlightRef.current) return false;
         const startedFromExistingRuntimeDecision = derivedSnapshot.action === 'choose-existing-runtime';
         operationInFlightRef.current = true;
-        operationFailureTargetRef.current = null;
         setIsOperating(true);
 
         let operationError: Error | null = null;
         try {
             await runner(facts, context);
         } catch (cause: unknown) {
-            const nextError = cause instanceof Error ? cause : new Error(String(cause));
-            const code = 'code' in nextError && typeof (nextError as { code?: unknown }).code === 'string'
-                ? (nextError as { code: string }).code
-                : null;
-            operationError = startedFromExistingRuntimeDecision
-                && code !== 'personal_home_existing_runtime_conflict'
-                && code !== 'personal_home_credentials_unverified'
-                ? Object.assign(new Error(nextError.message, { cause: nextError }), {
-                    code: 'personal_home_existing_runtime_operation_failed',
-                })
-                : nextError;
+            operationError = cause instanceof Error ? cause : new Error(String(cause));
         }
 
         // Facts are the recovery contract. Re-read them after both success and failure so a
@@ -233,8 +229,11 @@ export function usePersonalHomeBootstrapController(
         operationInFlightRef.current = false;
         if (!mountedRef.current) return operationError == null;
         if (nextFacts) setFacts(nextFacts);
-        operationFailureTargetRef.current = operationError ? operationTargetOf(nextFacts ?? facts) : null;
-        setError(operationError);
+        setFailure(operationError ? {
+            error: operationError,
+            target: operationTargetOf(nextFacts ?? facts),
+            existingRuntimeOperation: startedFromExistingRuntimeDecision,
+        } : null);
         setIsOperating(false);
         return operationError == null;
     }, [derivedSnapshot.action, enabled, facts]);

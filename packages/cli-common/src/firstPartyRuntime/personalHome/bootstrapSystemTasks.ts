@@ -43,7 +43,7 @@ export type PersonalHomeEndpointSnapshot =
          */
         homeConnectionDescriptor?: HomeConnectionDescriptorV1;
     }>
-    | Readonly<{ status: 'unreachable' | 'unknown' }>;
+    | Readonly<{ status: 'unreachable' | 'unsupported' }>;
 
 type TokenOnlyCredentials = Readonly<{ token: string }>;
 
@@ -207,14 +207,19 @@ async function requirePlainEndpoint(
 ): Promise<Extract<PersonalHomeEndpointSnapshot, { status: 'ready' }>> {
     const snapshot = await deps.probeEndpoint(endpoint);
     if (snapshot.status !== 'ready') {
-        throw new Error('Personal Home endpoint is not ready yet.');
+        if (snapshot.status === 'unsupported') {
+            throw new PersonalHomeSystemTaskError(
+                'personal_home_endpoint_update_required',
+                'This local Home does not provide the features or identity required for setup. Update it or use another Home.',
+            );
+        }
+        throw new PersonalHomeSystemTaskError(
+            'personal_home_endpoint_unreachable',
+            'Could not reach the local Home. Check that its background service is running, then try again.',
+        );
     }
     if (snapshot.storagePolicy !== 'plaintext_only') {
         throw new PersonalHomeExistingRuntimeConflictError();
-    }
-    const serverIdentityId = String(snapshot.serverIdentityId ?? '').trim();
-    if (!serverIdentityId) {
-        throw new Error('Personal Home identity is unavailable.');
     }
     return snapshot;
 }
@@ -304,7 +309,10 @@ export async function runPersonalHomeBootstrapFromSystemTasks(input: Readonly<{
                 'Personal Home runtime status readback',
             ));
             if (!startedStatus.installed || !startedStatus.healthy) {
-                throw new Error('Personal Home runtime is not healthy after start.');
+                throw new PersonalHomeSystemTaskError(
+                    'personal_home_endpoint_unreachable',
+                    'The local Home did not become healthy after starting. Check its background service, then try again.',
+                );
             }
             existingRuntimePreflightStarted = true;
         }

@@ -166,7 +166,7 @@ async function probePersonalHomeEndpoint(endpoint: string): Promise<PersonalHome
     });
     if (features.status !== 'ready') {
         return {
-            status: features.status === 'error' ? 'unreachable' : 'unknown',
+            status: features.status === 'error' ? 'unreachable' : 'unsupported',
         };
     }
     const serverIdentityId = String(
@@ -174,7 +174,7 @@ async function probePersonalHomeEndpoint(endpoint: string): Promise<PersonalHome
         ?? features.features.capabilities.serverIdentity.serverIdentityId
         ?? '',
     ).trim();
-    if (!serverIdentityId) return { status: 'unknown' };
+    if (!serverIdentityId) return { status: 'unsupported' };
     // Fail closed: a /v1/features descriptor is carried only when its Home
     // identity agrees with the independently observed server identity.
     const descriptor = features.features.homeConnectionDescriptor;

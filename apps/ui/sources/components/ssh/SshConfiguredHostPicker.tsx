@@ -45,12 +45,25 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
     const inline = props.presentation === 'suggestions';
     const [open, setOpen] = React.useState(false);
     const byId = React.useMemo(() => new Map(props.suggestions.map((suggestion) => [suggestion.id, suggestion])), [props.suggestions]);
-    const items = React.useMemo<DropdownMenuItem[]>(() => props.suggestions.map((suggestion) => ({
-        id: suggestion.id,
-        title: suggestion.alias,
-        subtitle: describeSuggestion(suggestion),
-        icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} />,
-    })), [props.suggestions, theme.colors.text.secondary]);
+    const items = React.useMemo(() => {
+        const aliasCounts = new Map<string, number>();
+        for (const { alias } of props.suggestions) {
+            aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
+        }
+        return props.suggestions.map((suggestion) => {
+            const { alias, port, username } = suggestion;
+            const host = alias.includes(':') && !alias.startsWith('[') ? `[${alias}]` : alias;
+            const title = (aliasCounts.get(alias) ?? 0) > 1
+                ? `${username ? `${username}@` : ''}${host}:${port ?? 22}`
+                : alias;
+            return {
+                id: suggestion.id,
+                title,
+                subtitle: describeSuggestion(suggestion),
+                icon: <Icon name="terminal" size={16} color={theme.colors.text.secondary} />,
+            } satisfies DropdownMenuItem;
+        });
+    }, [props.suggestions, theme.colors.text.secondary]);
 
     const handleSelect = React.useCallback((suggestionId: string) => {
         const suggestion = byId.get(suggestionId);
@@ -79,13 +92,13 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                 // The detected hosts as one centred row of chips, the step's own chip last (lab direction A "Which
                 // machine?"); each names where it was found as its hint.
                 <View style={styles.suggestions}>
-                    {props.suggestions.map((suggestion) => <SshHostChip
-                        key={suggestion.id}
-                        testID={`${props.testID}-${suggestion.id}`}
+                    {items.map(({ id, title, subtitle }) => <SshHostChip
+                        key={id}
+                        testID={`${props.testID}-${id}`}
                         iconName="terminal"
-                        title={suggestion.alias}
-                        hint={describeSuggestion(suggestion)}
-                        onPress={() => props.onSelectSuggestion(suggestion)}
+                        title={title}
+                        hint={subtitle}
+                        onPress={() => handleSelect(id)}
                     />)}
                     {props.trailingChip}
                 </View>

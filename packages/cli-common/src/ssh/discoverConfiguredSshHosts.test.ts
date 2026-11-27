@@ -239,38 +239,34 @@ alpha.example.test ssh-ed25519 AAAA
     expect(new Set(first.map(({ id }) => id)).size).toBe(first.length);
   });
 
-  it('preserves distinct config aliases that resolve to the same SSH target', async () => {
+  it('collapses aliases of one destination while retaining distinct ports and users', async () => {
     const homeDir = createHomeFixture();
     writeHomeFile(homeDir, '.ssh/config', `
-Host prod prod-short
-  HostName prod.example.test
+Host local local-alias
+  HostName 127.0.0.1
   User deploy
-  Port 2206
+Host explicit-default
+  HostName 127.0.0.1
+  User deploy
+  Port 22
+Host local-admin
+  HostName 127.0.0.1
+  User admin
+`);
+    writeHomeFile(homeDir, '.ssh/known_hosts', `
+127.0.0.1 ssh-ed25519 AAAA
+[127.0.0.1]:22 ssh-ed25519 AAAA
+[127.0.0.1]:53210 ssh-ed25519 AAAA
+[127.0.0.1]:53210 ssh-rsa AAAA
+[127.0.0.1]:53617 ssh-ed25519 AAAA
 `);
 
     const hosts = await discoverConfiguredSshHosts({ homeDir });
-
-    expect(hosts.map(({ alias, hostname, username, port, source }) => ({
-      alias,
-      hostname,
-      username,
-      port,
-      source,
-    }))).toEqual([
-      {
-        alias: 'prod',
-        hostname: 'prod.example.test',
-        username: 'deploy',
-        port: 2206,
-        source: 'ssh-config',
-      },
-      {
-        alias: 'prod-short',
-        hostname: 'prod.example.test',
-        username: 'deploy',
-        port: 2206,
-        source: 'ssh-config',
-      },
+    expect(hosts.map(({ alias, hostname, username, port }) => [alias, hostname, username, port])).toEqual([
+      ['local', '127.0.0.1', 'deploy', null],
+      ['local-admin', '127.0.0.1', 'admin', null],
+      ['127.0.0.1', '127.0.0.1', null, 53210],
+      ['127.0.0.1', '127.0.0.1', null, 53617],
     ]);
   });
 });

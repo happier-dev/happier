@@ -380,18 +380,13 @@ function buildHost(params: Readonly<{
 }
 
 function buildTargetKey(host: DiscoveredSshHost): string {
-  return [
-    host.source === 'ssh-config' ? host.alias.toLowerCase() : '',
-    host.hostname.toLowerCase(),
-    String(host.port ?? ''),
-    host.username?.toLowerCase() ?? '',
-  ].join('\0');
+  return [buildHostPortKey(host), host.username ?? ''].join('\0');
 }
 
 function buildHostPortKey(host: DiscoveredSshHost): string {
   return [
     host.hostname.toLowerCase(),
-    String(host.port ?? ''),
+    String(host.port ?? 22),
   ].join('\0');
 }
 

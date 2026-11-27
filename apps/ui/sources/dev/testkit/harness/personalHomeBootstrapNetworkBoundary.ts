@@ -8,7 +8,7 @@ import { installBrowserRuntimeForTests } from './browserRuntimeHarness';
 
 type FeatureProbe = Readonly<{
     status: 'ready';
-    serverIdentityId: string;
+    serverIdentityId: string | null;
     features: Readonly<{
         capabilities: Readonly<{
             auth: Readonly<{ signup: Readonly<{ methods: readonly Readonly<{ id: string; enabled: boolean }>[] }> }>;
@@ -100,7 +100,7 @@ export async function installPersonalHomeBootstrapNetworkBoundary(options: Reado
                 capabilities: {
                     ...base.capabilities,
                     ...probe.features.capabilities,
-                    serverIdentity: { serverIdentityId: probe.serverIdentityId },
+                    serverIdentity: probe.serverIdentityId ? { serverIdentityId: probe.serverIdentityId } : undefined,
                     auth: {
                         ...base.capabilities.auth,
                         ...probe.features.capabilities.auth,

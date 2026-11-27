@@ -476,13 +476,13 @@ const harness = vi.hoisted(() => {
         recordedResults: () => recordedResults,
         events: () => [...events],
         state: () => ({ ...runtime }),
-        installExistingHome() {
+        installExistingHome(options: { legacy?: boolean } = {}) {
             runtime.installed = true;
             runtime.healthy = true;
             runtime.serviceActive = true;
-            runtime.purpose = { kind: 'personal-home', canonicalServerUrl: CANONICAL_SERVER_URL };
-            runtime.version = '0.3.0-manual-bridge';
-            credentialsStore = { token: HOME_B_TOKEN };
+            runtime.purpose = options.legacy ? null : { kind: 'personal-home', canonicalServerUrl: CANONICAL_SERVER_URL };
+            runtime.version = options.legacy ? '0.2.6-dev.119.1' : '0.3.0-manual-bridge';
+            credentialsStore = options.legacy ? null : { token: HOME_B_TOKEN };
         },
         resultForTask: (taskId: string) => recordedResults.find((entry) => entry.taskId === taskId)?.data ?? null,
         endpointAuthCalls: () => endpointAuthCalls,
@@ -580,6 +580,18 @@ const harness = vi.hoisted(() => {
                 events.push('probe:endpoint');
                 if (!runtime.installed || !runtime.healthy) {
                     return { status: 'error' as const, reason: 'network' as const };
+                }
+                if (runtime.version === '0.2.6-dev.119.1') {
+                    return {
+                        status: 'ready' as const,
+                        serverIdentityId: null,
+                        features: {
+                            capabilities: {
+                                encryption: { storagePolicy: 'required_e2ee' },
+                                auth: { signup: { methods: [] } },
+                            },
+                        },
+                    };
                 }
                 return {
                     status: 'ready' as const,
@@ -759,6 +771,35 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
             action: 'retry',
             detail: { code: 'system_task_start_failed', message: 'Runtime status refused before starting', retryable: true },
         });
+    });
+
+    it('settles adoption of a healthy legacy Home without an identity with an update reason', async () => {
+        harness.installExistingHome({ legacy: true });
+        const hook = await renderHook(() => {
+            const runtime = usePersonalHomeBootstrapRuntime();
+            const controller = usePersonalHomeBootstrapController({ readFacts: runtime.readFacts });
+            return { controller, useExisting: () => controller.execute(runtime.useExistingRuntime) };
+        });
+        for (let cycle = 0; cycle < 8; cycle += 1) {
+            await act(async () => { vi.runOnlyPendingTimers(); });
+            await flushHookEffects();
+        }
+        expect(hook.getCurrent().controller.snapshot.action).toBe('choose-existing-runtime');
+
+        harness.markBootstrapStarted();
+        await expect(runHookOperation(() => hook.getCurrent().useExisting())).resolves.toBe(false);
+
+        expect(hook.getCurrent().controller.snapshot).toMatchObject({
+            phase: 'blocked',
+            action: 'choose-existing-runtime',
+            detail: { code: 'personal_home_endpoint_update_required' },
+        });
+        expect(network.requests.some(({ path }) => path === '/v1/features')).toBe(true);
+        expect(harness.state()).toMatchObject({ healthy: true, purpose: null });
+        expect(harness.recordedSpecs().filter(({ kind }) => kind.startsWith('relay.runtime.') && kind !== 'relay.runtime.status.v1')).toEqual([]);
+        expect(harness.endpointAuthCalls()).toEqual([]);
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+        expect(profiles.listServerProfiles().filter(({ source }) => source === 'desktop-personal-home')).toEqual([]);
     });
 
     it.each(['primary', 'canonical-alias'] as const)('does not prepare this computer when the runtime URL names two saved Home identities (%s)', async (matching) => {

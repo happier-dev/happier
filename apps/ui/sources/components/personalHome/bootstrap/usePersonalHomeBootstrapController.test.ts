@@ -52,7 +52,8 @@ async function failIssuedRestart(native: ReturnType<typeof createManualSystemTas
         error: { code: 'restart_readback_unavailable', message: 'restart readback unavailable' },
     });
     const result = await resultPromise;
-    if (!result?.ok) throw new Error(result?.error.message ?? 'restart result missing');
+    if (!result) throw new Error('restart result missing');
+    if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
 }
 
 describe('usePersonalHomeBootstrapController', () => {
@@ -355,7 +356,7 @@ describe('usePersonalHomeBootstrapController', () => {
         expect(hook.getCurrent().snapshot).toMatchObject({
             phase: 'blocked',
             action: 'choose-existing-runtime',
-            detail: { retryable: true },
+            detail: { code: 'restart_readback_unavailable', retryable: true },
         });
         const operationError = hook.getCurrent().error;
         expect(operationError?.message).toBe('restart readback unavailable');
