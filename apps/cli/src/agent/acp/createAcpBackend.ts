@@ -73,6 +73,7 @@ export interface CreateAcpBackendOptions {
 
   /** Provider-owned handlers for non-standard ACP extension requests/notifications. */
   extensionHandlers?: AcpExtensionHandlers;
+  formElicitation?: AcpBackendOptions['formElicitation'];
 
   /** Provider-owned projection/application for model metadata not standardized by ACP. */
   sessionModelAdapter?: AcpSessionModelAdapter;
@@ -127,6 +128,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     initializeMeta: options.initializeMeta,
     initializeClientCapabilitiesMeta: options.initializeClientCapabilitiesMeta,
     extensionHandlers: options.extensionHandlers,
+    formElicitation: options.formElicitation,
     sessionModelAdapter: options.sessionModelAdapter,
     sessionModesEnabled: options.sessionModesEnabled,
     initialSessionModeId: options.initialSessionModeId,

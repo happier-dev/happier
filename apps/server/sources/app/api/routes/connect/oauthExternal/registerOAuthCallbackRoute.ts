@@ -9,6 +9,7 @@ import { Context } from "@/context";
 import { encryptString } from "@/modules/encrypt";
 import { findOAuthProviderById } from "@/app/oauth/providers/registry";
 import { db } from "@/storage/db";
+import { claimGitHubSupporter, supporterGitHubResult, supporterPerksConfigured } from "@/app/supporter/supporterLinks";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { validateUsername } from "@/app/social/usernamePolicy";
 import { deleteOAuthStateAttemptBestEffort, loadValidOAuthStateAttempt } from "../connectRoutes.oauthStateAttempt";
@@ -92,6 +93,21 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                 : fallbackWebAppUrl;
 
         const flow = oauthState.flow;
+        if (flow === "supporter") {
+            const proof = attemptParsed.data.supporter;
+            if (providerId !== "github" || !supporterPerksConfigured(process.env) || !proof
+                || proof.accountId !== oauthState.userId || Boolean(proof.accountId) === Boolean(proof.code) || oauthError || !code) {
+                return reply.redirect(supporterGitHubResult("error"));
+            }
+            try {
+                const { accessToken } = await provider.exchangeCodeForAccessToken({
+                    env: process.env, code, state, pkceCodeVerifier: attemptParsed.data.pkceCodeVerifier,
+                });
+                return reply.redirect(supporterGitHubResult(await claimGitHubSupporter(proof, accessToken)));
+            } catch {
+                return reply.redirect(supporterGitHubResult("error"));
+            }
+        }
         const authMode = flow === "auth" && oauthState.publicKey ? "keyed" : flow === "auth" ? "keyless" : null;
         const redirectBaseParams: Record<string, string> =
             flow === "auth" && authMode === "keyless" ? { flow, mode: "keyless" } : { flow };

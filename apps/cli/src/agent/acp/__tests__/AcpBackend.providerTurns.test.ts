@@ -174,6 +174,27 @@ async function approve(session: FakePermissionSession): Promise<void> {
 }
 
 describe('ACP provider continuation ownership', () => {
+    it('leaves an open provider continuation to its source when a steer prompt answers with a stop reason', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+            const sink = host().beginContinuation({ id: 'task', turnId: 'native-steer' });
+            expect(sink).not.toBeNull();
+            events.length = 0;
+            let settled = false;
+            const completion = backend.waitForResponseComplete().finally(() => { settled = true; });
+            // The fixture answers every session/prompt with end_turn at once, as agy acp does for a steer.
+            await backend.sendSteerPrompt('owned', 'steer');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            expect(settled).toBe(false);
+            await sink!.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'CONTINUATION' } });
+            expect(events.some(event => event.type === 'model-output' && event.textDelta === 'CONTINUATION')).toBe(true);
+            await sink!.finish({ kind: 'completed', stopReason: 'end_turn' });
+            await completion;
+        });
+    });
+
     it('announces a provider continuation as idle and preserves its timeout outcome', async () => {
         await fixture(async ({ backend, host, events }) => {
             await backend.sendPrompt('owned', 'start background');
@@ -518,6 +539,22 @@ describe('ACP provider continuation ownership', () => {
             await backend.waitForResponseComplete();
             expect(events.some(event => event.type === 'model-output' && event.textDelta === 'stale')).toBe(false);
             expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'FOREGROUND' }));
+        });
+    });
+
+    it('settles provider work without closing or reloading the native session when the session is ending', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            const original = host();
+            original.registerContinuation({ id: 'task', parentToolCallId: '0:background' });
+            expect(original.beginContinuation({ id: 'task', turnId: 'native-1' })).not.toBeNull();
+            events.length = 0;
+            await backend.cancel('owned', { sessionEnding: true });
+            // Dispose owns native close and process teardown; a session/load replay here only delays Stop.
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 0, loads: 0 });
+            expect(original.beginContinuation({ id: 'task', turnId: 'native-stale' })).toBeNull();
+            expect(events).toContainEqual(expect.objectContaining({ type: 'status', status: 'stopped' }));
         });
     });
 });

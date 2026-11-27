@@ -56,6 +56,7 @@ const TARGETS = [
     downloads.githubRepoUrl,
     downloads.licenseUrl,
     'https://github.com/happier-dev/happier/graphs/contributors',
+    'https://github.com/sponsors/happier-dev',
 
     // Published stats the counters read.
     'https://stats.happier.dev/downloads.json',

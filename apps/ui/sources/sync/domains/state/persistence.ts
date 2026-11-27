@@ -5,7 +5,6 @@ import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/settings';
 import type { Settings } from '../settings/settings';
 import { voiceSettingsParse } from '../settings/voiceSettings';
 import { LocalSettings, localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
-import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { Profile, profileDefaults, profileParse } from '../profiles/profile';
 import {
     migrateThemeProfileLocalStateTokenIds,
@@ -56,6 +55,14 @@ const pendingSettingsSchemaByKey: Readonly<Record<string, z.ZodTypeAny>> = Objec
 
 function deviceAnalyticsIdKey(): string {
     return 'device-analytics-id-v1';
+}
+
+function analyticsPropertiesSentKey(scope: AnalyticsPropertiesScope): string {
+    return `analytics-properties-sent-v1:${scope}`;
+}
+
+function scmStatusSyncFailureReportedAtKey(): string {
+    return 'scm-status-sync-failure-reported-at-v1';
 }
 
 function newSessionDraftKey(scope?: ServerAccountScope | null): string {
@@ -378,6 +385,64 @@ export function saveDeviceAnalyticsId(value: string): void {
     mmkv.set(deviceAnalyticsIdKey(), trimmed);
 }
 
+export type AnalyticsPropertiesScope = 'person' | 'device_user';
+
+/** What this device last sent to PostHog as one subject's person or group properties. */
+export type AnalyticsPropertiesSentRecord = Readonly<{
+    subject: string;
+    fullSentAtMs: number;
+    properties: Readonly<Record<string, string | number | boolean | null>>;
+}>;
+
+function isAnalyticsPropertyValue(value: unknown): value is string | number | boolean | null {
+    return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+export function loadAnalyticsPropertiesSent(scope: AnalyticsPropertiesScope): AnalyticsPropertiesSentRecord | null {
+    const raw = getPersistenceStorage().getString(analyticsPropertiesSentKey(scope));
+    if (!raw) return null;
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        const { subject, fullSentAtMs, properties } = parsed as Record<string, unknown>;
+        if (typeof subject !== 'string' || typeof fullSentAtMs !== 'number' || !Number.isFinite(fullSentAtMs)) return null;
+        if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return null;
+        if (!Object.values(properties).every(isAnalyticsPropertyValue)) return null;
+        return { subject, fullSentAtMs, properties: properties as AnalyticsPropertiesSentRecord['properties'] };
+    } catch {
+        return null;
+    }
+}
+
+export function saveAnalyticsPropertiesSent(scope: AnalyticsPropertiesScope, record: AnalyticsPropertiesSentRecord): void {
+    getPersistenceStorage().set(analyticsPropertiesSentKey(scope), JSON.stringify(record));
+}
+
+export function clearAnalyticsPropertiesSent(): void {
+    const mmkv = getPersistenceStorage();
+    mmkv.delete(analyticsPropertiesSentKey('person'));
+    mmkv.delete(analyticsPropertiesSentKey('device_user'));
+}
+
+/** When each scm_status_sync_failed bucket was last reported from this device, in epoch ms. */
+export function loadScmStatusSyncFailureReportedAt(): Record<string, number> {
+    const raw = getPersistenceStorage().getString(scmStatusSyncFailureReportedAtKey());
+    if (!raw) return {};
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return Object.fromEntries(
+            Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1])),
+        );
+    } catch {
+        return {};
+    }
+}
+
+export function saveScmStatusSyncFailureReportedAt(reportedAt: Readonly<Record<string, number>>): void {
+    getPersistenceStorage().set(scmStatusSyncFailureReportedAtKey(), JSON.stringify(reportedAt));
+}
+
 export function saveSettings(settings: Settings, version: number) {
     const mmkv = getPersistenceStorage();
     mmkv.set('settings', JSON.stringify({ settings, version }));
@@ -595,26 +660,6 @@ export function saveLocalPetSourcesBySourceKey(sources: Record<string, LocalPetS
 
 export function loadThemePreference(): 'light' | 'dark' | 'adaptive' {
     return loadThemeRuntimeLocalState().themePreference;
-}
-
-export function loadPurchases(): Purchases {
-    const mmkv = getPersistenceStorage();
-    const purchases = mmkv.getString('purchases');
-    if (purchases) {
-        try {
-            const parsed = JSON.parse(purchases);
-            return purchasesParse(parsed);
-        } catch (e) {
-            console.error('Failed to parse purchases', e);
-            return { ...purchasesDefaults };
-        }
-    }
-    return { ...purchasesDefaults };
-}
-
-export function savePurchases(purchases: Purchases) {
-    const mmkv = getPersistenceStorage();
-    mmkv.set('purchases', JSON.stringify(purchases));
 }
 
 export function loadSessionDrafts(scope?: ServerAccountScope | null): Record<string, string> {

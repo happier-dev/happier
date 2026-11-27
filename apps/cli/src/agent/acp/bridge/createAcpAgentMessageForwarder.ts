@@ -15,6 +15,12 @@ export function createAcpAgentMessageForwarder(params: {
   sendAcp: SendAcpLike;
   provider: ACPProvider;
   sidechainId?: string;
+  /**
+   * Keep provider call ids un-namespaced inside the sidechain. Only for providers whose call ids are
+   * already unique across the main thread and every subagent thread, so permission prompts keep the
+   * id the permission handler registered.
+   */
+  preserveProviderCallIds?: boolean;
   makeId: () => string;
 }): {
   forward: (msg: AgentMessage) => void;
@@ -22,7 +28,7 @@ export function createAcpAgentMessageForwarder(params: {
 } {
   const sidechainId = params.sidechainId;
   const ns = (toolCallId: string): string =>
-    sidechainId ? namespaceSidechainCallId({ sidechainId, toolCallId }) : toolCallId;
+    sidechainId && !params.preserveProviderCallIds ? namespaceSidechainCallId({ sidechainId, toolCallId }) : toolCallId;
   const toolPublisher = createAcpToolCallRevisionPublisher({
     provider: params.provider,
     namespace: sidechainId ? { type: 'sidechain', sidechainId } : { type: 'main' },

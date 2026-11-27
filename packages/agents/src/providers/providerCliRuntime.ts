@@ -118,6 +118,8 @@ export type ProviderCliRuntimeSpec = Readonly<{
   docsUrl?: string | null;
   /** The vendor's npm package, when the CLI is also published to npm and it is not already the managed package. */
   npmPackageName?: string | null;
+  /** The vendor's GitHub repository whose latest release tag is the CLI version, when no managed or npm source owns "latest". */
+  githubReleaseRepo?: string | null;
   nativeUpdate?: ProviderCliNativeUpdateSpec | null;
 }>;
 
@@ -502,6 +504,15 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     acceptsJavaScriptFileOverride: false,
     installGuideUrl: 'https://antigravity.google/docs/cli/install',
     docsUrl: 'https://antigravity.google/docs/cli/install',
+    // Google publishes every agy release (tag = version, e.g. `1.5.18`) on this repository.
+    githubReleaseRepo: 'google-antigravity/antigravity-cli',
+    // `agy update` ("Update CLI" in `agy help`, 1.5.18). The official installers place the binary at
+    // ~/.local/bin/agy (install.sh) and %LOCALAPPDATA%\agy\bin\agy.exe (install.ps1); agy's own
+    // background updater runs only from interactive agy, so Happier-only users need this path.
+    nativeUpdate: {
+      args: ['update'],
+      installPaths: ['.local/bin/agy', 'AppData/Local/agy/bin'],
+    },
   },
   fx: {
     id: 'fx',
@@ -571,14 +582,16 @@ export function resolveProviderCliNpmPackageName(spec: ProviderCliRuntimeSpec): 
 
 /**
  * Where "latest" comes from: the source the managed install owner would install
- * from, else the vendor's npm package. `null` means no verified latest source.
+ * from, else the vendor's npm package, else the vendor's GitHub releases. `null` means no
+ * verified latest source.
  */
 export function resolveProviderCliLatestVersionSource(spec: ProviderCliRuntimeSpec): ProviderCliLatestVersionSource | null {
   if (spec.managedInstall?.kind === 'github_release_binary') {
     return { kind: 'github_release', githubRepo: spec.managedInstall.githubRepo };
   }
   const packageName = resolveProviderCliNpmPackageName(spec);
-  return packageName ? { kind: 'npm', packageName } : null;
+  if (packageName) return { kind: 'npm', packageName };
+  return spec.githubReleaseRepo ? { kind: 'github_release', githubRepo: spec.githubReleaseRepo } : null;
 }
 
 export function getProviderCliBinaryNames(

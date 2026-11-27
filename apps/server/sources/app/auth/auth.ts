@@ -31,7 +31,7 @@ interface OAuthStateTokens {
 }
 
 type OAuthStatePayload = Readonly<{
-    flow: "connect" | "auth";
+    flow: "connect" | "auth" | "supporter";
     provider: string;
     sid?: string | null;
     userId?: string | null;
@@ -292,7 +292,7 @@ class AuthModule {
         }
 
         const flow = payload.flow;
-        if (flow !== "auth" && flow !== "connect") {
+        if (flow !== "auth" && flow !== "connect" && flow !== "supporter") {
             throw new Error(`Invalid OAuth flow: ${String(flow)}`);
         }
         const sid = payload.sid?.toString().trim() || null;
@@ -314,7 +314,7 @@ class AuthModule {
     }
 
     async verifyOauthStateToken(token: string): Promise<{
-        flow: "connect" | "auth";
+        flow: "connect" | "auth" | "supporter";
         provider: string;
         sid: string | null;
         userId: string | null;
@@ -335,7 +335,7 @@ class AuthModule {
             if (verified.user !== "oauth-state") return null;
             const extras = verified.extras ?? {};
             const provider = typeof extras.provider === "string" ? extras.provider.trim().toLowerCase() : "";
-            const flow = extras.flow === "auth" ? "auth" : extras.flow === "connect" ? "connect" : null;
+            const flow = extras.flow === "auth" || extras.flow === "connect" || extras.flow === "supporter" ? extras.flow : null;
             if (!provider || !flow) return null;
 
             return {

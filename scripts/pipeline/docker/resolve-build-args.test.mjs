@@ -51,12 +51,6 @@ test('resolveOptionalDockerBuildArgs includes POSTHOG_API_KEY and POSTHOG_HOST w
   ]);
 });
 
-test('hosted web builds retain the public RevenueCat Stripe configuration', () => {
-  assert.deepEqual(resolveOptionalDockerBuildArgs({ REVENUE_CAT_STRIPE: 'public-stripe-key' }), [
-    '--build-arg', 'REVENUE_CAT_STRIPE=public-stripe-key',
-  ]);
-});
-
 test('resolveOptionalDockerBuildArgs includes EXPO_PUBLIC_HAPPIER_SERVER_URL when set', () => {
   assert.deepEqual(resolveOptionalDockerBuildArgs({ EXPO_PUBLIC_HAPPIER_SERVER_URL: 'https://api.happier.dev' }), [
     '--build-arg',

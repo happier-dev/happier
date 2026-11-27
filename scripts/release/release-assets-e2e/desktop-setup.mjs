@@ -28,7 +28,7 @@ import {
   resolvePublishedStableBaseline,
   stageCliReleaseAssets,
 } from './desktop-setup-artifacts.mjs';
-import { PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, resolvePredecessorSetupParams, runHsetupTask } from './desktop-setup-driver.mjs';
+import { resolvePredecessorSetupParamsBuilder, runHsetupTask } from './desktop-setup-driver.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RELAY_URL = 'http://relay:3005';
@@ -256,7 +256,7 @@ async function main() {
   identity.channel = channel;
   identity.relayImage = relayImage;
 
-  /** @type {{ cliTag: string; desktopTag: string; cliVersion: string } | null} */
+  /** @type {{ cliTag: string; desktopTag: string; cliVersion: string; setupParams: ReturnType<typeof resolvePredecessorSetupParamsBuilder> } | null} */
   let baseline = null;
   /** @type {ScenarioResult[]} */
   const results = [];
@@ -271,17 +271,23 @@ async function main() {
     if (!cliTag || !desktopTag) {
       results.push({ id: 'upgrade', status: 'BLOCKED', checks: [], observations: {}, durationMs: 0, blockedReason: `no pinned ${channel} baseline: pass --upgrade-from-cli-tag and --upgrade-from-desktop-tag` });
       scenarios.delete('upgrade');
-    } else if (!Object.hasOwn(PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, desktopTag)) {
-      results.push({ id: 'upgrade', status: 'BLOCKED', checks: [], observations: {}, durationMs: 0, blockedReason: `the setup contract of ${desktopTag} is not characterized: add what that release's app sent to PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG (desktop-setup-driver.mjs) from its tagged source` });
-      scenarios.delete('upgrade');
     } else {
-      const debPath = await downloadPinnedDesktopDeb({ repo, tag: desktopTag, destDir: join(workDir, 'downloads', 'desktop-prev'), token });
-      identity.previousDesktop = { tag: desktopTag, ...extractBundledHsetup({ artifactPath: debPath, outFile: join(desktopDir, 'prev', 'hsetup') }) };
-      const prevSource = join(workDir, 'downloads', 'cli-prev');
-      await downloadPinnedCliAssets({ repo, tag: cliTag, destDir: prevSource, token });
-      const prevCli = stageCliReleaseAssets({ sourceDir: prevSource, stageDir: join(feedDir, 'stages', 'prev') });
-      baseline = { cliTag, desktopTag, cliVersion: prevCli.version };
-      identity.previousCli = { tag: cliTag, version: prevCli.version };
+      let setupParams;
+      try {
+        setupParams = resolvePredecessorSetupParamsBuilder(desktopTag);
+      } catch (error) {
+        results.push({ id: 'upgrade', status: 'BLOCKED', checks: [], observations: {}, durationMs: 0, blockedReason: error instanceof Error ? error.message : String(error) });
+        scenarios.delete('upgrade');
+      }
+      if (setupParams) {
+        const debPath = await downloadPinnedDesktopDeb({ repo, tag: desktopTag, destDir: join(workDir, 'downloads', 'desktop-prev'), token });
+        identity.previousDesktop = { tag: desktopTag, ...extractBundledHsetup({ artifactPath: debPath, outFile: join(desktopDir, 'prev', 'hsetup') }) };
+        const prevSource = join(workDir, 'downloads', 'cli-prev');
+        await downloadPinnedCliAssets({ repo, tag: cliTag, destDir: prevSource, token });
+        const prevCli = stageCliReleaseAssets({ sourceDir: prevSource, stageDir: join(feedDir, 'stages', 'prev') });
+        baseline = { cliTag, desktopTag, cliVersion: prevCli.version, setupParams };
+        identity.previousCli = { tag: cliTag, version: prevCli.version };
+      }
     }
   }
 
@@ -440,7 +446,7 @@ async function main() {
       const previousSetup = await runPredecessorSetup({
         relayUrl: RELAY_URL,
         webappUrl: RELAY_URL,
-        setupParams: resolvePredecessorSetupParams(baseline.desktopTag, { relayUrl: RELAY_URL, webappUrl: RELAY_URL, channel, accountId }),
+        setupParams: baseline.setupParams({ relayUrl: RELAY_URL, webappUrl: RELAY_URL, channel, accountId }),
         inspectionParams,
         runHsetup: (kind, params, env) => hsetup(machine, 'prev', kind, params, { approvePairing, serviceConsent: 'decline' }, env),
         runCli: (args) => execAs(machine, `"$HOME/.happier/bin/happier" ${args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`),

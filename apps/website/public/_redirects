@@ -83,3 +83,8 @@
 /alternatives/claude-code-remote-control  /vs/claude-code-remote-control     301
 /alternatives/codex-remote               /vs/codex-remote                   301
 /vs/codex                                /vs/codex-remote                   301
+
+/pricing /plans 301
+# Workers serves directory index files at the trailing-slash URL. Proxy to it
+# directly so the pass number stays in the browser URL.
+/s/* /supporters/ 200

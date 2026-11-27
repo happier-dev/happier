@@ -363,6 +363,18 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  plans: {
+    description: 'Plan limits, usage and offers for this server (Plans & Supporter page).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  supporter: {
+    description: 'Supporter offer, avatar ring, credits, the GitHub star ask and the supporter prompt.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
   bugReports: {
     description: 'Bug report submission and diagnostics capability.',
     defaultFailMode: 'fail_closed',

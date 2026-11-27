@@ -1,17 +1,20 @@
 import { join } from 'node:path';
 
 import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { ProviderCliVersionUnsupportedError } from '@/runtime/managedTools/requireProviderCliCommand';
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 
 /**
- * Undocumented `agy` switch (present in 1.5.18, absent in 1.5.15). With it, the profile token file
+ * Undocumented `agy` switch. Google's release binaries first contain it in 1.5.16 (absent from 1.5.0,
+ * 1.5.8, 1.5.11, 1.5.13, 1.5.14 and 1.5.15; present in 1.5.16, 1.5.17, 1.5.18). With it, the profile token file
  * is the only credential source and refreshes stay in that file; without it an empty profile
  * silently falls back to the machine keyring login.
  */
 export const AGY_FILE_TOKEN_STORAGE_ENV_KEY = 'AGY_CLI_FORCE_FILE_TOKEN_STORAGE';
 /** `agy acp --app-data-dir` default: the profile subdirectory holding the token, conversations and settings. */
 export const AGY_APP_DATA_DIR = 'antigravity-cli';
-const CONNECTED_ACCOUNT_MINIMUM_VERSION = [1, 5, 18] as const;
+/** The first release containing `AGY_CLI_FORCE_FILE_TOKEN_STORAGE`, so connected accounts can be isolated. */
+const CONNECTED_ACCOUNT_MINIMUM_VERSION = [1, 5, 16] as const;
 
 export type AgyAcpLaunch = Readonly<{
   kind: 'machine' | 'connected';
@@ -44,11 +47,12 @@ function isAtLeast(version: readonly number[], minimum: readonly number[]): bool
 function admitConnectedAccountAgent(agent: Readonly<{ version: string | null }>): void {
   const version = parseVersion(agent.version);
   if (version && isAtLeast(version, CONNECTED_ACCOUNT_MINIMUM_VERSION)) return;
-  const found = agent.version?.trim() ? ` (found ${agent.version.trim()})` : '';
-  throw new Error(
-    `Connected Antigravity accounts need Antigravity CLI ${CONNECTED_ACCOUNT_MINIMUM_VERSION.join('.')} or newer${found}. `
-    + 'Run `agy update` on this machine, then try again.',
-  );
+  throw new ProviderCliVersionUnsupportedError({
+    agentId: 'agy',
+    requiredFor: 'Connected Antigravity accounts',
+    foundVersion: agent.version,
+    minimumVersion: CONNECTED_ACCOUNT_MINIMUM_VERSION.join('.'),
+  });
 }
 
 /**

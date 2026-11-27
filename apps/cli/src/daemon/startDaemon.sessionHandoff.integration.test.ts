@@ -171,6 +171,7 @@ vi.mock('@/backends/catalog', async () => {
     getConnectedServiceStateSharingDescriptor: vi.fn(async () => null),
     getVendorResumeSupport: vi.fn(async () => () => true),
     notifyTerminalAttachmentRetiredThroughCatalog: vi.fn(async () => {}),
+    readLocalHistoryKeptDueAtMsThroughCatalog: vi.fn(async () => null),
     requireCatalogEntry: vi.fn(),
     resolveConnectedServiceCandidatePersistedSessionFile: vi.fn(async () => null),
     resolveConnectedServiceCredentialLifecycleDescriptor: vi.fn(async (providerId: string) => ({

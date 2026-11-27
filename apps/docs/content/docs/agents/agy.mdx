@@ -14,7 +14,7 @@ account-switch validation is still in progress.
 
 ## Requirements and authentication
 
-Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); connected accounts need Antigravity CLI 1.5.18 or newer. Run `agy update` to upgrade an older install.
+Install the Antigravity CLI using the [official Antigravity CLI guide](https://antigravity.google/docs/cli/install), and make sure `agy` is available on `PATH` on the machine where Happier runs. Happier needs a CLI that includes the ACP server (Antigravity CLI 1.5.0 or newer); connected accounts need Antigravity CLI 1.5.16 or newer. Run `agy update` to upgrade an older install.
 
 Native Antigravity can continue a background task after the conversation returns to idle. Its result appears on the original tool card, and later activity can appear as another continuation. When Antigravity cannot identify which prompt originated a permission request, Happier asks you to decide even if a newer prompt has broader permissions.
 
@@ -77,9 +77,45 @@ existing context indicator.
 
 ## Permissions
 
-Happier sends no static permission-mode override for Antigravity and preserves your agent
-configuration unless you choose otherwise in the session.
-The mode picker uses the server's advertised modes. `agy acp` advertises a Plan mode.
+Antigravity's own modes mix approval levels (Default, Accept edits, Auto) with Plan.
+Happier splits them: the permission picker chooses the approval level, and the mode
+picker offers **Build** and **Plan**, like a Claude session.
+
+In Build, the permission mode chooses the Antigravity mode a session starts or resumes in:
+
+| Happier permission mode | Antigravity mode |
+| --- | --- |
+| CLI Settings | Unchanged; Antigravity's own default applies |
+| Read Only | Default, which asks before edits and commands |
+| Auto | Auto when the CLI offers it, otherwise Accept edits |
+| YOLO | Auto when the CLI offers it, otherwise Accept edits; Happier approves the remaining permission requests |
+
+Antigravity has no read-only mode, so in Read Only Happier still shows each edit or
+command request for you to decide. Auto approves edits inside the workspace and runs
+commands in Antigravity's terminal sandbox, asking only before commands that would leave
+it. Happier does not use Auto when the CLI does not advertise it.
+
+Plan switches Antigravity to its Plan mode until you choose Build again; Build returns to
+the mode your permission setting maps to. Plan appears when `agy acp` advertises it for the
+session. A session saved with an Antigravity approval mode picked in an earlier version's
+mode picker resumes in Build with its current permission setting.
+
+## Questions and images
+
+When Antigravity asks you a question with its question tool, Happier shows it as a
+structured question card with the offered choices and an **Other** answer, and sends your
+answer back to the agent. Declining the question tells Antigravity that you skipped
+it. Images you attach to a message are sent to Antigravity with the prompt.
+
+## Subagents
+
+In development builds, when Antigravity launches subagents of its own, each launch
+shows as a subagent card in the transcript and the subagent's tool calls appear inside
+that card instead of interrupting the main reply. Permission requests from a subagent's
+tool calls still reach you. Antigravity streams only a subagent's tool calls, not its
+messages. Happier matches a subagent to its launch through the role Antigravity records
+for it; a subagent it cannot match keeps its tool calls out of the main reply but is not
+shown under a card.
 
 ## MCP tools
 
@@ -94,7 +130,10 @@ sessions. For shared MCP setup and session selection, see [MCP servers](/extendi
 - For `Authentication required` with a connected account, sign in to that account again in
   **Settings -> Connected services** (or with `happier connect agy`), then retry launch.
 - If a connected-account session says it needs a newer Antigravity CLI, run `agy update` on that machine
-  and retry.
+  and retry. Antigravity's own background updater only runs from interactive `agy`, so a CLI used only
+  through Happier can stay on an old version. In current development source, the Updates screen lists
+  an `agy` placed by Google's installer (`~/.local/bin/agy`, or `%LOCALAPPDATA%\agy\bin\agy.exe` on
+  Windows), compares it with the latest Antigravity CLI release, and runs `agy update` for you.
 - If a model is unavailable, retry after the ACP handshake completes; the model list is
   provider-advertised.
 

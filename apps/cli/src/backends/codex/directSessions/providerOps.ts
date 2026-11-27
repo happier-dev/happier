@@ -19,6 +19,7 @@ import { pageCodexTranscript } from './pageCodexTranscript';
 import { readAfterCodexTranscript } from './readAfterCodexTranscript';
 import { resolveCodexHomeEntriesForDirectSessionsSource } from './resolveCodexHomeEntriesForDirectSessionsSource';
 import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
+import { createCodexRolloutReadPaths } from '../rollout/openCompressedCodexRollout';
 import {
   CODEX_APP_SERVER_DAEMON_PROXY_TRANSPORT,
   CODEX_APP_SERVER_TRANSPORT_ENV_KEY,
@@ -107,17 +108,30 @@ export const codexDirectSessionProviderOps: DirectSessionProviderOps = {
     });
     return { ...res, nextCursor: res.nextCursor ?? null, truncated: res.truncated === true };
   },
-  acquireFollowLease: async ({ source, remoteSessionId }) => createPollingDirectSessionFollowLease({
-    readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
-      readAfterCodexTranscript({
+  acquireFollowLease: async ({ source, remoteSessionId }) => {
+    const paths = createCodexRolloutReadPaths();
+    let read: ReturnType<typeof readAfterCodexTranscript> | undefined;
+    const lease = await createPollingDirectSessionFollowLease({
+      readAfterTranscript: ({ cursor, maxBytes, maxItems }) => (read = readAfterCodexTranscript({
         source,
         activeServerDir: configuration.activeServerDir,
         remoteSessionId,
         cursor,
         maxBytes,
         maxItems,
-      }),
-  }),
+        resolveRolloutReadPath: paths.resolve,
+      })),
+    });
+    return {
+      ...lease,
+      release: async () => {
+        // Stop new polls before releasing scratch owned by a current read.
+        await lease.release();
+        await read?.catch(() => undefined);
+        await paths.dispose();
+      },
+    };
+  },
   resolveTakeoverSpawnOptions: async ({ linked, sessionId, transcriptStorage }) => {
     const homeEntries = await resolveCodexHomeEntriesForDirectSessionsSource({
       source: linked.source,

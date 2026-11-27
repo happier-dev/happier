@@ -33,11 +33,6 @@ vi.mock('@/voice/context/voiceHooks', () => ({
 vi.mock('@/track', () => ({
     initializeTracking: vi.fn(),
     tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
 }));
 
 const requestMock = vi.hoisted(() => vi.fn());

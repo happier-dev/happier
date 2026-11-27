@@ -22,6 +22,7 @@ export const AGENTS_CORE = {
             supportedServiceIds: ['claude-subscription', 'anthropic'],
             quotaResetServiceIds: ['claude-subscription'],
             sessionAuthSwitch: {
+                accountSwitchTiming: 'mid_turn',
                 continuityMode: 'restart_same_home',
                 supportedTransitions: ['same_connected_group'],
                 providerStateSharingRequired: {
@@ -83,6 +84,7 @@ export const AGENTS_CORE = {
             supportedServiceIds: ['openai-codex', 'openai'],
             quotaResetServiceIds: ['openai-codex'],
             sessionAuthSwitch: {
+                accountSwitchTiming: 'mid_turn',
                 continuityMode: 'restart_shared_state_required',
                 supportedTransitions: ['same_connected_group'],
                 providerStateSharingRequired: {
@@ -600,9 +602,15 @@ export const AGENTS_CORE = {
         // `agy acp` sessions never share session identity with it until a real
         // create → list/load round trip proves equivalence.
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'tmux' },
+        // agy acp steers a running turn when another session/prompt arrives (CLI 1.5.0 notes; verified on 1.5.18).
+        runtimeInput: {
+            inFlightSteerSupported: true,
+            terminalPromptInjectionSupported: false,
+        },
         tools: { delivery: 'native_mcp', support: 'supported' },
         media: {
-            acceptsImageInput: 'experimental',
+            // agy 1.5.18 advertises promptCapabilities.image and answered a live PNG prompt correctly.
+            acceptsImageInput: 'supported',
             emitsSessionMedia: GENERIC_SESSION_MEDIA_OUTPUT,
             nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
         },

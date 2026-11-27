@@ -3,7 +3,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import { createTestAcpRuntime } from '@/testkit/backends/acpRuntime';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { createAgyAcpBackend } from './backend';
 
@@ -29,6 +35,7 @@ async function writeAgyFixture(dir: string, version: string): Promise<string> {
     require('node:readline').createInterface({ input: process.stdin }).on('line', line => {
       const request = JSON.parse(line);
       if (request.method !== 'initialize') fs.appendFileSync(${JSON.stringify(join(dir, 'requests.jsonl'))}, JSON.stringify(request.method) + '\\n');
+      else fs.appendFileSync(${JSON.stringify(join(dir, 'capabilities.jsonl'))}, JSON.stringify(request.params.clientCapabilities) + '\\n');
       const result = request.method === 'initialize'
         ? { protocolVersion: 1, agentInfo: { name: 'Antigravity ACP Server', version: ${JSON.stringify(version)} },
             agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} } } }
@@ -67,6 +74,21 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
     });
   });
 
+  it('offers structured question forms only when the session can answer them', async () => {
+    await withTempDir('agy-launch-', async dir => {
+      vi.stubEnv('GEMINI_HOME', '');
+      const agy = await writeAgyFixture(dir, '1.5.18');
+      const permissionHandler = { handleToolCall: async () => ({ decision: 'denied' as const }) };
+      for (const options of [{ permissionHandler }, {}]) {
+        const backend = await createAgyAcpBackend({ cwd: dir, env: { HAPPIER_AGY_PATH: agy }, ...options });
+        try { await backend.startSession(); } finally { await backend.dispose(); }
+      }
+      const capabilities = (await readFile(join(dir, 'capabilities.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      expect(capabilities[0]).toMatchObject({ elicitation: { form: {} } });
+      expect(capabilities[1]).not.toHaveProperty('elicitation');
+    });
+  });
+
   it('starts connected accounts in their materialized profile with file token storage', async () => {
     await withTempDir('agy-launch-', async dir => {
       const agy = await writeAgyFixture(dir, '1.5.18');
@@ -90,9 +112,44 @@ describe.skipIf(process.platform === 'win32')('Antigravity ACP launch', () => {
         HAPPIER_AGY_PATH: agy, GEMINI_HOME: join(dir, 'connected-home'), HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: CONNECTED_ACCOUNT_SELECTIONS,
       } });
       try {
-        await expect(backend.startSession()).rejects.toThrow(/1\.5\.18 or newer.*agy update/);
+        await expect(backend.startSession()).rejects.toThrow(/1\.5\.16 or newer.*agy update/);
         await expect(readFile(join(dir, 'requests.jsonl'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
       } finally { await backend.dispose(); }
+    });
+  });
+
+  it('reports a too-old Antigravity CLI for a connected account as an actionable dependency failure', async () => {
+    await withTempDir('agy-launch-', async dir => {
+      const agy = await writeAgyFixture(dir, '1.5.11');
+      const sent: ACPMessageData[] = [];
+      const runtime = createTestAcpRuntime({
+        provider: 'agy',
+        directory: dir,
+        session: {
+          ...createBasicSessionClientWithOverrides({ sendAgentMessage: (_provider, body) => sent.push(body) }),
+          sessionTurnLifecycle: createSessionTurnLifecycle({ sessionId: 'agy-session', enqueueSessionTurn: async () => {} }),
+        },
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => createAgyAcpBackend({ cwd: dir, env: {
+          HAPPIER_AGY_PATH: agy, GEMINI_HOME: join(dir, 'connected-home'), HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: CONNECTED_ACCOUNT_SELECTIONS,
+        } }),
+      });
+      try {
+        runtime.beginTurn();
+        const error = await runtime.startOrLoad({}).then(() => null, (failure: unknown) => failure);
+        await runtime.failTurn(error);
+        expect(sent).toContainEqual(expect.objectContaining({
+          type: 'turn_failed',
+          issue: expect.objectContaining({
+            source: 'dependency_failure',
+            sanitizedPreview: 'Connected Antigravity accounts need Antigravity CLI 1.5.16 or newer (found 1.5.11). '
+              + 'Run `agy update` on this machine, then try again.',
+          }),
+        }));
+      } finally { await runtime.reset(); }
     });
   });
 

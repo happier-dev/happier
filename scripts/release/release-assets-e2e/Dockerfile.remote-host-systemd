@@ -1,5 +1,4 @@
 FROM node:24-bookworm
-ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
 ENV container=docker SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=info
 

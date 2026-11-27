@@ -71,7 +71,7 @@ PKCE verifier. These paste forms also apply to `happier connect agy`.
 
 The CLI entry point is `happier connect agy`; `happier agy` starts an `agy acp`
 session using its explicit account selection or saved default. Connected accounts
-need Antigravity CLI 1.5.18 or newer on the machine. Explicit native
+need Antigravity CLI 1.5.16 or newer on the machine. Explicit native
 authentication remains available. A supporting relay and daemon are required for
 the new service; a current client refuses unsupported operations before sending
 the new selection, while existing services remain usable. Older local CLIs cannot
@@ -92,8 +92,14 @@ continues to load the native shared copy under the original conversation ID; the
 imported `.happier-import-*` copy is not automatically merged or selected.
 
 Subscription meters use the selected account's Google quota response, including
-its returned windows and reset information. Context usage is a separate ACP
-signal. Real sign-in, refresh, quota attribution and A→B→A pool resume are still
+its returned windows and reset information. An account that has never run
+Antigravity has no Code Assist project yet; its first quota read completes the
+same free-tier setup the Antigravity CLI performs on its first run (a paid plan
+stays the account's plan), so the account's quota is known before its first
+session. When Google asks an account to verify its identity first, the failed
+turn adds a session message with Google's verification link (or, if the link
+cannot be read, a note to verify the account with Google) instead of a reply.
+Context usage is a separate ACP signal. Real sign-in, refresh, quota attribution and A→B→A pool resume are still
 being validated; this section does not claim stable availability or completed
 authenticated/platform validation. The integration depends on Antigravity's OAuth
 client and an undocumented Google quota API, which Google may change.
@@ -519,6 +525,14 @@ To switch when about a tenth of the allowance is left, set it to 10, not 90.
 Codex and Claude pool sessions apply a switch in the middle of a turn: the
 request already in flight finishes on the previous account and the next request
 uses the new one, so a long turn moves on instead of failing at the limit.
+
+Other agents can't change accounts in the middle of a turn. Antigravity has to
+restart to use another account, and OpenCode and Pi pick up a new account
+between turns. For these agents, a switch at the threshold waits until the
+current turn ends, however long the turn runs, and never interrupts it. If the
+turn reaches the usage limit first, the pool switches then, as it does for any
+usage-limit failure. The pool's **Soft switch threshold** row lists the agents
+that switch this way.
 
 In development builds, Claude pool launches let Happier manage usage-limit
 recovery by default. In the pool's Behavior section, **Let Claude wait for usage

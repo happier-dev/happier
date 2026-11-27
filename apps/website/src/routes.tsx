@@ -15,6 +15,11 @@ import { CodexRemotePage } from './pages/CodexRemotePage';
 import { DownloadPage } from './pages/DownloadPage';
 import { EnterprisePage } from './pages/EnterprisePage';
 import { Home } from './pages/Home';
+import { OpenPage } from './pages/OpenPage';
+import { PlansPage } from './pages/PlansPage';
+import { SupportersPage } from './pages/SupportersPage';
+import { ThanksPage } from './pages/ThanksPage';
+import { PLANS_TITLE } from './data/plans';
 import { SecurityPage } from './pages/SecurityPage';
 import { TerminalPage } from './pages/TerminalPage';
 import { UsageLimitsPage } from './pages/UsageLimitsPage';
@@ -48,6 +53,7 @@ export const SITE = 'https://happier.dev';
 export type Route = {
     /** Origin-relative path. Always starts with `/`; only `/` ends with one. */
     path: string;
+    noindex?: true;
     /**
      * The languages THIS PAGE exists in. Omitted means all of them — see the
      * default applied where ROUTES is assembled, and the note there for why it
@@ -537,6 +543,43 @@ const DOWNLOAD: Route = {
     render: () => <DownloadPage />,
 };
 
+const PLAN_ROUTES: Route[] = [
+    {
+        path: '/open',
+        title: 'How Happier stays free',
+        description: 'Read what Happier promises, what it charges for and how it funds development, with monthly costs and income.',
+        render: () => <OpenPage />,
+    },
+    {
+        path: '/plans',
+        title: PLANS_TITLE,
+        description: 'Compare free self-hosting and Happier Cloud history limits, Lite and Plus monthly plans, and the Supporter Pack.',
+        render: () => <PlansPage />,
+    },
+    {
+        path: '/supporters',
+        locales: [DEFAULT_LOCALE],
+        title: 'Happier supporters',
+        description: 'Meet the people who help fund Happier. Supporters appear here when they choose to share their names publicly.',
+        render: () => <SupportersPage />,
+    },
+    {
+        path: '/thanks',
+        locales: [DEFAULT_LOCALE],
+        title: 'Thank you for supporting Happier',
+        description: 'Return to Happier after checkout to find your Supporter Pack and choose how to display your supporter badge.',
+        noindex: true as const,
+        render: () => <ThanksPage />,
+    },
+].map((route) => ({
+    ...route,
+    ogTitle: route.title,
+    ogDescription: route.description,
+    ogImage: '/images/og.png',
+    ogImageAlt: 'Happier running on desktop and mobile',
+    jsonLd: [webPage(route.path, 'webpage', route.title)],
+}));
+
 /**
  * Every page below ships in every language the site has.
  *
@@ -564,6 +607,7 @@ export const ROUTES: ReadonlyArray<Route> = [
     SECURITY,
     ENTERPRISE,
     DOWNLOAD,
+    ...PLAN_ROUTES,
 ].map((route) => ({ locales: LOCALES, ...route }));
 
 export function findRoute(pathname: string): Route | undefined {
@@ -577,7 +621,7 @@ export function findRoute(pathname: string): Route | undefined {
     // Cloudflare Pages serves /agents and /agents/ from the same file, so the
     // client has to accept both or a trailing slash breaks hydration.
     const normalised = bare !== '/' && bare.endsWith('/') ? bare.slice(0, -1) : bare;
-    return ROUTES.find((route) => route.path === normalised);
+    return ROUTES.find((route) => route.path === normalised && localesFor(route).includes(locale));
 }
 
 function escapeAttr(value: string): string {
@@ -693,7 +737,9 @@ export function headTagsFor(route: Route, locale: Locale = DEFAULT_LOCALE): stri
         ...locales
             .filter((l) => l !== locale)
             .map((l) => `<meta property="og:locale:alternate" content="${escapeAttr(LOCALE_META[l].ogLocale)}" />`),
-        `<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />`,
+        route.noindex
+            ? '<meta name="robots" content="noindex" />'
+            : '<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />',
         `<meta property="og:url" content="${escapeAttr(url)}" />`,
         `<meta property="og:title" content="${escapeAttr(meta.ogTitle)}" />`,
         `<meta property="og:description" content="${escapeAttr(meta.ogDescription)}" />`,
@@ -740,6 +786,7 @@ export type RouteManifestEntry = {
     title: string;
     description: string;
     head: string;
+    noindex?: true;
     /** dist-relative file the route must be written to. */
     file: string;
 };
@@ -775,6 +822,7 @@ export function routeManifest(): RouteManifestEntry[] {
                 title: meta.title,
                 description: meta.description,
                 head: headTagsFor(route, locale),
+                noindex: route.noindex,
                 file: fileForRoute(path),
             };
         }),

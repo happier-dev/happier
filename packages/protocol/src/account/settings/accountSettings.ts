@@ -151,6 +151,10 @@ export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1S
     'session.target.tracked.set': { disabledSurfaces: ['session_agent'] },
     'session.terminalComposer.clear': { disabledSurfaces: ['session_agent'] },
     'session.pendingInput.interruptAndRun': { disabledSurfaces: ['session_agent'] },
+    // Plans & Supporter: agents ask first only for money, public exposure and third-party writes.
+    'billing.checkout.open': { approvalRequiredSurfaces: ['session_agent', 'mcp'] },
+    'supporter.profile.update': { approvalRequiredSurfaces: ['session_agent', 'mcp'] },
+    'supporter.ring.set': { approvalRequiredSurfaces: ['session_agent', 'mcp'] },
   },
 });
 

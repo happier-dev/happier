@@ -210,6 +210,15 @@ export class ConnectedServiceCredentialRefreshError extends Error {
   }
 }
 
+/**
+ * `onAuthUpdated` applies credentials to Happier sessions. An execution run carries its host
+ * session's id and pid, so addressing it there would apply the run's credential to the host session
+ * (possibly another agent). Runs keep their rematerialized roots and their own registry revisions.
+ */
+function listSessionAuthUpdatedTargets(targets: ReadonlyArray<SpawnTarget>): ReadonlyArray<SpawnTarget> {
+  return targets.filter((target) => target.runtimeTargetKind === 'session');
+}
+
 export class ConnectedServiceRefreshCoordinator {
   private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
   private readonly inFlightRefreshes = new Map<string, Readonly<{
@@ -729,17 +738,18 @@ export class ConnectedServiceRefreshCoordinator {
           && candidate.profileId === binding.profileId
         )),
       );
-      if (affectedTargets.length === 0) return;
+      const sessionTargets = listSessionAuthUpdatedTargets(affectedTargets);
+      if (sessionTargets.length === 0) return;
       await this.params.onAuthUpdated?.({
         binding,
-        affectedTargets,
+        affectedTargets: sessionTargets,
         credentialRevision: null,
         mutation: 'deleted',
         trigger: 'reconnect_propagation',
       });
       return;
     }
-    const affectedTargets = await this.rematerializeTargetsForBinding(binding);
+    const affectedTargets = listSessionAuthUpdatedTargets(await this.rematerializeTargetsForBinding(binding));
     if (affectedTargets.length === 0) return;
     await this.params.onAuthUpdated?.({
       binding,
@@ -1665,8 +1675,9 @@ export class ConnectedServiceRefreshCoordinator {
   private async notifyAuthUpdatedForRefreshedBinding(
     binding: BoundProfile,
     credentialRevision: ConnectedServiceCredentialRevisionV1 | null,
-    affectedTargets: ReadonlyArray<SpawnTarget>,
+    rematerializedTargets: ReadonlyArray<SpawnTarget>,
   ): Promise<ConnectedServiceAuthUpdatedApplicationResult> {
+    const affectedTargets = listSessionAuthUpdatedTargets(rematerializedTargets);
     if (affectedTargets.length === 0 || !this.params.onAuthUpdated) {
       return EMPTY_AUTH_UPDATED_APPLICATION_RESULT;
     }

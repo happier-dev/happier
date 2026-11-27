@@ -87,6 +87,32 @@ export const DirectSessionsSourceSchema = lazySchema(() => z.discriminatedUnion(
 ]));
 export type DirectSessionsSource = z.infer<typeof DirectSessionsSourceSchema>;
 
+export const DirectSessionRetentionDaysSchema = lazySchema(() => z.union([z.number().int().positive(), z.literal('never')]));
+
+export const DirectSessionRetentionRequestSchema = lazySchema(() => {
+  const source = { providerId: DirectSessionsProviderIdSchema, source: DirectSessionsSourceSchema };
+  return z.discriminatedUnion('operation', [
+    z.object({ ...source, operation: z.literal('read') }).strict(),
+    z.object({ ...source, operation: z.literal('write'), days: DirectSessionRetentionDaysSchema }).strict(),
+  ]);
+});
+export type DirectSessionRetentionRequest = z.infer<typeof DirectSessionRetentionRequestSchema>;
+
+export const DirectSessionRetentionStateSchema = lazySchema(() => z.object({
+  currentDays: z.number().int().positive().nullable(),
+  defaultDays: z.number().int().positive(),
+  never: z.boolean(),
+  writable: z.boolean(),
+  blockedReason: z.enum(['managed', 'unreadable', 'accountPolicy', 'accountSettingsUnavailable']).optional(),
+}));
+export type DirectSessionRetentionState = z.infer<typeof DirectSessionRetentionStateSchema>;
+
+export const DirectSessionRetentionResponseSchema = lazySchema(() => z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), retention: DirectSessionRetentionStateSchema }),
+  z.object({ ok: z.literal(false), errorCode: z.enum(['invalid_request', 'provider_unavailable', 'internal_error']) }),
+]));
+export type DirectSessionRetentionResponse = z.infer<typeof DirectSessionRetentionResponseSchema>;
+
 /**
  * Negotiates only the generic ACP `session/list` browse source. This capability is intentionally
  * resume-only and grants no transcript, follow, takeover, terminal, or writer authority.

@@ -62,7 +62,6 @@ import type { StorageState } from './types';
 import { createFriendRequestCountSelector } from './friendRequestCount';
 
 import { getStorage } from '../domains/state/storageStore';
-import type { KnownEntitlements } from '../domains/state/storageStore';
 import type { ForkedTranscriptSnapshot } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import { getForkedTranscriptSnapshotCached } from '../domains/sessionFork/forkedTranscriptSnapshot';
 import type { SessionForkSupportSource } from '../domains/sessionFork/forkUiSupport';
@@ -1470,6 +1469,7 @@ export function buildSessionListShellViewItemSignature(item: SessionListViewItem
     item.session.meaningfulActivityAt ?? '',
     item.session.active === true ? '1' : '0',
     item.session.archivedAt ?? '',
+    item.session.cloudCopyLeftAt ?? '',
     item.session.keepVisibleWhenInactive === true ? '1' : '0',
     item.session.archiving === true ? '1' : '0',
     item.session.pendingCount ?? '',
@@ -2225,10 +2225,6 @@ export function useArtifactsCount(): number {
       return Object.values(state.artifacts).filter((a) => !a.draft).length;
     })
   );
-}
-
-export function useEntitlement(id: KnownEntitlements): boolean {
-  return getStorage()(useShallow((state) => state.purchases.entitlements[id] ?? false));
 }
 
 export function useRealtimeStatus(): 'disconnected' | 'connecting' | 'connected' | 'error' {

@@ -104,6 +104,8 @@ export type PlannedChangeActions = {
         feed: boolean;
         automations: boolean;
         pets: boolean;
+        /** The Plans & Supporter read, re-read only while a surface holds it (plan 01). */
+        accountPlan: boolean;
     };
     kv: PlannedKvAction;
     sessionFolderAssignments: PlannedSessionFolderAssignmentsAction;
@@ -137,6 +139,11 @@ function isSessionFolderAssignmentHint(change: ApiChangeEntry): boolean {
 function isBulkSessionFolderAssignmentsHint(change: ApiChangeEntry): boolean {
     const hint = change.hint;
     return isRecord(hint) && hint.sessionFolderAssignments === true;
+}
+
+function isAccountPlanHint(change: ApiChangeEntry): boolean {
+    const hint = change.hint;
+    return isRecord(hint) && hint.plan === true;
 }
 
 function isSessionOrganizationHint(change: ApiChangeEntry): boolean {
@@ -308,6 +315,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
     let invalidateFeed = false;
     let invalidateAutomations = false;
     let invalidatePets = false;
+    let invalidateAccountPlan = false;
     const assignmentSessionIds = new Set<string>();
     const assignmentFolderIds = new Set<string>();
     let assignmentFolderMode = false;
@@ -412,6 +420,11 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             } else {
                 reconcileSessionList = true;
             }
+            continue;
+        }
+
+        if (kind === 'account' && isAccountPlanHint(change)) {
+            invalidateAccountPlan = true;
             continue;
         }
 
@@ -528,6 +541,7 @@ export function planSyncActionsFromChanges(changes: ApiChangeEntry[]): PlannedCh
             feed: invalidateFeed,
             automations: invalidateAutomations,
             pets: invalidatePets,
+            accountPlan: invalidateAccountPlan,
         },
         kv,
         sessionFolderAssignments,

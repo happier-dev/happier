@@ -104,6 +104,7 @@ function areChromeConfigsEquivalent(
         && a.titleTestID === b.titleTestID
         && a.subtitleTestID === b.subtitleTestID
         && a.closeButtonTestID === b.closeButtonTestID
+        && a.header === b.header
         && a.layout === b.layout
         && a.bodyScroll === b.bodyScroll
         && areDimensionOptionsEqual(a.dimensions, b.dimensions);

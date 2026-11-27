@@ -91,7 +91,8 @@ describe('connectedServicesCollapsedItemKeysV1 setting registration', () => {
         expect(definition.default).toEqual({});
         expect(definition.schema.safeParse({ 's:account:p': true, 's:pool:g:p': false }).success).toBe(true);
         expect(definition.schema.safeParse({ 's:account:p': 'yes' }).success).toBe(false);
-        expect(definition.analytics?.privacy).toBe('count_only');
+        // Collapse state is UI state, not an analytics setting.
+        expect(definition.analytics).toBeUndefined();
     });
 
     it('is aggregated into the account setting artifacts', async () => {

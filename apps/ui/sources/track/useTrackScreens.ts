@@ -16,13 +16,25 @@ function sanitizeRouteSegment(segment: string): string {
     return value;
 }
 
-export function useTrackScreens() {
-    const route = useSegments()
+// expo-router drops a trailing `index`, so the root screen's segments are only its groups.
+const ROOT_SCREEN_NAME = 'home';
+
+/** The screen name for these route segments, or '' while the router has resolved none. */
+function resolveScreenName(segments: readonly string[]): string {
+    if (segments.length === 0) return '';
+    // Using segments before normalizing to avoid leaking any params
+    const route = segments
         .filter(segment => !segment.startsWith('('))
         .map(sanitizeRouteSegment)
-        .join('/'); // Using segments before normalizing to avoid leaking any params
+        .join('/');
+    return route || ROOT_SCREEN_NAME;
+}
+
+export function useTrackScreens() {
+    const route = resolveScreenName(useSegments());
     React.useEffect(() => {
-        tracking?.screen(route);
+        // No segments yet (the router has not resolved a route): not a screen.
+        if (route) tracking?.screen(route);
         recordBugReportUserAction('screen.navigate', { route });
     }, [route]); // NOTE: NO PARAMS HERE - we dont want to leak anything at all, except very basic stuff
 }

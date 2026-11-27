@@ -4,6 +4,7 @@ import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuati
 import { resolveAgyAcpLaunch, resolveAgyMachineProfileDir } from './agyAcpLaunch';
 import { importLegacyAgyConversation } from './agyConversationStore';
 import { agySessionModelAdapter, withOfferedAgyThoughtLevels } from './modelControls';
+import { AgyTransport } from './transport';
 
 export type AgyAcpBackendOptions = CatalogDefinedAcpBackendOptions;
 
@@ -11,6 +12,7 @@ export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promis
   return withOfferedAgyThoughtLevels(createCatalogDefinedAcpBackend('agy', {
     ...options,
     sessionModelAdapter: agySessionModelAdapter,
+    transportHandler: new AgyTransport(),
     launch: async ({ loadSessionId, resolveDefaultLaunch }) => {
       const command = resolveDefaultLaunch();
       const env = { ...process.env, ...options.env };

@@ -629,7 +629,7 @@ describe("session organization routes", () => {
         });
 
         expect(reply.code).toHaveBeenCalledWith(409);
-        expect(response).toEqual({ error: "session-pin-limit-exceeded" });
+        expect(response).toEqual({ error: "session-pin-limit-exceeded", limit: SESSION_ORGANIZATION_MAX_PINNED_SESSIONS });
         expect(txSessionPinCount).toHaveBeenCalledWith({
             where: {
                 accountId: "u1",
@@ -1260,7 +1260,7 @@ describe("session organization routes", () => {
         });
 
         expect(reply.code).toHaveBeenCalledWith(409);
-        expect(response).toEqual({ error: "session-pin-limit-exceeded" });
+        expect(response).toEqual({ error: "session-pin-limit-exceeded", limit: SESSION_ORGANIZATION_MAX_PINNED_SESSIONS });
         expect(txSessionPinCount).toHaveBeenCalledWith({
             where: {
                 accountId: "u1",

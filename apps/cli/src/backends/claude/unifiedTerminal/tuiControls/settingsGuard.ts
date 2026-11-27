@@ -364,7 +364,7 @@ export function createClaudeSettingsGuard(params: Readonly<{
           }
         }
         snapshot = await Promise.all(trackedFiles.map((relPath) => snapshotFile(configDir, relPath)));
-        await writeJournal(lockDir, snapshot);
+        if (snapshot.length > 0) await writeJournal(lockDir, snapshot);
       } catch (error) {
         await release();
         throw error;

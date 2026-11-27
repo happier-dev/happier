@@ -7,6 +7,7 @@ vi.mock('posthog-react-native', () => ({
         constructor(...args: any[]) {
             posthogConstructorSpy(...args);
         }
+        optOut() {}
     },
 }));
 

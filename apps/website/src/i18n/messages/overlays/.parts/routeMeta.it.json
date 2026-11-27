@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI su telefono, laptop e browser",
-    "description": "Un’app open source per Kilo CLI e altri dodici agenti di coding da riga di comando, sui tuoi computer e con i tuoi account. Senza postazioni né paywall.",
+    "description": "Un’app open source per Kilo CLI e altri dodici agenti di coding da riga di comando. Tutte le funzionalità sono gratuite.",
     "ogTitle": "Kilo CLI su telefono, laptop e browser",
     "ogDescription": "Un’unica app open source per Kilo e gli altri dodici agenti di coding da riga di comando che potresti avere installati.",
     "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
@@ -152,5 +152,19 @@
     "ogTitle": "Scarica Happier per tutti i tuoi dispositivi",
     "ogDescription": "App desktop e mobili, APK diretto e la CLI che esegue gli agenti sul tuo computer. Una pagina con tutte le versioni.",
     "ogImageAlt": "Il wordmark Happier sopra le parole: Un solo client per ogni agente di coding AI."
+  },
+  "/open": {
+    "title": "Come fa Happier a restare gratuito",
+    "description": "Scopri gli impegni di Happier, cosa puoi acquistare e come si finanzia lo sviluppo, con i costi e le entrate di ogni mese.",
+    "ogTitle": "Come fa Happier a restare gratuito",
+    "ogDescription": "Gli impegni di Happier, le fonti di finanziamento e il rendiconto mensile di costi ed entrate.",
+    "ogImageAlt": "Come fa Happier a restare gratuito"
+  },
+  "/plans": {
+    "title": "Piani e Sostenitore",
+    "description": "Confronta l’uso gratuito sul tuo server, i limiti di cronologia di Happier Cloud, i piani mensili Lite e Plus e il pacchetto Sostenitore.",
+    "ogTitle": "Piani e Sostenitore",
+    "ogDescription": "Usa Happier gratis sul tuo server o nel cloud, confronta Lite e Plus e scopri il pacchetto Sostenitore.",
+    "ogImageAlt": "Piani di Happier e pacchetto Sostenitore"
   }
 }

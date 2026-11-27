@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { Island } from '../islands';
+import { useI18n } from '../i18n';
 import { TerminalBackground } from './TerminalBackground';
 import { Footer } from '../sections/Footer';
 import { Nav } from '../sections/Nav';
@@ -19,6 +20,7 @@ import { Nav } from '../sections/Nav';
  * way a one-page site breaks when it grows a second page.
  */
 export function PageShell({ children }: { children: ReactNode }) {
+    const { availableLocales } = useI18n();
     /*
      * The three interactive parts of the chrome are islands; `children` — the
      * page itself — is prose and is never handed to React in the browser. That
@@ -31,7 +33,7 @@ export function PageShell({ children }: { children: ReactNode }) {
             <div className="relative z-[2]">
                 <Island name="nav" component={Nav} props={{ variant: 'static', isHome: false }} />
                 <main>{children}</main>
-                <Island name="footer" component={Footer} props={{ isHome: false }} />
+                <Island name="footer" component={Footer} props={{ isHome: false, availableLocales: [...availableLocales] }} />
             </div>
         </div>
     );
@@ -48,10 +50,13 @@ export function PageHeader({
     eyebrow,
     title,
     standfirst,
+    children,
 }: {
     eyebrow: string;
     title: string;
     standfirst: ReactNode;
+    /** Anything that belongs to the header below the standfirst: a note, a row of pills. */
+    children?: ReactNode;
 }) {
     return (
         <header className="mx-auto max-w-[1400px] px-6 pb-6 pt-16 md:px-10 md:pb-8 md:pt-24">
@@ -62,15 +67,16 @@ export function PageHeader({
                 >
                     {eyebrow}
                 </div>
-                <h1 className="font-display text-[36px] font-normal leading-[1.05] tracking-[-0.03em] md:text-[52px] lg:text-[60px]">
+                <h1 className="font-display text-[36px] font-normal leading-[1.05] tracking-[-0.03em] [text-wrap:balance] md:text-[52px] lg:text-[60px]">
                     {title}
                 </h1>
                 <p
-                    className="mt-6 max-w-[720px] text-[17px] leading-[1.62] md:text-[19px]"
+                    className="mt-6 max-w-[720px] text-[17px] leading-[1.62] [text-wrap:pretty] md:text-[19px]"
                     style={{ color: 'var(--muted)' }}
                 >
                     {standfirst}
                 </p>
+                {children}
             </div>
         </header>
     );
@@ -81,13 +87,21 @@ export function Prose({
     id,
     heading,
     children,
+    rhythm = 'manual',
     'data-section': dataSection,
 }: {
     id?: string;
     heading?: string;
     children: ReactNode;
+    /**
+     * `manual` is the reference-page rhythm argued below. `chapter` is for the
+     * money pages (/open, /plans), whose few sections are arguments and get the
+     * lab's 96px drop and a wider 880px column.
+     */
+    rhythm?: 'manual' | 'chapter';
     'data-section'?: string;
 }) {
+    const chapter = rhythm === 'chapter';
     return (
         <section id={id} data-section={dataSection} className="relative">
             {/*
@@ -100,10 +114,10 @@ export function Prose({
                 for. The marketing pages earn that much air because their
                 sections are arguments; these are a manual.
             */}
-            <div className="mx-auto max-w-[1400px] px-6 py-6 md:px-10 md:py-8">
-                <div className="max-w-[760px]">
+            <div className={`mx-auto max-w-[1400px] px-6 md:px-10 ${chapter ? 'pt-16 md:pt-24' : 'py-6 md:py-8'}`}>
+                <div className={chapter ? 'max-w-[880px]' : 'max-w-[760px]'}>
                     {heading ? (
-                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] md:text-[34px]">
+                        <h2 className="font-display text-[26px] font-normal leading-[1.14] tracking-[-0.025em] [text-wrap:balance] md:text-[34px]">
                             {heading}
                         </h2>
                     ) : null}

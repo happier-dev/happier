@@ -32,6 +32,7 @@ function buildPlanned(partial: {
             feed: false,
             automations: false,
             pets: false,
+            accountPlan: false,
             ...(partial.invalidate ?? {}),
         },
         kv: partial.kv ?? { type: 'none' },

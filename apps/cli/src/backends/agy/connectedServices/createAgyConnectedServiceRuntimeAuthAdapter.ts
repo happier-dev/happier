@@ -1,13 +1,13 @@
 import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
 import { logger } from '@/ui/logger';
+import { classifyAgyRuntimeFailure } from './classifyAgyRuntimeFailure';
 import { createAgyQuotaFetcher } from './quotaFetcher';
 
 export function createAgyConnectedServiceRuntimeAuthAdapter(): ConnectedServiceProviderRuntimeAuthAdapter {
   const fetcher = createAgyQuotaFetcher();
   return {
-    // `agy acp` turn failures have no characterized usage-limit evidence; the quota probe reports exhaustion.
-    classifyRuntimeAuthFailure: () => null,
+    classifyRuntimeAuthFailure: classifyAgyRuntimeFailure,
     async materializeActiveProfile() { return { supported: true }; },
     canHotApply() { return { supported: false, recovery: 'restart_rematerialize' }; },
     async hotApply() { return { applied: false, reason: 'hot_apply_unsupported' }; },

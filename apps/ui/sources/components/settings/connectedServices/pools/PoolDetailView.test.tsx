@@ -553,6 +553,21 @@ describe('PoolDetailView', () => {
         );
     });
 
+    it('explains on the soft threshold that providers without mid-turn switching switch when the turn ends', async () => {
+        const noteKey = 'connectedServices.detail.groupDetail.softSwitchThresholdTurnEndNote';
+
+        connectedServicesModuleState.searchParams = { serviceId: 'antigravity', groupId: 'primary' };
+        authoritativeGroupState.groups = [createAuthoritativeGroup({ serviceId: 'antigravity' })];
+        await renderPoolDetail();
+        expect(textSpies.translate).toHaveBeenCalledWith(noteKey, { agents: 'agentInput.agent.agy' });
+
+        textSpies.translate.mockClear();
+        connectedServicesModuleState.searchParams = { serviceId: 'claude-subscription', groupId: 'primary' };
+        authoritativeGroupState.groups = [createAuthoritativeGroup({ serviceId: 'claude-subscription' })];
+        await renderPoolDetail();
+        expect(textSpies.translate).not.toHaveBeenCalledWith(noteKey, expect.anything());
+    });
+
     it('disables Claude native waiting policy changes when account fallback is disabled', async () => {
         connectedServicesModuleState.searchParams = { serviceId: 'claude-subscription', groupId: 'primary' };
         authoritativeGroupState.groups = [createAuthoritativeGroup({ serviceId: 'claude-subscription' })];

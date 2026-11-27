@@ -1,6 +1,8 @@
 import {
     DirectSessionLinkEnsureRequestSchema,
     DirectSessionLinkEnsureResponseSchema,
+    DirectSessionRetentionRequestSchema,
+    DirectSessionRetentionResponseSchema,
     DirectSessionCandidateDeleteRequestSchema,
     DirectSessionCandidateDeleteResponseSchema,
     DirectSessionStatusGetRequestSchema,
@@ -17,8 +19,12 @@ import {
     DirectTranscriptPageResponseSchema,
     DirectTranscriptReadAfterRequestSchema,
     DirectTranscriptReadAfterResponseSchema,
+    LocalHistoryRpcRequestSchema,
+    LocalHistoryRpcResponseSchema,
     type DirectSessionLinkEnsureRequest,
     type DirectSessionLinkEnsureResponse,
+    type DirectSessionRetentionRequest,
+    type DirectSessionRetentionResponse,
     type DirectSessionCandidateDeleteRequest,
     type DirectSessionCandidateDeleteResponse,
     type DirectSessionStatusGetRequest,
@@ -33,6 +39,8 @@ import {
     type DirectTranscriptPageResponse,
     type DirectTranscriptReadAfterRequest,
     type DirectTranscriptReadAfterResponse,
+    type LocalHistoryRpcRequest,
+    type LocalHistoryRpcResponse,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { ZodType } from 'zod';
@@ -77,6 +85,50 @@ async function callDirectSessionMachineRpc<Request, Response>(params: Readonly<{
         throwUnsupportedResponse(params.method);
     }
     return parsed.data;
+}
+
+export async function machineDirectSessionRetention(
+    machineId: string,
+    input: DirectSessionRetentionRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<DirectSessionRetentionResponse> {
+    try {
+        return await callDirectSessionMachineRpc({
+            machineId,
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_RETENTION,
+            input,
+            requestSchema: DirectSessionRetentionRequestSchema,
+            responseSchema: DirectSessionRetentionResponseSchema,
+            opts,
+        });
+    } catch (error) {
+        if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
+            return { ok: false, errorCode: 'provider_unavailable' };
+        }
+        throw error;
+    }
+}
+
+export async function machineLocalHistory(
+    machineId: string,
+    input: LocalHistoryRpcRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<LocalHistoryRpcResponse> {
+    try {
+        return await callDirectSessionMachineRpc({
+            machineId,
+            method: RPC_METHODS.DAEMON_LOCAL_HISTORY,
+            input,
+            requestSchema: LocalHistoryRpcRequestSchema,
+            responseSchema: LocalHistoryRpcResponseSchema,
+            opts,
+        });
+    } catch (error) {
+        if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) {
+            return { ok: false, errorCode: 'provider_unavailable' };
+        }
+        throw error;
+    }
 }
 
 export async function machineDirectSessionsCandidatesList(

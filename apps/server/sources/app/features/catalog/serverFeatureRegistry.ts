@@ -4,6 +4,7 @@ import { resolveAutomationsFeature } from '../automationsFeature';
 import { resolveBugReportsFeature } from '../bugReportsFeature';
 import { resolveSharingFeature } from '../sharingFeature';
 import { resolveVoiceFeature } from '../voiceFeature';
+import { resolvePlansFeature } from '../plansFeature';
 import { resolveFriendsFeature } from '../friendsFeature';
 import { resolveOAuthFeature } from '../oauthFeature';
 import { resolveAuthFeature } from '../authFeature';
@@ -35,6 +36,7 @@ const serverFeatureResolvers = [
     (env) => resolveAutomationsFeature(env),
     (env) => resolveSharingFeature(env),
     (env) => resolveVoiceFeature(env),
+    (env) => resolvePlansFeature(env),
     (env) => resolveConnectedServicesFeature(env),
     (env) => resolveChannelBridgesFeature(env),
     (env) => resolveUpdatesFeature(env),

@@ -760,7 +760,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             if (url.endsWith('/health')) {
                 return Response.json({ ok: true });
             }
-            if (url.endsWith('/v1/features')) {
+            if (url.split('?')[0]?.endsWith('/v1/features')) {
                 return Response.json(buildServerFeaturesResponse());
             }
             if (matchServerFetchUrl(`https://owner.example/v2/sessions/${sessionId}/pending/${localId}/action`).asymmetricMatch(url)) {
