@@ -408,6 +408,37 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     expect(catalogReads).toBe(1);
   });
 
+  it('materializes a finite operation’s exact account without fetching the admitted account inventory again', async () => {
+    let inventoryReads = 0;
+    let credentialReads = 0;
+    const { owner } = createOwner({
+      resolveTarget: async target => {
+        inventoryReads++;
+        if (target.kind !== 'account') throw new Error('Expected one exact account');
+        return { account: target.account, displayName: 'Exact account' };
+      },
+      materializeAccount: async ({ account }) => {
+        credentialReads++;
+        if (credentialReads === 2) throw new Error('credential revoked at acquisition');
+        return { kind: 'environment', env: { TOKEN: account.accountId } };
+      },
+    });
+    const signal = new AbortController().signal;
+    const selection = await owner.resolveBindingIntentSelection({ purpose,
+      target: { kind: 'account', account: { service, accountId: 'exact' } }, serviceRefs: [service], signal });
+    const lease = owner.activatePurposeBindings({
+      subject: { kind: 'operation', operationId: 'read-exact', consumer: purpose.consumer, isCurrent: () => true },
+      purposes: [purpose], bindings: [selection.binding], bindingSelections: [selection],
+    });
+    const request = { ...authorized, exactPurposeBindingSubjectId: lease.subjectId, signal,
+      request: { kind: 'environment' as const, keys: ['TOKEN'] } };
+    try {
+      await expect(owner.materialize(request)).resolves.toEqual({ kind: 'environment', env: { TOKEN: 'exact' } });
+      await expect(owner.materialize(request)).rejects.toThrow('credential revoked at acquisition');
+      expect({ inventoryReads, credentialReads }).toEqual({ inventoryReads: 1, credentialReads: 2 });
+    } finally { lease.dispose(); }
+  });
+
   it('retains an admitted group selection through materialization without treating inventory invalidation as reselection', async () => {
     let generation = 1;
     const { owner, store, materializeAccount } = createOwner({ resolveTarget: async target => ({

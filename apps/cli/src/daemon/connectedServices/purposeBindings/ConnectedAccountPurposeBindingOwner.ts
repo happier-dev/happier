@@ -816,6 +816,7 @@ export function createConnectedAccountPurposeBindingOwner(
     coveredPurposeKeys: ReadonlySet<string>;
     bindingByPurposeKey: ReadonlyMap<string, QualifiedConnectedAccountPurposeBindingV1>;
     bindingSelectionByPurposeKey: ReadonlyMap<string, ConnectedAccountPurposeBindingIntentSelection>;
+    finiteOperation?: true;
     bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
     credentialConfigurations?: ManagedCredentialConfigurations;
     hostMcpRequestAuth?: Readonly<{ serverId: string; resource: string }>;
@@ -1167,6 +1168,7 @@ export function createConnectedAccountPurposeBindingOwner(
       coveredPurposeKeys,
       bindingByPurposeKey,
       bindingSelectionByPurposeKey,
+      ...(subject.kind === 'operation' && !subject.sessionId ? { finiteOperation: true as const } : {}),
       bindings: Object.freeze(parsedBindings),
       ...(subject.kind === 'managed_provider_operation' && subject.credentialConfigurations !== undefined
         ? { credentialConfigurations: subject.credentialConfigurations } : {}),
@@ -1244,6 +1246,7 @@ export function createConnectedAccountPurposeBindingOwner(
     sessionId?: string;
     signal: AbortSignal;
     observationOnly?: true;
+    useAdmittedExactAccount?: true;
   }>, publishedCatalog?: QualifiedConnectedAccountPurposeBindingsV1): Promise<Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
     resolved: ConnectedAccountPurposeResolvedTarget;
@@ -1280,12 +1283,17 @@ export function createConnectedAccountPurposeBindingOwner(
           directMaterialOrigin: sessionBinding.directMaterialOrigin,
         };
       }
+      const subject = input.exactPurposeBindingSubjectId
+        ? purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId) : undefined;
+      const retainedSelection = subject?.bindingSelectionByPurposeKey.get(qualifiedPurposeKey(purpose));
+      // Exact credential acquisition still reads the selected Account at the material owner.
+      if (input.useAdmittedExactAccount && subject?.finiteOperation && target.kind === 'account' && retainedSelection) {
+        return { target, resolved: retainedSelection.resolved, directMaterialOrigin: null };
+      }
       const resolved = await runConnectedAccountBindingStage('target_resolution', () => dependencies.resolveTarget(target, input.signal, input.observationOnly));
       input.signal.throwIfAborted();
       if (!resolved) return unavailableBinding(input, 'target_unavailable');
       assertResolvedTargetMatchesIntent(target, resolved);
-      const retainedSelection = input.exactPurposeBindingSubjectId
-        ? purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId)?.bindingSelectionByPurposeKey.get(qualifiedPurposeKey(purpose)) : null;
       if (retainedSelection && !sameResolvedTarget({ target, resolved }, {
         target: retainedSelection.binding.target, resolved: retainedSelection.resolved,
       })) return unavailableBinding(input, 'target_unavailable');
@@ -1522,7 +1530,8 @@ export function createConnectedAccountPurposeBindingOwner(
     // Retained admissions consume the published binding while only mutations queue.
     const before = await observeMaterializationPhase('materialization_binding_before', async () => ({
       explicit: input.nativeService ? await hasExplicitSelection() : false,
-      resolved: await readAuthorizedResolved(authorizationInput),
+      resolved: await readAuthorizedResolved({ ...authorizationInput,
+        ...(!input.credentialRevisionBasis ? { useAdmittedExactAccount: true as const } : {}) }),
     }));
     const resolved = before.resolved;
     if (!resolved) {
