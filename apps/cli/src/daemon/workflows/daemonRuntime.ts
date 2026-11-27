@@ -73,7 +73,9 @@ import { WorkflowSessionCompositionError } from './sessionStepExecutor';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
 import { lookupSessionsByTags } from '@/session/transport/http/sessionsHttp';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { isDeploymentEnvironmentPlacementActionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { resolveRequesterDeploymentMachine } from '@/deployments/resolveRequesterDeploymentMachine';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 
 type MachineAdmissionTransport = NonNullable<Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']>;
@@ -264,10 +266,14 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
   const serverId = params.serverId ?? configuration.activeServerId;
   const readBaseUrl = captureServerHttpBaseUrl();
   const admissionDrain = params.admissionDrain;
+  const matchesCurrentHome = async (candidateHomeId: string, serverIdentityId?: string, allowProfileId?: boolean): Promise<boolean> => {
+    if (serverIdentityId) return candidateHomeId === serverIdentityId || (allowProfileId === true && candidateHomeId === serverId);
+    return await isServerProfileHomeIdentity(serverId, candidateHomeId);
+  };
   const operationRpc = async (transport: import('@/session/actions/createCliActionDeps').MachineActionDirectTargetTransport,
     operation: ActionCompletionOperation, kind: 'get' | 'cancel' | 'wait', signal?: AbortSignal,
-    includeSetupReview?: true) => {
-    if (!await isServerProfileHomeIdentity(serverId, operation.serverId)) throw new Error('action_operation_home_mismatch');
+    includeSetupReview?: true, serverIdentityId?: string) => {
+    if (!await matchesCurrentHome(operation.serverId, serverIdentityId, true)) throw new Error('action_operation_home_mismatch');
     const method = kind === 'cancel' ? ACTION_OPERATION_RPC_METHODS_V1.cancel : ACTION_OPERATION_RPC_METHODS_V2.get;
     const request = { operationId: operation.operationId, ...(kind === 'wait' ? { waitForTerminal: true,
       ...(includeSetupReview ? { includeSetupReview } : {}) } : {}) };
@@ -492,7 +498,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             },
             observeOperation: async (operation, observation) => {
               const observed = ActionOperationGetV1ResponseSchema.parse(await operationRpc(input.machineActionDirectTargetTransport,
-                operation, 'wait', observation.signal, true));
+                operation, 'wait', observation.signal, true, input.serverIdentityId));
               if (observed.kind !== 'found') throw new Error('action_operation_observation_unavailable');
               return observed.operation;
             },
@@ -626,12 +632,32 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             findAction: async (execution, signal) => {
               const id = ActionIdSchema.safeParse(execution.actionId);
               if (!id.success || !execution.input || typeof execution.input !== 'object' || Array.isArray(execution.input)) return null;
+              const spec = getActionSpec(id.data);
+              const executionPlacement = resolveActionExecutionPlacementForInput(spec, execution.input, { kind: 'workflowRun' }, 'agent');
+              const explicitHomeId = typeof execution.input.homeId === 'string' ? execution.input.homeId
+                : spec.invocationServerIdForInput?.(execution.input);
+              if (explicitHomeId !== undefined && !await matchesCurrentHome(explicitHomeId, input.serverIdentityId)) return null;
+              const homeId = explicitHomeId ?? input.serverIdentityId ?? serverId;
+              const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+              let ownerMachineId: string | undefined;
+              if (isDeploymentEnvironmentPlacementActionV1(id.data, execution.input, executionPlacement)) {
+                // Schema-valid deployment operands always declare their Home; refuse
+                // unvalidated or cross-Home placement before reading Home state.
+                if (explicitHomeId === undefined) return null;
+                const selected = await resolveRequesterDeploymentMachine({
+                  actionId: id.data, input: execution.input, credentials: params.credentials,
+                  serverApiUrl: serverHttpBaseUrl, serverId,
+                  context: { surface: 'agent', serverId, ...(input.serverIdentityId ? { serverIdentityId: input.serverIdentityId } : {}),
+                    ...(signal ? { signal } : {}) },
+                });
+                signal?.throwIfAborted();
+                if (!selected.ok) return null;
+                ownerMachineId = selected.machineId;
+              }
               const target = resolveExternalActionMachineTarget({ actionId: id.data, rawInput: execution.input, target: undefined,
+                ...(ownerMachineId ? { ownerMachineId } : {}),
                 context: { surface: 'agent' } });
               if (target?.kind !== 'ready') return null;
-              const homeId = typeof execution.input.homeId === 'string' ? execution.input.homeId
-                : getActionSpec(id.data).invocationServerIdForInput?.(execution.input) ?? serverId;
-              if (!await isServerProfileHomeIdentity(serverId, homeId)) return null;
               try {
                 return await findNativeOperation({ actionId: execution.actionId, requestId: execution.actionRequestId,
                   machineId: target.machineId, key: 'native' }, signal);
@@ -641,7 +667,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
                 // lookup. Consume Home's positive allocation authority; an
                 // empty, refused or unavailable read is never proof of absence.
                 const machines = await readManagedMachines({ credentials: params.credentials,
-                  serverHttpBaseUrl: resolveServerHttpBaseUrl(), homeId, enrolledMachineId: target.machineId,
+                  serverHttpBaseUrl, homeId, enrolledMachineId: target.machineId,
                   ...(signal ? { signal } : {}) });
                 return machines.some(machine => machine.homeId === homeId && machine.enrolledMachineId === target.machineId
                   && machine.allocation === 'confirmed-absent') ? { kind: 'absent' as const } : null;
@@ -665,9 +691,9 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
               if (!authorized) throw new Error('workflow_startup_discovery_unavailable');
               return session.id;
             },
-            get: async (operation, signal) => await operationRpc(input.machineActionDirectTargetTransport, operation, 'get', signal),
-            cancel: async (operation, signal) => await operationRpc(input.machineActionDirectTargetTransport, operation, 'cancel', signal),
-            wait: async (operation, signal) => await operationRpc(input.machineActionDirectTargetTransport, operation, 'wait', signal),
+            get: async (operation, signal) => await operationRpc(input.machineActionDirectTargetTransport, operation, 'get', signal, undefined, input.serverIdentityId),
+            cancel: async (operation, signal) => await operationRpc(input.machineActionDirectTargetTransport, operation, 'cancel', signal, undefined, input.serverIdentityId),
+            wait: async (operation, signal) => await operationRpc(input.machineActionDirectTargetTransport, operation, 'wait', signal, undefined, input.serverIdentityId),
           },
           nativeActionRuns: {
             get: async (runId, signal) => await input.machineActionDirectTargetTransport.invoke(

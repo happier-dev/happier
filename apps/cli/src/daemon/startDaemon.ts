@@ -1875,6 +1875,8 @@ export async function startDaemon(
     const readManagedPolicyServerHttpBaseUrl = captureServerHttpBaseUrl();
     const pluginRemovalOrigin = await resolveCurrentMachineExecutionOriginContext();
     const managedPolicyHomeId = pluginRemovalOrigin?.serverIdentityId ?? null;
+    const resolveWorkflowHomeServerIdentityId = (): string | undefined =>
+      managedPolicyHomeId ?? resolveBoundHomeServerIdentityId() ?? undefined;
     const { installation: pluginRemovalInstallation, managedResourcePreflight } = await prepareDaemonPluginRemoval({
       credentials, get machineId() { return machineId; }, origin: pluginRemovalOrigin, readServerUrl: readManagedPolicyServerHttpBaseUrl,
       signal: homeTransportCancellation.signal,
@@ -4616,6 +4618,7 @@ export async function startDaemon(
                   credentials: selectedCredentials, accountId: selectedAccountId, serverId: requesterRuntimeServerId,
                 });
                 const installation = readInstallationIdentityIfExistsSync();
+                const workflowServerIdentityId = resolveWorkflowHomeServerIdentityId();
                 return runtime.createCoordinatorForMachine({ ...input, managedMachineAction: managedMachinePolicyAdapter, openManagedProjectWorkspace,
                   postWorkflowMessage,
                   sessionStartup: async request => {
@@ -4670,7 +4673,7 @@ export async function startDaemon(
                     });
                   },
                   ...(installation ? { installationIdentity: installation } : {}),
-                  ...(managedPolicyHomeId ? { serverIdentityId: managedPolicyHomeId } : {}),
+                  ...(workflowServerIdentityId ? { serverIdentityId: workflowServerIdentityId } : {}),
                   sessionActionRpcTransport: async request => {
                     if (!apiMachineForSessions) throw new Error('machine_socket_unavailable');
                     return await apiMachineForSessions.callSessionActionRpc(request);
@@ -4681,7 +4684,10 @@ export async function startDaemon(
                   credentials: input.requesterCredentials, accountId: input.requesterWorkAttributionV1.accountId,
                   serverId: requesterRuntimeServerId,
                 } : undefined);
-                return runtime.createRecoveryForMachine({ ...input, postWorkflowMessage });
+                const workflowServerIdentityId = resolveWorkflowHomeServerIdentityId();
+                return runtime.createRecoveryForMachine({ ...input,
+                  ...(workflowServerIdentityId ? { serverIdentityId: workflowServerIdentityId } : {}),
+                  postWorkflowMessage });
               },
             }
           : {}),
