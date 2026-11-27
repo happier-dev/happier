@@ -5137,6 +5137,15 @@ Responses encrypt `{ v: 2, k: 'res', c: '<same call id>', r: result }`;
 callers verify the direction and their call id before accepting the result.
 The call id is independent of the relay-owned transport request id.
 
+For an E2EE SCM status snapshot, commit diff, log list, or file read over
+Socket.IO, the caller can offer response content version 1. Home forwards that
+offer to the admitted responder. Successful results then use the shared
+content-byte frame before encryption, selecting gzip only when it is smaller
+than raw bytes. The AES bundle version is 1. Secretbox identifies the content
+frame inside its authenticated bytes. Both forms retain the existing RPC call-id
+binding and ciphertext carrier. Missing or unknown offers use the historical
+unframed writer. Stored content and requests retain their own writers.
+
 Structured plugin Action requests additionally project the target Machine,
 invocation kind and distinct referenced Session IDs into content-free
 `structuredMessageRouting`. This includes an Action-read nested in Resource watch

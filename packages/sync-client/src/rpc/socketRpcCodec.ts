@@ -5,8 +5,8 @@ import { markRpcRequestDisposition } from './rpcDisposition.js';
 
 export type SocketRpcContent =
   | Readonly<{ mode: 'plain' }>
-  | Readonly<{ mode: 'e2ee'; cipher: Readonly<{
-      encryptRaw(value: unknown): Promise<string>;
+  | Readonly<{ mode: 'e2ee'; responseContentVersion?: 1; cipher: Readonly<{
+      encryptRaw(value: unknown, contentVersion?: 1): Promise<string>;
       decryptRaw(ciphertext: string): Promise<unknown | null>;
     }> }>;
 
@@ -57,13 +57,14 @@ async function decodeRequestParams(content: SocketRpcContent, value: unknown, me
   if (opened.k !== 'req' || opened.m !== method || Object.keys(opened).some(key => !['v', 'k', 'm', 'c', 'p'].includes(key))) throw updateRequired();
   return { params: opened.p, callId: opened.c as string };
 }
-async function encodeResponse(content: SocketRpcContent, value: unknown, callId: string | null): Promise<unknown> {
+async function encodeResponse(content: SocketRpcContent, value: unknown, callId: string | null, contentVersion?: 1): Promise<unknown> {
   if (content.mode === 'plain') return value;
   // Before a request can be authenticated, only a typed refusal can be returned.
   // The relay can already refuse delivery; this carrier never establishes success.
   if (callId === null && isRecord(value) && typeof value.error === 'string' && typeof value.errorCode === 'string') return value;
   if (!isCallId(callId)) throw updateRequired();
-  return content.cipher.encryptRaw({ v: 2, k: 'res', c: callId, r: value });
+  const response = { v: 2, k: 'res', c: callId, r: value };
+  return contentVersion === 1 ? content.cipher.encryptRaw(response, contentVersion) : content.cipher.encryptRaw(response);
 }
 function interpretDecodedResult(value: unknown): unknown {
   if (isPluginErrorData(value)) throw restorePluginErrorFromWire(value);

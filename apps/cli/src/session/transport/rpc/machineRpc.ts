@@ -639,6 +639,7 @@ export async function callExactMachineRpc(params: Readonly<{
       await connect();
       const content: SocketRpcContent = machineCodec.mode === 'plain' ? { mode: 'plain' } : {
         mode: 'e2ee',
+        responseContentVersion: 1,
         cipher: {
           encryptRaw: async (value) => machineCodec.encodeRpc(value),
           decryptRaw: async (ciphertext) => machineCodec.decodeRpc(ciphertext),

@@ -2518,6 +2518,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(explicitMachineStopRequest
                     ? { transportResponseEnvelopeVersion: 1 as const }
                     : {}),
+                ...((data as { responseContentVersion?: unknown }).responseContentVersion === 1
+                    ? { responseContentVersion: 1 as const } : {}),
                 callerSocketId: params.socket.id,
                 ...(liveApprovalOrigin ? { answeringClient: { requireSingle: true } } : answeringClient ? { answeringClient } : {}),
                 callerSocket: params.socket,

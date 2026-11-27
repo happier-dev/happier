@@ -7477,6 +7477,12 @@ new key or negotiation. It does not prevent request replay. Plain-mode accounts
 and reserved server-origin methods keep their existing contracts. See
 [encryption.md](encryption.md#encrypted-socket-rpc-routing-v03-development).
 
+The optional `responseContentVersion: 1` offer negotiates the content encoding
+for selected E2EE SCM responses inside that binding. Older Homes drop the
+offer and older responders keep the original encoding. An absent or unknown
+offer always gets the unframed response. Nothing in this offer grants authority
+or changes the existing 0.2 → 0.3 encrypted RPC epoch.
+
 The current development structured plugin Action ingress also requires
 content-free `structuredMessageRouting` for encrypted requests, automatically
 projected by `callSocketRpc`. Its required invocation kind makes mounted/client

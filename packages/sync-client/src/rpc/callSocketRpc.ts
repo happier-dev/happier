@@ -12,7 +12,7 @@ import { isReadOnlyMachineRpcMethod } from '@happier-dev/protocol/actions/action
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { createRpcCallError, RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { readOriginalActionEnvelopeMachineRpcKindV1 } from '@happier-dev/protocol/socketRpc';
+import { readOriginalActionEnvelopeMachineRpcKindV1, supportsSocketRpcResponseContentV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
   type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncSeedRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { SocketRpcContinuationDeliveryV1Schema, type SocketRpcContinuationReturnV1 } from '@happier-dev/protocol/socketRpc';
@@ -290,6 +290,9 @@ export async function callSocketRpc<R>(params: Readonly<{
     const payload: SocketRpcRequestPayload = {
       method: answeringClient ? `${params.target.id}:${ANSWERING_CLIENT_RPC_PREFIX_V1}${params.method}` : method,
       params: encoded,
+      ...(params.content.mode === 'e2ee' && params.content.responseContentVersion === 1
+        && params.target.kind === 'machine' && supportsSocketRpcResponseContentV1(params.method)
+        ? { responseContentVersion: 1 as const } : {}),
       ...(structuredMessageRouting ? { structuredMessageRouting } : {}),
       ...(answeringClient ? { answeringClient } : {}),
       ...(transferRouting ? { transferRouting } : {}),

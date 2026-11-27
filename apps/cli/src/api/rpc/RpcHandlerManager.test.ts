@@ -1280,7 +1280,81 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode => [
   expect(JSON.stringify({ opened, logs })).not.toContain(secret);
   expect(opened).toMatchObject({ errorCode: 'confidential_continuation_failed' });
 });
-function rpcContent(key: Uint8Array): SocketRpcContent {
+it('negotiates compressed Machine RPC results and keeps the encrypted envelope explicit', async () => {
+  const { StoredJsonContentEnvelopeSchema } = await import('@happier-dev/protocol');
+  const { openSessionDataKeyBundle, openSessionDataKeyBundleV0 } = await import('@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto');
+  const key = new Uint8Array(32).fill(19);
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionKey: key,
+    encryptionVariant: 'dataKey', logger: () => {} });
+  const readResults = [
+    [RPC_METHODS.SCM_STATUS_SNAPSHOT, { success: true, snapshot: { entries: Array.from({ length: 20000 }, (_, i) =>
+      ({ path: `packages/workspace-module-${i}/src/runtime/entry.ts`, status: 'modified', staged: false, additions: 18, deletions: 4 })) } }],
+    [RPC_METHODS.SCM_DIFF_COMMIT, { success: true, diff: '+export const runtimeRegistration = registerRuntimeEntry();\n'.repeat(24000) }],
+    [RPC_METHODS.SCM_LOG_LIST, { success: true, entries: Array.from({ length: 2500 }, (_, i) =>
+      ({ sha: i.toString(16).padStart(40, '0'), subject: 'refactor(runtime): preserve registration', author: 'Fixture' })) }],
+    [RPC_METHODS.SCM_FILE_READ, { success: true, contentBase64: Buffer.from('export const runtimeRegistration = registerRuntimeEntry();\n'.repeat(10000)).toString('base64') }],
+  ] as const;
+  const { createServer } = await import('node:http');
+  const { Server } = await import('socket.io');
+  const { io: openSocket } = await import('socket.io-client');
+  const { callSocketRpc } = await import('@happier-dev/sync-client');
+  const http = createServer();
+  const io = new Server(http, { transports: ['websocket'] });
+  let reply: unknown;
+  io.on('connection', socket => {
+    socket.on(SOCKET_RPC_EVENTS.CALL, (request, ack) => {
+      void rpc.handleRequest(request, result => {
+        reply = result;
+        ack({ ok: true, result });
+      }, 'authenticated_home_socket');
+    });
+  });
+  await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+  const address = http.address();
+  if (!address || typeof address === 'string') throw new Error('Missing loopback address');
+  const caller = openSocket(`http://127.0.0.1:${address.port}`, { transports: ['websocket'], autoConnect: false });
+  const measurements = [];
+  try {
+    await new Promise<void>(resolve => {
+      caller.once('connect', resolve);
+      caller.connect();
+    });
+    let ackBytes = 0;
+    caller.io.engine.on('packet', packet => {
+      // Engine.IO removes its one-byte message discriminator before delivery.
+      if (packet.type === 'message' && typeof packet.data === 'string') ackBytes = 1 + Buffer.byteLength(packet.data);
+    });
+    for (const [method, value] of readResults) {
+      rpc.registerHandler(method, () => value);
+      const content = rpcContent(key);
+      const call = (version?: 1) => callSocketRpc({
+        socket: caller,
+        target: { kind: 'machine', id: 'machine-a' },
+        method,
+        params: {},
+        content: { ...content, ...(version === 1 ? { responseContentVersion: 1 } : {}) },
+      });
+      await expect(call()).resolves.toEqual(value);
+      const before = ackBytes;
+      if (typeof reply !== 'string') throw new Error('Expected legacy ciphertext');
+      expect(await openSessionDataKeyBundleV0(decodeBase64(reply), key)).toMatchObject({ status: 'authenticated', value: { r: value } });
+      await expect(call(1)).resolves.toEqual(value);
+      const envelope = StoredJsonContentEnvelopeSchema.parse({ t: 'encrypted', c: reply });
+      expect(StoredJsonContentEnvelopeSchema.safeParse({ t: 'encrypted', v: reply }).success).toBe(false);
+      if (envelope.t !== 'encrypted') throw new Error('Expected encrypted fixture');
+      const bytes = decodeBase64(envelope.c);
+      measurements.push({ method, before, after: ackBytes, version: bytes[0] });
+      expect(await openSessionDataKeyBundle(bytes, key)).toMatchObject({ status: 'authenticated', value: { r: value } });
+    }
+  } finally {
+    caller.close();
+    await io.close();
+  }
+  console.info('P03_NET_WIRE_RPC_ACK_BYTES', JSON.stringify(measurements));
+  expect(measurements.map(({ version }) => version)).toEqual([1, 1, 1, 1]);
+});
+
+function rpcContent(key: Uint8Array): Extract<SocketRpcContent, { mode: 'e2ee' }> {
   return { mode: 'e2ee', cipher: {
     encryptRaw: async value => encodeBase64(encrypt(key, 'dataKey', value)),
     decryptRaw: async value => decrypt(key, 'dataKey', decodeBase64(value)),

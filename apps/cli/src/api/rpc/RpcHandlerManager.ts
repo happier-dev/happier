@@ -3,7 +3,7 @@ import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protoc
 import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
 import { createSocketRpcContinuation, type SocketRpcContinuationHandler } from '@happier-dev/sync-client';
-import { SocketRpcContinuationReturnV1Schema } from '@happier-dev/protocol/socketRpc';
+import { SocketRpcContinuationReturnV1Schema, supportsSocketRpcResponseContentV1 } from '@happier-dev/protocol/socketRpc';
 import { openWorkspaceSyncTargetOperationContinuation } from './workspaceSyncOperationContinuation';
 import { isExecutionRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isReviewScmPreparationEffectV1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -334,7 +334,7 @@ export class RpcHandlerManager {
         const key = new Uint8Array(context.encryptionKey);
         const variant = context.encryptionVariant;
         return { mode: 'e2ee', cipher: {
-            encryptRaw: async (value) => encodeBase64(encrypt(key, variant, value)),
+            encryptRaw: async (value, contentVersion) => encodeBase64(encrypt(key, variant, value, contentVersion)),
             decryptRaw: async (ciphertext) => decrypt(key, variant, decodeBase64(ciphertext)),
         } };
     }
@@ -555,7 +555,10 @@ export class RpcHandlerManager {
             const failure = SessionGoalControlFailureV1Schema.safeParse(
                 result && typeof result === 'object' ? Reflect.get(result, 'goalControlFailure') : undefined);
             if (failure.success) diagnostic.goalControlFailure = failure.data;
-            return this.encodeTransportResponse(request, result, acknowledgement, callId, rpcContent);
+            const contentVersion = source === 'authenticated_home_socket' && request.responseContentVersion === 1
+                && supportsSocketRpcResponseContentV1(privateMethod) && diagnostic.outcomeCode === 'ok'
+                ? 1 : undefined;
+            return this.encodeTransportResponse(request, result, acknowledgement, callId, rpcContent, contentVersion);
         };
         const deny = (predicate: string, result: unknown = { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN }) => {
             if (diagnostic.callerClass === 'unattributed') diagnostic.callerClass = 'unadmitted';
@@ -2006,11 +2009,12 @@ export class RpcHandlerManager {
         this.logger('Cleared all RPC handlers');
     }
 
-    private encodeResponse(request: RpcRequest, response: unknown, callId: string | null, rpcContent: SocketRpcContent): Promise<unknown> {
+    private encodeResponse(request: RpcRequest, response: unknown, callId: string | null, rpcContent: SocketRpcContent, contentVersion?: 1): Promise<unknown> {
         return socketRpcCodec.encodeResponse(
             this.isServerOriginRequest(request) || this.isContentFreeManagedActivityRequest(request) ? { mode: 'plain' } : rpcContent,
             response,
             callId,
+            contentVersion,
         );
     }
 
@@ -2020,8 +2024,9 @@ export class RpcHandlerManager {
         acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null,
         callId: string | null = null,
         rpcContent: SocketRpcContent,
+        contentVersion?: 1,
     ): Promise<unknown> {
-        const encodedResult = await this.encodeResponse(request, result, callId, rpcContent);
+        const encodedResult = await this.encodeResponse(request, result, callId, rpcContent, contentVersion);
         if (
             request.transportResponseEnvelopeVersion
             !== SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1

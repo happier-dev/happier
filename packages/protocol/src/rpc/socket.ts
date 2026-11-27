@@ -137,6 +137,18 @@ export const ANSWERING_CLIENT_RPC_PREFIX_V1 = 'answering-client.v1/';
 
 export const SOCKET_RPC_TRANSPORT_RESPONSE_ENVELOPE_VERSION_V1 = 1 as const;
 
+/** The first compressed response corridor contains large, source-backed reads. */
+const COMPRESSIBLE_SOCKET_RPC_RESPONSES_V1: ReadonlySet<string> = new Set([
+  RPC_METHODS.SCM_STATUS_SNAPSHOT,
+  RPC_METHODS.SCM_DIFF_COMMIT,
+  RPC_METHODS.SCM_LOG_LIST,
+  RPC_METHODS.SCM_FILE_READ,
+]);
+
+export function supportsSocketRpcResponseContentV1(method: string): boolean {
+  return COMPRESSIBLE_SOCKET_RPC_RESPONSES_V1.has(method);
+}
+
 /**
  * Opaque, short-lived RPC correlation. The relay stamps a fresh value before it
  * reaches an RPC target, so a caller-local collision cannot cancel another
@@ -416,6 +428,8 @@ export type SocketRpcRequestPayload = Readonly<{
   continuationReturn?: SocketRpcContinuationReturnV1;
   /** Payload-free diagnostics only; never grants cancellation or execution custody. */
   traceId?: string;
+  /** Caller offers this decoder for one response. The Home forwards only a recognized version. */
+  responseContentVersion?: 1;
   /** Cooperative cancel requests stop work but retain this call's own result ACK. */
   waitForResultOnCancel?: boolean;
   authorization?: SocketRpcAuthorizationContext;

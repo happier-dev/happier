@@ -232,6 +232,7 @@ async function executeRpcForwardCall(params: Readonly<{
     /** Home producer runs under the selected target guard; null leaves existing Machine routing unchanged. */
     createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
     transportResponseEnvelopeVersion?: 1;
+    responseContentVersion?: SocketRpcRequestPayload['responseContentVersion'];
     callerSocketId?: string;
     /** Admitted App-to-App Actions may explicitly address their own registered App. */
     allowCallerTarget?: boolean;
@@ -533,6 +534,7 @@ async function executeRpcForwardCall(params: Readonly<{
             ...(params.authorization ? { authorization: params.authorization } : {}),
             ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
             ...(params.receivingMachineAdmission ? { receivingMachineAdmission: params.receivingMachineAdmission } : {}),
+            ...(params.responseContentVersion === 1 ? { responseContentVersion: 1 as const } : {}),
             ...(params.transportResponseEnvelopeVersion === 1
                 ? { transportResponseEnvelopeVersion: 1 as const }
                 : {}),

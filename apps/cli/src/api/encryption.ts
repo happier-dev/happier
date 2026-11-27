@@ -147,8 +147,8 @@ function encryptDataKeyBytes(plaintext: Uint8Array, dataKey: Uint8Array, nonce: 
   return packSessionDataKeyBundle({ nonce, ciphertext: encrypted, authTag, version });
 }
 
-/** SessionMessage alone opts in to the shared content-byte frame. */
-export function encryptSessionMessage(
+/** Seal JSON using the shared authenticated content-byte frame. */
+function encryptFramedContent(
   key: Uint8Array,
   variant: 'legacy' | 'dataKey',
   value: unknown,
@@ -160,6 +160,9 @@ export function encryptSessionMessage(
     ? encryptLegacyBytes(plaintext, key, nonce ?? getRandomBytes(tweetnacl.secretbox.nonceLength))
     : encryptDataKeyBytes(plaintext, key, nonce ?? getRandomBytes(SESSION_DATA_KEY_NONCE_BYTES), 1);
 }
+
+/** SessionMessage writes opt in independently of transient RPC negotiation. */
+export const encryptSessionMessage = encryptFramedContent;
 
 export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
   return encryptWithDataKeyAndNonce(data, dataKey, getRandomBytes(SESSION_DATA_KEY_NONCE_BYTES));
@@ -216,7 +219,9 @@ export function encrypt(
   key: Uint8Array,
   variant: 'legacy' | 'dataKey',
   data: any,
+  contentVersion?: 1,
 ): Uint8Array {
+  if (contentVersion === 1) return encryptFramedContent(key, variant, data);
   if (variant === 'legacy') {
     return encryptLegacy(data, key);
   } else {

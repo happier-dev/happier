@@ -976,7 +976,7 @@ class ApiSocket {
                 params,
                 content: usePlaintextParams
                     ? { mode: 'plain' }
-                    : { mode: 'e2ee', cipher: machineEncryption! },
+                    : { mode: 'e2ee', responseContentVersion: 1, cipher: machineEncryption! },
                 ...rpcOptions,
                 signal: sharedSignal,
                 onIssued: () => {

@@ -642,6 +642,7 @@ async function machineRpcWithServerTransport<R, A>(
                                 ? { mode: 'plain' }
                                 : {
                                     mode: 'e2ee',
+                                    responseContentVersion: 1,
                                     cipher: {
                                         encryptRaw: async (payload) => await timeoutBudget.runWithinTimeout(
                                             'scoped',
