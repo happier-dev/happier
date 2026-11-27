@@ -289,10 +289,17 @@ describe('AE.P02.F8-shared-consent', () => {
     const pluginEffectPath = join(testDir, 'nested-plugin-fired.txt');
     await writeActivatedActionExecutionPluginFixture({ pluginRoot, pluginId, actionId: pluginLocalActionId,
       markerPath: pluginEffectPath });
-    await writeEnabledLocalExtensionPackageState({ happyHomeDir: join(testDir, actor.name, 'home'), pluginRoot, pluginId });
-    const machine = await fixture.enrollDaemon(actor, { env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-      HAPPIER_CLAUDE_PATH: agent.executablePath } });
+    const machine = await fixture.enrollDaemon(actor, {
+      env: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1', HAPPIER_CLAUDE_PATH: agent.executablePath },
+      beforeDaemonSpawn: happyHomeDir => writeEnabledLocalExtensionPackageState({ happyHomeDir, pluginRoot, pluginId }),
+    });
     const session = await fixture.assertKnownGoodSessionControl(actor, machine);
+    const pluginSpec = await actor.execute('action.spec.get', { id: pluginActionId }, {
+      defaultSessionId: session.sessionId,
+      externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
+        project: { machineId: machine.target.machineId, directory: machine.workspaceDir } },
+    });
+    expect(pluginSpec, JSON.stringify(pluginSpec)).toMatchObject({ ok: true, result: { actionSpec: { id: pluginActionId } } });
     const permission = await actor.executeAsPerson(SESSION_PERMISSION_MODE_SET_ACTION_ID_V1, {
       sessionId: session.sessionId, permissionMode: 'default', applyTiming: 'immediate',
     });

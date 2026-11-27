@@ -369,7 +369,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
         /** Keep a journey's checkout independent of its retained log directory's SCM ancestry. */
         workspaceDir?: string;
         cliLaunchSpec?: Parameters<typeof startTestDaemon>[0]['cliLaunchSpec'];
-        beforeDaemonSpawn?: Parameters<typeof startTestDaemon>[0]['__beforeSpawn'];
+        beforeDaemonSpawn?: (homeDir: string) => Promise<void>;
         preserveRuntimeOnRestart?: boolean;
         pairedHome?: Readonly<{ homeDir: string; serverId: string; machineId: string }>;
       }> = {}) {
@@ -407,8 +407,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
           ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}),
           ...(options.preserveRuntimeOnRestart ? { cleanupDescendantsOnExit: false } : {}),
         };
+        const beforeDaemonSpawn = options.beforeDaemonSpawn;
         const launch = () => startTestDaemon({ ...daemonOptions,
-          ...(options.beforeDaemonSpawn ? { __beforeSpawn: options.beforeDaemonSpawn } : {}) });
+          ...(beforeDaemonSpawn ? { __beforeSpawn: () => beforeDaemonSpawn(homeDir) } : {}) });
         let daemon = await launch();
         const daemonIndex = daemons.push(daemon) - 1;
         return { get daemon() { return daemon; }, homeDir, workspaceDir, cliServerId: enrollment.serverId, target: { serverId, machineId: enrollment.machineId },
