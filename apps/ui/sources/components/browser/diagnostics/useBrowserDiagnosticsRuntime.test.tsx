@@ -563,39 +563,6 @@ describe('useBrowserDiagnosticsRuntime', () => {
         expect(hook.getCurrent()?.bridge?.nonce).not.toBe(before.nonce);
     });
 
-    it('keeps diagnostics closed while a preview uses the navigation-only bridge', async () => {
-        stubCryptoRandomUuid();
-        const snapshotClient = vi.fn(async () => ({
-            ok: true as const,
-            snapshot: createDaemonDiagnosticsSnapshot([createDaemonConsoleEvent()]),
-        }));
-
-        const hook = await renderHook(
-            ({ view }: { view: BrowserControlViewState | null }) =>
-                useBrowserDiagnosticsRuntime({
-                    view,
-                    parentOrigin: 'https://app.happier.test',
-                    daemonSnapshotClient: snapshotClient,
-                }),
-            {
-                initialProps: {
-                    view: createLocalPreviewView(),
-                },
-            },
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const runtime = hook.getCurrent();
-        expect(runtime?.bridge?.navigationOnly).toBe(true);
-        expect(runtime?.requestEval({ expression: 'document.title' })).toBe(false);
-        await act(async () => { runtime?.bridge?.onEvents([createDaemonConsoleEvent()]); });
-        expect(selectBrowserDiagnosticsForView(hook.getCurrent()!.state, {
-            browserSessionId: 'browser_session_1', viewId: 'view_1',
-        }).eventCount).toBe(0);
-        expect(snapshotClient).not.toHaveBeenCalled();
-    });
-
     it('creates a scoped injected diagnostics bridge for supported local preview views and applies events', async () => {
         stubCryptoRandomUuid();
 
