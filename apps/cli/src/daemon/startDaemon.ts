@@ -415,7 +415,11 @@ import { shouldRefreshSessionRunnerResumeIdentity } from './sessionRunnerRuntime
 import { resolveSessionRunnerRuntimeState } from './sessionRunnerRuntime/resolveRuntimeState';
 import { resolveSessionRunnerActivityDisabledReason as resolveSessionRunnerActivityDisabledReasonFromReaders } from './sessionRunnerRuntime/resolveActivityDisabledReason';
 import { setOpenCodeConnectedServiceInFlightTurnProvider } from './connectedServices/sessionAuthSwitch/openCodeConnectedServiceInFlightTurnRegistry';
-import { requestConnectedServiceSwitchBeforeTurnWithDeferral } from './connectedServices/sessionAuthSwitch/connectedServiceSwitchBeforeTurnDeferral';
+import {
+  applyConnectedServiceGenerationAtTurnEnd,
+  CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END,
+  requestConnectedServiceSwitchBeforeTurnWithDeferral,
+} from './connectedServices/sessionAuthSwitch/connectedServiceSwitchBeforeTurnDeferral';
 import { logConnectedServiceDaemonRestartDiagnostic } from './connectedServices/sessionAuthSwitch/logConnectedServiceDaemonRestartDiagnostic';
 import { logConnectedServiceAuthSwitchResult } from './connectedServices/sessionAuthSwitch/logConnectedServiceAuthSwitchResult';
 import { resolveSharedStateRequiredSwitchContinuity } from './connectedServices/sessionAuthSwitch/resolveSharedStateRequiredSwitchContinuity';
@@ -5181,6 +5185,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           transcriptEventOwner: ConnectedServiceRestartRequestedTranscriptEventOwner;
           onSignalFailureLogMessage: string;
           awaitPreviousRunnerRetirement?: boolean;
+          /** Signal only at an observed boundary: no deferral, and the activity gate still refuses a live turn. */
+          skipTurnDeferral?: boolean;
         }>): Promise<Readonly<{ signaled: boolean }>> => {
           // K5:gated_restart connected-service restarts route through the generic planned runner
           // restart primitive, preserving deferral, stale-owner checks, PID reservation, and respawn.
@@ -5191,13 +5197,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             sessionId: input.sessionId,
             tracked: input.tracked,
             reason: 'connected_service_switch',
-            deferral: {
-              kind: 'connected_service_switch',
-              source: input.source,
-              policy: input.policy,
-              target: input.target,
-              turnDeferralQueue: connectedServiceTurnDeferralQueue,
-            },
+            deferral: input.skipTurnDeferral === true
+              ? { kind: 'none' }
+              : {
+                  kind: 'connected_service_switch',
+                  source: input.source,
+                  policy: input.policy,
+                  target: input.target,
+                  turnDeferralQueue: connectedServiceTurnDeferralQueue,
+                },
             restartRequestedPids: connectedServicesRestartRequestedPids,
             pidToTrackedSession,
             canSignal: () => resolveSessionRunnerActivityDisabledReason(input.sessionId) ?? true,
@@ -5326,7 +5334,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           commitAccountSwitchEvents: boolean;
           dryRun?: boolean;
           executionAuthority: ConnectedServiceExecutionAuthorityV1;
-        }>) => async (generationInput: Readonly<{
+        }>) => {
+        const applyNow = async (generationInput: Readonly<{
           sessionId: string;
           serviceId: ConnectedServiceId;
           groupId: string | null;
@@ -5336,7 +5345,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           reason: string;
           switchReason: ConnectedServiceSessionAuthSwitchReason;
           fromProfileId?: string | null;
-        }>): Promise<Readonly<{
+        }>, holdUntilTurnEnd: boolean): Promise<Readonly<{
           ok: boolean;
           action?: string;
           errorCode?: string;
@@ -5483,6 +5492,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 tracked: restartTracked,
                 source: 'automatic',
                 policy: 'defer_until_turn_boundary',
+                // The turn already ended (applyConnectedServiceGenerationAtTurnEnd). If a new turn
+                // has started since, the activity gate refuses the signal and the apply is retried
+                // later; it never closes that turn after a forced deadline.
+                skipTurnDeferral: holdUntilTurnEnd,
                 target: normalizeSwitchTarget({
                   serviceId,
                   profileId: activeProfileId,
@@ -5617,6 +5630,52 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 errorCode: result.errorCode,
                 ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               };
+        };
+        return async (
+          generationInput: Parameters<typeof applyNow>[0],
+        ): ReturnType<typeof applyNow> => {
+          const liveTracked = applyParams.dryRun === true
+            ? null
+            : getCurrentChildren().find((child) => child.happySessionId === generationInput.sessionId) ?? null;
+          if (!liveTracked) return await applyNow(generationInput, false);
+          const lifecycleDescriptor = await resolveConnectedServiceCredentialLifecycleDescriptor(
+            resolveTrackedSessionCatalogAgentId(liveTracked),
+          );
+          const outcome = await applyConnectedServiceGenerationAtTurnEnd({
+            deferralQueue: connectedServiceTurnDeferralQueue,
+            sessionId: generationInput.sessionId,
+            target: normalizeSwitchTarget({
+              serviceId: generationInput.serviceId,
+              profileId: generationInput.activeProfileId,
+              groupId: generationInput.groupId,
+              generation: generationInput.generation,
+            }),
+            switchReason: generationInput.switchReason,
+            executionAuthority: applyParams.executionAuthority,
+            runtimeAuthApply: lifecycleDescriptor.runtimeAuthApply,
+            apply: async (holdUntilTurnEnd) => await applyNow(generationInput, holdUntilTurnEnd),
+            onDeferredApplyFailure: (error) => {
+              logger.warn('[DAEMON RUN] Connected-service switch held until turn end failed', {
+                sessionId: generationInput.sessionId,
+                serviceId: generationInput.serviceId,
+                groupId: generationInput.groupId,
+                generation: generationInput.generation,
+                error: serializeAxiosErrorForLog(error),
+              });
+            },
+          });
+          if ('status' in outcome) {
+            logger.debug('[DAEMON RUN] Connected-service switch held until the turn ends', {
+              sessionId: generationInput.sessionId,
+              serviceId: generationInput.serviceId,
+              groupId: generationInput.groupId,
+              generation: generationInput.generation,
+              switchReason: generationInput.switchReason,
+            });
+            return { ok: false, errorCode: CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END };
+          }
+          return outcome;
+        };
         };
 
             // Handle child process exit

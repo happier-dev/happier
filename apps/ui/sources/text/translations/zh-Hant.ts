@@ -2079,6 +2079,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 strategyManualSubtitle: '只使用目前成員，直到手動變更。',
                 softSwitchThresholdTitle: '軟切換閾值',
                 softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `當此池中有另一個成員擁有更新的可用配額時，在剩餘低於 ${percent}% 時切換。`,
+                softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}：無法在回合進行中切換帳號，因此會等目前回合結束後再切換。`,
                 softSwitchThresholdPromptTitle: '軟切換閾值',
                 softSwitchThresholdPromptBody: '輸入剩餘百分比，Happier 會在該值以下優先選擇此多帳號池中更安全的成員。使用 0 可關閉預防性切換。',
                 invalidSoftSwitchThresholdTitle: '閾值無效',

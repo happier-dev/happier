@@ -3271,6 +3271,7 @@ export const ca: TranslationStructure = {
                 strategyManualSubtitle: 'Usa només el membre actiu fins que es canviï manualment.',
                 softSwitchThresholdTitle: 'Llindar de canvi suau',
                 softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Canvia per sota del ${percent}% restant quan aquest Pool tingui un altre membre amb quota utilitzable més recent.`,
+                softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: no pot canviar de compte a mig torn, així que el canvi espera que acabi el torn actual.`,
                 softSwitchThresholdPromptTitle: 'Llindar de canvi suau',
                 softSwitchThresholdPromptBody: 'Introdueix el percentatge restant en què Happier hauria de preferir un membre més segur d’aquest Pool amb diversos comptes. Fes servir 0 per desactivar el canvi preventiu.',
                 invalidSoftSwitchThresholdTitle: 'Llindar no vàlid',

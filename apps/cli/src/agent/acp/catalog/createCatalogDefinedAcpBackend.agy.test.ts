@@ -93,4 +93,30 @@ describe('catalog-defined Antigravity ACP backend permission modes', () => {
     },
     20_000,
   );
+
+  it('switches agy between Plan and the permission-derived Build mode, ignoring persisted approval overrides', async () => {
+    await withTempDir('happier-agy-agent-mode-', async (dir) => {
+      const { scriptPath, setModesPath } = writeAgyAcpAgentScript(dir, true);
+      let permissionMode: PermissionMode = 'yolo';
+      const backend = createCatalogDefinedAcpBackend('agy', {
+        cwd: dir,
+        getPermissionMode: () => permissionMode,
+        launch: { command: process.execPath, args: [scriptPath] },
+      }) as ReturnType<typeof createCatalogDefinedAcpBackend> & {
+        setSessionMode: (sessionId: SessionId, modeId: string) => Promise<void>;
+        clearSessionModeOverride: (sessionId: SessionId) => Promise<void>;
+      };
+      try {
+        const { sessionId } = await backend.startSession();
+        await backend.setSessionMode(sessionId, 'plan');
+        await backend.clearSessionModeOverride(sessionId);
+        // A raw agy approval mode persisted as a mode override resolves through the permission selector.
+        permissionMode = 'read-only';
+        await backend.setSessionMode(sessionId, 'accept-edits');
+        expect(readSetModeIds(setModesPath)).toEqual(['auto', 'plan', 'auto', 'default']);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  }, 20_000);
 });

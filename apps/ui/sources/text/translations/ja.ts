@@ -3728,6 +3728,7 @@ localTailscale: {
         strategyManualSubtitle: "手動で変更されるまでアクティブなメンバーだけを使います。",
         softSwitchThresholdTitle: "ソフト切り替えしきい値",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `このプールにより新しい利用可能なクォータを持つ別のメンバーがある場合、残り ${percent}% 未満で切り替えます。`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: ターンの途中でアカウントを切り替えられないため、現在のターンが終わってから切り替えます。`,
         softSwitchThresholdPromptTitle: "ソフト切り替えしきい値",
         softSwitchThresholdPromptBody: "この複数アカウントプールで、より安全なメンバーを優先する残り割合を入力してください。0 で予防的な切り替えを無効にします。",
         invalidSoftSwitchThresholdTitle: "しきい値が無効です",

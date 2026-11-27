@@ -9,6 +9,7 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import type { ConnectedServicesProviderMaterializer } from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
 
 import * as catalog from './catalog';
+import { canApplyConnectedServiceSwitchMidTurn } from '@/daemon/connectedServices/accountGroups/switching/predictiveSoftSwitchPolicy';
 import {
   AGENTS,
   notifyTerminalAttachmentRetiredThroughCatalog,
@@ -155,6 +156,19 @@ describe('AGENTS', () => {
       scope: 'per_session_runtime',
       ownerId: 'opencode',
     });
+  });
+
+  it('keeps the shared account-switch timing declaration equal to each provider lifecycle fact', async () => {
+    for (const id of AGENT_IDS) {
+      const switchCapability = AGENTS_CORE[id].connectedServices?.sessionAuthSwitch;
+      if (!switchCapability) continue;
+      const descriptor = await catalog.resolveConnectedServiceCredentialLifecycleDescriptor(id);
+      const midTurn = 'accountSwitchTiming' in switchCapability && switchCapability.accountSwitchTiming === 'mid_turn';
+      expect({ id, midTurn }).toEqual({
+        id,
+        midTurn: canApplyConnectedServiceSwitchMidTurn(descriptor.runtimeAuthApply),
+      });
+    }
   });
 
   it('keeps cloud connect config in sync with catalog entries', async () => {

@@ -3185,6 +3185,7 @@ export const en = {
                 strategyManualSubtitle: 'Only use the active member until changed manually.',
                 softSwitchThresholdTitle: 'Soft switch threshold',
                 softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Switch below ${percent}% left when this pool has another member with fresher usable quota.`,
+                softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: can't change accounts mid-turn, so the switch waits for the current turn to end.`,
                 softSwitchThresholdPromptTitle: 'Soft switch threshold',
                 softSwitchThresholdPromptBody: 'Enter the remaining percentage where Happier should prefer a safer member in this multi-account pool. Use 0 to disable preventive switching.',
                 invalidSoftSwitchThresholdTitle: 'Invalid threshold',

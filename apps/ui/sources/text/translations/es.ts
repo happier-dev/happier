@@ -3420,6 +3420,7 @@ export const es: TranslationStructure = {
         strategyManualSubtitle: "Usa solo el miembro activo hasta que se cambie manualmente.",
         softSwitchThresholdTitle: "Umbral de cambio suave",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Cambiar por debajo del ${percent}% restante cuando este Pool tenga otro miembro con cuota utilizable más reciente.`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: no puede cambiar de cuenta a mitad de un turno, así que el cambio espera a que termine el turno actual.`,
         softSwitchThresholdPromptTitle: "Umbral de cambio suave",
         softSwitchThresholdPromptBody: "Introduce el porcentaje restante en el que Happier debería preferir un miembro más seguro de este Pool con varias cuentas. Usa 0 para desactivar el cambio preventivo.",
         invalidSoftSwitchThresholdTitle: "Umbral no válido",

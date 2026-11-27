@@ -1263,6 +1263,24 @@ describe('runStandardAcpProvider', () => {
     expect(harness.metrics.cleanupCalls).toBe(1);
   });
 
+  it('cancels provider work for an ending session on termination but keeps a turn abort resumable', async () => {
+    const harness = createHarness();
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      await harness.handlers.get('abort')?.(undefined);
+      expect(harness.runtime.cancel).toHaveBeenLastCalledWith();
+      await harness.metrics.killHandler?.();
+    };
+
+    try {
+      await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(harness.runtime.cancel).toHaveBeenLastCalledWith({ sessionEnding: true });
+  });
+
   // Archiving is a user-intent action, never a lifecycle consequence. A terminal-started
   // Session whose runtime terminates must stay unarchived so it remains listed and
   // resumable, exactly like a daemon-started one.

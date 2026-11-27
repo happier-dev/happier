@@ -3377,6 +3377,7 @@ export const ru: TranslationStructure = {
         strategyManualSubtitle: "Использовать только активного участника, пока он не будет изменен вручную.",
         softSwitchThresholdTitle: "Порог мягкого переключения",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Переключаться ниже ${percent}% остатка, если в этом пуле есть другой участник с более свежей доступной квотой.`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: не может сменить аккаунт посреди хода, поэтому переключение ждёт окончания текущего хода.`,
         softSwitchThresholdPromptTitle: "Порог мягкого переключения",
         softSwitchThresholdPromptBody: "Введите процент остатка, при котором Happier должен предпочесть более безопасного участника в этом пуле из нескольких аккаунтов. Используйте 0, чтобы отключить предупредительное переключение.",
         invalidSoftSwitchThresholdTitle: "Недопустимый порог",

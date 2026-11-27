@@ -285,6 +285,31 @@ Agents whose ACP server advertises `session/list` expose their own sessions as *
 - Runtime authority: `AcpBackend.listSessions` checks the negotiated `agentCapabilities.sessionCapabilities.list` from `initialize` and fails with `AcpSessionCapabilityNotNegotiatedError` before dispatching `session/list`; the daemon reports it as `provider_unavailable`.
 - UI/daemon compatibility: before sending the new `{ kind: 'acpSessionList' }` source, the canonical UI machine-direct-sessions operation probes `daemon.directSessions.acpSessionList.capability.get`. A missing method on the released `cli-v0.2.12` daemon degrades only this browse source to `provider_unavailable`; the UI never sends that daemon a source its released schema rejects. The capability is explicitly `resumeOnly: true` and grants no adjacent direct-session operation.
 - Candidates are opaque provider identifiers preserved byte-exactly after nonblank validation, plus title/cwd/updatedAt. They feed the new-session **resume** picker only. Transcript paging, activity, follow leases, linking and takeover are intentionally absent for this source (optional members on `DirectSessionProviderOps`), and `listDirectBrowseProviderIds()` excludes `resumeOnly` browse sources so the link/open browse list never offers them.
+
+### Direct-session local history
+
+The optional `DirectSessionProviderOps.retention` member handles the machine-scoped
+`daemon.directSessions.retention` RPC. Claude uses the daemon-validated config
+source and its existing settings lock and atomic editor. The direct write checks
+managed settings and the released account preference before publishing an edit.
+The app's Local History settings lists providers with a `localHistory` capability
+in the UI agent registry. The capability supplies the RPC source and account settings route.
+
+In 0.2, the Claude local-history operation owns Keep, Let go, and due-session
+reads. Keep changes the transcript's modification time and records the original
+activity and filesystem-confirmed timestamp in the Machine's server-scoped
+`daemon/agent-sessions-kept.json` file. Let go removes the record. A due read
+checks the kept entries' file metadata and removes records for missing or
+changed transcripts. The daemon publishes the earliest seven-day notice in
+Machine `daemonState.keptDueAtMs`. The session-list footer and the Local history
+settings read due sessions on demand. The footer gives the cloud notice priority.
+
+Codex transcript paging and browse metadata recognize both rollout formats and
+prefer the plain file when both variants exist. Direct paging uses a private
+seekable decode for compressed rollouts and retains the provider file identity in
+its cursor. The active follow lease reuses a decode while the source version
+matches and releases its scratch files on detach. Native history still owns
+paginated rollouts with a history base.
 - `session/close` is dispatched at `AcpBackend.dispose()` for the active session when negotiated, so agents that own session resources beyond the local process release them. When the live handshake also negotiates `session/delete`, the resume picker advertises a provider-owned candidate action and dispatches exactly one generic delete request after destructive confirmation. Agents that omit the capability remain valid and see no delete action; deleting a persisted Happier session never deletes the provider-owned candidate.
 
 ### Dynamic model lists

@@ -526,6 +526,14 @@ Codex and Claude pool sessions apply a switch in the middle of a turn: the
 request already in flight finishes on the previous account and the next request
 uses the new one, so a long turn moves on instead of failing at the limit.
 
+Other agents can't change accounts in the middle of a turn. Antigravity has to
+restart to use another account, and OpenCode and Pi pick up a new account
+between turns. For these agents, a switch at the threshold waits until the
+current turn ends, however long the turn runs, and never interrupts it. If the
+turn reaches the usage limit first, the pool switches then, as it does for any
+usage-limit failure. The pool's **Soft switch threshold** row lists the agents
+that switch this way.
+
 In development builds, Claude pool launches let Happier manage usage-limit
 recovery by default. In the pool's Behavior section, **Let Claude wait for usage
 limits** enables Claude's own waiting instead. This preference applies to new
