@@ -79,6 +79,24 @@ describe('registerMachineConnectedServiceQuotaRpcHandlers', () => {
     });
   });
 
+  it.each([
+    [501, 'connected_service_quota_recovery_credit_handler_unavailable'],
+    [503, 'daemon_draining'],
+    [503, 'daemon_shutting_down'],
+  ])('preserves the quota recovery HTTP %i refusal %s across the Machine RPC', async (status, errorCode) => {
+    await registerHandlers();
+    notifyDaemonConnectedServiceQuotaRecoveryCreditConsume.mockResolvedValueOnce({
+      error: `Request failed: /connected-service-quota-recovery-credit/consume, HTTP ${status} (${errorCode})`,
+      errorCode,
+      response: { ok: false, errorCode },
+    });
+
+    const handler = handlers.get(RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME);
+    await expect(handler?.({
+      serviceId: 'openai-codex', profileId: 'work', idempotencyKey: 'consume:session-1:credit-1',
+    })).resolves.toMatchObject({ ok: false, errorCode });
+  });
+
   it('rejects an empty profile even with valid idempotency before daemon dispatch', async () => {
     await registerHandlers();
     const handler = handlers.get(RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME);

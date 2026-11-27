@@ -27,7 +27,9 @@ export function registerMachineConnectedServiceQuotaRpcHandlers(params: Readonly
       try {
         const daemonResponse = await notifyDaemonConnectedServiceQuotaRecoveryCreditConsume(request.data);
         if (daemonResponse && typeof daemonResponse === 'object' && 'error' in daemonResponse) {
-          if ('errorCode' in daemonResponse && daemonResponse.errorCode === 'outcome_unknown') {
+          const errorCode = 'errorCode' in daemonResponse && typeof daemonResponse.errorCode === 'string'
+            ? daemonResponse.errorCode : undefined;
+          if (errorCode === 'outcome_unknown') {
             const { idempotencyKey, providerCreditId } = request.data;
             return {
               ok: false,
@@ -40,7 +42,7 @@ export function registerMachineConnectedServiceQuotaRpcHandlers(params: Readonly
               },
             };
           }
-          return failure('daemon_control_failed', String(daemonResponse.error));
+          return failure(errorCode || 'daemon_control_failed', String(daemonResponse.error));
         }
         const parsed = ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.safeParse(unwrapDaemonResult(daemonResponse));
         if (!parsed.success) return failure('invalid_daemon_response');
