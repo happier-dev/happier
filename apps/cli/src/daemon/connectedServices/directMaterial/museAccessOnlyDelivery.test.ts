@@ -1,6 +1,7 @@
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
 import {
+  computeTeamCredentialSourceMemberKeyV1,
   TeamCredentialSourceBindingV1Schema,
   type TeamCredentialDirectMaterialUpsertRequestV1,
 } from '@happier-dev/protocol/teams';
@@ -9,7 +10,7 @@ import type { QualifiedConnectedAccountMaterialSnapshot } from '@/daemon/connect
 import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 
 import { createTeamCredentialDirectMaterialClient } from './teamCredentialDirectMaterialClient';
-import { prepareTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
+import { reconcileTeamCredentialDirectMaterial } from './reconcileTeamCredentialDirectMaterial';
 
 const account = {
   service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
@@ -77,30 +78,45 @@ describe('Muse access-only Team delivery', () => {
         return snapshot;
       }
 
-      async function publish(snapshot: ReturnType<typeof captureSource>) {
-        if (!await snapshot.currentness.isCurrent()) return { ok: false, reason: 'source_changed' };
-        const expected = {
-          sourceMember: snapshot.currentness.sourceMember,
-          publishedSourceVersion: published?.sourceVersion ?? null,
-          expectedResourceRevision: 7,
-          expectedStoredSourceVersion: published?.sourceVersion ?? null,
-          recipientMode,
-          recipientContentPublicKeyFingerprint: recipientMode === 'e2ee' ? 'synthetic-recipient-key' : null,
-          ...(recipientMode === 'e2ee' ? { recipientContentPublicKey: publicKey } : {}),
-        };
-        const prepared = prepareTeamCredentialDirectMaterial({
-          sourceSnapshot: snapshot,
-          expected,
-          homeServerIdentityId: 'home-1',
+      function publish(snapshot: ReturnType<typeof captureSource>) {
+        const sourceMember = snapshot.currentness.sourceMember;
+        return reconcileTeamCredentialDirectMaterial({
           teamId: 'team-1',
           resourceId: 'muse-resource',
-          recipientAccountId: 'member-account',
-          randomBytes: tweetnacl.randomBytes,
+          sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(sourceMember),
+          fetchPreparation: async () => ({
+            homeServerIdentityId: 'home-1',
+            teamId: 'team-1',
+            resourceId: 'muse-resource',
+            resourceRevision: 7,
+            source,
+            sourceMember,
+            sourceCredentialIncarnation: source.credentialIncarnation,
+            publishedSourceVersion: published?.sourceVersion ?? null,
+            recipients: [{
+              recipientAccountId: 'member-account',
+              recipientMode,
+              recipientContentPublicKeyFingerprint: recipientMode === 'e2ee' ? 'synthetic-recipient-key' : null,
+              recipientContentPublicKey: recipientMode === 'e2ee' ? Buffer.from(publicKey).toString('base64') : null,
+              expectedStoredSourceVersion: published?.sourceVersion ?? null,
+              storedTupleCurrent: published !== undefined,
+            }],
+            nextCursor: null,
+          }),
+          resolveSourceSnapshot: async () => snapshot,
+          upsert: async ({ items }) => ({
+            results: items.map((item) => {
+              uploads.push(item);
+              published = item;
+              return { status: 'stored', recipientAccountId: item.recipientAccountId,
+                sourceMemberKey: item.sourceMemberKey, sourceVersion: item.sourceVersion };
+            }),
+          }),
+          withdrawPublication: async request => {
+            if (request.expectedPublishedSourceVersion === published?.sourceVersion) published = undefined;
+            return { ok: true };
+          },
         });
-        if (!prepared.ok) return prepared;
-        uploads.push(prepared.item);
-        published = prepared.item;
-        return { ok: true, sourceVersion: prepared.item.sourceVersion };
       }
 
       const client = createTeamCredentialDirectMaterialClient({
@@ -151,19 +167,19 @@ describe('Muse access-only Team delivery', () => {
       }
 
       const first = captureSource('synthetic-member-access-1', currentCredentialRevision);
-      await expect(publish(first)).resolves.toEqual({ ok: true, sourceVersion: first.currentness.sourceVersion });
+      await expect(publish(first)).resolves.toEqual({ ok: true, prepared: 1 });
       await expectOpenedAccessOnly('synthetic-member-access-1');
 
       currentCredentialRevision = 'csr_1123456789ABCDEFGHJKMNPQRS';
       const rotated = captureSource('synthetic-member-access-2', currentCredentialRevision);
       expect(rotated.currentness.sourceVersion).not.toBe(first.currentness.sourceVersion);
-      await expect(publish(rotated)).resolves.toEqual({ ok: true, sourceVersion: rotated.currentness.sourceVersion });
+      await expect(publish(rotated)).resolves.toEqual({ ok: true, prepared: 1 });
       await expectOpenedAccessOnly('synthetic-member-access-2');
 
       const uploadsBeforeStale = uploads.length;
-      await expect(publish(first)).resolves.toEqual({ ok: false, reason: 'source_changed' });
+      await expect(publish(first)).resolves.toEqual({ ok: false, reason: 'source_changed', prepared: 0 });
       persistedSourceCurrent = false;
-      await expect(publish(rotated)).resolves.toEqual({ ok: false, reason: 'source_changed' });
+      await expect(publish(rotated)).resolves.toEqual({ ok: false, reason: 'source_changed', prepared: 0 });
       expect(uploads).toHaveLength(uploadsBeforeStale);
 
       revoked = true;
