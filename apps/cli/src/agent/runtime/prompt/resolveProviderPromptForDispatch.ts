@@ -102,6 +102,7 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     refreshMetadataBeforeRead: boolean;
     meta?: unknown;
     catalogs?: StructuredInputCatalogReaders;
+    providerContext?: string;
 }>): Promise<ResolvedProviderPromptForDispatch> {
     // Built from the INBOUND metadata, before resolution strips `mentions[]`. It is a text
     // projection, so it reaches every backend family and both directions (send and steer)
@@ -118,6 +119,7 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
         senderContext && !preserveCommandSyntax ? senderContext : params.userText,
         sessionReferenceBlock,
         preserveCommandSyntax ? senderContext : null,
+        params.providerContext,
     ].filter((block): block is string => Boolean(block)).join('\n\n');
     const framingChars = messagePrompt.length - params.userText.length;
 

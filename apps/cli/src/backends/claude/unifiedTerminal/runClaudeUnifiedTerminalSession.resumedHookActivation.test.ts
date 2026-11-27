@@ -511,6 +511,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
 
     const { resolveClaudeQueuedPromptForDispatch } = await import('../runtime/resolveClaudeQueuedPromptForDispatch');
     const { message: prompt } = await resolveClaudeQueuedPromptForDispatch({
+      sessionDirectory: workspaceDir,
       sessionClient: { getMetadataSnapshot: () => ({}), updateMetadata: () => {} },
       batch: {
         message: kind === 'text' ? 'Prompt accepted after a resumed terminal write times out before Enter is verified.' : '/compact',
