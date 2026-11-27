@@ -263,7 +263,7 @@ describe('review walkthrough transport', () => {
             expect(await result).toMatchObject({ ok: false,
                 errorCode: termination === 'cancel'
                     ? detached ? 'MACHINE_RPC_ABORTED' : 'SOCKET_RPC_ABORTED'
-                    : 'RPC_OUTCOME_UNKNOWN' });
+                    : detached ? 'RPC_OUTCOME_UNKNOWN' : 'outcome_unknown' });
             expect(fixture.requests.filter(request => request.method === 'execution.run.action')).toHaveLength(1);
             if (termination === 'cancel') expect(fixture.emissions.some(item => item.event === 'rpc-cancel')).toBe(true);
         } finally {

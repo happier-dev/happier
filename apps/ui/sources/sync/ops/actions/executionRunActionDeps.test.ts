@@ -32,6 +32,8 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createUiExecutionRunActionDeps } from './executionRunActionDeps';
+import { presentActionExecutionFailure } from './resolveActionExecutionFailureMessage';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const V2_EXECUTION_RUN_CAPABILITY = {
     supported: true,
@@ -47,6 +49,25 @@ const V2_EXECUTION_RUN_CAPABILITY = {
 describe('UI execution.run Action dependencies', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    it('preserves a detached reviewer transport refusal through the Action failure presenter', async () => {
+        machineRpcWithServerScopeMock.mockRejectedValueOnce(Object.assign(new Error('Private RPC diagnostic'), {
+            ok: false, errorCode: 'review_follow_up_ended', error: 'This reviewer has ended; start a new round.',
+            requestId: 'detached-review-refusal', details: { reason: 'reviewer_ended' },
+            failureCause: { phase: 'review.follow_up', errorClass: 'ReviewRefusal', errorCode: 'review_follow_up_ended', httpStatus: 409 },
+        }));
+        const result = await createUiExecutionRunActionDeps().executionRunGet(null, { runId: 'run-1' }, {
+            targetMachineId: 'machine-1', serverId: 'server-1',
+        });
+        const failure = ActionExecuteFailureSchema.parse(result);
+        expect(failure).toMatchObject({ errorCode: 'review_follow_up_ended', requestId: 'detached-review-refusal',
+            details: { reason: 'reviewer_ended' }, failureCause: { phase: 'review.follow_up' } });
+        const presented = presentActionExecutionFailure(failure);
+        expect(presented.reason).toBe('This reviewer has ended; start a new round.');
+        expect(presented.technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'requestId', value: 'detached-review-refusal' }),
+        ]));
     });
 
     it('deletes detached history on the exact Account and Machine using the session delete Action', async () => {

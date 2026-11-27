@@ -1,9 +1,9 @@
 import { isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ExecutionRunGetRequestSchema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import { machineCapabilitiesDescribe } from '@/sync/ops/capabilities';
 import { readExecutionRunProtocolV2Support } from '@happier-dev/protocol/execution/runs/protocolSupport';
@@ -98,10 +98,10 @@ async function callDetachedExecutionRunRpc(
             ...(opts?.onTransportIssued ? { onIssued: opts.onTransportIssued } : {}),
         });
     } catch (error) {
-        return executionRunFailure(
-            readRpcErrorCode(error) ?? 'execution_run_target_unavailable',
-            error instanceof Error ? error.message : 'execution_run_target_unavailable',
-        );
+        return {
+            ok: false,
+            ...normalizeActionExecutorThrownError(error, 'execution.run.rpc', 'execution_run_target_unavailable'),
+        };
     }
 }
 

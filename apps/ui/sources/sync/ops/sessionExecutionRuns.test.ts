@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -62,14 +62,10 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
+vi.resetModules();
+const sessionExecutionRuns = await import('./sessionExecutionRuns');
+
 describe('sessionExecutionRuns', () => {
-    let sessionExecutionRuns: typeof import('./sessionExecutionRuns');
-
-    beforeAll(async () => {
-        vi.resetModules();
-        sessionExecutionRuns = await import('./sessionExecutionRuns');
-    }, 120_000);
-
     afterAll(() => {
         vi.resetModules();
     });
@@ -115,6 +111,29 @@ describe('sessionExecutionRuns', () => {
         }, { serverId: 'server-a', scope: { serverId: 'server-a', accountId: 'captured-account' } });
         expect(response).toEqual(refusal);
         expect(notifyExecutionRunActivityMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves the typed failure thrown by the attached Action transport', async () => {
+        const failure = {
+            ok: false,
+            errorCode: 'review_follow_up_ended',
+            error: 'Start a new review before requesting this explanation.',
+            requestId: 'attached-review-refusal',
+            details: { reason: 'run_ended' },
+            failureCause: {
+                phase: 'review.walkthrough',
+                errorClass: 'HttpStatusError',
+                errorCode: 'review_follow_up_ended',
+                httpStatus: 409,
+            },
+        };
+        sessionAccountRpcMock.mockRejectedValueOnce(Object.assign(new Error(failure.error), failure));
+
+        const result = await sessionExecutionRuns.sessionExecutionRunAction('session-1', {
+            runId: 'run_1', actionId: 'review.follow_up', input: { messageMarkdown: 'Explain this finding' },
+        }, { scope: { serverId: 'server-a', accountId: 'captured-account' } });
+
+        expect(result).toMatchObject(failure);
     });
 
     it.each(['start', 'ensure', 'cancel_turn'] as const)('keeps %s on its captured Account without ambient fallback', async (kind) => {
@@ -475,13 +494,25 @@ describe('sessionExecutionRuns', () => {
         });
     });
 
-    it('returns ok:false error shapes from execution.run.get without treating them as unsupported', async () => {
-        sessionRpcMock.mockResolvedValue({ ok: false, error: 'Not found', errorCode: 'execution_run_not_found' });
+    it('retains a returned typed failure from execution.run.get', async () => {
+        const failure = {
+            ok: false,
+            error: 'Not found',
+            errorCode: 'execution_run_not_found',
+            requestId: 'attached-run-read-refusal',
+            details: { reason: 'run_removed' },
+            failureCause: {
+                phase: 'execution.run.get',
+                errorClass: 'HttpStatusError',
+                errorCode: 'execution_run_not_found',
+                httpStatus: 404,
+            },
+        };
+        sessionRpcMock.mockResolvedValue(failure);
 
         const response = await sessionExecutionRuns.sessionExecutionRunGet('session-1', { runId: 'run_1', includeStructured: true });
 
-        expect((response as any).ok).toBe(false);
-        expect((response as any).errorCode).toBe('execution_run_not_found');
+        expect(response).toMatchObject(failure);
     });
 
     it('rejects execution.run.action for inactive replay forks that cannot resume before session RPC', async () => {

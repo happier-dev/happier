@@ -111,7 +111,7 @@ function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | u
   return undefined;
 }
 
-export function normalizeActionExecutorThrownError(error: unknown, phase?: string, fallbackErrorCode: 'action_failed' | 'cancelled' = 'action_failed'): Readonly<{ errorCode: string; error: string; requestId?: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
+export function normalizeActionExecutorThrownError(error: unknown, phase?: string, fallbackErrorCode: ActionExecuteFailure['errorCode'] = 'action_failed'): Readonly<{ errorCode: string; error: string; requestId?: string; details?: unknown; failureCause: ActionFailureCauseV1; effectAttempted?: boolean }> {
   // An adapter may retain a child's public failure as its standard Error cause.
   // Raw exception causes never acquire the public Action contract implicitly.
   let carried = parseActionExecuteFailure(error);
@@ -133,7 +133,7 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
 
 function classifyActionExecutorThrownError(
   error: unknown,
-  fallbackErrorCode: 'action_failed' | 'cancelled',
+  fallbackErrorCode: ActionExecuteFailure['errorCode'],
   phase?: string,
 ): Pick<ActionExecuteFailure, 'errorCode' | 'error' | 'details' | 'effectAttempted' | 'failureCause'> {
   // The host classifier already decided this code is public. Fill an absent

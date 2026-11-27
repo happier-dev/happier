@@ -28,6 +28,8 @@ import {
 import { requiresProviderSafeExecutionRunStartRpc } from '@happier-dev/protocol/execution/runs/startRequest';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { sessionRpcWithServerAccountScope, sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -98,7 +100,7 @@ function executionRunSessionRpc<R, A>(params: Readonly<{
 function readErrorResponseShape(response: unknown): { ok: false; error: string; errorCode?: string; details?: unknown } | null {
     if (!response || typeof response !== 'object') return null;
     if (typeof (response as any).error !== 'string') return null;
-    return {
+    return parseActionExecuteFailure(response) ?? {
         ok: false,
         error: String((response as any).error),
         ...(typeof (response as any).errorCode === 'string' ? { errorCode: String((response as any).errorCode) } : {}),
@@ -547,8 +549,7 @@ export async function sessionExecutionRunAction(
     } catch (error) {
         return {
             ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error) ?? 'execution_run_target_unavailable',
+            ...normalizeActionExecutorThrownError(error, 'execution.run.rpc', 'execution_run_target_unavailable'),
         };
     }
 }

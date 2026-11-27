@@ -16,8 +16,8 @@ import { alertActionFailure } from './alertActionFailure';
 
 beforeEach(() => vi.clearAllMocks());
 
-it('presents an issued unknown outcome as an unconfirmed operation rather than a hard failure', () => {
-    alertActionFailure({ reason: 'socket has been disconnected', code: RPC_ERROR_CODES.OUTCOME_UNKNOWN,
+it.each([RPC_ERROR_CODES.OUTCOME_UNKNOWN, 'outcome_unknown'])('presents %s as an unconfirmed operation', (code) => {
+    alertActionFailure({ reason: 'socket has been disconnected', code,
         context: { phase: 'session.open', targetHome: 'home-1' } });
     expect(Modal.alert).toHaveBeenCalledWith(t('toolView.pending.unknownTitle'), t('toolView.pending.unknownDescription'), expect.any(Array));
     const buttons = vi.mocked(Modal.alert).mock.calls.at(0)?.[2];
@@ -26,7 +26,7 @@ it('presents an issued unknown outcome as an unconfirmed operation rather than a
     const details = String(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]);
     expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[0]).toBe(t('approvals.technicalDetails'));
     expect(details.split('\n')).toEqual([
-        `${t('common.error')}: ${RPC_ERROR_CODES.OUTCOME_UNKNOWN}`,
+        `${t('common.error')}: ${code}`,
         `${t('approvals.failureTechnicalLabels.phase')}: session.open`,
         `${t('common.home')}: home-1`,
     ]);

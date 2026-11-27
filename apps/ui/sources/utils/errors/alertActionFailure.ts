@@ -1,6 +1,6 @@
 import { Modal } from '@/modal';
 import { t, type TranslationKeyNoParams } from '@/text';
-import { type ActionFailureCauseV1, ActionRefusalDiagnosticV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionFailureCauseV1, ActionRefusalDiagnosticV1Schema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 export type ActionFailureContext = Readonly<Record<string, string | number | boolean | null>>;
@@ -89,7 +89,7 @@ export function alertActionFailure(failure: Readonly<{
         Modal.alert(t('common.error'), failure.reason);
         return;
     }
-    const uncertain = code === RPC_ERROR_CODES.OUTCOME_UNKNOWN;
+    const uncertain = isActionOutcomeUnknownErrorCodeV1(code);
     Modal.alert(
         failure.title ?? t(uncertain ? 'toolView.pending.unknownTitle' : 'common.error'),
         uncertain ? t('toolView.pending.unknownDescription') : failure.reason,
