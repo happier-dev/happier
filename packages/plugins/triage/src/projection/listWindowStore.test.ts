@@ -232,6 +232,7 @@ function createHarness(options: Readonly<{
     sameSourceForB?: boolean;
     /** Substitute only the provider scan boundary for a discriminating walk fixture. */
     scanA?: ScanFn;
+    scanB?: ScanFn;
     sortFields?: readonly import('@happier-dev/triage-protocol/v1').TriageListSortFieldV1[];
 }> = {}) {
     const admitSourceB = options.admitSourceB ?? true;
@@ -568,6 +569,7 @@ function createHarness(options: Readonly<{
 
     const scanB: ScanFn = async (input) => {
         scanCalls.count += 1;
+        if (options.scanB !== undefined) return await options.scanB(input);
         if (state.sourceBFailure !== null) {
             return { kind: 'failed', failure: state.sourceBFailure };
         }
@@ -3401,6 +3403,40 @@ it('retains the last aggregate ordered prefix as stale when a sorted refresh fai
   expect(store.getSnapshot().window?.rows.map(row => triageEntryRowKey(row.entryRef))).toEqual(before);
   expect(store.getSnapshot().freshness).toBe('stale');
  } finally { store.dispose(); }
+});
+
+it('opens a 400-entry corpus with one provider page per configured source', async () => {
+    const scan: ScanFn = async ({ instance, page }) => {
+        if (page.kind !== 'initial') throw new Error('Opening the window must not consume continuation pages');
+        const prefix = instance.instance.sourceInstanceId;
+        const observations = Array.from({ length: Math.min(page.limit, 100) }, (_, index) =>
+            presentObservation({ entryId: `${prefix}-${index}`, title: `Entry ${index}`,
+                sourceUpdatedAtMs: 10_000 - index }));
+        return observations.length === 100
+            ? { kind: 'complete', evidence: { kind: 'walkFinished' }, observations }
+            : { kind: 'page', evidence: { kind: 'partial', reason: 'more-pages' }, observations,
+                continuation: { v: 1, token: String(observations.length) } };
+    };
+    const harness = createHarness({ scanA: scan, scanB: scan, sortFields: ['updated'] });
+    for (const index of [3, 4]) {
+        const sourceInstanceId = `0000000${index}-1111-4111-8111-111111111111`;
+        harness.control.sourceInstances.seed(toCorpusStoredValue(
+            instanceRow(`extra-${index}`, SOURCE_A, sourceInstanceId, index, `account-${index}`),
+        ));
+    }
+    const store = createTriageListWindowStore({
+        lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, sort: { field: 'updated', direction: 'desc' } },
+        readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs,
+    });
+    try {
+        await store.refresh('view');
+        expect(harness.actionInputs.filter(input => input.limit > 0)).toHaveLength(1);
+        expect(harness.scanCalls.count).toBe(4);
+        expect(store.getSnapshot().window?.rows.length).toBeGreaterThan(0);
+        expect(store.getSnapshot().loadMore?.kind).toBe('available');
+    } finally {
+        store.dispose();
+    }
 });
 
 it('admits a sorted head beyond the window row count before choosing the first visible row', async () => {
