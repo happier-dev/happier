@@ -1,4 +1,4 @@
-import { useCallback, useContext, useRef, type ComponentType, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useContext, useRef, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { View } from 'react-native';
 
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
@@ -92,22 +92,26 @@ function useDefaultTechnicalDetailsText(): HappierTechnicalDetailsTextRender {
 
 /**
  * The opened lines. They mount when the fold opens, so their first layout is the opening: inside a bounded approval
- * prompt they ask its scrolling facts to bring them into view (`HappierApprovalFactsRevealContext`).
+ * prompt they ask its scrolling facts to bring the whole fold into view (`HappierApprovalFactsRevealContext`), its
+ * toggle with its lines, so a fold taller than the window rests with its title at the top, never cut under the fade
+ * while the lines read from their first (K05, cut 53: at 390 the lines' own top hid "Technical details" above them).
  */
 function TechnicalDetailsLines(props: Readonly<{
   lines: readonly HappierTechnicalDetailsLine[];
   renderText: HappierTechnicalDetailsTextRender;
   space: HappierTechnicalDetailsSpace;
   testID?: string;
+  fold: RefObject<View | null>;
 }>): ReactElement {
   const reveal = useContext(HappierApprovalFactsRevealContext);
   const ref = useRef<View>(null);
   const revealed = useRef(false);
+  const { fold } = props;
   const handleLayout = useCallback(() => {
     if (revealed.current || !reveal) return;
     revealed.current = true;
-    reveal(ref.current as HappierFactsRevealTarget | null);
-  }, [reveal]);
+    reveal((fold.current ?? ref.current) as HappierFactsRevealTarget | null);
+  }, [fold, reveal]);
   return (
     <View ref={ref} testID={props.testID} style={{ gap: props.space.s4 }} onLayout={reveal ? handleLayout : undefined}>
       {props.lines.map((line) => (
@@ -133,17 +137,21 @@ export function HappierTechnicalDetailsDisclosure(
   props: HappierTechnicalDetailsDisclosureProps,
 ): ReactElement | null {
   const defaultRenderText = useDefaultTechnicalDetailsText();
+  // Inside a bounded prompt the fold is measured whole for the reveal; elsewhere nothing wraps it.
+  const revealing = useContext(HappierApprovalFactsRevealContext) !== null;
+  const fold = useRef<View>(null);
   if (props.lines.length === 0) return null;
   const renderText = props.renderText ?? defaultRenderText;
   const space = props.space ?? HAPPIER_TECHNICAL_DETAILS_METRICS.space;
   const Disclosure = props.Disclosure;
   const Body = props.Body ?? PageRowBody;
-  return (
+  const disclosure = (
     <Disclosure title={props.title} testID={props.testID}>
       <Body>
-        <TechnicalDetailsLines lines={props.lines} renderText={renderText} space={space}
+        <TechnicalDetailsLines lines={props.lines} renderText={renderText} space={space} fold={fold}
           testID={props.testID ? `${props.testID}.body` : undefined} />
       </Body>
     </Disclosure>
   );
+  return revealing ? <View ref={fold} collapsable={false}>{disclosure}</View> : disclosure;
 }

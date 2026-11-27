@@ -243,16 +243,60 @@ describe('HappierApprovalPromptChrome', () => {
       await view.render(card(true));
       const body = view.container.querySelector('[data-testid="technical.body"]') as HTMLElement;
       expect(body).not.toBeNull();
-      // The body opens 180px down the facts and is 60px tall: its end must reach the 100px window's bottom, and rest
-      // clear of the bottom fade (K05, cut 52: the revealed lines sat under a fade a whole row deep).
-      Object.defineProperty(body, 'offsetTop', { value: 180 });
-      Object.defineProperty(body, 'offsetHeight', { value: 60 });
+      // The fold opens 160px down the facts, its lines under its title, 60px in all: its end must reach the 100px
+      // window's bottom, and rest clear of the bottom fade (K05, cut 52: the revealed lines sat under a fade a whole row deep).
+      const fold = view.container.querySelector('[data-testid="technical"]')!.parentElement as HTMLElement;
+      Object.defineProperty(fold, 'offsetTop', { value: 160 });
+      Object.defineProperty(fold, 'offsetHeight', { value: 60 });
       fire(body, 60);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
       expect(depth).toBeGreaterThan(0);
       const offset = scrolls.at(-1)?.top ?? 0;
-      expect(180 + 60).toBeLessThanOrEqual(offset + 100 - depth);
-      expect(180).toBeGreaterThanOrEqual(offset + depth);
+      expect(160 + 60).toBeLessThanOrEqual(offset + 100 - depth);
+      expect(160).toBeGreaterThanOrEqual(offset + depth);
+    } finally { view.unmount(); }
+  });
+
+  it('rests a fold taller than the window with its title at the top, clear of the fade, its lines reading from the first', async () => {
+    // K05, cut 53 (390 dark): the phone tray keeps a third of the room, the opened lines outgrow its window, and the
+    // reveal anchored the lines' own top, so "Technical details" sat cut under the top fade above them.
+    const Open = createContext(false);
+    let depth = 0;
+    const Fold = (props: Readonly<{ title: string; testID?: string; children: ReactNode }>) => (
+      <View testID={props.testID}><View testID="toggle" />{useContext(Open) ? props.children : null}</View>
+    );
+    const card = (open: boolean) => (
+      <Open.Provider value={open}>
+        <HappierApprovalPromptChrome {...base} testID="card" maxHeight={200} footer={<View testID="decision" />}
+          renderFactsEdgeFade={(_edges, _fill, value) => { depth = value; return null; }}>
+          <View testID="facts" />
+          <HappierTechnicalDetailsDisclosure testID="technical" title="Technical details" Disclosure={Fold}
+            lines={[1, 2, 3, 4].map((n) => ({ key: `line-${n}`, label: `Intent ${n}`, value: `default:builtin:widget_${n}` }))} />
+        </HappierApprovalPromptChrome>
+      </Open.Provider>
+    );
+    const view = mountThroughReactNativeWeb(card(false));
+    try {
+      const fire = (node: Element, height: number) => act(() => {
+        (node as unknown as { __reactLayoutHandler?: (event: unknown) => void }).__reactLayoutHandler?.({
+          nativeEvent: { layout: { x: 0, y: 0, width: 600, height } } });
+      });
+      const scroller = view.container.querySelector('[data-testid="card-facts"]') as HTMLElement & { scroll: unknown };
+      const scrolls: Array<Readonly<{ top?: number }>> = [];
+      scroller.scroll = (options: Readonly<{ top?: number }>) => { scrolls.push(options); };
+      fire(scroller, 100);
+      await view.render(card(true));
+      // The fold's title row starts 160px down the facts; its lines follow from 180px and run 300px.
+      const fold = view.container.querySelector('[data-testid="technical"]')!.parentElement as HTMLElement;
+      const body = view.container.querySelector('[data-testid="technical.body"]') as HTMLElement;
+      Object.defineProperty(fold, 'offsetTop', { value: 160 });
+      Object.defineProperty(fold, 'offsetHeight', { value: 320 });
+      Object.defineProperty(body, 'offsetTop', { value: 180 });
+      Object.defineProperty(body, 'offsetHeight', { value: 300 });
+      fire(body, 300);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
+      expect(depth).toBeGreaterThan(0);
+      expect(scrolls.at(-1)?.top).toBe(160 - depth);
     } finally { view.unmount(); }
   });
 
