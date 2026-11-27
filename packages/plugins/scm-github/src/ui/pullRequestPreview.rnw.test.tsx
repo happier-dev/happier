@@ -442,6 +442,20 @@ describe('the PR Overview Preview step', () => {
     expect(await agentRead()).toMatchObject({ kind: 'preview', previews: [{ kind: 'unavailable' }, { state: 'ready' }] });
   });
 
+  it.each([
+    [false, 'preview-child', 'preview-teardown'],
+    [true, 'preview-second', 'preview-second-deployment'],
+  ] as const)('opens the ready preview receipt (grouped: %s)', async (
+    multiplePreviews, environmentId, receiptId,
+  ) => {
+    const { detail, opened } = await mountOverview({
+      operation: 'deploy', domainState: 'active',
+      multiplePreviews, unavailableFirstPreview: multiplePreviews,
+    });
+    await detail.press(await vi.waitFor(() => detail.getByRole('button', { name: 'Open receipt' })));
+    expect(opened).toEqual([{ environmentId, receiptId, serverId: 'srv_preview' }]);
+  });
+
   it('opens a failed deploy\'s receipt in Happier', async () => {
     const { detail, opened } = await mountOverview({ operation: 'deploy', receiptState: 'failed' });
     await detail.press(await vi.waitFor(() => detail.getByRole('button', { name: 'Open receipt' })));

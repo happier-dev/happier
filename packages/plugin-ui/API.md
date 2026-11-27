@@ -1379,6 +1379,9 @@ Declaration: `dist/index.d.ts`
 - type `PublicUsageMetricId` from `dist/index.d.ts`
 - type `PublicUsageOriginalLabels` from `dist/index.d.ts`
 - type `PublicUsageRecordKind` from `dist/index.d.ts`
+- type `PullRequestPreviewChild` from `dist/index.d.ts`
+- value `PullRequestPreviewSection` from `dist/index.d.ts`
+- type `PullRequestPreviewSectionProps` from `dist/index.d.ts`
 - value `QRCode` from `dist/index.d.ts`
 - type `QRCodeProps` from `dist/index.d.ts`
 - value `REMOTE_VIEWER_KEYS` from `dist/index.d.ts`
@@ -3383,6 +3386,9 @@ Declaration: `dist/components/index.d.ts`
 - type `PublicUsageMetricId` from `dist/components/index.d.ts`
 - type `PublicUsageOriginalLabels` from `dist/components/index.d.ts`
 - type `PublicUsageRecordKind` from `dist/components/index.d.ts`
+- type `PullRequestPreviewChild` from `dist/components/index.d.ts`
+- value `PullRequestPreviewSection` from `dist/components/index.d.ts`
+- type `PullRequestPreviewSectionProps` from `dist/components/index.d.ts`
 - value `QRCode` from `dist/components/index.d.ts`
 - type `QRCodeProps` from `dist/components/index.d.ts`
 - value `REMOTE_VIEWER_KEYS` from `dist/components/index.d.ts`

@@ -33,6 +33,7 @@ export { countUsageChartCalendarDates, projectUsageRiverWeekRange } from '../dat
 export type { UsageCalendarArtModel, UsageNinetyPlanetsModel, UsageStreakThreadModel, UsageDaysOnSurfaceModel,
   UsageRingedStreaksModel, UsageAroundPeriodModel, UsageWeeksSkylineModel, UsageMoonsModel, UsageMachinesModel,
   UsageProjectsModel, UsageAtmosphereModel, UsageGalaxyModel } from '../presentation/usage/charts/publicUsageChartModels.js';
+export { PullRequestPreviewSection, type PullRequestPreviewSectionProps, type PullRequestPreviewChild } from './PullRequestPreviewSection.js';
 export { ApprovalFields, type ApprovalFieldRow, type ApprovalFieldsProps } from './ApprovalFields.js';
 export { ApprovalPendingNotice, type ApprovalPendingNoticeProps } from './ApprovalPendingNotice.js';
 export { ApprovalPrompt, type ApprovalPromptProps } from './ApprovalPrompt.js';

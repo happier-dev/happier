@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 vi.mock(
   'expo-router',
@@ -13,40 +14,14 @@ const lifetime = {
   isCurrent: () => true,
   onRetire: () => ({ dispose() {} }),
 };
-const reference = {
-  contentArtifactId: 'env-content',
-  contentHeaderVersion: 1,
-  contentBodyVersion: 1,
-};
-const environment = {
-  v: 1,
-  id: 'env-preview-142',
-  serverId: 'home',
-  projectSourceId: 'source-checkout',
-  revision: 1,
-  owner: { kind: 'account', accountId: 'account' },
-  protection: 'nonProduction',
-  purpose: 'standard',
-  deployerMode: 'managers',
-  controllerMachineId: 'vps-1',
-  runtimeTargetLinkId: 'runtime',
-  ...reference,
-  createdByAccountId: 'account',
-  createdAtMs: 1,
-  updatedAtMs: 1,
-  capabilities: {
-    role: 'manager',
-    read: true,
-    deploy: true,
-    manage: true,
-    manageBindings: true,
-    manageTargets: true,
-    delete: true,
-  },
-};
 const readResult = DeploymentEnvironmentGetResultV1Schema.parse({
   ok: true,
-  environment,
+  environment: createDeploymentEnvironmentHeaderV1({
+    id: 'env-preview-142',
+    serverId: lifetime.scope.serverId,
+    projectSourceId: 'source-checkout',
+    owner: { kind: 'account', accountId: lifetime.scope.accountId },
+  }),
   targetLinks: [],
 });
 
