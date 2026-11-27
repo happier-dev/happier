@@ -5,6 +5,7 @@ import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/exe
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { createSparedHeldAgentCustody, type HeldAgentOwner } from '@/daemon/processSupervision/sparedHeldAgents';
 import { reachHeldTargetAgent, restoreSessionTargetRelay, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { exposeManagedTargetProviderConsumer } from '@/machines/managed/providerConsumer';
@@ -9320,7 +9321,9 @@ export async function startDaemonSessionControlRuntime(
           requester: requester ?? session,
         });
         if (!selected.ok)
-          return { ok: false, errorCode: selected.errorCode, error: selected.errorCode };
+          return { ok: false, errorCode: selected.errorCode, error: selected.errorCode,
+            failureCause: projectActionFailureCauseV1(new RpcError(selected.errorCode, selected.errorCode),
+              'local_services.credential_selection') };
         const { credentials } = selected;
         await localServicesActionFeatureGate.refresh();
         const apiMachineForSessions = params.getApiMachineForSessions();

@@ -39,6 +39,23 @@ import {
 
 describe('readLocalServiceActionOutcome', () => {
     afterEach(standardCleanup);
+    it('shows a receiving credential refusal through launcher Start and Technical details', async () => {
+        const failureCause = { phase: 'local_services.credential_selection', errorClass: 'RpcError',
+            errorCode: 'custodian_only', httpStatus: null };
+        previewRpc.mockResolvedValueOnce({ ok: false, errorCode: 'custodian_only', error: 'custodian_only', failureCause });
+        const execute = createLocalServicesRuntimeActionExecutor({ startLauncherTarget: startLocalServiceLauncherTargetViaMachineRpc });
+        const result = await execute({ actionId: 'localServices.launcher.start',
+            input: { machineId: 'machine_1', targetId: 'target_1' }, context: { surface: 'ui' } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'custodian_only', failureCause });
+        const { value, Harness } = renderRunner({ presentation: 'inline' });
+        await renderScreen(<Harness />);
+        await act(async () => {
+            expect(await value.current?.run({ id: 'start', failureTitle: 'Could not start', action: async () => result })).toBe(false);
+        });
+        const details = value.current?.failure?.details.join('\n');
+        expect(details).toContain('local_services.credential_selection');
+        expect(details).toContain('custodian_only');
+    });
     it.each([
         { carrier: 'coded transport', presentation: 'inline' as const, reasonCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE,
             failureCause: { phase: 'rpc.discovery', errorClass: 'RpcError',
