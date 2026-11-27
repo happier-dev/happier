@@ -3,7 +3,9 @@ import type { AgentSessionModel } from '@happier-dev/plugin-sdk/agents/runtime';
 import { resolveModelDisplayName } from '@happier-dev/plugin-sdk/agents';
 import { formatReasoningEffortTierLabel } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+import { SPAWN_SESSION_ERROR_CODES, type SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/sessions';
 
+import { isCodexAuthenticationError } from '../../../auth/services/runtime/auth/failure.js';
 import { isCodexAppServerFastServiceTier } from '../serviceTier.js';
 import { resolveCodexModelCostTier } from '../../../models/modelTiers.js';
 import {
@@ -46,7 +48,7 @@ export type CodexAppServerSessionControlsSnapshot = Readonly<{
     currentModeId: string | null;
     availableModels: SessionModelOption[];
     modelsObserved: boolean;
-    modelFailureCause?: ReturnType<typeof projectActionFailureCauseV1>;
+    modelFailureCause?: ReturnType<typeof projectActionFailureCauseV1> | NonNullable<SessionRuntimeIssueV1['failureCause']>;
     currentModelId: string | null;
     configOptions: SessionConfigOption[];
 }>;
@@ -426,19 +428,22 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
 
     const modelEntries = readListEntries(modelsResponse);
     const modelsObserved = modelEntries !== null && (modelEntries.length === 0 || availableModels.length > 0);
+    const modelError = modelsSettled.status === 'rejected' ? modelsSettled.reason : undefined;
+    let modelFailureCause: CodexAppServerSessionControlsSnapshot['modelFailureCause'];
+    if (!modelsObserved) {
+        const actionCause = projectActionFailureCauseV1(modelError ?? new TypeError('Invalid Codex model/list response'),
+            'codex.models.list', { allowUnknownErrorCode: false });
+        modelFailureCause = isCodexAuthenticationError(modelError)
+            ? { phase: 'authentication', failureReason: 'authentication_required', code: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT, actionCause }
+            : actionCause;
+    }
 
     return {
         availableModes,
         currentModeId,
         availableModels,
         modelsObserved,
-        ...(!modelsObserved ? {
-            modelFailureCause: projectActionFailureCauseV1(
-                modelsSettled.status === 'rejected' ? modelsSettled.reason : new TypeError('Invalid Codex model/list response'),
-                'codex.models.list',
-                { allowUnknownErrorCode: false },
-            ),
-        } : {}),
+        ...(modelFailureCause ? { modelFailureCause } : {}),
         currentModelId,
         configOptions: [],
     };

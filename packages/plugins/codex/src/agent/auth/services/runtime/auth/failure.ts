@@ -302,6 +302,19 @@ function readRetainedModelEntitlementEvidence(value: unknown): Readonly<{
 
 const codexUsageLimitRecoveryAction = { kind: 'quota_recovery_required' } as const;
 
+export function isCodexAuthenticationError(error: unknown): boolean {
+  const classification = classifyCodexConnectedServiceAuthFailure({
+    providerErrorPath: true,
+    error,
+    serviceId: 'openai-codex',
+    profileId: null,
+    groupId: null,
+  });
+  return classification?.kind === 'auth_expired'
+    || classification?.kind === 'account_changed'
+    || classification?.kind === 'refresh_failed';
+}
+
 export function classifyCodexConnectedServiceAuthFailure(
   input: ClassifyCodexConnectedServiceAuthFailureInput,
 ): CodexConnectedServiceRuntimeFailureClassification | null {

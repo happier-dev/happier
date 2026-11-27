@@ -5,7 +5,7 @@ import type {
   AgentPreflightSessionControlsProbeContextV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { classifyCodexConnectedServiceAuthFailure } from '../../auth/services/runtime/auth/failure.js';
+import { isCodexAuthenticationError } from '../../auth/services/runtime/auth/failure.js';
 import {
   buildCodexAppServerBaseArgs,
   initializeCodexAppServerClient,
@@ -60,19 +60,6 @@ function isSupportedPassiveCodexAccount(value: unknown): boolean {
   return value.type === 'chatgpt'
     && (typeof value.email === 'string' || value.email === null)
     && typeof value.planType === 'string';
-}
-
-function isCodexAuthenticationError(error: unknown): boolean {
-  const classification = classifyCodexConnectedServiceAuthFailure({
-    providerErrorPath: true,
-    error,
-    serviceId: 'openai-codex',
-    profileId: null,
-    groupId: null,
-  });
-  return classification?.kind === 'auth_expired'
-    || classification?.kind === 'account_changed'
-    || classification?.kind === 'refresh_failed';
 }
 
 function readPassiveCodexAccountAuthentication(value: unknown): 'authenticated' | 'authentication_required' | 'unavailable' {

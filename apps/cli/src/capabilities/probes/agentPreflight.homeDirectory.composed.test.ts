@@ -10,6 +10,8 @@ import axios from 'axios';
 
 import { projectAgentPreflightSessionControlsCatalogEntry } from '@/plugins/projection/registry/agentCatalogEntryHooks';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { CODEX_PREFLIGHT_SESSION_CONTROLS } from '../../../../../packages/plugins/codex/src/agent/lifecycle/preflight/sessionControls';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 import { invokeCliPreflightMethod } from './agentPreflight';
 import { preflightCatalogEntryFixture } from './preflightSessionControlsProbeAdapter.testkit';
 import { createExternalConnectedAccountForegroundFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
@@ -28,6 +30,65 @@ import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/c
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
 describe('native Agent preflight home directory intent', () => {
+    it('returns a typed sign-in refusal from the Codex app-server model probe', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-codex-model-auth-')));
+        try {
+            const script = join(root, 'codex-models.mjs');
+            await writeFile(script, `
+                import { createInterface } from 'node:readline';
+                import { existsSync } from 'node:fs';
+                for await (const line of createInterface({ input: process.stdin })) {
+                    const { id, method } = JSON.parse(line);
+                    if (id === undefined) continue;
+                    const error = method === 'model/list' && existsSync(new URL('./signed-out', import.meta.url))
+                        ? { code: -32000, message: 'Private native detail', data: { code: 'authentication_required' } }
+                        : undefined;
+                    const result = method === 'model/list' ? { data: [{ id: 'fixture-model', displayName: 'Fixture model' }] } : { data: [] };
+                    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, ...(error ? { error } : { result }) }) + '\\n');
+                }
+            `);
+            const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+            const executable = writeExecutableShimSync({
+                dir: root,
+                fileName: process.platform === 'win32' ? 'codex-fixture.cmd' : 'codex-fixture',
+                contents: process.platform === 'win32'
+                    ? `@echo off\r\n"${process.execPath}" "${script}"\r\n`
+                    : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(script)}\n`,
+            });
+            vi.stubEnv('HAPPIER_CODEX_PATH', executable);
+            const projected = projectAgentPreflightSessionControlsCatalogEntry({
+                agentId: 'codex', systemTools: [{ id: 'codex-cli', title: 'Codex fixture', executableNames: [executable] }],
+                preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS,
+                retirementSignal: new AbortController().signal, isCurrent: () => true,
+            });
+            const adapter = await projected.getPreflightSessionControlsProbeAdapter?.();
+            if (!adapter) throw new Error('Missing Codex preflight adapter');
+            const probe = async (cwd: string) => await invokeCliPreflightMethod('codex', 'probeModels', { cwd, bypassCache: true }, {
+                agentCatalogEntry: preflightCatalogEntryFixture('codex', adapter),
+                accountContext: { credentials: null, accountSettings: null },
+            }, {});
+            expect(await probe(root)).toMatchObject({ ok: true, result: { source: 'dynamic',
+                availableModels: expect.arrayContaining([expect.objectContaining({ id: 'fixture-model' })]),
+            } });
+            await writeFile(join(root, 'signed-out'), '');
+            const coldWorkspace = join(root, 'cold-workspace');
+            await mkdir(coldWorkspace);
+            const response = await probe(coldWorkspace);
+            expect(response.ok).toBe(true);
+            if (!response.ok) throw new Error('Missing model observation');
+            expect(AgentModelsProbeObservationSchema.parse(response.result)).toMatchObject({
+                source: 'unavailable', availableModels: [], refreshError: true, failureCause: {
+                    phase: 'authentication', code: 'agent_signed_out', failureReason: 'authentication_required',
+                    actionCause: { phase: 'codex.models.list' },
+                },
+            });
+            expect(JSON.stringify(response)).not.toContain('Private native detail');
+        } finally {
+            vi.unstubAllEnvs();
+            await rm(root, { recursive: true, force: true });
+        }
+    }, 60_000);
+
     it('retains a declared native model diagnostic through the Session observation owner', async () => {
         const projected = projectAgentPreflightSessionControlsCatalogEntry({ agentId: 'opencode', systemTools: [],
             preflightSessionControls: { probeModels: async () => ({ availableModels: [], source: 'unavailable', refreshError: true,
