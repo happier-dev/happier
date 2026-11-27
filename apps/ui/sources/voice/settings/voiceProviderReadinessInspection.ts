@@ -175,27 +175,33 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
     const daemonFeatureAvailability = resolveFeatureAvailabilityArm(resolveRuntimeFeatureDecisionFromSnapshot({
         featureId: 'voice.daemonInference', settings, snapshot: featureSnapshot ?? { status: 'loading' },
     }));
-    let models: readonly DaemonVoiceInferenceModelStatus[] = [];
-    let modelError: Parameters<typeof resolveVoiceDaemonModelAvailabilityFromCatalogState>[0]['errorCode'] = null;
-    if ((requireStt || requireTts) && machine.machineId && daemonFeatureEnabled && input.isCurrent()) {
-        try {
-            const packIds = [requireStt ? stt.localNeural.assetId ?? getDefaultModelPackId('stt_sherpa') : null,
-                requireTts ? tts.localNeural.assetId ?? getDefaultModelPackId('tts_sherpa') : null]
-                .filter((id): id is string => Boolean(id));
-            models = await captureDaemonVoiceModelCatalogObservation(machine.machineId).read({
-                client: new DaemonVoiceInferenceClient(), packIds, requireNewObservation: true, isCurrent: input.isCurrent, signal: context.signal,
-            }) ?? [];
-        } catch (error) {
-            modelError = readDaemonVoiceModelCatalogErrorCode(error);
-        }
-    }
+    const [{ models, modelError }, credentials, nativeDeviceSpeechRecognition, inspectedConnectedPurposes] = await Promise.all([
+        (async () => {
+            let models: readonly DaemonVoiceInferenceModelStatus[] = [];
+            let modelError: Parameters<typeof resolveVoiceDaemonModelAvailabilityFromCatalogState>[0]['errorCode'] = null;
+            if ((requireStt || requireTts) && machine.machineId && daemonFeatureEnabled && input.isCurrent()) {
+                try {
+                    const packIds = [requireStt ? stt.localNeural.assetId ?? getDefaultModelPackId('stt_sherpa') : null,
+                        requireTts ? tts.localNeural.assetId ?? getDefaultModelPackId('tts_sherpa') : null]
+                        .filter((id): id is string => Boolean(id));
+                    models = await captureDaemonVoiceModelCatalogObservation(machine.machineId).read({
+                        client: new DaemonVoiceInferenceClient(), packIds, requireNewObservation: true, isCurrent: input.isCurrent, signal: context.signal,
+                    }) ?? [];
+                } catch (error) {
+                    modelError = readDaemonVoiceModelCatalogErrorCode(error);
+                }
+            }
+            return { models, modelError };
+        })(),
+        (requireStt || requireTts) && machine.machineId && input.isCurrent()
+            ? TokenStorage.getCredentialsForServerUrl(appliedServer.serverUrl, { serverId: appliedServer.serverId }) : null,
+        platform === 'web' || stt.provider !== 'device' ? 'unknown' as const
+            : import('expo-speech-recognition').then(({ ExpoSpeechRecognitionModule }) => readDeviceSpeechRecognitionAvailability(ExpoSpeechRecognitionModule), () => 'unknown' as const),
+        context.services?.readConnectedAccountPurposes?.(context.signal),
+    ]);
     const modelAvailability = resolveVoiceDaemonModelAvailabilityFromCatalogState({ loading: false, errorCode: modelError,
         statuses: models, selectedSttPackId: stt.localNeural.assetId, selectedTtsPackId: tts.localNeural.assetId, requireStt, requireTts });
     const selectedMachine = machine.machineId ? resolveMachineForActiveServerFromState(state, machine.machineId, { serverId }) : null;
-    const credentials = (requireStt || requireTts) && machine.machineId && input.isCurrent()
-        ? await TokenStorage.getCredentialsForServerUrl(appliedServer.serverUrl, { serverId: appliedServer.serverId }) : null;
-    const nativeDeviceSpeechRecognition = platform === 'web' || stt.provider !== 'device' ? 'unknown'
-        : await import('expo-speech-recognition').then(({ ExpoSpeechRecognitionModule }) => readDeviceSpeechRecognitionAvailability(ExpoSpeechRecognitionModule), () => 'unknown' as const);
     const localAvailability = resolveVoiceProviderLocalAvailability({ serverFeatures, daemonFeatureEnabled,
         daemonFeatureAvailability, platformOs: platform,
         browserSpeechCapability: readPassiveBrowserWebSpeechCapability({ platformOs: platform }), nativeDeviceSpeechRecognition,
@@ -209,9 +215,9 @@ export async function inspectVoiceSettingsSemanticReadiness(input: Readonly<{
         daemonPcmCapture: resolveDaemonSpeechPcmCaptureAvailability(), daemonDirectRouteAvailability: resolveVoiceDaemonDirectRouteAvailability({
             serverFeatures, credentials, endpoint: selectedMachine?.daemonState?.peerMediation?.loopback?.endpoint ?? null }) });
     const purposeSnapshot = getConnectedAccountCatalogValue(scope, 'purposes');
-    const connectedPurposes = context.services?.readConnectedAccountPurposes
-        ? await context.services.readConnectedAccountPurposes(context.signal)
-        : purposeSnapshot.status === 'ready' && !purposeSnapshot.stale ? purposeSnapshot.value : null;
+    const connectedPurposes = inspectedConnectedPurposes === undefined
+        ? purposeSnapshot.status === 'ready' && !purposeSnapshot.stale ? purposeSnapshot.value : null
+        : inspectedConnectedPurposes;
     const resolveSavedSecret = (ref: string) => resolveSavedSecretReference(scope, settings.secrets, ref);
     const rawTargets = purpose === 'dictation' || localSelected
         ? projectVoiceRawSpeechReadinessTargets(settings, registry, machine.machineId, purpose, connectedPurposes) : [];

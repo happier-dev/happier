@@ -15,16 +15,14 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { canVoiceAdapterStartNewConversation, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
-import { canDismissVoiceSessionFailedAttempt, dismissVoiceSessionEndedAttempt, getVoiceSessionEndedAttempt,
+import { dismissVoiceSessionEndedAttempt, getVoiceSessionEndedAttempt,
     getVoiceSessionPresentedAttemptId, getVoiceSessionPresentedBinding, getVoiceSessionRestartTarget } from '@/voice/session/voiceSessionStore';
 import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBindingBySessionId';
 import { resolveVoiceExecutionMachinePresentationFromState } from '@/voice/credentials/useExecutionMachinePresentation';
 import { resolveVoiceStartAdmission, resolveCurrentVoiceRuntimePlatform } from '@/components/voice/surface/resolveVoiceStartAdmission';
-import { resolveVoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
-import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 import { resolveVoiceSnapshotRecoveryAction, resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
 import { resolveVoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
-import { resolveVoiceAttemptControl } from '@/components/voice/attempt/resolveVoiceAttemptControl';
+import { projectVoiceAttemptControlSnapshot } from '@/components/voice/attempt/projectVoiceAttemptControlSnapshot';
 import { projectVoiceAttemptPresentation } from '@/components/voice/attempt/projectVoiceAttemptPresentation';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveVoiceServiceTitle } from '@/voice/registry/voiceProviderPresentation';
@@ -139,13 +137,9 @@ async function readConversation(target: VoiceStartIntent = { kind: 'default' }):
     const recoveryAction = resolveVoiceSnapshotRecoveryAction(snapshot);
     const recovery = resolveVoiceSurfaceRecovery(recoveryAction);
     const setupIncomplete = !admission.connectedServicesBindingReady || !admission.credentialReady;
-    const surfaceState = resolveVoiceSurfaceState(snapshot);
-    const control = resolveVoiceAttemptControl({ surfaceState, tone: resolveVoiceSurfaceStatusPresentation(surfaceState).tone,
-        status: snapshot.status, sessionId: snapshot.sessionId, canStop: snapshot.canStop,
-        canCommitInput: snapshot.canCommitInput, muted: snapshot.micMuted === true, capturing: false,
+    const control = projectVoiceAttemptControlSnapshot({ snapshot, capturing: false,
         startAdmitted: ownsVoiceRuntime && voiceEnabled && admission.canStart,
         hasRecovery: ownsVoiceRuntime && recoveryAction !== 'none' && (resolveVoiceAttemptRecoveryAvailable(recovery, context) || setupIncomplete),
-        canDismissFailedAttempt: canDismissVoiceSessionFailedAttempt(snapshot),
         setupOffered: ownsVoiceRuntime && (idleTarget.kind === 'global' || startAddress !== null) });
     const voice: VoiceConversationStatus = { attemptId, adapterId: snapshot.adapterId, sessionId: snapshot.sessionId,
         status: snapshot.status, mode: snapshot.mode, target: attemptId

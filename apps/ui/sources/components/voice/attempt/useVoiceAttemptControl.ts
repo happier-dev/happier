@@ -10,7 +10,7 @@ import {
     resolveVoiceStartAdmission,
 } from '@/components/voice/surface/resolveVoiceStartAdmission';
 import { resolveVoiceSnapshotRecoveryAction, resolveVoiceSurfaceRecovery, type VoiceRecoveryIcon } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
-import { resolveVoiceSurfaceState, type VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
+import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 import { resolveVoiceSurfaceStatusPresentation } from '@/components/voice/surface/resolveVoiceSurfaceStatusPresentation';
 import { useVoiceInputSourceActive } from '@/components/voice/light/VoiceEnergyAppProvider';
 import { voiceSurfaceHaptics } from '@/components/voice/surface/voiceSurfaceHaptics';
@@ -24,7 +24,6 @@ import { storage, useActiveServerAccountScope, useSession, useSetting } from '@/
 import { readLocalConversationVoiceSettings, readVoiceProviderSettingsConfig, voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 import {
-    canDismissVoiceSessionFailedAttempt,
     getVoiceSessionAttemptStartedAt,
     getVoiceSessionPresentedAttemptId,
     getVoiceSessionFirstSuccessAttemptId,
@@ -55,7 +54,7 @@ import { resolveVoicePresentedProviderId } from '@/voice/settings/resolveVoicePr
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
 import { resolveVoiceMicCaptureActive } from '@/voice/session/resolveVoiceMicCaptureActive';
 import { voiceSessionManager } from '@/voice/session/voiceSession';
-import { canVoiceAdapterStartNewConversation, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
+import { canVoiceAdapterStartNewConversation, getVoiceAdapterRegistry, resolveVoiceAdapterSurfaceCapabilities } from '@/voice/session/voiceAdapterRegistry';
 import type { VoiceHeldInput } from '@/voice/runtime/controller/VoiceConversationController';
 import { useFocusedSessionAddress } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getFocusedDesktopAppWindowSurface, subscribeFocusedDesktopAppWindowSurface } from '@/desktop/window/appWindowSurface';
@@ -77,10 +76,10 @@ import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAc
 import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
 
 import {
-    resolveVoiceAttemptControl,
     resolveVoiceSessionNeedsYou,
     type VoiceAttemptControl,
 } from './resolveVoiceAttemptControl';
+import { projectVoiceAttemptControlSnapshot } from './projectVoiceAttemptControlSnapshot';
 import {
     createVoiceAttemptRecoveryDispatch,
     resolveVoiceAttemptRecoveryAvailable,
@@ -234,9 +233,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
      * — including the recovery target and, through it, the surface model's `React.memo` seam.
      */
     const canonicalVoice = React.useMemo(() => voiceSettingsParse(voice), [voice]);
-    useVoiceProviderRegistryRevision(voiceProviderRegistry);
+    const providerRegistryRevision = useVoiceProviderRegistryRevision(voiceProviderRegistry);
     const providerId = resolveVoicePresentedProviderId(snap, canonicalVoice, voiceProviderRegistry) ?? 'off';
-    const capabilities = resolveVoiceAdapterSurfaceCapabilities(providerId, voice);
+    // Adapter replacement and provider activation invalidate the same projection as settings.
+    const adapter = getVoiceAdapterRegistry().get(providerId);
+    const capabilities = React.useMemo(
+        () => resolveVoiceAdapterSurfaceCapabilities(providerId, voice),
+        [adapter, providerId, providerRegistryRevision, voice],
+    );
     const voiceAgentFeatureEnabled = useFeatureEnabled('voice.agent');
     const ended = React.useSyncExternalStore(
         subscribeToVoiceSessionEndedAttempt,
@@ -283,12 +287,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             return false;
         }
     }, [commandBridge, executeValue, isCurrent, navigateWithFocusReturn, router]);
-    const surfaceState = resolveVoiceSurfaceState({
-        status: snap.status,
-        mode: snap.mode,
-        errorPresentation: snap.errorPresentation,
-        presentationState: snap.presentationState,
-    });
     const recoveryAction = resolveVoiceSnapshotRecoveryAction(snap);
     const recovery = React.useMemo(
         () => resolveVoiceSurfaceRecovery(recoveryAction),
@@ -327,22 +325,26 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const bindingScope = resolvedIdleTarget.kind;
     const startSessionAddress = resolvedIdleTarget.kind === 'session' ? resolvedIdleTarget.sessionAddress : null;
     const startSessionId = startSessionAddress?.sessionId ?? null;
-    const startAdmission = resolveVoiceStartAdmission({
+    const runtimePlatform = resolveCurrentVoiceRuntimePlatform(Platform.OS);
+    const providerSettings = credentialEntry?.providerSettings ?? null;
+    const startAdmission = React.useMemo(() => resolveVoiceStartAdmission({
         bindingScope,
         // Start admission and recovery consume canonical capabilities, independent of container.
         daemonLocalVoiceUnavailable:
             capabilities?.requiresVoiceAgentFeature === true && voiceAgentFeatureEnabled !== true,
         globalStartAuthorized: bindingScope === 'global' && capabilities?.allowsGlobalStart === true,
-        platform: resolveCurrentVoiceRuntimePlatform(Platform.OS),
+        platform: runtimePlatform,
         providerId,
-        providerSettings: voiceProviderRegistry.get(providerId)?.providerSettings ?? null,
+        providerSettings,
         registry: voiceProviderRegistry,
         // `null` for the global target: a global start binds no surface session by definition.
         startSessionId,
         voiceSettings: canonicalVoice,
         credentialContext: { settings: { voiceSettingsV1, secrets }, connectedPurposes,
             resolveSavedSecret: savedSecretReferences.resolve },
-    });
+    }), [bindingScope, capabilities?.requiresVoiceAgentFeature, capabilities?.allowsGlobalStart,
+        voiceAgentFeatureEnabled, runtimePlatform, providerId, providerSettings, providerRegistryRevision,
+        startSessionId, canonicalVoice, voiceSettingsV1, secrets, connectedPurposes, savedSecretReferences.resolve]);
     /*
      * §2.2's middle rung. A provider the user selected but has not finished connecting refuses the
      * start and publishes no `errorRecoveryAction` — nothing failed, because nothing was ever
@@ -373,11 +375,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const voiceExecutionMachine = useVoiceExecutionMachinePresentation();
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const agentRuntime = expectedAttempt ? snap.recoveryTarget?.agentRuntime ?? null : capabilities?.agentRuntime ?? null;
-    /*
-     * `resolveVoiceAdapterSurfaceCapabilities` freezes a new capability object on every call, so a
-     * stable identity built from the two ids the recovery target actually reads is the same value
-     * with a usable reference.
-     */
+    // The recovery target consumes only these two ids, including from live attempt snapshots.
     const agentRuntimeIdentity = React.useMemo(
         () => (agentRuntime ? { localId: agentRuntime.localId, pluginId: agentRuntime.pluginId } : null),
         [agentRuntime?.localId, agentRuntime?.pluginId],
@@ -640,19 +638,11 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         };
         return { ready, release: () => finish('release'), cancel: () => finish('cancel') } satisfies VoiceHeldInput;
     }, [canHoldToTalk, currentAccountScope, executeControl, expectedAttempt, snapSessionId]);
-    const control = React.useMemo(() => resolveVoiceAttemptControl({
-        surfaceState,
-        tone: resolveVoiceSurfaceStatusPresentation(surfaceState).tone,
-        status: snap.status,
-        sessionId: snap.sessionId ?? null,
-        canStop: snap.canStop === true,
-        canCommitInput: snap.canCommitInput === true,
-        inputEndsOnSilence: snap.inputEndsOnSilence === true,
-        muted: snap.micMuted === true,
+    const control = React.useMemo(() => projectVoiceAttemptControlSnapshot({
+        snapshot: snap,
         capturing,
         startAdmitted: ownsVoiceRuntime && startAdmission.canStart,
         hasRecovery: ownsVoiceRuntime && recoveryAction !== 'none' && (recoveryAvailable || setupIncomplete),
-        canDismissFailedAttempt: canDismissVoiceSessionFailedAttempt(snap),
         /*
          * Every mount of this projection is already behind the Voice feature gate (the global off
          * switch), so an idle Voice that cannot start offers its setup and the rest mic stays
@@ -663,12 +653,11 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         setupOffered: ownsVoiceRuntime && !setupDismissed,
         sessionStatus,
     }), [
-        bindingScope,
         ownsVoiceRuntime,
         setupDismissed,
         recoveryAvailable,
         setupIncomplete,
-        startSessionId,
+        recoveryAction,
         sessionStatus?.state,
         sessionStatus?.statusText,
         sessionStatus?.actionRequiredReason,
@@ -681,10 +670,12 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         snap.adapterId,
         snap.errorCode,
         snap.errorPresentation,
+        snap.mode,
+        snap.presentationState,
         startAdmission.canStart,
-        surfaceState,
         capturing,
     ]);
+    const surfaceState = control.surfaceState;
 
     const canStop = control.canStop;
     const canStart = control.canStart;

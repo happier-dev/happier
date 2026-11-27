@@ -127,6 +127,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
   const maxDiagnostics = clampPositiveInteger(deps.maxDiagnostics, 64);
   const items = new Map<string, CanonicalVoiceTranscriptItem>();
   const seenEventIds = new Map<string, string>();
+  const partialEventIdsByItemId = new Map<string, Set<string>>();
   const lastItemEventFingerprints = new Map<string, string>();
   type PendingAdmittedPersistenceEvent = {
     admission: CanonicalVoiceTranscriptPersistenceAdmission;
@@ -171,7 +172,25 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     return { status: 'rejected', item: null };
   };
 
-  const rememberEventId = (eventId: string, fingerprint: string): void => {
+  const rememberEventId = (
+    eventId: string,
+    fingerprint: string,
+    itemId: string,
+    final: boolean,
+  ): void => {
+    const partialEventIds = partialEventIdsByItemId.get(itemId);
+    if (final) {
+      // Final item authority rejects late partials; retain only the durable
+      // event IDs needed to recognize repeated finals and corrections.
+      if (partialEventIds) {
+        for (const partialEventId of partialEventIds) seenEventIds.delete(partialEventId);
+        partialEventIdsByItemId.delete(itemId);
+      }
+    } else if (partialEventIds) {
+      partialEventIds.add(eventId);
+    } else {
+      partialEventIdsByItemId.set(itemId, new Set([eventId]));
+    }
     seenEventIds.set(eventId, fingerprint);
   };
 
@@ -236,6 +255,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     lastLiveSequence = -1;
     items.clear();
     seenEventIds.clear();
+    partialEventIdsByItemId.clear();
     lastItemEventFingerprints.clear();
     pendingAdmittedPersistenceEventsByEventId.clear();
     pendingAdmittedPersistenceEventsByItemId.clear();
@@ -291,7 +311,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (previousRole && previousRole !== event.role) return diagnose('conflicting_duplicate', event);
     const lastItemFingerprint = lastItemEventFingerprints.get(event.itemId);
     if (lastItemFingerprint === fingerprint) {
-      rememberEventId(event.eventId, fingerprint);
+      rememberEventId(event.eventId, fingerprint, event.itemId, isCanonicalVoiceTranscriptPersistenceEvent(event));
       return { status: 'duplicate', item: previous };
     }
     if (
@@ -336,7 +356,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (next.final) deps.persistFinal?.(next);
     items.set(next.itemId, next);
     lastItemEventFingerprints.set(next.itemId, fingerprint);
-    rememberEventId(event.eventId, fingerprint);
+    rememberEventId(event.eventId, fingerprint, next.itemId, next.final);
     if (event.provenance === 'live') lastLiveSequence = event.sequence;
     deps.onProjection?.(next);
     return { status: 'applied', item: next };
@@ -481,7 +501,7 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     if (appliedToCurrentSnapshot) {
       items.set(pending.item.itemId, pending.item);
       lastItemEventFingerprints.set(pending.item.itemId, pending.fingerprint);
-      rememberEventId(pending.eventId, pending.fingerprint);
+      rememberEventId(pending.eventId, pending.fingerprint, pending.item.itemId, pending.item.final);
       if (pending.item.provenance === 'live') {
         lastLiveSequence = Math.max(lastLiveSequence, pending.item.lastSequence);
       }

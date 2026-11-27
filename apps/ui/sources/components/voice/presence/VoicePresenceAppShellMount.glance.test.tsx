@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
@@ -36,9 +36,15 @@ const { resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } =
   await import('@/voice/session/voiceSessionStore');
 const { SessionCockpitChromeRegistryProvider } =
   await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
-const { setVoiceGlanceOpen } = await import('./voiceCompanionSectionReveal');
+const { setVoiceGlanceOpen, reportVoiceCompanionSectionOnScreen } = await import('./voiceCompanionSectionReveal');
 const { VoicePresenceAppShellMount } =
   await import('./VoicePresenceAppShellMount');
+
+const chromeRegistry = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+const keyboard = await import('@/hooks/ui/useKeyboardHeight');
+const pet = await import('@/components/pets/source/useSelectedPetPackage');
+const native = await import('react-native');
+const storageHooks = await import('@/sync/domains/state/storage');
 
 const initialStorage = getStorage().getState();
 let screen: RenderScreenResult | null = null;
@@ -72,6 +78,49 @@ describe('the open glance and its container', () => {
     registerVoiceAdapters([]);
     resetVoiceSessionStoreForTests();
     resetServerFeaturesClientForTests();
+    vi.restoreAllMocks();
+  });
+
+  it('mounts zero geometry, pet and keyboard readers while the Island is idle, then mounts current placement on connection', async () => {
+    getStorage().setState(state => ({
+      settings: { ...state.settings, experiments: true, featureToggles: { ...state.settings.featureToggles, voice: true, 'voice.agent': true }, voice: voiceSettingsParse({ providerId: 'local_conversation' }) },
+      localSettings: { ...state.localSettings, voicePresenceContainer: 'island' },
+    }));
+    resetVoiceSessionStoreForTests();
+    const idleSnapshot = { adapterId: 'local_conversation', sessionId: null, status: 'disconnected' as const, mode: 'idle' as const, canStop: false };
+    setVoiceSessionSnapshot(idleSnapshot);
+    // Pass-through spies measure live reader work without replacing any internal logic.
+    const readers = [
+      vi.spyOn(chromeRegistry, 'useSessionCockpitBottomChromeHeight'),
+      vi.spyOn(chromeRegistry, 'useSessionCockpitComposerChromeHeight'),
+      vi.spyOn(chromeRegistry, 'useSessionCockpitComposerChromeTop'),
+      vi.spyOn(chromeRegistry, 'useSessionCockpitComposerChromeRightInset'),
+      vi.spyOn(chromeRegistry, 'useSessionCockpitPetRect'),
+      vi.spyOn(chromeRegistry, 'useSessionCockpitActionRailRect'),
+      vi.spyOn(keyboard, 'useKeyboardHeight'),
+      vi.spyOn(native, 'useWindowDimensions'),
+      vi.spyOn(pet, 'useSelectedPetPackage'),
+    ];
+    const localSettings = vi.spyOn(storageHooks, 'useLocalSetting');
+    screen = await renderScreen(<SessionCockpitChromeRegistryProvider><VoicePresenceAppShellMount /></SessionCockpitChromeRegistryProvider>);
+    for (let index = 0; index < 20; index++) {
+      await act(async () => { setVoiceSessionSnapshot({ ...idleSnapshot, mode: index % 2 === 0 ? 'thinking' : 'idle' }); });
+    }
+    expect(screen.findByTestId('voice-presence-app-shell-root')).toBeNull();
+    for (const reader of readers) expect(reader).toHaveBeenCalledTimes(0);
+    expect(localSettings.mock.calls.filter(([key]) => key === 'petsCompanionSizeScale')).toHaveLength(0);
+    await act(async () => { setVoiceSessionSnapshot({ ...idleSnapshot, sessionId: 'voice-shell', status: 'connected', mode: 'listening', canStop: true }); });
+    expect(screen.findByTestId('voice-presence-app-shell-root')).not.toBeNull();
+    for (const reader of readers) expect(reader.mock.calls.length).toBeGreaterThan(0);
+    expect(localSettings.mock.calls.some(([key]) => key === 'petsCompanionSizeScale')).toBe(true);
+    await act(async () => { resetVoiceSessionStoreForTests(); });
+    for (const reader of readers) reader.mockClear();
+    localSettings.mockClear();
+    for (let index = 0; index < 20; index++) {
+      await act(async () => { setVoiceSessionSnapshot({ ...idleSnapshot, mode: index % 2 === 0 ? 'thinking' : 'idle' }); });
+    }
+    for (const reader of readers) expect(reader).toHaveBeenCalledTimes(0);
+    expect(localSettings.mock.calls.filter(([key]) => key === 'petsCompanionSizeScale')).toHaveLength(0);
   });
 
   it.each(['island', 'orb'] as const)(
@@ -131,6 +180,25 @@ describe('the open glance and its container', () => {
       // The container stays mounted (the glance anchors to it and returns focus there) but is not drawn twice.
       expect(screen.findByTestId('voice-glance-popover')).not.toBeNull();
       expect(yielded()).toBe(true);
+      if (container === 'island') {
+        let hideSection: (() => void) | undefined;
+        try {
+          await act(async () => { hideSection = reportVoiceCompanionSectionOnScreen(); });
+          expect(screen.findByTestId('voice-presence-app-shell-root')).toBeNull();
+        } finally {
+          await act(async () => { hideSection?.(); });
+        }
+        expect(screen.findByTestId('voice-glance-popover')).not.toBeNull();
+        // The newly presented geometry child measures its host before drawing the capsule.
+        await act(async () => {
+          screen!.findByTestId('voice-presence-float-host')!.props.onLayout({ nativeEvent: { layout: { width: 1024, height: 768 } } });
+        });
+        const restoredFrame = screen.findByTestId('voice-presence-float-body')!.props.style[0];
+        await act(async () => {
+          screen!.findByTestId('voice-presence-float-body')!.props.onLayout({ nativeEvent: { layout: { width: restoredFrame.width, height: restoredFrame.height } } });
+        });
+        expect(yielded()).toBe(true);
+      }
       await act(async () => {
         setVoiceGlanceOpen(false);
       });

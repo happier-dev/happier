@@ -563,6 +563,60 @@ describe('useVoiceAttemptControl start admission', () => {
     getStorage().setState(initialStorageState, true);
   });
 
+  it('does no capability or admission reprojection for unchanged parent renders and refreshes changed inputs', async () => {
+    const adapterRegistry = await import('@/voice/session/voiceAdapterRegistry');
+    const admissionOwner = await import('@/components/voice/surface/resolveVoiceStartAdmission');
+    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+    adapterRegistry.registerVoiceAdapters([getActivatedAdapter('local_conversation')]);
+    seedVoiceSettings({ providerId: 'local_conversation', providers: {
+      local_conversation: { schemaVersion: 1, config: { conversationMode: 'agent' } },
+    } });
+    // Observe real projection work without replacing either internal owner.
+    const capabilities = vi.spyOn(adapterRegistry, 'resolveVoiceAdapterSurfaceCapabilities');
+    const admission = vi.spyOn(admissionOwner, 'resolveVoiceStartAdmission');
+    const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
+    try {
+      expect(hook.getCurrent().canStart).toBe(true);
+      capabilities.mockClear();
+      admission.mockClear();
+      for (let index = 0; index < 5; index++) await hook.rerender();
+      expect(capabilities).toHaveBeenCalledTimes(0);
+      expect(admission).toHaveBeenCalledTimes(0);
+
+      await act(async () => setVoiceAgentFeature(false));
+      expect(hook.getCurrent().canStart).toBe(false);
+      expect(admission.mock.calls.length).toBeGreaterThan(0);
+      expect(capabilities).toHaveBeenCalledTimes(0);
+
+      await act(async () => setVoiceAgentFeature(true));
+      expect(hook.getCurrent().canStart).toBe(true);
+      platformState.os = 'unknown';
+      await hook.rerender();
+      expect(hook.getCurrent().canStart).toBe(false);
+      expect(hook.getCurrent().startRefusal?.reason).toBe(t('voice.readiness.platform_unsupported'));
+      platformState.os = 'web';
+      await hook.rerender();
+      expect(hook.getCurrent().canStart).toBe(true);
+      expect(capabilities).toHaveBeenCalledTimes(0);
+
+      adapterRegistry.registerVoiceAdapters([getActivatedAdapter('local_conversation')]);
+      await hook.rerender();
+      expect(hook.getCurrent().canStart).toBe(true);
+      expect(capabilities.mock.calls.length).toBeGreaterThan(0);
+
+      capabilities.mockClear();
+      admission.mockClear();
+      await act(async () => seedVoiceSettings({ providerId: 'off' }));
+      expect(hook.getCurrent().canStart).toBe(false);
+      expect(capabilities.mock.calls.length).toBeGreaterThan(0);
+      expect(admission.mock.calls.length).toBeGreaterThan(0);
+    } finally {
+      await hook.unmount();
+      capabilities.mockRestore();
+      admission.mockRestore();
+    }
+  });
+
   it('does not deliver Session writes to an unbound runtime carrier', async () => {
     const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
     const { useVoiceSetupConversationMessages } = await import('@/voice/settings/setup/useVoiceSetupItem');

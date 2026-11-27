@@ -76,6 +76,36 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_DEFAULT);
     const readAloud = props.readAloud;
     const phone = useDeviceType() === 'phone';
+    // Keep glance intent when the Companion temporarily suppresses this float.
+    const [open, setOpen] = React.useState(false);
+    const orb = props.container === 'orb';
+    // While the Companion's Voice section is on screen it is the call's one glance: the floating
+    // presence steps back instead of resting over the Companion column (on a phone the Orb stays).
+    const sectionOnScreen = React.useSyncExternalStore(
+        subscribeVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen);
+    const yieldsToSection = sectionOnScreen && !(phone && orb);
+    // One visibility fact governs both the container and its measured composer clearance.
+    // Keyboard-open moves the same presence above measured keyboard chrome; transport stays reachable.
+    // A reading stays presented with its Stop whatever the call can do next.
+    const visible = !yieldsToSection && (resolveVoicePresenceReadAloud(voice, readAloud) !== null
+        || (voice.availability !== 'unavailable' && (orb || voice.live || Boolean(voice.ended))));
+    React.useLayoutEffect(() => visible ? registerVoiceGlancePresentation((expanded) => {
+        if (!expanded || !revealVoiceCompanionSection()) setOpen(expanded);
+    }) : undefined, [visible]);
+    if (!visible) return null;
+    return <VoiceVisibleFloatingPresence {...props} voice={voice} phone={phone} open={open} />;
+}
+
+/** Geometry and pet readers exist only for a presented float. */
+function VoiceVisibleFloatingPresence(props: Readonly<{
+    container: 'island' | 'orb';
+    readAloud: VoiceReadAloud;
+    voice: ReturnType<typeof useVoiceAttemptControl>;
+    phone: boolean;
+    open: boolean;
+}>): React.ReactElement {
+    const { voice, readAloud, phone, open } = props;
+    const orb = props.container === 'orb';
     const insets = useChromeSafeAreaInsets();
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const composerChromeHeight = useSessionCockpitComposerChromeHeight();
@@ -95,7 +125,6 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const petsCompanionSizeScale = useLocalSetting('petsCompanionSizeScale');
     const selectedPetPackage = useSelectedPetPackage();
     const anchorRef = React.useRef<View | null>(null);
-    const [open, setOpen] = React.useState(false);
     const close = React.useCallback(() => {
         fireAndForget(executePresentationAction('ui.voice_global.glance.close', {}), { tag: 'VoicePresence.glance.close' });
     }, []);
@@ -106,28 +135,13 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
             { tag: 'VoicePresence.glance' });
     }, [open]);
 
-    const orb = props.container === 'orb';
-    // While the Companion's Voice section is on screen it is the call's one glance: the floating
-    // presence steps back instead of resting over the Companion column (on a phone the Orb stays).
-    const sectionOnScreen = React.useSyncExternalStore(
-        subscribeVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen, isVoiceCompanionSectionOnScreen);
-    const yieldsToSection = sectionOnScreen && !(phone && orb);
-    // One visibility fact governs both the container and its measured composer clearance.
-    // Keyboard-open moves the same presence above measured keyboard chrome; transport stays reachable.
-    // A reading stays presented with its Stop whatever the call can do next.
-    const visible = !yieldsToSection && (resolveVoicePresenceReadAloud(voice, readAloud) !== null
-        || (voice.availability !== 'unavailable' && (orb || voice.live || Boolean(voice.ended))));
     // The keyboard scaffold already lifts the composer. In that state the float clears the
     // measured composer instead of reporting the keyboard height back as composer reservation.
-    const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;
+    const reservesComposerSpace = phone && !orb && keyboardHeight === 0;
     const reportBottomReservation = useReportSessionCockpitFloatingBottomChromeHeight(reservesComposerSpace);
     // Resting above the composer instead, it covers the transcript's last rows: the transcript keeps
     // that much space after its last row (the composer stays where it is).
-    const reportTranscriptClearance = useReportSessionCockpitTranscriptBottomClearance(visible && !reservesComposerSpace);
-    React.useLayoutEffect(() => visible ? registerVoiceGlancePresentation((expanded) => {
-        if (!expanded || !revealVoiceCompanionSection()) setOpen(expanded);
-    }) : undefined, [visible]);
-    if (!visible) return null;
+    const reportTranscriptClearance = useReportSessionCockpitTranscriptBottomClearance(!reservesComposerSpace);
 
     // Desktop mascot windows retain their incumbent band. In-app pets publish their actual
     // moved rectangle instead of reserving a second, assumed corner alongside that measurement.
