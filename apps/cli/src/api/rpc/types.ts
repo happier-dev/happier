@@ -64,6 +64,8 @@ export type RpcLocalActionContext = Readonly<Partial<Pick<
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     /** Captured Account Environment read; never serialized or accepted from a Process DTO. */
     processEnvironmentRead?: (target: Readonly<{ serverId: string; environmentId: string }>) => Promise<boolean>;
+    /** The Session SCM owner resolved this request inside the requester's own Session workspace. */
+    ownsScmSessionWorkspace?: true;
 }>;
 
 /** Content-free, host-owned operation observations; never part of an RPC DTO. */
@@ -79,8 +81,9 @@ export type RpcHandlerContext = Readonly<{
     retainedCheckoutTeardown?: Readonly<{ data: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').RetainedCheckoutTeardownDataV1 | null }>;
     /** The installed ingress retained a claimed host Workflow's Account custody for this exact typed operation. */
     admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
-    /** Known requester identity selected by receiving admission for this workspace effect. */
-    directWorkspaceRequester?: Exclude<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity, { kind: 'unknown' }>;
+    /** Requester selected by receiving admission. SCM member placement uses that requester's child. */
+    directWorkspaceRequester?: Exclude<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity, { kind: 'unknown' }>
+        & Readonly<{ scmPlacement?: 'member' }>;
     /** Exact host capture returned by Machine admission; never parsed from a request. */
     workspaceSyncPrivateExecution?: import('@/workspaces/sync/workspaceSyncHandoffAdapter').RetainedWorkspaceSyncPrivateExecution;
     /** Content codec admitted for this exact call (its reply uses it); absent when no material was admitted. */

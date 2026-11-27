@@ -14,7 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, v
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { invokeHostReviewedChildV1, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
-import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -53,6 +53,9 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { createCliMachineActionTransport } from '@/session/actions/cliActionDeps/machineTransport';
+import { createCliSessionActionTransport } from '@/session/transport/cliActionTransport';
+import { createSessionBoundScmAction } from '@/scm/actions/sessionBoundAction';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -551,8 +554,10 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.daemonTouches).toEqual([]);
   });
 
-  it('keeps a reviewed Can use child’s repository reads inside its own member folder', async () => {
-    const f = await fixture({ admissionCurrent: false });
+  it.each(['enabled', 'disabled'] as const)('keeps a reviewed Can use child’s repository reads in its own workspace with isolation %s', async isolation => {
+    const f = await fixture({ admissionCurrent: false,
+      ...(isolation === 'disabled' ? { sourceRuntimeIsolation: 'disabled', memberIdentityUnavailable: true } : {}) });
+    const ownRepository = isolation === 'enabled' ? f.memberRepository : await repository(f.directory, 'guest-project');
     const target = { kind: 'machine', machineId: f.machineId } as const;
     const accountId = 'member-account';
     const requestId = 'review-start';
@@ -586,27 +591,70 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       execute: async (_input, context) => ({ context }),
     });
     if (!('context' in reviewed)) throw new Error(`Expected reviewed child: ${JSON.stringify(reviewed)}`);
-    const child = { ...reviewed.context, defaultSessionId: 'session-1', externalActionTarget: undefined };
-    const transport = createCliMachineActionTransport({
+    const ownSession = 'c111111111111111111111111';
+    const foreignSession = 'c222222222222222222222222';
+    const token = 'reviewed-guest-fixture';
+    const params = {
+      token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain' as const, ctx: null,
       machineActionDirectTargetTransport: { machineId: f.machineId, invoke: f.manager.invokeLocal.bind(f.manager) },
+    };
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      }
+      if (path === `/v2/sessions/${ownSession}` || path === `/v2/sessions/${foreignSession}`) {
+        const own = path.endsWith(ownSession);
+        return { status: 200, data: { session: createSessionRecordFixture({
+          id: own ? ownSession : foreignSession, encryptionMode: 'plain', machineId: f.machineId,
+          metadata: JSON.stringify({ path: own ? ownRepository : f.ownerRepository }),
+          effectiveAccess: {
+            v: 1, level: own ? 'owner' : 'view', sources: own ? [{ kind: 'owner' }] : [],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: own,
+              grants: own ? [] : [{ accessLevel: 'view', canApprovePermissions: false }] }),
+          },
+        }) } };
+      }
+      throw new Error(`Unexpected Home request ${path}`);
     });
-    const status = (cwd: string) => transport.callMachineAction({
-      machineId: f.machineId, method: RPC_METHODS.SCM_STATUS_SNAPSHOT, effectActionId: 'scm.status.snapshot',
-      exactMachine: true, authority: 'present_user', context: child,
-      request: createTargetedActionRpcRequestV1(
-        { cwd, detail: 'facts', outcomeVersion: 1, operationStateVersion: 1 },
-        { ...target, project: { machineId: f.machineId, directory: cwd } }, child,
-      ),
+    const machine = createCliMachineActionTransport(params);
+    const common = {
+      callMachineAction: machine.callMachineAction,
+      normalizeStringValue: (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null,
+      resolveServerRequestHeaders: () => ({ Authorization: `Bearer ${token}` }),
+    };
+    const session = createCliSessionActionTransport(params, { ...common,
+      readCurrentSessionMetadata: async () => null,
+      readServerFeaturesSnapshot: async () => undefined,
+      resolveCurrentSessionValue: async () => null,
+      withProjectHome: run => run(),
     });
-    expect(await status(f.memberRepository)).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
-    expect(daemonGit()).toEqual([]);
-    expect(os.daemonTouches).toEqual([]);
+    const execute = createSessionBoundScmAction(params, { ...common, ...session,
+      isMachineActionServerScopeCurrent: machine.isMachineActionServerScopeCurrent,
+      invokeSessionPullRequestBinding: async () => { throw new Error('Unexpected Session binding'); },
+    });
+    const status = (sessionId: string, cwd?: string) => execute({
+      actionId: 'scm.status.snapshot', input: { detail: 'facts', ...(cwd ? { cwd } : {}) },
+      context: { ...reviewed.context, defaultSessionId: sessionId, externalActionTarget: undefined },
+      executeCanonicalAction: async () => { throw new Error('Unexpected Action'); },
+    });
+    const response = await status(ownSession);
+    expect(response, JSON.stringify(response)).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    if (isolation === 'enabled') {
+      expect(daemonGit()).toEqual([]);
+      expect(os.daemonTouches).toEqual([]);
+      expect(os.runAs).toEqual(expect.arrayContaining([expect.objectContaining({ uid: 2401 })]));
+    } else {
+      expect(daemonGit().length).toBeGreaterThan(0);
+    }
     const readCount = gitLaunches().length;
     for (const cwd of [f.ownerRepository, f.otherMemberRepository]) {
-      expect(await status(cwd)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+      expect(await status(ownSession, cwd)).toMatchObject({ success: false });
     }
+    expect(await status(foreignSession)).toMatchObject({ success: false,
+      errorCode: isolation === 'enabled' ? 'INVALID_PATH' : 'BACKEND_UNAVAILABLE' });
     expect(gitLaunches()).toHaveLength(readCount);
-    expect(os.runAs.map(run => run.uid)).toEqual([2401]);
+    expect([...new Set(os.runAs.map(run => run.uid))]).toEqual(isolation === 'enabled' ? [2401] : []);
   });
 
   // SCM-MEMBER-LIVE-1115: the Action surface sends the Project as a targeted machine target.

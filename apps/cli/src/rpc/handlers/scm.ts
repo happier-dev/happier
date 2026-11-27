@@ -265,9 +265,7 @@ export function registerScmHandlers(
                 : runAsMember(context, member, method, projectRoot, input, comparisons ? run : undefined,
                     identity.kind === 'unknown' ? undefined : identity.requester.accountId);
             const unrestricted = isHostRequesterUnrestrictedOwner(identity);
-            // Only the raw Machine admission path grants daemon placement to a
-            // Use requester. A retained Action supplies identity for member execution.
-            const directMachinePlacement = selected.kind === 'local' && context.machineAdmission && directRequester;
+            const directMachinePlacement = selected.kind === 'local' && directRequester && directRequester.scmPlacement !== 'member';
             if (identity.kind !== 'unknown' && (unrestricted || directMachinePlacement)) {
                 // Manage keeps full access to a member folder, but daemon Git never runs a member
                 // repository's config or hooks (F-A ruling, MEMBER-CHILD-READS-1115): its repository

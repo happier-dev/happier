@@ -237,7 +237,7 @@ export function createSessionBoundScmAction(
       v: 1, kind: 'targeted_action_rpc', target: workspace, input: request,
     });
     const executeMachineScmAction = async (machineId: string | null, selectedInput: Readonly<Record<string, unknown>>,
-      sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string) => {
+      sessionAuthorization = context.rpcSessionAuthorization, sessionRoot?: string, ownsScmSessionWorkspace?: true) => {
       const selectedTarget = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined;
       const root = workspace?.rootPath ?? sessionRoot ?? selectedTarget?.project?.directory;
       const [{ bindScmActionToSessionWorkspace }, { tryAcquireAuthoritativePluginRuntimeRegistryLease }, { executeCapturedMachineAction }] = await Promise.all([import("@/scm/actions/placement"), import("@/plugins/runtime/reload/runtimeLease"), import("@/api/machine/capturedMachineAction")]);
@@ -353,6 +353,7 @@ export function createSessionBoundScmAction(
         invoke: options => callMachineAction({ machineId, serverId: context.serverId ?? undefined, method, request,
           ...(sessionAuthorization ? { authorization: sessionAuthorization } : {}),
           context, effectActionId: actionId,
+          ...(ownsScmSessionWorkspace ? { ownsScmSessionWorkspace } : {}),
           authority: context.authority, exactMachine: true,
           // SCM reads, like effects, belong to the containing Action lifetime.
           timeoutMs: null,
@@ -489,7 +490,8 @@ export function createSessionBoundScmAction(
       if (!sessionMachineId) return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
       return await executeMachineScmAction(sessionMachineId, sessionBoundInput,
         context.rpcSessionAuthorization ?? (resolveSocketRpcSessionAuthorization(getActionSpec(actionId).bindings?.rpcMethod ?? '')
-          ? { kind: 'session.write', sessionId: transport.sessionId } : undefined), workingDirectory);
+          ? { kind: 'session.write', sessionId: transport.sessionId } : undefined), workingDirectory,
+        transport.rawSession.effectiveAccess?.level === 'owner' ? true : undefined);
     }
 
     if (actionId.startsWith('scm.diffSummary.') && !await localReviewHomeCurrent()) {

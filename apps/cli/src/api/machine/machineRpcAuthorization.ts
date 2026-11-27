@@ -1306,13 +1306,21 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(
       && body.data.transientRelationship?.relationshipId === relationshipId);
 }
 
-/** Home-admitted people and Account automation do this SCM work in their own member folder. */
-function admitsMemberFolderScm(
+/** A raw receipt admits the method. A retained Use root admits local reads in
+ * its member folder, or in its already resolved own Session workspace. */
+function selectRequesterWorkspacePlacement(
   identity: HostRequesterExecutionIdentity,
   method: string,
-): boolean {
-  return identity.kind === 'isolated' && (identity.presentPerson === true || identity.accountAutomation === true)
-    && (isScmMemberFolderRpcMethod(method) || isScmHostingCredentialRpcMethod(method));
+  admission: 'machine' | 'owned_session' | 'member_folder' | 'owner_only',
+  readPolicy: MachineRpcAdmissionBoundary['readAgentIsolation'],
+): 'owner' | 'daemon' | 'member' | 'unavailable' {
+  if (isHostRequesterUnrestrictedOwner(identity)) return 'owner';
+  if (identity.kind !== 'isolated' || admission === 'owner_only') return 'unavailable';
+  const personOrAccountAutomation = identity.presentPerson === true || identity.accountAutomation === true;
+  const daemonScope = admission === 'machine' || (admission === 'owned_session' && personOrAccountAutomation);
+  if (daemonScope && isRequesterOwnWorkPlacedOnDaemonForHost(identity, readPolicy)) return 'daemon';
+  return personOrAccountAutomation && (isScmMemberFolderRpcMethod(method) || isScmHostingCredentialRpcMethod(method))
+    ? 'member' : 'unavailable';
 }
 
 export async function authorizeMachineRpcRequest(
@@ -1794,13 +1802,15 @@ export async function authorizeMachineRpcRequest(
           hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
         if (identity.kind === 'unknown') return forbidden('machine_admission');
-        const memberRead = localRepositoryRead
-          && retainedRequester?.authorization.binding.admittedMachineRole === 'use'
-          && admitsMemberFolderScm(identity, method);
-        if (!memberRead && !isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
+        const useRead = localRepositoryRead && retainedRequester?.authorization.binding.admittedMachineRole === 'use';
+        const placement = selectRequesterWorkspacePlacement(identity, method, useRead
+          ? request.localActionContext?.ownsScmSessionWorkspace ? 'owned_session' : 'member_folder'
+          : 'owner_only', machine.readAgentIsolation);
+        if (placement === 'unavailable') return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
         if (localRepositoryRead) {
-          authorized = { ok: true, directWorkspaceRequester: identity };
+          authorized = { ok: true, directWorkspaceRequester: placement === 'member'
+            ? { ...identity, scmPlacement: 'member' } : identity };
         }
       } catch { return forbidden('authorization_unavailable'); }
     }
@@ -2092,17 +2102,11 @@ export async function authorizeMachineRpcRequest(
         if (request.signal?.aborted) return forbidden('request_cancelled');
         if (installationId !== machine.resolveInstallationId())
           return forbidden('machine_installation');
-        // Home-admitted Manage on this physical receiver permits raw work.
-        const unrestricted = isHostRequesterUnrestrictedOwner(identity);
-        // Home admitted this grantee (Use or Manage) for this method. Where the owner turned
-        // isolation off, their own work runs on the daemon (owner ruling 2026-11-23 ~15:10Z);
-        // every other policy state keeps the refusals below.
-        const directRequester = !unrestricted && identity.kind === 'isolated'
-          && isRequesterOwnWorkPlacedOnDaemonForHost(identity, machine.readAgentIsolation);
-        if (directRequester) {
+        const placement = selectRequesterWorkspacePlacement(identity, rpcMethod, 'machine', machine.readAgentIsolation);
+        if (placement === 'daemon' && identity.kind === 'isolated') {
           // Placement never substitutes for the method's remaining authorization checks.
           authorized = { ok: true, directWorkspaceRequester: identity };
-        } else if (!nativeEffectOwner && !receivingManager && !unrestricted && !admitsMemberFolderScm(identity, rpcMethod)) {
+        } else if (!nativeEffectOwner && !receivingManager && placement === 'unavailable') {
           const refuseExecution = (errorCode: string, error: string): RpcAuthorizationResult => ({
             ok: false, errorCode, error,
             failureCause: projectActionFailureCauseV1({ code: errorCode }, 'rpc.admission.requester_execution_isolation',
