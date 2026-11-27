@@ -440,13 +440,6 @@ export function createConnectedAccountRequestAuthService(
         _legacyServiceKeyedCompatibility?: true,
     ): boolean => true;
 
-    const pruneExpiredLeases = (): void => {
-        const now = nowMs();
-        for (const [key, lease] of leases) {
-            if (isExpired(lease, now)) leases.delete(key);
-        }
-    };
-
     const createSharedOperation = <T>(
         run: (signal: AbortSignal) => Promise<T>,
         onSettled: (operation: RequestAuthSharedOperation<T>) => void,
@@ -537,23 +530,14 @@ export function createConnectedAccountRequestAuthService(
         return { binding, use, resolved };
     };
 
-    const getCachedOrFill = async (
+    const fillLease = async (
+        key: string,
         subject: ConnectedAccountRequestAuthSubject,
         binding: QualifiedConnectedAccountPurposeBindingV1,
         resolved: ConnectedAccountRequestAuthResolvedBinding,
         materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'],
         signal: AbortSignal,
     ): Promise<CachedHeadersMaterial> => {
-        pruneExpiredLeases();
-        const key = leaseKey(resolved, materialization, subject);
-        const existing = leases.get(key);
-        if (existing && !isExpired(existing, nowMs())) {
-            leases.delete(key);
-            leases.set(key, existing);
-            return existing;
-        }
-        if (existing) leases.delete(key);
-
         const pendingKey = fillKey(subject.subjectId, key);
         const pending = fills.get(pendingKey);
         if (pending && !pending.signal.aborted) {
@@ -625,6 +609,7 @@ export function createConnectedAccountRequestAuthService(
             deadlineMs: operationDeadlineMs,
         });
         try {
+            let needsGroupReconciliation = false;
             while (true) {
                 phase = 'binding_before';
                 const { binding, use, resolved } = await resolveAuthorizedBinding(
@@ -633,18 +618,25 @@ export function createConnectedAccountRequestAuthService(
                     lifetime.signal,
                 );
                 phase = 'materialization';
-                const material = await getCachedOrFill(
-                    input.subject,
-                    binding,
-                    resolved,
-                    use.materialization,
-                    lifetime.signal,
-                );
-                if (binding.target.kind === 'group') {
-                    // A Pool may select a different member while its credential is being filled.
+                const key = leaseKey(resolved, use.materialization, input.subject);
+                let material = leases.get(key);
+                if (!material || isExpired(material, nowMs())) {
+                    if (material) leases.delete(key);
+                    material = await fillLease(
+                        key,
+                        input.subject,
+                        binding,
+                        resolved,
+                        use.materialization,
+                        lifetime.signal,
+                    );
+                    needsGroupReconciliation = true;
+                }
+                if (binding.target.kind === 'group' && needsGroupReconciliation) {
+                    // A Pool may change members during a fill. Keep reconciling
+                    // after a retry even if that retry finds a cached bearer.
                     phase = 'binding_after';
                     const after = await resolveAuthorizedBinding(input.subject, input.purpose, lifetime.signal);
-                    const key = leaseKey(resolved, use.materialization, input.subject);
                     if (
                         leaseKey(after.resolved, after.use.materialization, input.subject) !== key
                         || !sameResolvedBinding(resolved, after.resolved)
@@ -998,9 +990,9 @@ export function createConnectedAccountRequestAuthService(
     const reconcileCredentialLeases:
         ConnectedAccountRequestAuthService['reconcileCredentialLeases'] = (input) => {
         isCredentialLeaseCurrent = input.isCurrent;
-        pruneExpiredLeases();
+        const now = nowMs();
         for (const [key, value] of leases) {
-            if (!isCredentialLeaseCurrent(
+            if (isExpired(value, now) || !isCredentialLeaseCurrent(
                 value.account,
                 value.credentialRevision,
                 value.legacyServiceKeyedCompatibility,

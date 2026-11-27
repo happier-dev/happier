@@ -813,52 +813,62 @@ describe('ConnectedAccountRequestAuthService', () => {
         expect(materializationsByAccount.get('account-0')).toBe(1);
     });
 
-    it('prunes expired leases while retaining other current accounts', async () => {
-        let currentAccountId = 'account-0';
+    it.each(['account', 'group'] as const)('reads only the selected lease on a warm %s lookup', async (kind) => {
+        let accountId = 'account-0';
         let now = 0;
-        const materializationsByAccount = new Map<string, number>();
+        const resolveCurrentBinding = vi.fn(() => resolved({
+            accountId,
+            revision: revision1,
+            ...(kind === 'group' ? { generation: 7 } : {}),
+        }));
+        const materializeHeaders = vi.fn(async () => ({
+            headers: { authorization: 'Bearer ' + accountId },
+            facts: {},
+            expiresAt: now + 10,
+        }));
+        const nowMs = vi.fn(() => now);
         const owner = createConnectedAccountRequestAuthService({
-            resolveCurrentBinding: () => resolved({
-                accountId: currentAccountId,
-                revision: revision1,
-            }),
-            materializeHeaders: async ({ resolved: { account } }) => {
-                const materializations =
-                    (materializationsByAccount.get(account.accountId) ?? 0) + 1;
-                materializationsByAccount.set(account.accountId, materializations);
-                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}-${materializations}`) }, facts: {}, expiresAt: account.accountId === 'account-1' ? 5 : 1_000 };
-            },
-            refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
+            resolveCurrentBinding,
+            materializeHeaders,
+            refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
-            nowMs: () => now,
+            nowMs,
         });
-        const capability: ConnectedAccountRequestAuthSubject = {
-            subjectId: 'session:expiry-pruning',
-            isCurrent: () => true,
-            registerRedaction: () => undefined,
-            resolvePurposeUse: (requestedPurpose) => (
-                JSON.stringify(requestedPurpose) === JSON.stringify(purpose)
-                    ? { binding: accountBinding(currentAccountId), use: requestAuthUse }
-                    : null
-            ),
-            listPurposeUses: () => [{
-                binding: accountBinding(currentAccountId),
-                use: requestAuthUse,
-            }],
-        };
+        const lookup = () => owner.lookupRequestAuth({
+            subject: subject(kind === 'group' ? groupBinding() : accountBinding(accountId)),
+            purpose,
+        });
 
-        for (let index = 0; index < 64; index += 1) {
-            currentAccountId = `account-${index}`;
-            await owner.lookupRequestAuth({ subject: capability, purpose });
+        for (let index = 0; index <= 64; index += 1) {
+            accountId = `account-${index}`;
+            await lookup();
         }
-        now = 10;
-        currentAccountId = 'account-64';
-        await owner.lookupRequestAuth({ subject: capability, purpose });
-        currentAccountId = 'account-0';
+        accountId = 'account-0';
+        now = 9;
+        resolveCurrentBinding.mockClear();
+        materializeHeaders.mockClear();
+        nowMs.mockClear();
 
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
-            .toBe('token-account-0-1');
-        expect(materializationsByAccount.get('account-0')).toBe(1);
+        // Count full cache traversals through the real owner without exposing its cache.
+        const enumeration = vi.spyOn(Map.prototype, Symbol.iterator);
+        let cacheScans: number;
+        try {
+            const lease = await lookup();
+            cacheScans = enumeration.mock.contexts.filter(
+                (context) => context instanceof Map && context.size === 65,
+            ).length;
+            expect(lease.expiresAt).toBe(10);
+        } finally {
+            enumeration.mockRestore();
+        }
+        expect.soft(cacheScans).toBe(0);
+        expect.soft(resolveCurrentBinding).toHaveBeenCalledTimes(1);
+        expect.soft(nowMs).toHaveBeenCalledTimes(1);
+        expect(materializeHeaders).not.toHaveBeenCalled();
+
+        now = 10;
+        await expect(lookup()).resolves.toMatchObject({ expiresAt: 20 });
+        expect(materializeHeaders).toHaveBeenCalledTimes(1);
     });
 
     it('reconciles removed credential leases while retaining a current shared account lease', async () => {
