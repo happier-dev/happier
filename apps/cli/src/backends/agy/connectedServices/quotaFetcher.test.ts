@@ -128,18 +128,79 @@ describe('Antigravity selected-account quota summary', () => {
       await expect(fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal })).rejects.toHaveProperty('quotaFetchErrorCode');
     }
   });
-  it.each([
-    ['never onboarded', NOT_ONBOARDED_LOAD_CODE_ASSIST],
-    ['awaiting a user-defined project', { currentTier: { id: 'standard-tier', userDefinedCloudaicompanionProject: true } }],
-  ])('reports an account %s as unknown quota without enrolling it or inventing allowance', async (_name, load) => {
+  it('reports an account awaiting a user-defined project as unknown quota without enrolling it or inventing allowance', async () => {
     const requests: string[] = [];
     const fetcher = createAgyQuotaFetcher({ fetchRuntime: async (url, init) => {
       requests.push(url);
-      return unsupportedClientResponse(init) ?? Response.json(load);
+      return unsupportedClientResponse(init) ?? Response.json({ currentTier: { id: 'standard-tier', userDefinedCloudaicompanionProject: true } });
     } });
     const snapshot = await fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal });
     expect(requests).toEqual(['https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist']);
     expect(snapshot).toMatchObject({ serviceId: 'antigravity', profileId: 'agy-selected', meters: [] });
+  });
+  // Native agy onboards an account on its first run; a pool member connected through Happier may
+  // never have run agy. Onboarding follows the Code Assist login contract (same as 0.3's
+  // discoverAntigravityProject): onboardUser(free-tier) → poll the operation → load the project.
+  it('onboards a never-onboarded account and then reads its real quota', async () => {
+    const requests: Array<{ url: string; method: string; body: unknown; userAgent: string | null }> = [];
+    let onboarded = false;
+    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async (url, init) => {
+      requests.push({ url, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : null, userAgent: new Headers(init.headers).get('user-agent') });
+      const unsupported = unsupportedClientResponse(init);
+      if (unsupported) return unsupported;
+      if (url.endsWith(':loadCodeAssist')) return Response.json(onboarded ? LIVE_LOAD_CODE_ASSIST : NOT_ONBOARDED_LOAD_CODE_ASSIST);
+      if (url.endsWith(':onboardUser')) return Response.json({ name: 'operations/onboard-1', done: false });
+      if (url.endsWith('/v1internal/operations/onboard-1')) {
+        onboarded = true;
+        return Response.json({ name: 'operations/onboard-1', done: true, response: { '@type': 'type.googleapis.com/OnboardUserResponse' } });
+      }
+      return Response.json(liveSummary(0.8));
+    } });
+    const snapshot = await fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal });
+    expect(requests.map(({ url, method }) => `${method} ${url}`)).toEqual([
+      'POST https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+      'POST https://daily-cloudcode-pa.googleapis.com/v1internal:onboardUser',
+      'GET https://daily-cloudcode-pa.googleapis.com/v1internal/operations/onboard-1',
+      'POST https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+      'POST https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary',
+    ]);
+    expect(requests[1]?.body).toEqual({ tierId: 'free-tier', metadata: { ideType: 'ANTIGRAVITY' } });
+    expect(requests[4]?.body).toEqual({ project: 'live-project' });
+    expect(snapshot?.meters).toContainEqual(expect.objectContaining({ providerLimitId: 'pro-weekly', remainingPct: 80, isExhausted: false }));
+  });
+  it.each([
+    ['the onboarding operation fails', { name: 'operations/onboard-1', done: true, error: { code: 7, message: 'private vendor response' } }, NOT_ONBOARDED_LOAD_CODE_ASSIST, 'antigravity_onboarding_failed'],
+    ['onboarding leaves no project', { name: 'operations/onboard-1', done: true, response: {} }, { currentTier: { id: 'free-tier' } }, 'antigravity_quota_malformed:onboarded_without_project:allowed=-;ineligible=-;paid=-'],
+  ])('fails observably without inventing quota when %s', async (_name, operation, reloaded, message) => {
+    const requests: string[] = [];
+    let onboarded = false;
+    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => {
+      requests.push(url);
+      if (url.endsWith(':loadCodeAssist')) return Response.json(onboarded ? reloaded : NOT_ONBOARDED_LOAD_CODE_ASSIST);
+      if (url.endsWith(':onboardUser')) { onboarded = true; return Response.json(operation); }
+      return Response.json(liveSummary(1));
+    } });
+    const error = await fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal }).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ message });
+    expect(String((error as Error).message)).not.toContain('private vendor response');
+    expect(requests.some(url => url.includes('retrieveUserQuota'))).toBe(false);
+  });
+  // agy's Code Assist contract: an account Google must verify first is reported as an ineligible
+  // tier with reason VALIDATION_REQUIRED (plus a validation link agy sometimes drops).
+  it.each([
+    ['without an allowed free tier', [{ id: 'standard-tier', userDefinedCloudaicompanionProject: true }]],
+    ['while the free tier is offered', [{ id: 'free-tier', isDefault: true }]],
+  ])('reports an account awaiting Google verification %s as validation required without onboarding it', async (_name, allowedTiers) => {
+    const requests: string[] = [];
+    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => {
+      requests.push(url);
+      return Response.json({ allowedTiers, ineligibleTiers: [{ reasonCode: 'VALIDATION_REQUIRED', tierId: 'free-tier',
+        reasonMessage: 'private vendor response', validationUrl: 'https://accounts.google.com/signin/continue?private' }] });
+    } });
+    const error = await fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal }).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ message: 'antigravity_validation_required', providerCode: 'antigravity_validation_required' });
+    expect(JSON.stringify(error)).not.toContain('private');
+    expect(requests).toEqual(['https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist']);
   });
   it('keeps an unidentified-client entitlement malformed', async () => {
     const fetcher = createAgyQuotaFetcher({ fetchRuntime: async () => unsupportedClientResponse({ headers: {} })! });
@@ -166,7 +227,11 @@ describe('Antigravity pool hard-limit recovery from fetched quota', () => {
     const store = createProviderAccountUsageStore();
     const g = group();
     for (const [profileId, load, weekly] of [['exhausted', LIVE_LOAD_CODE_ASSIST, 0], ['candidate', candidateLoad, candidateWeekly]] as const) {
-      const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => Response.json(url.endsWith(':loadCodeAssist') ? load : liveSummary(weekly)) });
+      let onboarded = false;
+      const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => {
+        if (url.endsWith(':onboardUser')) { onboarded = true; return Response.json({ done: true, response: {} }); }
+        return Response.json(url.endsWith(':loadCodeAssist') ? onboarded ? LIVE_LOAD_CODE_ASSIST : load : liveSummary(weekly));
+      } });
       const snapshot = await fetcher.fetch({ record: record(null, profileId), now: nowMs, signal: new AbortController().signal });
       store.recordSnapshot(buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({ snapshot: snapshot!, sourceProviderAccountId: `${profileId}-google-id` }),
         { sources: [{ serviceId: 'antigravity', profileId, bindingKind: 'group_member', groupId: 'agy', groupGeneration: g.generation }] });
@@ -182,7 +247,8 @@ describe('Antigravity pool hard-limit recovery from fetched quota', () => {
   it('does not select a member whose live-shaped weekly quota is also exhausted', async () => {
     expect((await select(LIVE_LOAD_CODE_ASSIST, 0)).selected).toBeNull();
   });
-  it('accepts a never-onboarded member as unknown quota for hard-limit recovery', async () => {
+  it('onboards a never-used member so its real quota decides hard-limit recovery', async () => {
     expect((await select(NOT_ONBOARDED_LOAD_CODE_ASSIST, 1)).selected?.profileId).toBe('candidate');
+    expect((await select(NOT_ONBOARDED_LOAD_CODE_ASSIST, 0)).selected).toBeNull();
   });
 });
