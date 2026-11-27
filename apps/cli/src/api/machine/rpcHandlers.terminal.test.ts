@@ -2228,8 +2228,10 @@ describe('registerMachineTerminalRpcHandlers', () => {
           deps: { env, platform, workingDirectory: root, sessionManager } });
         const ensure = registered.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!;
         try {
-          await expect(ensure({ terminalKey: 'script', cwd, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev' } })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
-          await expect(ensure({ terminalKey: 'malicious', cwd, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev; echo injected' } })).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
+          // Like every other Ensure launch, an unadmitted caller is refused by the requester identity owner first.
+          const unadmitted = { ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable' };
+          await expect(ensure({ terminalKey: 'script', cwd, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev' } })).resolves.toMatchObject(unadmitted);
+          await expect(ensure({ terminalKey: 'malicious', cwd, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev; echo injected' } })).resolves.toMatchObject(unadmitted);
           expect(provider.spawned).toHaveLength(0);
         } finally { sessionManager.dispose(); }
       }

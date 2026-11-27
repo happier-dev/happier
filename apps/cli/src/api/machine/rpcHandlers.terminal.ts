@@ -762,7 +762,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     return result;
   };
 
-  const runPackageScript = async (cwd: string, runTargetId: string, context?: RpcHandlerContext) => {
+  const runPackageScript = async (cwd: string, runTargetId: string, requesterIdentity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
     const refused = (code: string, details?: unknown) => ({ ...err('terminal_invalid_request'), error: code,
       ...(details === undefined ? {} : { details }) });
     const admission = context?.machineAdmission;
@@ -789,7 +789,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const accepted = resolveWorkspaceRefV1(rows.workspaceRefs, { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: cwd },
         { normalizeServerId: id => id === runtime.serverId ? homeServerId : id });
       if (accepted.kind !== 'resolved' || !accepted.ref.projectKey) return refused('project_workspace_unavailable');
-      const requesterIdentity = (await resolveRequesterIdentity(context)).identity;
       const scriptName = await readRequesterCheckout({ runtime, requesterIdentity, context, workspace: accepted.ref,
         read: () => resolveLocalServiceRunTargetScriptName({ cwd: accepted.ref.rootPath, runTargetId }) });
       if (context.signal.aborted) return refused('machine_admission_changed');
@@ -859,13 +858,14 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       )
     ) return err('terminal_invalid_request');
 
-    if (parsed.data.launch?.kind === 'package_script') {
-      const cwd = resolveCwd(parsed.data.cwd);
-      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context) : cwd;
-    }
     const resolvedRequester = await resolveRequesterIdentity(context);
     const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
     if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
+    // A package script runs as the same placed requester: it needs the identity this check admits.
+    if (parsed.data.launch?.kind === 'package_script') {
+      const cwd = resolveCwd(parsed.data.cwd);
+      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, requesterIdentity, context) : cwd;
+    }
     const placed = placeTerminal(requesterIdentity, context);
     if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
     const { placement } = placed;
@@ -1059,13 +1059,14 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       )
     ) return err('terminal_invalid_request');
 
-    if (parsed.data.launch?.kind === 'package_script') {
-      const cwd = resolveCwd(parsed.data.cwd);
-      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context) : cwd;
-    }
     const resolvedRequester = await resolveRequesterIdentity(context);
     const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
     if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
+    // A package script runs as the same placed requester: it needs the identity this check admits.
+    if (parsed.data.launch?.kind === 'package_script') {
+      const cwd = resolveCwd(parsed.data.cwd);
+      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, requesterIdentity, context) : cwd;
+    }
     const placed = placeTerminal(requesterIdentity, context);
     if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
     const { placement } = placed;

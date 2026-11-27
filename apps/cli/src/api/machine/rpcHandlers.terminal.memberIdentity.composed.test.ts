@@ -564,6 +564,18 @@ describe.skipIf(process.platform !== 'linux')('installed host-composed member te
     expect(f.processes).toEqual([]);
   });
 
+  it('refuses a package script before any checkout read when the requester identity is unknown, as Ensure does', async () => {
+    const f = await fixture({ finite: true, nativePackageScript: true });
+    // No held Home: the requester identity owner cannot place this caller.
+    f.setHeldHome(null);
+    nativeOs.ownerRoots = [f.member.workspaceRoot];
+    const result = await f.invokeTerminal(RPC_METHODS.DAEMON_TERMINAL_ENSURE, { terminalKey: 'unknown-script', cwd: f.workspace.rootPath,
+      launch: { kind: 'package_script', runTargetId: 'native-member:dev' } });
+    expect(result).toMatchObject({ ok: false, error: 'agent_isolation_unavailable' });
+    expect(nativeOs.ownerDaemonReads).toEqual([]);
+    expect(f.processes).toEqual([]);
+  });
+
   it('requires the requester Ask for a member script even when the host Account waives approval', async () => {
     const f = await fixture({ finite: true, requesterAsk: true });
     expect(getActiveAccountSettingsSnapshot()?.settings.actionsSettingsV1.approvalWaivedSurfaces?.['projects.script.run']).toContain('api');
