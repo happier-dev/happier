@@ -24,6 +24,7 @@ import { resolveDevServerConnection } from '../../utils/dev/resolveDevServerConn
 import { resolveStackServerEndpoint } from '../../utils/server/urls.mjs';
 import { emitSourceReloadRefusal, formatSourceReloadRefusal, recordSourceReloadRefusal } from '../shared/source_reload_refusal.mjs';
 import { preflightSourceRuntimeMigrations } from './preflightSourceRuntimeMigrations.mjs';
+import { assertRevisionCheckoutDependencies } from '../../build/source_revision_install.mjs';
 import { recordSourceSelectionRollback } from '../shared/source_selection_rollback.mjs';
 import { emitSourceRuntimeSourceTimes, formatSourceRuntimeSourceTimes } from '../shared/source_bundle_record.mjs';
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
@@ -162,8 +163,20 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     if (green && !request.rev && [treeRevision?.revision, revision?.revision].includes(green.revision)) {
       await log(`[reload] green commit ${green.revision} (proven ${green.checkedAt}); --rev=HEAD selects HEAD instead`);
     }
-    const sourceRevision = request.revisionDescriptorPath ? { descriptorPath: request.revisionDescriptorPath }
+    let sourceRevision = request.revisionDescriptorPath ? { descriptorPath: request.revisionDescriptorPath }
       : revision ? { rev: revision.revision, overlay: Object.keys(revision.overlay) } : undefined;
+    if (uiMode === 'export' && connection.startServer && !placement?.target && !sourceTree && sourceRevision) {
+      // Descriptor exports mount this host's checkout installation. Refuse a
+      // known mismatch before server/daemon producer admission. Capture checks
+      // again because dependency refresh can publish a different install meanwhile.
+      if (!sourceRevision.descriptorPath) {
+        sourceRevision = { descriptorPath: await writeSourceRevisionDescriptor({ repoDir, identity: revision,
+          outputDir: revisionDir = await mkdtemp(join(sourceRoot, 'revision-')),
+          components: ['server', 'daemon', 'expo'] }) };
+      }
+      await assertRevisionCheckoutDependencies({ repoDir,
+        descriptor: await readSourceRevisionDescriptor(sourceRevision.descriptorPath), scratchRoot: sourceRoot, env });
+    }
     if (revision) await log(`[reload] source revision ${revision.revision}${revision.overlayDigest ? ` + overlay ${revision.overlayDigest} (${Object.keys(revision.overlay).length} declared files)` : ''}; select another with --rev=<sha>, layer this Stack's uncommitted files with --overlay=<paths>`);
     if (sourceCapturedAfter != null) await log(`[reload] source capture boundary: ${new Date(sourceCapturedAfter).toISOString()}`);
     if (placement?.target && !connection.startServer) {

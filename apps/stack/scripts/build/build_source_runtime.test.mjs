@@ -2520,6 +2520,63 @@ test(`source reload retries adoption of the same capture after ${failures} readi
 });
 }
 
+test('revision export refuses mismatched checkout dependencies before bundle admission', async t => {
+  const { resolveSourceRevisionIdentity, writeSourceRevisionDescriptor, readSourceRevisionDescriptor } = await import('./source_revision.mjs');
+  const { assertRevisionCheckoutDependencies, REVISION_DEPENDENCIES_MISMATCH_CODE } = await import('./source_revision_install.mjs');
+  const { inspectDependencyRefresh } = await import('../utils/proc/dependency_refresh.mjs');
+  const fixture = await createTempFixture(t, { prefix: 'reload-export-dependency-preflight-' });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
+  await mkdir(join(repoDir, 'apps/server/sources'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/package.json'), JSON.stringify({ name: '@happier-dev/server' }));
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export {};');
+  await mkdir(join(repoDir, 'apps/ui'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ name: '@happier-dev/ui' }));
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules/\n');
+  const git = (...args) => childProcess.execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  git('init', '--quiet'); git('add', '-A'); git('commit', '--quiet', '-m', 'selected');
+  const identity = await resolveSourceRevisionIdentity({ repoDir, rev: 'HEAD', overlay: [] });
+  const descriptorPath = await writeSourceRevisionDescriptor({ repoDir, identity,
+    outputDir: fixture.path('descriptor'), components: ['server', 'daemon', 'expo'] });
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_SOURCE_TREES: '0',
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer' };
+  const { installIdentity } = await inspectDependencyRefresh({ installDir: repoDir, env });
+  const marker = resolveDependencyRefreshMarkerPath(repoDir);
+  await mkdir(dirname(marker), { recursive: true });
+  await writeFile(marker, JSON.stringify({ version: 7, identity: installIdentity }));
+  const options = { stackName: 'qa', stackBaseDir: fixture.path('stacks/qa'), repoDir,
+    args: ['--ui=export', '--no-daemon', `--source-revision=${descriptorPath}`], env };
+  let bundleBuilds = 0;
+  // Only replace the OS build worker launch. The reload, descriptor, dependency
+  // identity comparison and terminal refusal publication remain real.
+  for (const method of ['spawn', 'fork']) {
+    const original = childProcess[method];
+    t.mock.method(childProcess, method, (command, args, ...rest) => {
+      if (args?.some(arg => String(arg).includes('workspace_build_admission.mjs'))) {
+        bundleBuilds += 1;
+        throw Object.assign(new Error('bundle admission reached'), { code: 'EBUNDLEPROBE' });
+      }
+      return original(command, args, ...rest);
+    });
+  }
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(prepareSourceRuntimeReload(options), /bundle admission reached/);
+    assert.equal(bundleBuilds, 1, 'matching installation reaches the bundle builder');
+    await writeFile(marker, JSON.stringify({ version: 7, identity: 'another-installation' }));
+    let expected;
+    try { await assertRevisionCheckoutDependencies({ repoDir, descriptor: await readSourceRevisionDescriptor(descriptorPath),
+      scratchRoot: fixture.path('comparison'), env }); } catch (error) { expected = error; }
+    await assert.rejects(prepareSourceRuntimeReload(options), { code: REVISION_DEPENDENCIES_MISMATCH_CODE, message: expected.message });
+    assert.equal(bundleBuilds, 1, 'mismatched export must launch no bundle builder');
+    const refusal = JSON.parse(await readFile(join(options.stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+    assert.match(await readFile(refusal.logPath, 'utf8'), new RegExp(REVISION_DEPENDENCIES_MISMATCH_CODE));
+    assert.ok((await readFile(refusal.logPath, 'utf8')).includes(expected.message));
+    await assert.rejects(prepareSourceRuntimeReload({ ...options, args: ['--ui=export', '--no-daemon', '--rev=HEAD'] }),
+      { code: REVISION_DEPENDENCIES_MISMATCH_CODE, message: expected.message });
+    assert.equal(bundleBuilds, 1, 'controller revision selection also refuses before bundle admission');
+  } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+});
+
 test('source reload refusal publishes the failing module and preserves incumbent selection', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
   graph.old.entrypoint = graph.daemon.entrypoint;
