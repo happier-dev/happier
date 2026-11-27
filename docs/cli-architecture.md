@@ -4735,6 +4735,10 @@ Shared Docker state has no automatic Remove.
 Docker inspection and child execution then establish the actual container id,
 OS user, workspace root and named volumes. Placed containers use their own
 filesystem; Project files delivers Copy once, Git clone or explicit sync.
+For a local source and a managed target, the finite seed delivers the private
+SCM snapshot as one archive stream. The guest stages its contents and the
+target becomes visible after the source finishes streaming and the guest
+confirms extraction. Populated kept workspaces retain their own working copy.
 In current 0.3 development, Git clone can omit the repository and branch to use
 “From the folder” and “The folder’s current branch”. Session preparation resolves
 those facts through the captured original Source’s admitted `projects.open`

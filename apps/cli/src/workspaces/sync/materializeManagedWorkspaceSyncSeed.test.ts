@@ -1,7 +1,9 @@
-import { execFile as execFileCallback } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFile as execFileCallback, spawn } from 'node:child_process';
+import { watch } from 'node:fs';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { Duplex } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -29,8 +31,9 @@ async function fixture() {
   await mkdir(source);
   // Only the provider's command/file transport is substituted. Every selection,
   // Git export and materialization step runs through the real workspace owners.
-  const target: ManagedWorkspaceSyncSeedTarget = {
+  const target = {
     exec: async (command, signal) => {
+      signal.throwIfAborted();
       try {
         const result = await execFile('/bin/sh', ['-c', command], { signal, env: { ...process.env, PATH: '/usr/bin:/bin' } });
         return { status: 0, stdout: result.stdout, stderr: result.stderr };
@@ -39,12 +42,59 @@ async function fixture() {
         return { status: typeof result.code === 'number' ? result.code : 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
       }
     },
-    putFile: async (path, bytes) => { await writeFile(path, bytes); },
-  };
+    openChannel(argv: readonly string[], signal: AbortSignal) {
+      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'], env: { ...process.env, PATH: '/usr/bin:/bin' } });
+      const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+      const abort = () => child.stdin.end();
+      signal.addEventListener('abort', abort, { once: true });
+      child.once('close', () => signal.removeEventListener('abort', abort));
+      child.once('error', error => channel.destroy(error));
+      return channel;
+    },
+  } satisfies ManagedWorkspaceSyncSeedTarget;
   return { root, source, target, targetPath: join(root, 'guest', 'project'), signal: new AbortController().signal };
 }
 
 describe.skipIf(process.platform === 'win32')('managed target workspace seed', () => {
+  it('delivers a 200-file tree with one guest stream and a constant number of guest calls', async () => {
+    const f = await fixture();
+    for (let index = 0; index < 40; index++) {
+      const directory = join(f.source, `folder-${index}`);
+      await mkdir(directory);
+      await Promise.all(Array.from({ length: 5 }, (_, file) => writeFile(join(directory, `file-${file}`), `${index}:${file}`)));
+    }
+    let commands = 0;
+    let streams = 0;
+    const target = {
+      exec: async (...args: Parameters<typeof f.target.exec>) => { commands++; return await f.target.exec(...args); },
+      openChannel: (...args: Parameters<typeof f.target.openChannel>) => { streams++; return f.target.openChannel(...args); },
+    };
+    const result = await materializeManagedWorkspaceSyncSeed({ ...f, target, sourcePath: f.source,
+      activeServerDir: f.root, registry: createScmBackendRegistry([]) });
+    expect(await readFile(join(result.targetRoot, 'folder-39', 'file-4'), 'utf8')).toBe('39:4');
+    expect({ commands, streams }).toEqual({ commands: 2, streams: 1 });
+  });
+
+  it('cleans a staged guest seed when its caller cancels before publication', async () => {
+    const f = await fixture();
+    const parent = dirname(f.targetPath);
+    await mkdir(parent, { recursive: true });
+    await writeFile(join(f.source, 'archive-data'), Buffer.alloc(1024 * 1024));
+    const lifetime = new AbortController();
+    const cancellation = new Error('cancelled workspace seed');
+    const watcher = watch(parent, (_event, name) => {
+      if (name?.startsWith('.happier-project-')) lifetime.abort(cancellation);
+    });
+    try {
+      await expect(materializeManagedWorkspaceSyncSeed({ ...f, sourcePath: f.source, activeServerDir: f.root,
+        signal: lifetime.signal, registry: createScmBackendRegistry([]) })).rejects.toBe(cancellation);
+    } finally {
+      watcher.close();
+    }
+    expect(lifetime.signal.aborted).toBe(true);
+    expect(await readdir(parent)).toEqual([]);
+  });
+
   it('copies a chosen folder with binary files, executable files and contained links', async () => {
     const f = await fixture();
     await mkdir(join(f.source, 'nested'));
@@ -53,9 +103,9 @@ describe.skipIf(process.platform === 'win32')('managed target workspace seed', (
     await chmod(join(f.source, 'run'), 0o755);
     await symlink('nested/uncommitted.bin', join(f.source, 'link'));
     const progress: ActionOperationProgressUpdate[] = [];
-    const target = { ...f.target, putFile: async (...args: Parameters<typeof f.target.putFile>) => {
+    const target = { ...f.target, openChannel: (...args: Parameters<typeof f.target.openChannel>) => {
       expect(progress.at(-1)?.phase).toBe('project_files_copy');
-      await f.target.putFile(...args);
+      return f.target.openChannel(...args);
     } };
     const result = await materializeManagedWorkspaceSyncSeed({ ...f, sourcePath: f.source, activeServerDir: f.root,
       target, onProgress: event => { progress.push(event); }, registry: createScmBackendRegistry([]) });
@@ -76,23 +126,23 @@ describe.skipIf(process.platform === 'win32')('managed target workspace seed', (
     await writeFile(join(f.source, 'sentinel.bin'), bytes);
     const linkPath = join(f.source, 'private', 'app-server.sock');
     await symlink('../sentinel.bin', linkPath);
-    let guestFileWrites = 0;
-    const target = { ...f.target, putFile: async (...args: Parameters<typeof f.target.putFile>) => {
-      guestFileWrites += 1;
-      await f.target.putFile(...args);
+    let guestStreams = 0;
+    const target = { ...f.target, openChannel: (...args: Parameters<typeof f.target.openChannel>) => {
+      guestStreams++;
+      return f.target.openChannel(...args);
     } };
     const input = { ...f, target, sourcePath: f.source, activeServerDir: f.root, registry: createScmBackendRegistry([]) };
     const copied = await materializeManagedWorkspaceSyncSeed(input);
     expect(await readFile(join(copied.targetRoot, 'private', 'app-server.sock'))).toEqual(bytes);
-    expect(guestFileWrites).toBeGreaterThan(0);
+    expect(guestStreams).toBe(1);
 
     await rm(linkPath);
     await symlink(join(f.source, 'sentinel.bin'), linkPath);
-    guestFileWrites = 0;
+    guestStreams = 0;
     const refusedTarget = join(f.root, 'guest', 'refused');
     const failure = await materializeManagedWorkspaceSyncSeed({ ...input, targetPath: refusedTarget }).catch(error => error);
     expect(failure).toMatchObject({ code: 'project_files_copy_failed' });
-    expect(guestFileWrites).toBe(0);
+    expect(guestStreams).toBe(0);
     await expect(lstat(refusedTarget)).rejects.toMatchObject({ code: 'ENOENT' });
     const launch = projectSessionTargetLaunchFailure(failure);
     expect(launch).toMatchObject({ errorDetail: { code: 'project_files_copy_failed', failureCause: {
@@ -158,10 +208,10 @@ describe.skipIf(process.platform === 'win32')('managed target workspace seed', (
     const f = await fixture();
     await writeFile(join(f.source, 'sentinel.txt'), 'copy');
     const failureCause = projectActionFailureCauseV1(Object.assign(new Error('PRIVATE_PROVIDER_OUTPUT'), { code: 'EACCES', status: 503 }),
-      'machines.native.put_file');
+      'machines.native.stream');
     const refusal = ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: 'provider_unavailable',
       error: 'PRIVATE_PROVIDER_OUTPUT', failureCause }, 'machines.managed.acquire');
-    const target = { ...f.target, putFile: async () => { throw refusal; } };
+    const target = { ...f.target, openChannel: () => { throw refusal; } };
     const failure = await materializeManagedWorkspaceSyncSeed({ ...f, target, sourcePath: f.source, activeServerDir: f.root,
       registry: createScmBackendRegistry([]) }).catch(error => error);
     expect(failure).toMatchObject({ code: 'project_files_copy_failed' });
