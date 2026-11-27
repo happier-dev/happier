@@ -12,7 +12,7 @@ import {
   resolveDescriptorApplicationOrigin,
   type HomeApplicationCarrierEligibility,
 } from '@happier-dev/cli-common/homeEnrollment';
-import { assertResolvedHomeTargetIdentity, resolveHomeTarget, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError, resolveHomeTarget, type ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 
 import {
   createLoopbackHomeIdentityProbe,
@@ -28,6 +28,8 @@ import {
   setServerProfileEndpointsById,
   adoptServerProfileHomeConnectionDescriptor,
   refreshServerProfileHomeConnectionDescriptor,
+  ServerProfileDescriptorRevisionError,
+  ServerProfileIdentityMismatchError,
   type ServerProfile,
 } from '@/server/serverProfiles';
 
@@ -543,35 +545,50 @@ export async function applyDaemonHomeDescriptorRefresh(input: Readonly<{
 }>): Promise<'ignored' | 'updated' | 'unchanged' | 'stale'> {
   const descriptor = input.features.homeConnectionDescriptor;
   if (!descriptor) return 'ignored';
-  const observedIdentity = input.features.capabilities.serverIdentity.serverIdentityId;
-  const resolvedTarget = await resolveHomeTarget({
-    input: { kind: 'descriptor', descriptor, authority: 'current_connection' },
-    readSavedProfile: async () => null,
-  });
-  assertResolvedHomeTargetIdentity(resolvedTarget, observedIdentity ?? '');
-  // A daemon may start from its explicit URL before Stack materializes the
-  // stable invocation profile. Keep an already bound profile fixed, but let a
-  // captured manual target adopt that exact configured profile once it exists.
-  const target = input.reconcileDescriptor
-    ? null
-    : input.homeTarget?.profileId
-      ? input.homeTarget
-      : await resolveCurrentCliHomeTarget();
-  // An env-only invocation has no saved profile to mutate. In particular,
-  // its descriptor must never be assigned to the user's focused Home.
-  if (!input.reconcileDescriptor && !target?.profileId) return 'ignored';
-  if (target) assertResolvedHomeTargetIdentity(target, observedIdentity ?? '');
-  const reconciliation = await (
-    input.reconcileDescriptor
-    ?? (async (nextDescriptor) => await adoptServerProfileHomeConnectionDescriptor({
-      descriptor: nextDescriptor,
-      expectedProfileId: target!.profileId!,
-      observation: 'exact',
-    }))
-  )(descriptor);
-  if (reconciliation.outcome === 'updated' || reconciliation.outcome === 'unchanged') {
-    await input.onExactDescriptorAdopted?.(descriptor);
+  try {
+    const observedIdentity = input.features.capabilities.serverIdentity.serverIdentityId;
+    const resolvedTarget = await resolveHomeTarget({
+      input: { kind: 'descriptor', descriptor, authority: 'current_connection' },
+      readSavedProfile: async () => null,
+    });
+    assertResolvedHomeTargetIdentity(resolvedTarget, observedIdentity ?? '');
+    // A daemon may start from its explicit URL before Stack materializes the
+    // stable invocation profile. Keep an already bound profile fixed, but let a
+    // captured manual target adopt that exact configured profile once it exists.
+    const target = input.reconcileDescriptor
+      ? null
+      : input.homeTarget?.profileId
+        ? input.homeTarget
+        : await resolveCurrentCliHomeTarget();
+    // An env-only invocation has no saved profile to mutate. In particular,
+    // its descriptor must never be assigned to the user's focused Home.
+    if (!input.reconcileDescriptor && !target?.profileId) return 'ignored';
+    if (target) assertResolvedHomeTargetIdentity(target, observedIdentity ?? '');
+    const reconciliation = await (
+      input.reconcileDescriptor
+      ?? (async (nextDescriptor) => await adoptServerProfileHomeConnectionDescriptor({
+        descriptor: nextDescriptor,
+        expectedProfileId: target!.profileId!,
+        observation: 'exact',
+      }))
+    )(descriptor);
+    if (reconciliation.outcome === 'updated' || reconciliation.outcome === 'unchanged') {
+      await input.onExactDescriptorAdopted?.(descriptor);
+    }
+    if (reconciliation.outcome === 'updated') await input.requestReconnect();
+    return reconciliation.outcome;
+  } catch (error) {
+    if (error instanceof HomeTargetResolutionError || error instanceof ServerProfileIdentityMismatchError
+      || error instanceof ServerProfileDescriptorRevisionError) {
+      logger.warnLocalFile('[DAEMON RUN] Authenticated Home descriptor refresh refused', {
+        status: 'unavailable',
+        code: error.code,
+        ...(error instanceof ServerProfileDescriptorRevisionError ? {
+          storedRevision: error.storedRevision,
+          observedRevision: error.observedRevision,
+        } : {}),
+      });
+    }
+    throw error;
   }
-  if (reconciliation.outcome === 'updated') await input.requestReconnect();
-  return reconciliation.outcome;
 }

@@ -3486,6 +3486,10 @@ names and system, Fastify or Axios error codes, a closed failed phase and an
 application request id. Private broker requests also carry the host-generated
 broker request id used for Home admission, distinguishing Home admission,
 source opening and upstream forwarding without logging URLs, headers or bodies.
+In 0.3 development, the initial provider-broker open on the daemon runner
+service returns HTTP 403 for a Machine carrier admission refusal, including the
+carrier's reason code. The runner preserves that code when binding preparation
+fails.
 In 0.3 development, the existing `[provider-broker-application]` file records
 also distinguish fresh carrier admission, target HTTP receipt, phase settlement,
 upstream HTTP status and completed responses. A context record joins the target

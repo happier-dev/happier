@@ -25,6 +25,7 @@ import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals }
 import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, waitForDaemonAdmission, waitForSessionSpawnAdmission, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { AUTHORITY_CEILING_HEADER_V1, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { logger } from '@/ui/logger';
+import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
@@ -186,6 +187,7 @@ import type {
 } from './spawn/persistedTakeoverAdmission';
 import {
   AGENT_RUNTIME_DAEMON_SERVICES_PATH,
+  PROVIDER_BROKER_CARRIER_OPEN_PHASE,
   AgentRuntimeDaemonServiceRequestV1Schema,
   AgentRuntimeDaemonServiceResponseV1Schema,
   type AgentRuntimeDaemonServiceRequestV1,
@@ -3632,6 +3634,19 @@ export function createDaemonControlApp({
           },
       );
     } catch (error) {
+      if (request.body.operation.kind === 'provider_broker.binding.open' && error instanceof MachineCarrierError) {
+        reply.code(403);
+        return { ok: false as const, error: {
+          code: error.code,
+          message: 'Provider broker carrier refused to open.',
+          failureCause: {
+            phase: PROVIDER_BROKER_CARRIER_OPEN_PHASE,
+            errorClass: 'Error' as const,
+            errorCode: error.code,
+            httpStatus: 403,
+          },
+        } };
+      }
       if (request.body.operation.kind === 'provider_broker.binding.open'
         && error instanceof SessionTeamCredentialLaunchUnavailableError) {
         return { ok: false as const, error: {

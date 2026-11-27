@@ -5,7 +5,9 @@ import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor, getServerProfile, isServerProfileHomeIdentity, removeServerProfile, setServerProfileEndpointsById, useServerProfile } from '@/server/serverProfiles';
-import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
+import { resolveCliHomeTarget, resolveCurrentCliHomeTarget } from '@/server/homeTarget';
+import { createServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
+import { logger } from '@/ui/logger';
 import { publishServerHttpRuntimeOrigin, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 import {
@@ -204,6 +206,55 @@ describe('prepareDaemonHomeIrohTransport', () => {
       });
     } finally {
       vi.unstubAllGlobals();
+      envScope.restore();
+      reloadConfiguration();
+    }
+  });
+
+  it('reports an exact descriptor conflict and recovers on the next valid authenticated refresh', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+      'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+    const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    try {
+      await withTempDir('happier-daemon-descriptor-conflict-', async homeDir => {
+        envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: undefined,
+          HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+        reloadConfiguration();
+        const profile = await addServerProfile({ name: 'daemon-home', serverUrl: descriptor.canonicalServerUrl,
+          webappUrl: descriptor.canonicalServerUrl, use: true });
+        await adoptServerProfileHomeConnectionDescriptor({
+          expectedProfileId: profile.id, observation: 'exact', descriptor,
+        });
+        const homeTarget = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: profile.id });
+        const requestReconnect = vi.fn();
+        const exactEndpoint = { ...descriptor.endpoints[0]!, directAddresses: ['127.0.0.1:12345'] };
+        let published = { ...descriptor, endpoints: [exactEndpoint] };
+        const store = createServerFeaturesSnapshotStore({
+          fetchSnapshot: async () => ({ status: 'ready', provenance: 'authenticated',
+            features: FeaturesResponseSchema.parse({ features: {},
+              capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+              homeConnectionDescriptor: published }) }),
+          onAuthenticatedReady: async features => {
+            await applyDaemonHomeDescriptorRefresh({ features, homeTarget, requestReconnect });
+          },
+        });
+
+        expect(await store.refresh()).toBeUndefined();
+        expect((await getServerProfile(profile.id)).homeConnectionDescriptor).toEqual(descriptor);
+        expect(requestReconnect).not.toHaveBeenCalled();
+        expect(warn.mock.calls.map(([, diagnostic]) => diagnostic)).toContainEqual(expect.objectContaining({
+          status: 'unavailable', code: 'home_descriptor_conflict',
+          storedRevision: descriptor.revision, observedRevision: descriptor.revision,
+        }));
+
+        published = { ...published, revision: descriptor.revision + 1 };
+        expect(await store.refresh()).toMatchObject({ status: 'ready', provenance: 'authenticated' });
+        expect((await getServerProfile(profile.id)).homeConnectionDescriptor).toEqual(published);
+        expect(requestReconnect).toHaveBeenCalledOnce();
+      });
+    } finally {
+      warn.mockRestore();
       envScope.restore();
       reloadConfiguration();
     }

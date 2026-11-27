@@ -11,6 +11,7 @@ import type { RequesterAgentStartPolicyV1 } from '@/daemon/sessionEncryption/req
 
 import {
   AGENT_RUNTIME_DAEMON_SERVICES_PATH,
+  PROVIDER_BROKER_CARRIER_OPEN_PHASE,
   AgentRuntimeDaemonServiceRequestV1Schema,
   AgentRuntimeDaemonServiceResponseV1Schema,
   type AgentRuntimeDaemonServiceRequestV1,
@@ -340,6 +341,12 @@ export async function openCurrentRunnerTeamCredentialProviderBinding(
     return response.result;
   }
   if (!response.ok) {
+    if (response.error.failureCause?.phase === PROVIDER_BROKER_CARRIER_OPEN_PHASE) {
+      throw Object.assign(new Error(response.error.message), {
+        code: response.error.code,
+        failureCause: projectDaemonServiceRefusalCause(response.error),
+      });
+    }
     if (response.error.code === REASONING_EFFORT_NOT_ALLOWED) {
       throw new SessionTeamCredentialLaunchUnavailableError(REASONING_EFFORT_NOT_ALLOWED, 'binding', response.error);
     }
@@ -1012,12 +1019,6 @@ async function dispatchAtAuthority(
       || response.status === 501
       || response.status === 503
     ) {
-      if (await didCurrentRunnerAuthorityRotate({
-        expected: input.authority,
-        observed: authority,
-      })) {
-        throw createRunnerAgentRuntimeDaemonServiceAuthorityTransitionError();
-      }
       // Only the route's two post-dispatch custody responses prove dispatch
       // occurred. A merely well-formed typed 503 may still be a pre-dispatch
       // refusal and therefore is not evidence of an ambiguous effect. The
@@ -1029,6 +1030,17 @@ async function dispatchAtAuthority(
       try { settledCandidate = rawBody.trim() ? JSON.parse(rawBody) as unknown : null; }
       catch { /* Malformed control responses retain the existing classification. */ }
       const settled = AgentRuntimeDaemonServiceResponseV1Schema.safeParse(settledCandidate);
+      if (response.status === 403 && operation.kind === 'provider_broker.binding.open'
+        && settled.success && !settled.data.ok
+        && settled.data.error.failureCause?.phase === PROVIDER_BROKER_CARRIER_OPEN_PHASE) {
+        return settled.data;
+      }
+      if (await didCurrentRunnerAuthorityRotate({
+        expected: input.authority,
+        observed: authority,
+      })) {
+        throw createRunnerAgentRuntimeDaemonServiceAuthorityTransitionError();
+      }
       // Preserve the failed boundary before the effect classifier deliberately
       // collapses it. Only admitted diagnostic codes enter this local record;
       // capability paths, tokens, request content and response text never do.

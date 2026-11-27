@@ -14789,7 +14789,11 @@ Recovery restores that Home's own verified continuity before republishing; it
 does not lower the client's admitted frontier. A shared-database consumer's
 private continuity therefore belongs with that consumer when its server moves.
 Public privacy-reduced observations do not allocate a revision or erase private
-facts from the retained authenticated descriptor.
+facts from the retained authenticated descriptor. In 0.3 development the daemon
+logs a typed warning when an authenticated features refresh refuses descriptor
+reconciliation. A seeded public descriptor must carry advisory provenance to
+qualify for promotion. An observation that was stored as exact remains subject to
+the same-revision conflict rule.
 
 Stack starts for an established Home wait for its matching authenticated
 descriptor before refreshing profile endpoints or starting the daemon. The

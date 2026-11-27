@@ -72,6 +72,9 @@ export {
 export const AGENT_RUNTIME_DAEMON_SERVICES_PATH =
   '/agent-runtime/session/services/v1';
 
+/** Identifies an admitted broker open refused by the Machine carrier. */
+export const PROVIDER_BROKER_CARRIER_OPEN_PHASE = 'providers.team_credential.carrier_open';
+
 /** New-turn admission refusal: the runtime's brokered Team endpoint is not a
  * current binding of this daemon. Recoverable by reopening the runtime. */
 export const TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT =

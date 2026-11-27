@@ -28,6 +28,7 @@ import {
 import type { TrackedSession } from './types';
 import { clearTrackedRunnerAgentDaemonServiceAdmission } from './agentRuntime/clearTrackedRunnerAgentDaemonServiceAdmission';
 import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
+import { MachineCarrierError } from './peer/iroh/machineCarrier';
 import { buildCgroupSelfMigratingHappyCliLaunchSpec } from './platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { sessionScopeExitEvidencePath } from './platform/linux/systemdUserResourceGovernor';
 import { adoptTrackedSessionRunnerIdentity } from './sessions/sessionReportCorrelation';
@@ -285,7 +286,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, capabilityDigest: authority.capabilityDigest });
     }
   });
-  it.each(['team_credential_provider_selection_not_current', 'resource_unavailable', 'broker_unavailable'] as const)(
+  it.each(['team_credential_provider_selection_not_current', 'resource_unavailable', 'broker_unavailable', 'grant_unknown_key'] as const)(
     'preserves a real Team selection refusal (%s) from the broker producer through the runner client', async code => {
     const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
@@ -310,6 +311,9 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'control-token',
       // Real broker decision and HTTP route/client; only Home catalog/open network results are supplied.
       agentRuntimeDaemonServices: { dispatch: async () => {
+        if (code === 'grant_unknown_key') {
+          throw new MachineCarrierError(code, 'Provider broker authority was rejected.');
+        }
         await openSessionTeamCredentialProviderBinding({ sessionId, machineId: 'machine-1', agentId: 'codex',
           agentTargetKey: operation.agentTargetKey, modelId: operation.modelId,
           binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: operation.resourceId,
@@ -339,7 +343,9 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       } },
     });
     let wireResponse: unknown;
-    app.addHook('onSend', async (_request, _reply, payload) => {
+    let wireStatus: number | undefined;
+    app.addHook('onSend', async (_request, reply, payload) => {
+      wireStatus = reply.statusCode;
       if (typeof payload === 'string') wireResponse = JSON.parse(payload);
       return payload;
     });
@@ -355,6 +361,15 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       tracked.agentRuntimeDaemonServiceCapabilityHash = capabilityDigest;
       const refused = await openCurrentRunnerTeamCredentialProviderBinding({ authority, operation })
         .then(() => null, (error: unknown) => error);
+      if (code === 'grant_unknown_key') {
+        expect(wireStatus).toBe(403);
+        expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(wireResponse)).toMatchObject({
+          ok: false, error: { code },
+        });
+        expect(refused).toMatchObject({ code });
+        return;
+      }
+      expect(wireStatus).toBe(200);
       expect(wireResponse).toEqual({ ok: false, error: { code, message: expect.any(String),
         failureCause: { phase: 'providers.team_credential.binding', errorClass: 'Error', errorCode: code, httpStatus: null },
       } });
