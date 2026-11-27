@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, tmpdir } from 'node:os';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -128,6 +128,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
       throw error;
     });
   const daemons: StartedDaemon[] = [];
+  const temporaryWorkspaceDirs: string[] = [];
   const accountObservers: ReturnType<typeof observeSessionSocketEvents>[] = [];
   try {
     if (!requestProxy && (params.observeActionRequests || params.beforeHttpRequest || params.requestObservation)) {
@@ -231,7 +232,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
         const account = { name, auth, terminal, credentials,
           uiCredentials: buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' }),
           async readProjectOrganizationRevision(project: Omit<Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>, 'kind'>) {
-            const key = { kind: 'project-organization', ...project };
+            const key = { kind: 'project-organization' as const, ...project };
             const response = await fetchJson<unknown>(new URL(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, actionServerApiUrl).href, {
               method: 'POST',
               headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
@@ -343,7 +344,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
         connectedServices: { v: 2, bindingsByServiceId: {} }, terminal: { mode: 'plain' },
       });
       if (!result.ok) {
-        throw new Error(`Project fixture Session creation refused (${result.errorCode}); error=${JSON.stringify(result.error)}`);
+        const failedRequests = requestProxy?.entries().filter(request => request.statusCode !== null && request.statusCode >= 400)
+          .map(({ method, path, statusCode }) => ({ method, path: new URL(path, server.baseUrl).pathname, statusCode }));
+        throw new Error(`Project fixture Session creation refused (${result.errorCode}); result=${JSON.stringify(result)}; failedHttp=${JSON.stringify(failedRequests ?? [])}`);
       }
       const created = SessionSpawnNewActionResultV1Schema.parse(result.result);
       if (created.type !== 'success') {
@@ -376,7 +379,13 @@ export async function startProjectDaemonFixture(params: Readonly<{
         await mkdir(accountDir, { recursive: true });
         const directory = await mkdtemp(join(accountDir, 'machine-'));
         const homeDir = options.pairedHome?.homeDir ?? join(directory, 'home');
-        const workspaceDir = options.workspaceDir ?? join(directory, 'workspace');
+        const workspaceDir = options.workspaceDir ?? await (async () => {
+          // Keep the default workspace outside the retained log directory's SCM
+          // ancestry so turn-end checkpoints do not snapshot the monorepo checkout.
+          const isolatedWorkspaceDir = await mkdtemp(join(tmpdir(), 'happier-project-workspace-'));
+          temporaryWorkspaceDirs.push(isolatedWorkspaceDir);
+          return isolatedWorkspaceDir;
+        })();
         const claudeConfigDir = join(homeDir, '.claude');
         await Promise.all([mkdir(workspaceDir, { recursive: true }), mkdir(claudeConfigDir, { recursive: true })]);
         const enrollment = await (async () => {
@@ -434,6 +443,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
     const errors: unknown[] = [];
     for (const close of [...accountObservers].reverse().map(observer => () => observer.dispose())
       .concat([...daemons].reverse().map(daemon => () => daemon.stop()))
+      .concat([...temporaryWorkspaceDirs].reverse().map(dir => () => rm(dir, { recursive: true, force: true })))
       .concat(async () => { await requestProxy?.stop(); }, () => server.stop(),
         async () => { await ingress?.stop(); }, async () => {
           if (previousCertificates) setDefaultCACertificates(previousCertificates);

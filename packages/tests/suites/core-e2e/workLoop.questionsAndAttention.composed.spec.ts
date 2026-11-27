@@ -109,13 +109,16 @@ it('observes a Run question, refuses the retired answer and delivers a Run Follo
     const occurrence = SessionFollowRunOccurrenceRoutesResponseV1Schema.parse(await observation.json());
     if (!occurrence.ok) throw new Error(`Run Follow observation refused: ${occurrence.error}`);
     expect(occurrence.original.source).toEqual(follow.source);
-    for (const alreadyRepresented of [false, true]) {
-      const response = await post(SESSION_FOLLOW_PERSONAL_PROGRESS_ROUTE_V1, { original: occurrence.original });
-      expect(response.status).toBe(200);
-      expect(SessionFollowPersonalProgressResponseV1Schema.parse(await response.json())).toEqual({
-        accepted: true, alreadyRepresented,
-      });
-    }
+    const firstDelivery = await post(SESSION_FOLLOW_PERSONAL_PROGRESS_ROUTE_V1, { original: occurrence.original });
+    expect(firstDelivery.status).toBe(200);
+    // The enrolled daemon may already have delivered the settled Run occurrence
+    // before this explicit replay arrives; the subsequent POST must still dedupe.
+    expect(SessionFollowPersonalProgressResponseV1Schema.parse(await firstDelivery.json()).accepted).toBe(true);
+    const replayDelivery = await post(SESSION_FOLLOW_PERSONAL_PROGRESS_ROUTE_V1, { original: occurrence.original });
+    expect(replayDelivery.status).toBe(200);
+    expect(SessionFollowPersonalProgressResponseV1Schema.parse(await replayDelivery.json())).toEqual({
+      accepted: true, alreadyRepresented: true,
+    });
     const relations = FollowListActionOutputV1Schema.parse(await execute('follow.list', {
       receiver: follow.receiver, direction: 'following',
     }));
