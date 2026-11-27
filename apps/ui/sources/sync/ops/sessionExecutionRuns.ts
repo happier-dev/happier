@@ -144,7 +144,7 @@ async function readSessionExecutionRun(
                     && ('waitForInputId' in request && request.waitForInputId || 'waitForOutput' in request && request.waitForOutput)
                     ? { timeoutMs: null } : {}) });
         } catch (error) {
-            response = { ok: false, error: error instanceof Error ? error.message : 'Unknown error', errorCode: readRpcErrorCode(error) };
+            response = { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
         }
         account?.assertCurrent();
         const failure = readErrorResponseShape(response);
@@ -185,9 +185,13 @@ async function readSessionExecutionRun(
                 serverId: account.serverId, runtimeAccountId: account.accountId,
                 externalActionTarget: { kind: 'machine', machineId }, signal: opts?.signal } });
     } catch (error) {
-        const code = isActionAccountScopeChangedError(error) ? 'action_account_scope_changed'
-            : error instanceof SessionSnapshotReadError ? error.errorCode : readRpcErrorCode(error) ?? 'content_unavailable';
-        return { ok: false, error: code, errorCode: code };
+        if (isActionAccountScopeChangedError(error)) {
+            return { ok: false, error: 'action_account_scope_changed', errorCode: 'action_account_scope_changed' };
+        }
+        const failure = normalizeActionExecutorThrownError(error, 'execution.run.rpc',
+            error instanceof SessionSnapshotReadError ? error.errorCode : 'content_unavailable');
+        // Retained-read infrastructure failures have a content-free public message.
+        return { ok: false, ...failure, error: failure.errorCode };
     } finally {
         if (account && account !== opts?.account) account.dispose();
     }
@@ -342,14 +346,12 @@ export async function sessionExecutionRunStart(
         notifyExecutionRunActivity({ serverId, sessionId });
         return parsed.data;
     } catch (error) {
-        const details = ExecutionRunStartFailureDetailsV1Schema.safeParse(error && typeof error === 'object'
-            && 'details' in error ? error.details : undefined);
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: error instanceof SessionSnapshotReadError ? error.errorCode : readRpcErrorCode(error),
-            ...(details.success ? { details: details.data } : {}),
-        };
+        const { details: normalizedDetails, ...failure } = normalizeActionExecutorThrownError(error, 'execution.run.rpc',
+            error instanceof SessionSnapshotReadError ? error.errorCode : undefined);
+        const details = ExecutionRunStartFailureDetailsV1Schema.safeParse(normalizedDetails ?? (
+            error && typeof error === 'object' && 'details' in error ? error.details : undefined
+        ));
+        return { ok: false, ...failure, ...(details.success ? { details: details.data } : {}) };
     } finally {
         account?.dispose();
     }
@@ -380,11 +382,7 @@ export async function sessionExecutionRunStop(
         notifyExecutionRunMutationSuccess(sessionId, serverId, response);
         return response;
     } catch (error) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
-        };
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
     }
 }
 
@@ -412,11 +410,7 @@ export async function sessionExecutionRunCancelTurn(
         notifyExecutionRunActivity({ serverId, sessionId });
         return response;
     } catch (error) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
-        };
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
     }
 }
 
@@ -445,11 +439,7 @@ export async function sessionExecutionRunEnsure(
         notifyExecutionRunActivity({ serverId, sessionId });
         return response;
     } catch (error) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
-        };
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
     }
 }
 
@@ -470,11 +460,7 @@ export async function sessionExecutionRunList(
         }
         return parsed.data;
     } catch (error) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
-        };
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
     }
 }
 
@@ -495,11 +481,7 @@ export async function sessionExecutionRunGet(
         }
         return parsed.data;
     } catch (error) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
-        };
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
     }
 }
 
@@ -513,11 +495,7 @@ export async function sessionExecutionRunWait(
         if (!serverId) return createExecutionRunHomeUnavailableResult();
         return await readSessionExecutionRun('execution.run.wait', sessionId, request, serverId, opts);
     } catch (error) {
-        return {
-            ok: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error),
-        };
+        return { ok: false, ...normalizeActionExecutorThrownError(error, 'execution.run.rpc') };
     }
 }
 

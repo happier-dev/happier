@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const sessionRpcMock = vi.hoisted(() => vi.fn());
@@ -13,6 +14,7 @@ const sessionState = vi.hoisted(() => ({
     sessions: {} as Record<string, any>,
     settings: {},
 }));
+const readSessionStateMock = vi.hoisted(() => vi.fn(() => sessionState));
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
@@ -57,7 +59,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
         storage: {
-            getState: () => sessionState,
+            getState: readSessionStateMock,
         },
     });
 });
@@ -85,6 +87,7 @@ describe('sessionExecutionRuns', () => {
         readMachineControlTargetMock.mockReset();
         readMachineControlTargetMock.mockReturnValue({ machineId: 'machine-1' });
         notifyExecutionRunActivityMock.mockReset();
+        readSessionStateMock.mockClear();
         sessionState.sessions = {};
         sessionState.settings = {};
     });
@@ -513,6 +516,35 @@ describe('sessionExecutionRuns', () => {
         const response = await sessionExecutionRuns.sessionExecutionRunGet('session-1', { runId: 'run_1', includeStructured: true });
 
         expect(response).toMatchObject(failure);
+    });
+
+    it('retains typed failures thrown during execution.run.get routing and transport', async () => {
+        const failure = {
+            ok: false,
+            error: 'Run read was refused',
+            errorCode: 'execution_run_not_allowed',
+            requestId: 'attached-run-read-refusal',
+            details: { reason: 'scope_refused' },
+            failureCause: {
+                phase: 'execution.run.get',
+                errorClass: 'HttpStatusError',
+                errorCode: 'execution_run_not_allowed',
+                httpStatus: 403,
+            },
+        } as const;
+        const request = { runId: 'run_1' };
+
+        sessionAccountRpcMock.mockRejectedValueOnce(createActionExecuteFailureError(failure));
+        const transportResult = await sessionExecutionRuns.sessionExecutionRunGet('session-1', request, {
+            scope: { serverId: 'server-a', accountId: 'captured-account' },
+        });
+        expect.soft(transportResult).toMatchObject(failure);
+
+        readSessionStateMock.mockImplementationOnce(() => {
+            throw createActionExecuteFailureError({ ...failure, requestId: 'attached-run-route-refusal' });
+        });
+        const routeResult = await sessionExecutionRuns.sessionExecutionRunGet('session-1', request);
+        expect(routeResult).toMatchObject({ ...failure, requestId: 'attached-run-route-refusal' });
     });
 
     it('rejects execution.run.action for inactive replay forks that cannot resume before session RPC', async () => {
