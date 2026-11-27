@@ -191,7 +191,7 @@ describe('activate', () => {
         fields: [{
           path: 'credentialRef',
           title: 'GitHub account',
-          description: 'Select the GitHub Connected Account used to resolve the repository.',
+          description: 'The GitHub account Happier uses to watch this repository.',
           widget: 'select',
           required: true,
           requireExplicitSelection: true,
