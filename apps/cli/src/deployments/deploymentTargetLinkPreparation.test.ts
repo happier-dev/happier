@@ -88,8 +88,9 @@ it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (
     // The Environment's protected content (its name) is readable on the Account, as on a real Home.
     const environmentContent = await createCredentialedAccountArtifactStore(fixture.host.credentials).create({
         header: { kind: 'deployment-environment.v1', title: environment.content.name }, body: JSON.stringify(environment.content) });
-    const environmentHeader = { ...environment.environment, contentArtifactId: environmentContent.artifactId,
-        contentHeaderVersion: environmentContent.revision.headerVersion, contentBodyVersion: environmentContent.revision.bodyVersion };
+    const environmentHeader = createDeploymentEnvironmentHeaderV1({ ...environment.environment, runtimeTargetLinkId: undefined,
+        contentArtifactId: environmentContent.artifactId,
+        contentHeaderVersion: environmentContent.revision.headerVersion, contentBodyVersion: environmentContent.revision.bodyVersion });
     let associations = 0;
     vi.spyOn(axios, 'request').mockImplementation(async request => {
         const path = new URL(request.url!).pathname;
@@ -263,7 +264,15 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
     const open = () => prepareProjectOpenReceiptPersistence({ directory: join(directory, 'receipts'),
         keyPath: join(directory, 'key.json'), accountId: 'custodian', machineId: 'controller' });
     let interruptedSnapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null | undefined;
-    const home = vi.spyOn(axios, 'request').mockImplementation(async () => {
+    const home = vi.spyOn(axios, 'request').mockImplementation(async http => {
+        if (new URL(http.url!).pathname.endsWith('/environments/environment')) {
+            timeline.push('preflight');
+            return { status: 200, data: { ok: true,
+                environment: createDeploymentEnvironmentHeaderV1({ id: 'environment', revision: request.expectedRevision,
+                    serverId: 'home', owner: { kind: 'account', accountId: 'owner' }, runtimeTargetLinkId: undefined }),
+                targetLinks: [],
+            } };
+        }
         timeline.push('home');
         const retained = (await open()).retained;
         expect(retained).toHaveLength(1);
@@ -287,8 +296,9 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
     const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.targets.link', input: request, context: {} });
     if (!plan || 'ok' in plan) throw new Error('Expected reviewed native create plan');
-    // Review preparation may read the Environment's name; the contract below is about Home follow-ups after the create.
+    // Exclude the review's name lookup so the timeline starts at the execution preflight.
     home.mockClear();
+    timeline.length = 0;
     const app = fastify();
     // Native child execution is an HTTP boundary; declarations, reviewed-child policy and host flow stay real.
     app.post('/child', async () => {
@@ -318,28 +328,28 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
         if (unknown) {
             expect(result).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
             expect((await open()).retained[0]?.snapshot.result).toBeUndefined();
-            expect(home).not.toHaveBeenCalled();
+            expect(timeline).toEqual(['preflight', 'native']);
         } else {
             expect(result).toMatchObject({ ok: false, errorCode: 'deployment_link_incomplete', details: {
                 recovery: { requestKey: request.requestKey, provisioned: true, provider },
-                failure: { error: expect.stringContaining('target_link.environment_read') } } });
-            expect(result).toMatchObject({ failureCause: { phase: 'deployment.home.request', errorClass: 'Error' } });
+                failure: { error: expect.stringContaining('target_link.provider_links_read') } } });
+            expect(result).toMatchObject({ failureCause: { phase: 'deployment.failure', errorClass: 'Error' } });
             expect(timeline).toContain('durable-checkpoint');
             expect(interruptedSnapshot).toMatchObject({ state: 'failed',
                 error: { errorCode: 'action_outcome_unknown', effectAttempted: true },
                 result: { ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider } } });
             expect((await open()).retained[0]?.snapshot).toMatchObject({ state: 'failed', result: {
                 ok: false, error: 'deployment_link_incomplete', recovery: { provisioned: true, provider },
-                failure: { error: expect.stringContaining('target_link.environment_read') } } });
+                failure: { error: expect.stringContaining('target_link.provider_links_read') } } });
         }
         const restarted = await createOperations();
         const replay = await invoke(restarted, 'fresh-transport-after-restart');
         expect(replay).toMatchObject({ ok: false,
             errorCode: unknown ? 'action_outcome_unknown' : 'deployment_link_incomplete' });
         if (!unknown) expect(replay).toMatchObject({
-            failureCause: { phase: 'deployment.home.request', errorClass: 'Error' },
+            failureCause: { phase: 'deployment.failure', errorClass: 'Error' },
             details: { recovery: { requestKey: request.requestKey, provisioned: true, provider },
-                failure: { error: expect.stringContaining('target_link.environment_read') } },
+                failure: { error: expect.stringContaining('target_link.provider_links_read') } },
         });
         expect(timeline.filter(step => step === 'native')).toHaveLength(1);
     } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }

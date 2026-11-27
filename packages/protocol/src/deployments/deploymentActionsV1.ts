@@ -507,6 +507,7 @@ export function projectDeploymentTargetLinkFailureV1(actionId: string, value: un
   const retained = DeploymentTargetLinkProvisionedResultV1Schema.safeParse(value);
   if (!retained.success) return null;
   return { ok: false, errorCode: retained.data.error, error: retained.data.error, details: retained.data,
+    ...(retained.data.recovery.provider.providerResourceOrigin === 'created' ? { effectAttempted: true } : {}),
     ...(retained.data.failure?.failureCause ? { failureCause: retained.data.failure.failureCause } : {}) };
 }
 

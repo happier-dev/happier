@@ -276,8 +276,9 @@ export function DeploymentPlatformTargetEditor(
         const parsed = DeploymentTargetLinkResultV1Schema.safeParse(operation.snapshot.result ?? operation.snapshot.error?.details);
         const result = parsed.success ? parsed.data : isActionOutcomeUnknownErrorCodeV1(operation.snapshot.error?.errorCode)
           ? { ok: false as const, error: 'action_outcome_unknown' as const } : null;
-        // A later Environment edit supersedes this exact reviewed association. Add can start a fresh choice.
+        // A confirmed association conflict leaves the acknowledged native project available for Finish linking.
         if (result && !result.ok && result.error === 'deployment_link_incomplete'
+          && !result.failure
           && result.recovery.expectedRevision !== props.environment.revision) return [];
         if (result?.ok && result.productionBranchOutcome && props.environment.revision !== undefined
           && result.revision < props.environment.revision) return [];
@@ -301,9 +302,10 @@ export function DeploymentPlatformTargetEditor(
         && operation.snapshot.domainRef.purpose === 'associate' && operation.snapshot.domainRef.requestKey === selected.domain.requestKey)
         .reduce<(typeof linkOperations)[number] | null>((latest, operation) =>
           !latest || operation.snapshot.createdAt > latest.snapshot.createdAt ? operation : latest, null) : null;
-      const refusedCode = association?.snapshot.error?.errorCode ?? (!result.ok && result.error !== 'deployment_link_incomplete'
+      const failure = association?.snapshot.error ?? (!result.ok && result.error === 'deployment_link_incomplete' ? result.failure : undefined);
+      const refusedCode = failure?.errorCode ?? (!result.ok && result.error !== 'deployment_link_incomplete'
         && result.error !== 'provider_scope_already_linked' && result.error !== 'action_outcome_unknown' ? result.error : null);
-      setLinkRefused(refusedCode ? { code: refusedCode, details: association?.snapshot.error?.details } : null);
+      setLinkRefused(refusedCode ? { code: refusedCode, details: failure?.details } : null);
     });
     return () => { live = false; };
   }, [linkOperations, props.environment.revision]);
@@ -604,7 +606,7 @@ export function DeploymentPlatformTargetEditor(
     setLinkRefused(null);
     try {
       let input: Parameters<Actions['link']>[0];
-      if (provisioned) input = provisioned;
+      if (provisioned) input = { ...provisioned, expectedRevision: props.environment.revision };
       else {
         if (!target || !create || !draft) return;
         const key = requestKey ?? randomUUID();
@@ -622,11 +624,25 @@ export function DeploymentPlatformTargetEditor(
         if (result.productionBranchOutcome) { setCreatedBranchOutcome(result.productionBranchOutcome); return; }
         onClose(); return;
       }
-      if (result.error === 'deployment_link_incomplete' || result.error === 'provider_scope_already_linked') setLinkSettlement(result);
+      if (result.error === 'deployment_link_incomplete') {
+        setLinkSettlement(result);
+        if (result.failure) setLinkRefused({ code: result.failure.errorCode, details: result.failure.details });
+      } else if (result.error === 'provider_scope_already_linked') setLinkSettlement(result);
       else setLinkRefused({ code: result.error });
     } catch (error) {
       const read = readDeploymentActionError(error);
       if (read.kind === 'approval') { onClose(); onApproval(read.artifactId); return; }
+      if (read.kind === 'refused' && read.code === 'deployment_link_incomplete') {
+        const { DeploymentTargetLinkProvisionedResultV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+        const partial = DeploymentTargetLinkProvisionedResultV1Schema.safeParse(read.failure?.details);
+        if (!shouldContinue()) return;
+        if (partial.success) {
+          setLinkSettlement(partial.data);
+          const cause = partial.data.failure;
+          if (cause) setLinkRefused({ code: cause.errorCode, details: cause.details });
+          return;
+        }
+      }
       if (read.kind === 'refused' && isActionOutcomeUnknownErrorCodeV1(read.code) && !provisioned) setLinkSettlement({ ok: false, error: 'action_outcome_unknown' });
       else setLinkRefused(read.kind === 'refused' ? { code: read.code, details: read.failure?.details } : { code: 'unknown_error' });
     } finally { if (shouldContinue()) setBusy(null); }
@@ -1013,6 +1029,7 @@ export function DeploymentPlatformTargetEditor(
             kind="error"
             title={t('projects.deployments.platformLink.linkRefused')}
             reason={readDeploymentConnectionPermissionRemedy(linkRefused.code, linkRefused.details)
+              ?? readDeploymentRefusalRecovery(linkRefused.code, linkRefused.details)?.remedy
               ?? (linkRefused.code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION
                 ? deploymentActionRefusalRemedy(linkRefused.code)
                 : readDeploymentRefusal(linkRefused.code).reason === 'permission'

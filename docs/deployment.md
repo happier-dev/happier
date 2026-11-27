@@ -704,10 +704,13 @@ production branch is applied within the same Create Action. If that branch
 update fails or its acknowledgement is uncertain, the created project identity is
 retained and the result shows the branch outcome and provider cause. The person
 can recover without creating the project again. This is unreleased 0.3 behavior.
-Create and Finish linking use the same association owner. If association fails,
-direct execution and retained operation reads preserve the typed failure cause
-and the provisioned `deployments.targets.link` recovery input; replay does not
-create another provider project.
+Create checks the reviewed runtime Link before creating a provider project.
+When the Environment already has a runtime Link, the request must select that
+exact Link and revision for replacement. Home compares the selection again
+atomically when it writes the association. If association fails after provider
+Create, the Action, approval and retained operation keep the typed refusal.
+The retained operation also holds the exact project. **Finish linking** uses
+that project and the current Environment revision.
 
 In unreleased 0.3, you can create a Railway service from a selected GitHub
 repository and branch or link an existing service. Railway builds the latest

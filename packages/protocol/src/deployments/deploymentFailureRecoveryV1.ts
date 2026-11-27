@@ -98,6 +98,7 @@ const recoveries = {
     deployment_preview_not_enrolled: recovery('This Environment has no active Preview enrollment. Open its Preview settings to complete enrollment.',
         'settings', 'Review Previews'),
     deployment_conflict: recovery('The Environment changed since this review. Open a fresh review to include the latest changes.', 'review', 'Review latest changes'),
+    deployment_link_incomplete: recovery('Open the runtime target chooser and use Finish linking to connect the existing provider project.', 'settings', 'Open Environment settings'),
     deployment_access_denied: recovery('You do not have permission to change this Environment. Ask its owner for deployment access.', 'permissions', 'View permissions'),
     machine_unavailable: recovery('A required machine is unavailable. Reconnect it or choose another machine for this Environment.', 'machines', 'Check machines'),
     secret_missing: recovery('A required secret is missing. Add it to this Environment before deploying again.', 'variables', 'Add missing secret'),

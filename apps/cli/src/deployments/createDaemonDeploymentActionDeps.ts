@@ -4,7 +4,7 @@ import { executeOwnServerDatabaseOperationForHost } from './targets/ownServer/da
 import { ApiClient } from '@/api/api';
 import { isManagedDeploymentDataRoleBindingPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createOwnServerDataRoleBindingsForHost } from './targets/ownServer/dataRoleBindings';
 import { createDomainDnsActionsForHost } from './targets/domainDnsActionsForHost';
 import { isDeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol';
@@ -24,7 +24,7 @@ import { isHomeAdmittedPresentUserHostInvocation } from '@happier-dev/protocol/a
 import { isSharedRequesterActionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
+import { normalizeDeploymentTargetLinkOriginV1, readDeploymentTargetLinkSelectionConflictV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from './actions/backups';
 import { createDeploymentBackupConfigureForHost } from './actions/backupConfigureForHost';
 import { prepareBackupAnotherMachineChildrenForHost } from './backups/anotherMachineForHost';
@@ -2061,14 +2061,28 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             return failure('deployment_target_role_unavailable');
                         }
                         const checkSource = readDeploymentTargetSourceCheckV1(target);
-                        if (checkSource) {
-                            // Association reuses the metadata for this exact definition. Home compares the reviewed revision.
+                        if (checkSource || 'providerCreate' in intent) {
                             const selected = { environmentId: intent.environmentId, context };
                             const metadata = await readEnvironmentMetadata(selected);
                             readLinkMetadata = async () => metadata;
-                            const environment = await readDeploymentEnvironmentForHost(selected, { readMetadata: readLinkMetadata, open, assertCurrent });
-                            const sourceRefusal = checkSource(readDeploymentDefinitionSourceKindV1(environment.content.definition));
-                            if (sourceRefusal) return failure(sourceRefusal);
+                            if ('providerCreate' in intent) {
+                                const replaces = intent.replacesLinkId;
+                                const previous = metadata.targetLinks.find(link => link.id === replaces
+                                    && link.deletedAtMs === undefined && link.detachedAtMs === undefined);
+                                const conflict = readDeploymentTargetLinkSelectionConflictV1(intent, metadata.environment, previous);
+                                if (conflict) {
+                                    const remedy = conflict === 'runtime_target_link'
+                                        ? 'The current runtime Link must match the exact Link selected for replacement. Choose that Link or an Environment with no runtime Link.'
+                                        : 'The Environment or reviewed Link has changed. Refresh it before creating the provider project.';
+                                    return { ok: false, errorCode: 'deployment_conflict', effectAttempted: false, error: remedy,
+                                        details: { requiredFact: 'deploymentActionResult', remedy } };
+                                }
+                            }
+                            if (checkSource) {
+                                const environment = await readDeploymentEnvironmentForHost(selected, { readMetadata: readLinkMetadata, open, assertCurrent });
+                                const sourceRefusal = checkSource(readDeploymentDefinitionSourceKindV1(environment.content.definition));
+                                if (sourceRefusal) return failure(sourceRefusal);
+                            }
                         }
                     }
                     if ('providerCreate' in intent) {
@@ -2086,7 +2100,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         const linked = await storage(actionId, prepared, context);
                         if (recovery && 'ok' in linked && linked.ok === false) return DeploymentTargetLinkProvisionedResultV1Schema.parse({
                             ok: false, error: 'deployment_link_incomplete', recovery,
-                            failure: 'errorCode' in linked ? linked : failure(linked.error, linked),
+                            failure: 'errorCode' in linked ? linked : { ok: false, errorCode: linked.error, error: linked.error, details: linked,
+                                failureCause: readActionFailureCauseV1({ phase: 'deployment.target_link.associate',
+                                    errorClass: 'UnknownThrownValue', errorCode: linked.error, httpStatus: null }) },
                         });
                         if ('ok' in linked && linked.ok === false && ('errorCode' in linked ? linked.errorCode : linked.error) === 'deployment_content_unavailable') {
                             return { ...failure('deployment_content_unavailable'),

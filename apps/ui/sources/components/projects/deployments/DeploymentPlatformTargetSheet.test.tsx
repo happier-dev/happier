@@ -267,13 +267,14 @@ it.each([false, true, 'git-grant', 'builds-permission', 'branch-set', 'branch-ke
   } finally { await installed.dispose(); context.dispose(); }
 });
 
-it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevision', 'branchResult', 'branchResultAdvanced'] as const)('recovers the latest dismissed link operation on cold return without repeating native create (%s)', async outcome => {
+it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevision', 'revisionConflict', 'branchResult', 'branchResultAdvanced'] as const)('recovers the latest dismissed link operation on cold return without repeating native create (%s)', async outcome => {
   const ambiguous = outcome === 'unknown';
   const unavailable = outcome === 'unavailable';
   const missingPlugin = outcome === 'missingPlugin';
   const branchResult = outcome === 'branchResult' || outcome === 'branchResultAdvanced';
   const branchResultAdvanced = outcome === 'branchResultAdvanced';
   const staleRevision = outcome === 'staleRevision';
+  const revisionConflict = outcome === 'revisionConflict';
   const pluginId = 'com.example.cold-create-cloud';
   const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { create: true });
   const serverId = await homes.addHome({ name: 'Cold create cloud', serverUrl: 'https://cold-create-cloud.test',
@@ -284,8 +285,8 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
   const { ActionOperationSnapshotV1Schema, ACTION_OPERATION_RPC_METHODS_V2, projectActionOperationListSnapshotV1 } = await import('@happier-dev/protocol/actions/operations/v1');
   const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
   try {
-    // After Unlink, the same Environment has advanced and no runtime target; Add must offer a fresh choice.
-    const environment = createDeploymentEnvironmentHeaderV1({ id: 'cold-create-environment', revision: branchResultAdvanced ? 6 : branchResult || staleRevision ? 5 : 4, projectSourceId: 'source-app',
+    // An Environment edit can advance the revision while a Pages project is still waiting for its Link.
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'cold-create-environment', revision: branchResultAdvanced ? 6 : branchResult || staleRevision || revisionConflict ? 5 : 4, projectSourceId: 'source-app',
       serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'current-controller', owner: { kind: 'account', accountId: 'owner' } });
     homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, { body: { ok: true, environment, targetLinks: [] } });
     homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
@@ -304,7 +305,8 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
       targetLinkId: 'cold-link', targetLinkRevision: 1, productionBranchOutcome: { status: 'defaultKept', branch: 'main', requestedBranch: 'release',
         failureCause: { phase: 'deployment.provider.branch', errorClass: 'Error', errorCode: 'branch_missing', httpStatus: 400 } } }
       : ambiguous ? { ok: false, error: 'outcome_unknown' }
-      : { ok: false, error: 'deployment_link_incomplete', recovery };
+      : { ok: false, error: 'deployment_link_incomplete', recovery,
+        ...(revisionConflict ? { failure: { ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' } } : {}) };
     const full = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'cold-created-operation', revision: 2,
       actionId: 'deployments.targets.link', state: branchResult ? 'succeeded' : 'failed', scope: { accountId: 'owner', machineId: 'cold-controller' },
       title: 'Create runtime target', requestId: 'cold-created-request', createdAt: 1, startedAt: 2, settledAt: 3,
@@ -391,7 +393,8 @@ it.each(['provisioned', 'unknown', 'unavailable', 'missingPlugin', 'staleRevisio
     if (ambiguous) { expect(associations).toHaveLength(0); return; }
     await act(async () => { await surfaceAction(card()).onPress(); });
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(associations).toHaveLength(1); });
-    expect(associations[0]).toMatchObject({ provisioned: true, requestKey: recovery.requestKey, expectedRevision: recovery.expectedRevision });
+    expect(associations[0]).toMatchObject({ provisioned: true, requestKey: recovery.requestKey, expectedRevision: environment.revision,
+      provider: { providerIdentity: { providerResourceId: recovery.provider.providerIdentity.providerResourceId } } });
     const later = ActionOperationSnapshotV1Schema.parse({ ...full, operationId: 'cold-linked-operation', requestId: 'cold-linked-request',
       state: 'succeeded', scope: { accountId: 'owner', machineId: 'current-controller' }, createdAt: 10, startedAt: 11, settledAt: 12, error: undefined,
       domainRef: { ...full.domainRef, purpose: 'associate' },

@@ -1,3 +1,4 @@
+import { readDeploymentTargetLinkSelectionConflictV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
 import { DeploymentTargetLinkHeaderV1Schema, type DeploymentTargetLinkInputV1 } from '@happier-dev/protocol';
 import type { Prisma } from '@prisma/client';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
@@ -184,14 +185,12 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
         return link ? { ok: true as const, environmentId: input.environmentId, revision: loaded.row.revision,
             targetLinkId: link.id, targetLinkRevision: link.revision } : deploymentFailure('deployment_conflict');
     }
-    if (loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
     const previous = input.replacesLinkId ? await tx.deploymentTargetLink.findFirst({ where: {
         id: input.replacesLinkId, environmentId: input.environmentId, deletedAt: null, detachedAt: null,
     }, include: { machines: { orderBy: { position: 'asc' } } } }) : null;
-    const replacesPreviewData = input.replacesLinkId !== undefined && input.role === 'data';
-    if (input.replacesLinkId) {
-        if (!previous || previous.revision !== input.expectedTargetLinkRevision || previous.role !== input.role)
-            return deploymentFailure('deployment_conflict');
+    if (readDeploymentTargetLinkSelectionConflictV1(input, loaded.row, previous)) return deploymentFailure('deployment_conflict');
+    const replacesPreviewData = previous !== null && input.role === 'data';
+    if (previous) {
         if (replacesPreviewData) {
             // The branch result replaces its child bootstrap scope without changing the
             // link identity already captured by the creating Workflow for teardown.
@@ -200,7 +199,7 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
                 || previous.contributionLocalId !== plugin.contribution.localId || previous.targetKind !== input.targetKind
                 || (previous.machineId ?? undefined) !== input.machineId
                 || (previous.installationId ?? undefined) !== input.installationId) return deploymentFailure('deployment_conflict');
-        } else if (input.role !== 'runtime' || loaded.row.runtimeTargetLinkId !== previous.id) return deploymentFailure('deployment_conflict');
+        }
         // Selection retains the complete predecessor and its native custody.
         // Teardown/unlink prove physical removal after Move has verified its destination.
         if (!plugin && previous.sourceKind === 'host' && previous.hostTargetId !== input.targetId)
@@ -209,7 +208,7 @@ export async function linkDeploymentTargetForAdmittedEnvironmentInTx(tx: Tx, act
             state: { in: deploymentInProgressStates() } }, select: { id: true } });
         if (busy) return { ok: false as const, error: 'deployment_in_progress' as const, deploymentId: busy.id,
             href: `/deployments/environments/${encodeURIComponent(input.environmentId)}/deployments/${encodeURIComponent(busy.id)}` };
-    } else if (input.role === 'runtime' && loaded.row.runtimeTargetLinkId) return deploymentFailure('deployment_conflict');
+    }
     const retainsOwnServer = !plugin && previous?.sourceKind === 'host';
     if (previous && retainsOwnServer) {
         // A member whose Machine stays selected was admitted by the writer at that Machine's
