@@ -1,4 +1,5 @@
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveMachineRetentionNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { sessionModelPickerValueFromRef, sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
@@ -890,7 +891,8 @@ export function useCreateNewSession(params: Readonly<{
             const progress = (value: ManagedMachineCreationProgress) => {
                 if (isCurrent()) setManagedProgress({ signature, value });
             };
-            if (!isDeferredManagedMachineAuthorPresetDraft(managedDraft) && managedDraft.archiveEffect !== 'keep' && !managedDraft.receipt.retentionCapabilities.supportedIntents.includes(managedDraft.archiveEffect)) {
+            if (!isDeferredManagedMachineAuthorPresetDraft(managedDraft) && managedDraft.archiveEffect !== 'keep'
+                && resolveMachineRetentionNativeIntentV1(managedDraft.archiveEffect, managedDraft.receipt.retentionCapabilities.supportedIntents) === null) {
                 progress({ kind: 'failed', code: 'native_intent_unsupported' });
                 reportAfterCreatedSettlement({ status: 'rejected' });
                 return;

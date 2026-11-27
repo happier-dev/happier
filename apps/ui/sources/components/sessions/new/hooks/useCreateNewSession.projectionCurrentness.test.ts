@@ -1878,8 +1878,10 @@ describe('useCreateNewSession (projection currentness admission)', () => {
         expect(hook.getCurrent().managedMachineCreationProgress).toMatchObject({ kind: 'failed', code: 'native_intent_unsupported' });
         await hook.unmount();
     });
-    it('uses a fresh request after explicit replacement cleared the previous paid reference, even for the same recipe', async () => {
-        const managedDraft = await createManagedDraft();
+    it('uses a fresh request after explicit replacement, including archive Stop on a suspend-only provider', async () => {
+        const draft = await createManagedDraft('stop');
+        const managedDraft = { ...draft, receipt: { ...draft.receipt,
+            retentionCapabilities: { supportedIntents: ['start' as const, 'suspend' as const, 'delete' as const] } } };
         const references: Array<NonNullable<Parameters<typeof useCreateNewSession>[0]['managedMachineAcquisition']>> = [];
         const hook = await mount(null, false, {
             managedMachineSelection: managedDraft,
