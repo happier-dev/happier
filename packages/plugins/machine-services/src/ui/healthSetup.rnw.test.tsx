@@ -425,14 +425,18 @@ const keyFlowSchema: JsonValue = JSON.parse(JSON.stringify(TelemetryKeyFlowConfi
     : value,
 ));
 
-it.each(['new', 'saved', 'from-route', 'from-route-to-spend'] as const)('authors a Key flow through its declared schema (%s)', async mode => {
+it.each(['new', 'saved', 'from-route', 'from-route-to-spend', 'from-trace-error-rate'] as const)('authors a Key flow through its declared schema (%s)', async mode => {
   const saved = mode === 'saved';
   const spend = mode === 'from-route-to-spend';
-  const seeded = mode === 'from-route' || spend;
+  const fromTrace = mode === 'from-trace-error-rate';
+  const seeded = mode === 'from-route' || spend || fromTrace;
+  const serviceName = fromTrace ? 'DBW R4 control/R4 control' : 'billing-api';
+  const method = fromTrace ? 'GET' : 'POST';
+  const value = fromTrace ? 0.25 : 800;
   const existing = { checkId: 'saved-checkout', kind: { pluginId: 'happier.telemetry', localId: 'key-flow' },
     binding: { kind: 'healthCheck' },
-    config: { environmentId: 'env-prod', serviceName: 'billing-api',
-      measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' },
+    config: { environmentId: 'env-prod', serviceName,
+      measure: { kind: 'route', routes: [{ method, route: '/checkout' }], statistic: 'p95' },
       windowMs: 600_000, threshold: { operator: 'above', value: 450 } },
     periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3,
   } as const;
@@ -460,9 +464,13 @@ it.each(['new', 'saved', 'from-route', 'from-route-to-spend'] as const)('authors
       await expect(page.getByRole('button', { name: 'Measure: Spend' })).resolves.toBeDefined();
     } else {
       expect(field('Route')?.value).toBe('/checkout');
-      expect(field('Method')?.value).toBe('POST');
+      expect(field('Method')?.value).toBe(method);
     }
-    expect(field('Service name')?.value).toBe('billing-api');
+    expect(field('Service name')?.value).toBe(serviceName);
+    if (fromTrace) {
+      await act(async () => { await page.press(await page.getByRole('button', { name: 'Statistic: P95' })); });
+      await act(async () => { await page.press(await page.getByRole('menuitemradio', { name: 'Error rate' })); });
+    }
     expect((await addButton(page)).state?.disabled).toBe(true);
     await type('Window ms', '600000');
   } else {
@@ -475,16 +483,16 @@ it.each(['new', 'saved', 'from-route', 'from-route-to-spend'] as const)('authors
     await type('Window ms', '600000');
     expect((await addButton(page)).state?.disabled).toBe(true);
   }
-  await type('Value', '800');
+  await type('Value', String(value));
   await act(async () => {
     await page.press(await page.getByRole('button', { name: saved ? 'Save changes' : 'Add check' }));
   });
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
     checks: [expect.objectContaining({ checkId: saved ? existing.checkId : 'key-flow', kind: existing.kind,
-      config: { environmentId: 'env-prod', serviceName: 'billing-api',
+      config: { environmentId: 'env-prod', serviceName,
         measure: spend ? { kind: 'spend', costMode: 'api_equivalent' }
-          : { ...existing.config.measure, statistic: mode === 'new' ? 'p50' : 'p95' },
-        windowMs: 600_000, threshold: { operator: 'above', value: 800 } } })] }) })]);
+          : { ...existing.config.measure, statistic: fromTrace ? 'errorRate' : mode === 'new' ? 'p50' : 'p95' },
+        windowMs: 600_000, threshold: { operator: 'above', value } } })] }) })]);
 });
 
 it('enables the default Domain checks only after accepting cadence and preserves sibling checks', async () => {
