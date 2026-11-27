@@ -65,16 +65,23 @@ function workerMessage(id: string, update: WorkerUpdateV1): WorkerMessage {
 }
 
 describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
-    it.each(['connected_service_run_materialization_blocked', 'plugin_action_execution_placement_unavailable'])(
-        'presents a Workflow refusal (%s) while retaining the Agent text', async code => {
+    it.each([
+        { state: 'interrupted', code: 'connected_service_run_materialization_blocked' },
+        { state: 'failed', code: 'connected_service_run_materialization_blocked' },
+        { state: 'failed', code: 'plugin_action_execution_placement_unavailable' },
+    ] as const)(
+        'presents a $state Workflow refusal ($code) while retaining the Agent text', async ({ state, code }) => {
             const update = composeWorkflowRunWorkerUpdateV1({
-                run: createWorkflowRunSummaryFixture({ state: 'failed', attentionRequired: false }),
-                failure: { recordId: 'failed-step', reason: { code, message: code } },
+                run: createWorkflowRunSummaryFixture({ state, attentionRequired: false }),
+                failure: { recordId: 'failed-step', reason: { code } },
             });
             expect(update?.result).toBe(code);
             if (!update) throw new Error('Expected a failed Workflow worker update');
             const card = await renderCard(update, getActiveServerSnapshot().serverId);
             expect(card.findByTestId('worker-update-issue')).not.toBeNull();
+            if (code === 'connected_service_run_materialization_blocked') {
+                expect(card.getTextContent()).toContain(t('workflows.problem.preExecution.connectedAccountPreparationBlocked'));
+            }
             expect(card.getTextContent()).not.toContain(code);
             await card.pressByTestIdAsync('worker-update-details-toggle');
             expect(card.getTextContent()).toContain(code);

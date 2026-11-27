@@ -2094,7 +2094,7 @@ describe("workflowRunService (integration)", () => {
         expect(await db.accountChange.count({ where: { kind: "session", entityId: seeded.sessionId, accountId: { not: seeded.accountId } } })).toBe(0);
     });
 
-    it("wakes the committed cold Session placement for origin input or result without unrelated pending input", async () => {
+    it.each(["succeeded", "interrupted"] as const)("wakes the committed cold Session placement for origin input or %s outcome without unrelated pending input", async state => {
         process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
         const seeded = await seedPendingAdmission(true);
         const homeId = await getOrCreateServerIdentityId();
@@ -2178,10 +2178,18 @@ describe("workflowRunService (integration)", () => {
             expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets
                 .some(target => target.origin.kind === 'context-delivery')).toBe(false);
             await commitWorkflowInvocationFact({ ...seeded.fact, expectedLifecycle: "waiting_for_approval", lifecycle: "completed" });
-            await transitionWorkflowRun({ ...seeded, parentAttempt: 1, expectedRevision: 4, state: "succeeded",
-                checkpointEnvelope: checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n), custodyState: "settled",
-                invocationTransitions: [{ id: seeded.rootId, expectedLifecycle: "pending", lifecycle: "completed" }] });
+            await transitionWorkflowRun({ ...seeded, parentAttempt: 1, expectedRevision: 4, state,
+                checkpointEnvelope: checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n),
+                ...(state === "succeeded" ? { custodyState: "settled" as const,
+                    invocationTransitions: [{ id: seeded.rootId, expectedLifecycle: "pending" as const, lifecycle: "completed" as const }] }
+                    : { errorCode: "connected_service_run_materialization_blocked" }) });
+            expect(await db.accountChange.findFirst({ where: { kind: "session", entityId: seeded.sessionId } }))
+                .toMatchObject({ hint: { kind: "workflow-run-delivery", runId: seeded.runId, revision: 5 } });
             expect(contextTargets()).toMatchObject([{ origin: { kind: "context-delivery", delivery: { runId: seeded.runId, revision: 5 } } }]);
+            expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets)
+                .toContainEqual(expect.objectContaining({ origin: expect.objectContaining({
+                    kind: "context-delivery", delivery: { runId: seeded.runId, revision: 5 },
+                }) }));
             await workflowRunService.ackWorkflowRunOriginDelivery({ accountId: seeded.accountId, runId: seeded.runId, revision: 5 });
             expect((await readManagedWakeTargets({ actorAccountId: seeded.accountId, request })).targets
                 .some(target => target.origin.kind === 'context-delivery')).toBe(false);

@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1 } from "@happier-dev/protocol/workflows/workflowProgressV1";
-import { AUTOMATION_RUN_TERMINAL_STATES_V3 as AUTOMATION_RUN_TERMINAL_STATES } from "@happier-dev/protocol/automations/automationRunStateV3";
+import { WORKFLOW_RUN_WORKER_REPORT_STATES_V1 } from "@happier-dev/protocol/sessions/relations/workerUpdateV1";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import type { Tx } from '@/storage/inTx';
 import { db } from '@/storage/db';
@@ -15,7 +15,7 @@ export async function readWorkflowRunOriginWakeCandidatesInTx(tx: Tx, input:
         workflowCustodyState: { not: null }, workflowAcceptedSnapshotEnvelope: { not: null },
         OR: [
             { workflowInvocations: { some: { lifecycle: 'admitting' } } },
-            { state: { in: [...AUTOMATION_RUN_TERMINAL_STATES] }, originDeliveryAckRevision: { not: null },
+            { state: { in: [...WORKFLOW_RUN_WORKER_REPORT_STATES_V1] }, originDeliveryAckRevision: { not: null },
                 revision: { gt: tx.automationRun.fields.originDeliveryAckRevision } },
         ],
     }, select: { id: true, accountId: true, originSessionId: true, revision: true,
@@ -26,7 +26,7 @@ export async function readWorkflowRunOriginWakeCandidatesInTx(tx: Tx, input:
     const rows: Awaited<ReturnType<typeof read>> = [];
     for (const accountIds of portableQueryChunks({ values: [...new Set(input.accountIds)], bindingsPerValue: 1,
         // Account IDs share the budget with the admitting predicate and SQLite pagination.
-        fixedBindings: AUTOMATION_RUN_TERMINAL_STATES.length + 3 })) {
+        fixedBindings: WORKFLOW_RUN_WORKER_REPORT_STATES_V1.length + 3 })) {
         rows.push(...await read({ accountId: { in: [...accountIds] }, originSessionId: { not: null } }));
     }
     return rows;

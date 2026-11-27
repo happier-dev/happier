@@ -36,6 +36,17 @@ describe('composeWorkflowRunWorkerUpdateV1', () => {
     });
   });
 
+  it.each(['interrupted', 'failed'] as const)('publishes the failed leaf cause for a Run in state %s', state => {
+    const code = 'connected_service_run_materialization_blocked';
+    expect(composeWorkflowRunWorkerUpdateV1({
+      run: { id: 'run-1', state, attentionRequired: false },
+      failure: { recordId: 'failed-leaf', reason: { code } },
+    })).toMatchObject({
+      workerKind: 'workflow_run', workerId: 'run-1', ownerState: state, wake: 'needs_you', result: code,
+      transcriptPointer: { kind: 'workflow_run', runId: 'run-1', invocationRecordId: 'failed-leaf' },
+    });
+  });
+
   it('never composes superseded attention history after a hold resolves', () => {
     expect(composeWorkflowRunWorkerUpdateV1({ run: { id: 'run-1', state: 'running', attentionRequired: false } })).toBeNull();
     expect(composeWorkflowRunWorkerUpdateV1({ run: { id: 'run-1', state: 'running', attentionRequired: true } }))

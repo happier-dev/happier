@@ -1,5 +1,6 @@
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
+import { WORKFLOW_RUN_WORKER_REPORT_STATES_V1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readKeysetCursorTextV1 } from '@happier-dev/protocol/pagination/keysetCursorV1';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
 import { isTerminalWorkflowInvocationLifecycleV1, projectWorkflowBigIntV1, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, type WorkflowInvocationLifecycleV1, type WorkflowRunOriginV1, type WorkflowRunSummaryV1, type WorkflowRunLastStartedSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -313,12 +314,12 @@ async function reconcileWorkflowRunAttentionAndHintTx(tx: Tx, accountId: string,
         after = { ...after, revision: after.revision + 1 };
     }
     if (!after.originSessionId) return;
-    const becameTerminal = !AUTOMATION_RUN_TERMINAL_STATES.some((state) => state === before.state)
-        && AUTOMATION_RUN_TERMINAL_STATES.some((state) => state === after.state);
-    if (!inputDeliverable && !(after.originDeliveryAckRevision !== null && (becameTerminal || attentionChanged))) return;
+    const hasNewWorkerOutcome = after.state !== before.state
+        && WORKFLOW_RUN_WORKER_REPORT_STATES_V1.some(state => state === after.state);
+    if (!inputDeliverable && !(after.originDeliveryAckRevision !== null && (hasNewWorkerOutcome || attentionChanged))) return;
     await markAccountChangesForSessionAccounts({ tx, sessionId: after.originSessionId, accountIds: [accountId],
         hint: { kind: "workflow-run-delivery", runId, revision: after.revision, usageAccountingChanged: false } });
-    if (inputDeliverable || (after.originDeliveryAckRevision !== null && becameTerminal)) {
+    if (inputDeliverable || (after.originDeliveryAckRevision !== null && hasNewWorkerOutcome)) {
         await publishManagedContextWakeInTx(tx, { runId, originSessionId: after.originSessionId });
     }
 }

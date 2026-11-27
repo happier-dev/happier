@@ -9,7 +9,6 @@ export function resolveWorkflowRunFollowEventV1(run: Pick<WorkflowRunSummaryV1, 
   const kind = classifyWorkerUpdateEventV1({ workerKind: 'workflow_run', ownerState: run.state,
     ...(run.attentionRequired ? { wake: 'needs_you' } : {}) });
   if (kind === 'finished' || kind === 'failed_or_stopped') return { kind };
-  if (run.state === 'interrupted') return { kind: 'failed_or_stopped' };
   // This is the source's ordinary human-attention projection. Only a real
   // permission request may produce approval; summary attention never fabricates one.
   if (kind === 'needs_you' || run.state === 'waiting_for_review') return { kind: 'needs_you', type: 'decision' };
@@ -29,7 +28,7 @@ export function composeWorkflowRunWorkerUpdateV1(input: Readonly<{
   const selected = input.finalResult?.result;
   const failure = event === 'failed_or_stopped' || event === 'needs_you' ? input.failure : undefined;
   const text = selected?.kind === 'json' ? JSON.stringify(selected.value) : selected?.value
-    ?? failure?.reason.runtimeIssueV1?.sanitizedPreview ?? failure?.reason.message;
+    ?? failure?.reason.runtimeIssueV1?.sanitizedPreview ?? failure?.reason.message ?? failure?.reason.code;
   const decision = input.finalProducerReview?.decision;
   const followUp = decision?.kind === 'use_result' ? decision.followUp : undefined;
   const followUpText = followUp?.kind === 'run_started'

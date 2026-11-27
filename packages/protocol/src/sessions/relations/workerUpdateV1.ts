@@ -12,7 +12,7 @@ import { WorkflowRunStateV1Schema } from '../../workflows/workflowRunStateV1.js'
 import { ExecutionRunIdSchema, SessionIdSchema } from '../idsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import type { FollowEventKindV1 } from '../follow/sessionFollowPolicyV1.js';
-import { isTerminalAutomationRunStateV3 } from '../../automations/automationRunStateV3.js';
+import { AUTOMATION_RUN_TERMINAL_STATES_V3 } from '../../automations/automationRunStateV3.js';
 
 const WorkerUpdateSessionIdV1Schema = asProtocolZod<string, string>(SessionIdSchema);
 
@@ -153,6 +153,11 @@ export type WorkerUpdateHeadlineFactsV1 = {
     'workerKind' | 'workerId' | 'ownerState' | 'wake' | 'headline'>;
 }[WorkerUpdateV1['workerKind']];
 
+/** Run states that end the current work and can report an outcome, including a resumable interruption. */
+export const WORKFLOW_RUN_WORKER_REPORT_STATES_V1 = [
+  ...AUTOMATION_RUN_TERMINAL_STATES_V3, 'interrupted',
+] as const;
+
 /** Source outcome is authoritative; the legacy wake only carries live attention, never success. */
 export function classifyWorkerUpdateEventV1(update: Readonly<
   Pick<WorkerUpdateV1, 'workerKind' | 'ownerState'> & Partial<Pick<WorkerUpdateV1, 'wake'>>
@@ -161,7 +166,7 @@ export function classifyWorkerUpdateEventV1(update: Readonly<
     return update.ownerState === 'succeeded' ? 'finished' : 'failed_or_stopped';
   }
   if (update.workerKind === 'workflow_run') {
-    if (isTerminalAutomationRunStateV3(update.ownerState) && update.ownerState !== 'succeeded') return 'failed_or_stopped';
+    if (update.ownerState !== 'succeeded' && WORKFLOW_RUN_WORKER_REPORT_STATES_V1.some(state => state === update.ownerState)) return 'failed_or_stopped';
     if (update.wake === 'needs_you') return 'needs_you';
     return update.ownerState === 'succeeded' ? 'finished' : null;
   }
