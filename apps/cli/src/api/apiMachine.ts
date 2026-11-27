@@ -715,6 +715,12 @@ type AccountChangesSyncDemand = {
     pushedPages?: QueuedPushedChangesPage[];
 };
 
+type ActiveProjectSourceRequesterEncryption = {
+    binding: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationV1['binding'];
+    resolveEncryption: import('@/daemon/externalActions/executeExternalAction').ResolveExternalActionEncryption;
+    refCount: number;
+};
+
 /** `update-machine` fields the live handler applies to held Machine content. */
 const UPDATE_MACHINE_CONTENT_FIELDS_APPLIED_LIVE: ReadonlySet<string> = new Set([
     't', 'machineId', 'metadata', 'daemonState', 'devcontainerChild', 'keyBasis', 'dataEncryptionKey',
@@ -777,6 +783,7 @@ export class ApiMachineClient {
     private readonly machineRpcWorkingDirectory: string;
     private readonly filesystemAccessPolicy: FilesystemAccessPolicy;
     private externalActionIngressOwner: ExternalActionIngressOwner | null = null;
+    private readonly activeProjectSourceRequesterEncryptions = new Map<string, ActiveProjectSourceRequesterEncryption>();
     private machineGuardLocalAction: ActionExecutorDeps['machineGuardAction'] | null = null;
     private additionalAllowedReadDirs: string[] = [];
     private additionalAllowedWriteDirs: string[] = [];
@@ -4675,14 +4682,45 @@ export class ApiMachineClient {
             operationId: input.operationId, accountServerId: serverId, sourceMachineId: source.machineId,
             sourceRootPath: input.sourceWorkspace.rootPath, originalActionEnvelope: envelope.data,
             sourceContext: { ...projectWorkspaceSyncPhysicalContextFromActionContext(context), machineAdmission: source } });
-        const result = await this.callWorkspaceSyncPhysicalMachineRpc({
-            machineId: input.machineId, context, credentials: input.credentials, request: input.request,
-            originalMachineId: this.machine.id, accountServerId: serverId, requireCurrentAdmission: true,
-            signedEffectActionId: authorization.binding.actionId, method: input.method ?? RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN,
-            ...(!preparation && address.ok && address.address.installationId ? { physicalEndpointInstallationId: address.address.installationId } : {}),
-            routing: { workspaceSyncSourceRouting }, signal: input.context.signal,
-        });
-        return preparation ? WorkspaceSyncPrepareBetweenResultV1Schema.parse(result) : ProjectOpenSyncMaterializationResultV1Schema.parse(result);
+        const requesterResolveEncryption = !preparation && envelope.data.v === 2
+            && authorization.binding.accountId !== authorization.binding.custodianAccountId
+            && authorization.binding.target.kind === 'machine'
+            ? readRequesterAccountActionTransportContext(authorization)?.resolveEncryption
+            : undefined;
+        let registeredRequesterEncryption: Readonly<{ token: string; entry: ActiveProjectSourceRequesterEncryption }> | null = null;
+        if (requesterResolveEncryption) {
+            const existing = this.activeProjectSourceRequesterEncryptions.get(authorization.token);
+            if (existing && sameStrictJsonValue(existing.binding, authorization.binding)) {
+                existing.refCount += 1;
+                registeredRequesterEncryption = { token: authorization.token, entry: existing };
+            } else if (!existing) {
+                const entry: ActiveProjectSourceRequesterEncryption = {
+                    binding: authorization.binding,
+                    resolveEncryption: requesterResolveEncryption,
+                    refCount: 1,
+                };
+                this.activeProjectSourceRequesterEncryptions.set(authorization.token, entry);
+                registeredRequesterEncryption = { token: authorization.token, entry };
+            }
+        }
+        try {
+            const result = await this.callWorkspaceSyncPhysicalMachineRpc({
+                machineId: input.machineId, context, credentials: input.credentials, request: input.request,
+                originalMachineId: this.machine.id, accountServerId: serverId, requireCurrentAdmission: true,
+                signedEffectActionId: authorization.binding.actionId, method: input.method ?? RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN,
+                ...(!preparation && address.ok && address.address.installationId ? { physicalEndpointInstallationId: address.address.installationId } : {}),
+                routing: { workspaceSyncSourceRouting }, signal: input.context.signal,
+            });
+            return preparation ? WorkspaceSyncPrepareBetweenResultV1Schema.parse(result) : ProjectOpenSyncMaterializationResultV1Schema.parse(result);
+        } finally {
+            if (registeredRequesterEncryption) {
+                registeredRequesterEncryption.entry.refCount -= 1;
+                if (registeredRequesterEncryption.entry.refCount <= 0
+                    && this.activeProjectSourceRequesterEncryptions.get(registeredRequesterEncryption.token) === registeredRequesterEncryption.entry) {
+                    this.activeProjectSourceRequesterEncryptions.delete(registeredRequesterEncryption.token);
+                }
+            }
+        }
     }
 
     /** The installed child's existing socket attests its admitted workspace effect, never parent Account authority. */
@@ -4845,6 +4883,12 @@ export class ApiMachineClient {
         : Promise<Awaited<ReturnType<import('@/daemon/externalActions/executeExternalAction').ResolveExternalActionEncryption>>> {
         if (authorization && authorization.binding.accountId !== authorization.binding.custodianAccountId
             && authorization.binding.target.kind === 'machine') {
+            const active = this.activeProjectSourceRequesterEncryptions.get(authorization.token);
+            if (active) {
+                return sameStrictJsonValue(active.binding, authorization.binding)
+                    ? await active.resolveEncryption(signal, authorization)
+                    : null;
+            }
             const context = this.machineContentContext;
             const machine = this.machine;
             if (!context.ready || machine.encryptionMode === 'plain' || machine.encryptionVariant !== 'dataKey') return null;
