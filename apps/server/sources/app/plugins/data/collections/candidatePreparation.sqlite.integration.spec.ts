@@ -2474,7 +2474,7 @@ describe("plugin Collection candidate preparation", () => {
                     writableCollections: [target],
                     expectedRevision: "0",
                 },
-            })).rejects.toThrow(/accountPluginIntent\.updateMany/);
+            })).rejects.toThrow("late intent publication failure");
         } finally {
             await db.$executeRawUnsafe("DROP TRIGGER IF EXISTS candidate_preparation_late_intent_publication_failure");
         }
