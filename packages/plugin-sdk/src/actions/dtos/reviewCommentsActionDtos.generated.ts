@@ -85,13 +85,13 @@ export type ReviewCommentsActionInputById = {
             selectedLinesHash: string;
             contextWindowHash: string;
             capturedAt: number;
-            fileLength: number;
             source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
             isUncommitted: boolean;
             isUntracked: boolean;
             truncated: boolean;
             hasBidiControls: boolean;
             likelyMinified: boolean;
+            fileLength?: number | undefined;
             commitSha?: string | undefined;
             truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
             diffContext?: undefined | {
@@ -652,13 +652,13 @@ export type ReviewCommentsActionInputById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -808,13 +808,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -1186,13 +1186,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -1564,13 +1564,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -1941,13 +1941,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -2318,13 +2318,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -2695,13 +2695,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -3070,13 +3070,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -3447,13 +3447,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -3824,13 +3824,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -4201,13 +4201,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
@@ -4579,13 +4579,13 @@ export type ReviewCommentsActionResultById = {
                 selectedLinesHash: string;
                 contextWindowHash: string;
                 capturedAt: number;
-                fileLength: number;
                 source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 isUncommitted: boolean;
                 isUntracked: boolean;
                 truncated: boolean;
                 hasBidiControls: boolean;
                 likelyMinified: boolean;
+                fileLength?: number | undefined;
                 commitSha?: string | undefined;
                 truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
                 diffContext?: undefined | {
