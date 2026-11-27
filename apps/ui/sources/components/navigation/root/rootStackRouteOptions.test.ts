@@ -45,6 +45,7 @@ describe('root route identity ownership', () => {
         expect(options['artifacts/new']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.newDocument' });
         expect(options['artifacts/edit/[id]']).toMatchObject({ headerShown: true, headerTitle: 'artifacts.browser.editDocument' });
         expect(options['workflows/[id]/index']).toMatchObject({ headerShown: true, headerTitle: 'workflows.page.chromeTitle' });
+        expect(options['workflows/runs/index']).toMatchObject({ headerShown: true, headerTitle: 'workflows.tabs.runs' });
         expect(options['boards/[boardId]']).toMatchObject({ headerShown: true, headerTitle: 'boards.title' });
         expect(options['session/recent']).toMatchObject({ headerShown: true, headerTitle: 'sessionHistory.title' });
         expect(options['workflows/index'].headerShown).toBe(false);

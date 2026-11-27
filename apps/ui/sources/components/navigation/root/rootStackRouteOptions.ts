@@ -137,7 +137,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
             },
             workflowsHistory: {
                 headerShown: true,
-                headerTitle: t('workflows.destination.history.title'),
+                headerTitle: t('workflows.tabs.runs'),
                 headerBackTitle: back,
             },
             workflowsRunSettings: {

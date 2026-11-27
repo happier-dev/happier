@@ -21,7 +21,7 @@ import { HEADER_BAND_HORIZONTAL_PADDING_PX } from '@/components/ui/layout/header
 import { t } from '@/text';
 
 import { usePaneRegion } from '../paneRegionContext';
-import { PaneMainChipClaimsContext, usePaneMainColumn } from './usePaneMainColumn';
+import { PaneMainChipClaimsContext, PaneMainHideClaimsContext, usePaneMainColumn } from './usePaneMainColumn';
 
 /** Whether a header in this column draws the hide control (the main column's own header only). */
 export function usePaneMainHideAvailable(): boolean {
@@ -58,7 +58,16 @@ export const PaneMainHideButton = React.memo(function PaneMainHideButton(
   const layout = useOptionalAppPaneScopeLayout();
   const shortcut = useKeyboardShortcutLabel('panes.main.toggle');
   const region = usePaneRegion();
-    if (!main || !main.canHide || main.hidden || region !== 'main') return null;
+  const hideClaims = React.useContext(PaneMainHideClaimsContext);
+  const [owner] = React.useState(() => ({}));
+  const eligible = Boolean(main && main.canHide && !main.hidden && region === 'main');
+  React.useLayoutEffect(() => (eligible && hideClaims ? hideClaims.claim(owner) : undefined), [eligible, hideClaims, owner]);
+  const ownsHide = React.useSyncExternalStore(
+    hideClaims ? hideClaims.subscribe : NO_CLAIMS_SUBSCRIBE,
+    () => (hideClaims ? hideClaims.isOwner(owner) : true),
+    () => (hideClaims ? hideClaims.isOwner(owner) : true),
+  );
+  if (!eligible || !main || !ownsHide) return null;
   const edge = layout?.arrangement === 'editor' ? 'right' : 'left';
   return (
     <IconButton

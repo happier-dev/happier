@@ -34,7 +34,7 @@ export const INTERNAL_TASK_DESCRIPTOR_V1: TriageSourceDescriptorV1 = {
   sessionRelations: { kindIds: ['task'] },
 };
 const surfaces = ['plugin', 'ui', 'agent', 'mcp', 'cli'] as const;
-const write = { surfaces, placementBindings: [], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+const write = { surfaces, placementBindings: [], execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
   dangerLevel: 'safe' } as const;
 const read = { surfaces, placementBindings: [], execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
   dangerLevel: 'safe' } as const;

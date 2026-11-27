@@ -9,7 +9,7 @@ import { useDestinationFocusSignal } from '@/components/appShell/workspace/desti
 import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { RightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { useOptionalAppPaneScopeLayout } from './hooks/useAppPaneScopeLayout';
-import { createPaneMainChipClaims, PaneMainChipClaimsContext, PaneMainColumnContext, type PaneMainColumnDescriptor, type PaneMainColumnState } from './mainColumn/usePaneMainColumn';
+import { createPaneMainChipClaims, createPaneMainHideClaims, PaneMainChipClaimsContext, PaneMainColumnContext, PaneMainHideClaimsContext, type PaneMainColumnDescriptor, type PaneMainColumnState } from './mainColumn/usePaneMainColumn';
 import { PaneMainRestoreFallback } from './mainColumn/PaneMainColumnControls';
 import type { PaneSurfaceScope } from './types';
 
@@ -114,10 +114,13 @@ export function AppPaneScopeControls(props: Readonly<{
         },
     }), [canHide, execute, layout?.deviceType, layout?.multiPaneEnabled, props.rightOpen, props.sideAvailable, readSide, requestToggle]), focus);
     const [chipClaims] = React.useState(createPaneMainChipClaims);
+    const [hideClaims] = React.useState(createPaneMainHideClaims);
     return <PaneMainColumnContext.Provider value={value}>
         <PaneMainChipClaimsContext.Provider value={chipClaims}>
-            {props.children}
-            <PaneMainRestoreFallback />
+            <PaneMainHideClaimsContext.Provider value={hideClaims}>
+                {props.children}
+                <PaneMainRestoreFallback />
+            </PaneMainHideClaimsContext.Provider>
         </PaneMainChipClaimsContext.Provider>
     </PaneMainColumnContext.Provider>;
 }

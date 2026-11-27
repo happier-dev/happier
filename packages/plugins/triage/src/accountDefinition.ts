@@ -195,7 +195,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
             { path: 'transitionId', title: 'New status' },
           ],
         },
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         inputSchema: PluginWorkItemTransitionInputV1Schema, resultSchema: TriageTaskWriteResultV1Schema,
         run: transitionTriageWorkItem,
       },
@@ -226,7 +226,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageCreateTaskActionInputV1Schema,
         resultSchema: TriageCreateTaskActionResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageCreateTaskActionHandler(),
       },
       [TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1]: {
@@ -283,7 +283,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageEditTaskActionInputV1Schema,
         resultSchema: TriageTaskWriteResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageEditTaskActionHandler(),
       },
 [TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1]: {
@@ -300,7 +300,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageTransitionTaskActionInputV1Schema,
         resultSchema: TriageTaskWriteResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageTransitionTaskActionHandler(),
       },
 [TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1]: {
@@ -326,7 +326,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         },
         inputSchema: TriageDeleteTaskActionInputV1Schema,
         resultSchema: TriageDeleteTaskActionResultV1Schema,
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: deleteTriageTask,
       },
 [TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1]: {
@@ -353,7 +353,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputSchema: TriageLinkEntryToSessionInputV1Schema,
         resultSchema: TriageLinkEntryToSessionActionResultV1Schema,
         hostAccess: ['account-storage'],
-        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        execution: { ...TRIAGE_DATA_ACTION_EXECUTION_V1, invokingUi: true },
         run: createTriageLinkEntryToSessionActionHandler(),
       },
 [TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1]: {

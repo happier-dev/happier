@@ -572,6 +572,24 @@ describe('Triage plugin manifest', () => {
     },
   );
 
+  it.each(['tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1', 'tasks/delete-v1', 'tasks/link-v1', 'work-items/transition-v1'])(
+    'keeps the %s Account task write orchestrator on the invoking UI so Personal tasks work with 0 Machines', id => {
+      expect(PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === id)).toMatchObject({
+        execution: { target: 'account', invokingUi: true,
+          account: { artifactId: 'triage-account-runtime', exportName: 'activate' } },
+      });
+    },
+  );
+
+  it.each(['internal/tasks/configure-v1', 'internal/tasks/create-v1', 'internal/tasks/edit-v1', 'internal/tasks/transition-v1', 'internal/tasks/link-session-v1'])(
+    'keeps the built-in %s Personal task write on the invoking UI without a Machine', id => {
+      expect(PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === id)).toMatchObject({
+        execution: { target: 'account', invokingUi: true,
+          account: { artifactId: 'triage-account-runtime', exportName: 'activate' } },
+      });
+    },
+  );
+
   it('declares localized Voice Action presentation in every shipped Triage bundle', () => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(
       (candidate) => candidate.id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,

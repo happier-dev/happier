@@ -215,5 +215,51 @@ describe('plugin page header actions', () => {
     const side = await renderScreen(mainColumnPage('side', () => {}, { showsTitle: false }));
     expect(side.findByTestId('pane-main-hide')).toBeNull();
   });
+
+  it('renders only one Hide button when both a plugin toolbar and a nested PageHeader mount in the same main column', async () => {
+    const { IconButton } = await import('@/components/ui/buttons/IconButton');
+    const { PaneMainHideButton } = await import('@/components/appShell/panes/mainColumn/PaneMainColumnControls');
+    const { createPaneMainHideClaims, PaneMainHideClaimsContext } = await import('@/components/appShell/panes/mainColumn/usePaneMainColumn');
+    const claims = createPaneMainHideClaims();
+    const hidden: boolean[] = [];
+    const main = {
+      hidden: false, canHide: true, folded: false,
+      labels: { hideLabel: 'Hide Tasks', showLabel: 'Show Tasks' }, identity: { name: 'Tasks' },
+      setHidden: (value: boolean) => hidden.push(value),
+      requestHidden: (value: boolean) => hidden.push(value),
+      toggle: () => hidden.push(true),
+    };
+    const renderBoth = (showToolbar: boolean) => (
+      <DestinationInstanceHost
+        tabId="tasks"
+        ref={{ kind: 'settings', params: {} }}
+        pathname="/plugins/happier.triage/tasks"
+        focused
+        visible
+        phone={false}
+        navigation={{ push: () => {}, replace: () => {}, back: () => {} }}
+      >
+        <PaneMainColumnContext.Provider value={main}>
+          <PaneMainHideClaimsContext.Provider value={claims}>
+            <PaneRegionProvider region="main">
+              <PluginSurfaceInteractionBoundary surfaceId="triage-tasks" snapshotTitle="Tasks" enabled>
+                {showToolbar ? renderPluginNavigationActions(null) : null}
+                <PaneMainHideButton />
+              </PluginSurfaceInteractionBoundary>
+            </PaneRegionProvider>
+          </PaneMainHideClaimsContext.Provider>
+        </PaneMainColumnContext.Provider>
+      </DestinationInstanceHost>
+    );
+
+    const screen = await renderScreen(renderBoth(true));
+    expect(screen.root.findAllByType(IconButton)).toHaveLength(1);
+    await screen.pressByTestIdAsync('pane-main-hide');
+    expect(hidden).toEqual([true]);
+
+    // When the outer toolbar unmounts, the remaining Hide control takes ownership seamlessly.
+    await screen.update(renderBoth(false));
+    expect(screen.root.findAllByType(IconButton)).toHaveLength(1);
+  });
 });
 

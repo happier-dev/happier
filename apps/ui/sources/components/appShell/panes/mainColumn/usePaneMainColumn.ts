@@ -67,3 +67,42 @@ export function createPaneMainChipClaims(): PaneMainChipClaims {
 }
 
 export const PaneMainChipClaimsContext = React.createContext<PaneMainChipClaims | null>(null);
+
+/**
+ * Which header owns the main column's Hide control. A plugin page can mount both a toolbar row and an inner
+ * `PageHeader` (such as a first-run state) inside the same main column; only the first claimant renders the
+ * Hide icon so two identical collapse icons never stack vertically.
+ */
+export type PaneMainHideClaims = Readonly<{
+    claim(owner: object): () => void;
+    subscribe(listener: () => void): () => void;
+    isOwner(owner: object): boolean;
+}>;
+
+export function createPaneMainHideClaims(): PaneMainHideClaims {
+    const owners: object[] = [];
+    const listeners = new Set<() => void>();
+    const notify = () => { listeners.forEach((listener) => listener()); };
+    return {
+        claim(owner) {
+            if (!owners.includes(owner)) {
+                owners.push(owner);
+                notify();
+            }
+            return () => {
+                const index = owners.indexOf(owner);
+                if (index !== -1) {
+                    owners.splice(index, 1);
+                    notify();
+                }
+            };
+        },
+        subscribe(listener) {
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+        },
+        isOwner: (owner) => owners.length === 0 || owners[0] === owner,
+    };
+}
+
+export const PaneMainHideClaimsContext = React.createContext<PaneMainHideClaims | null>(null);

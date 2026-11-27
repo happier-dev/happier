@@ -12,8 +12,8 @@ import { useUnistyles } from 'react-native-unistyles';
 export const HeaderLogo = React.memo((props: Readonly<{ size?: number; inset?: number }>) => {
     const size = props.size ?? 24;
     const inset = props.inset ?? 8;
-    const { rt } = useUnistyles();
-    const source = rt.themeName === 'dark'
+    const { theme } = useUnistyles();
+    const source = theme.dark
         ? require('@/assets/images/logo-white.png')
         : require('@/assets/images/logo-black.png');
     return (
