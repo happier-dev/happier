@@ -119,6 +119,7 @@ async function observeAfter(params: Readonly<{
   runtimeRegistry: HookRuntimeRegistry;
   eventId: 'action.execute.after' | 'agent.tool.execute.after';
   payload: ActionExecuteAfterHookPayload | AgentToolExecuteAfterHookPayload;
+  actionMachineId?: string;
 }>): Promise<void> {
   await dispatchPluginHookEvent({
     runtimeRegistry: params.runtimeRegistry,
@@ -127,6 +128,7 @@ async function observeAfter(params: Readonly<{
       category: 'lifecycle',
       payload: params.payload,
     }),
+    ...(params.actionMachineId === undefined ? {} : { context: { actionMachineId: params.actionMachineId } }),
     // Action After observers can finish provider work after the Action settles.
     ...(params.eventId === 'agent.tool.execute.after'
       ? { handlerTimeoutMs: EXECUTION_INTERCEPTION_HOOK_TIMEOUT_MS }
@@ -137,11 +139,11 @@ async function observeAfter(params: Readonly<{
 export async function observeActionExecutionThroughRuntimeRegistry(params: Readonly<{
   runtimeRegistry: HookRuntimeRegistry;
   payload: ActionExecuteAfterHookPayload;
+  actionMachineId?: string;
 }>): Promise<void> {
   await observeAfter({
-    runtimeRegistry: params.runtimeRegistry,
+    ...params,
     eventId: 'action.execute.after',
-    payload: params.payload,
   });
 }
 

@@ -130,14 +130,20 @@ export function createActionExecutionHookDeps(): Pick<
       }
     },
     observeActionExecution: async (observation) => {
+      let actionMachineId: string | undefined;
       if (observation.actionId === REVIEW_START_ACTION_ID_V1) {
         // The installed plugin runtime resolves sources through the daemon's
         // Account. A foreign requester may run the Review here without sharing
         // its settled receipt with the custodian's plugins.
-        const { machineAdmission, externalActionExecutionAuthorization } = observation.context;
+        const { machineAdmission, externalActionExecutionAuthorization, externalActionTarget,
+          executionRunTargetMachineId, defaultSessionMachineId } = observation.context;
         const binding = externalActionExecutionAuthorization?.binding;
         if (machineAdmission && !isCustodianMachineAdmission(machineAdmission)
           || binding && binding.accountId !== binding.custodianAccountId) return;
+        // A provider read can return from the Account runtime to the Machine that admitted the Review.
+        actionMachineId = machineAdmission?.machineId
+          ?? (externalActionTarget?.kind === 'machine' ? externalActionTarget.machineId : undefined)
+          ?? executionRunTargetMachineId ?? defaultSessionMachineId;
       }
       const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
       if (!lease) return;
@@ -146,6 +152,7 @@ export function createActionExecutionHookDeps(): Pick<
         await observeActionExecutionThroughRuntimeRegistry({
           runtimeRegistry: lease.registry,
           payload: buildAfterPayload(observation),
+          ...(actionMachineId === undefined ? {} : { actionMachineId }),
         });
       } finally {
         await lease.release();

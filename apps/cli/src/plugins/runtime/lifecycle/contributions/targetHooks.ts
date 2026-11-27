@@ -37,6 +37,7 @@ type TargetRegistration = Readonly<{
 
 type TargetHookDispatcherContext = Readonly<{
     signal?: AbortSignal;
+    actionMachineId?: string;
     tools?: unknown;
 }>;
 
@@ -60,6 +61,7 @@ function readTargetHookDispatcherContext(context: unknown): TargetHookDispatcher
     const record = context as Readonly<Record<string, unknown>>;
     return {
         ...(record.signal instanceof AbortSignal ? { signal: record.signal } : {}),
+        ...(typeof record.actionMachineId === 'string' ? { actionMachineId: record.actionMachineId } : {}),
         ...(Object.prototype.hasOwnProperty.call(record, 'tools') ? { tools: record.tools } : {}),
     };
 }
@@ -236,6 +238,9 @@ export function createTargetHookHandlerRegistry(params: Readonly<{
                                 correlationId: randomUUID(),
                                 surface: 'agent',
                                 signal,
+                                ...(dispatcherContext.actionMachineId === undefined ? {} : {
+                                    approvalContext: { defaultSessionMachineId: dispatcherContext.actionMachineId },
+                                }),
                                 bypassActionInterception: true,
                                 redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
                                 isOccurrenceCurrent: () => (

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { reviewReviewersForEngineIdsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { connectUiTriageActionClient } from '@happier-tests/ui-action-client';
@@ -10,17 +11,18 @@ import githubPackage from '../../../plugins/scm-github/package.json';
 import { PLUGIN_MANIFEST as githubManifest } from '../../../plugins/scm-github/src/manifest';
 import { activate as activateGithub } from '../../../plugins/scm-github/src/accountRuntime';
 import { GITHUB_PLUGIN_ID, GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../../../plugins/scm-github/src/observations/githubProviderContracts';
-import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../../plugins/scm-github/src/triage/contribution';
+import { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1, GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../../plugins/scm-github/src/triage/contribution';
 import { encodeGithubTriageConfiguration, GITHUB_TRIAGE_ACCOUNT_SCOPE_V1, GITHUB_TRIAGE_LOCAL_INSTANCE_KEY_V1 } from '../../../plugins/scm-github/src/triage/configuration';
 import {
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
   TriageSourceAdministrationActionResultV1Schema, type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
-import { GITHUB_SCM_HOSTING_PROVIDER_ID } from '../../../plugins/scm-github/src/adapter';
 import { GITHUB_TRIAGE_INSTANCE_KEY_STABILITY_V1 } from '../../../plugins/scm-github/src/triage/configuration';
 import {
   TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TriageReadEntryDetailResultV1Schema,
 } from '../../../plugins/triage/src/actions/entryDetailProtocol';
+import { TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, TriageReobserveEntryResultV1Schema } from '../../../plugins/triage/src/actions/reobserveEntryProtocol';
+import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionResultV1Schema } from '../../../plugins/triage/src/actions/resolveResourceProtocol';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { GITHUB_ISSUE_RESPONSE, GITHUB_OTHER_REPOSITORY_RESPONSE, GITHUB_PULL_REQUEST_RESPONSE, GITHUB_REPOSITORY_RESPONSE } from '../../../plugins/scm-github/src/triage/__fixtures__/githubResponses';
@@ -39,7 +41,7 @@ const homeDir = join(testDir, 'daemon-home');
 const githubAccountPlugin = { packageName: githubPackage.name, manifest: githubManifest, activate: activateGithub };
 const source = {
   v: 1 as const,
-  instance: { source: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-forge' }, sourceInstanceId: randomUUID() },
+  instance: { source: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 }, sourceInstanceId: randomUUID() },
   binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native' as const,
     service: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' } },
   localInstanceKey: GITHUB_TRIAGE_LOCAL_INSTANCE_KEY_V1,
@@ -73,9 +75,14 @@ beforeAll(async () => {
       if (mode === 'unidentified') return { statusCode: 200, body: { unexpected: true } };
       if (mode === 'malformed') return { statusCode: 200, body: null, rawBody: '{"unexpected":' };
       if (path === '/repos/octo-org/example-app') return { statusCode: 200, body: GITHUB_REPOSITORY_RESPONSE };
-      if (path === '/repos/octo-org/example-app/pulls/1284') return { statusCode: 200, body: GITHUB_PULL_REQUEST_RESPONSE };
+      const baseOid = GITHUB_PULL_REQUEST_RESPONSE.base.sha;
+      const headOid = GITHUB_PULL_REQUEST_RESPONSE.head.sha;
+      if (path === `/repos/octo-org/example-app/compare/${baseOid}...${headOid}`) {
+        return { statusCode: 200, body: { base_commit: { sha: baseOid }, merge_base_commit: { sha: baseOid } } };
+      }
+      if (path === '/repos/octo-org/example-app/pulls/1284') return { statusCode: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, changed_files: 1 } };
       if (path === '/repos/octo-org/example-app/issues/1284/timeline') return { statusCode: 200, body: [{ id: 1, event: 'labeled', actor: { login: 'octocat' }, created_at: '2026-08-12T18:00:00Z', label: { name: 'review' } }] };
-      if (path === '/repos/octo-org/example-app/pulls/1284/files') return { statusCode: 200, body: [{ sha: GITHUB_PULL_REQUEST_RESPONSE.head.sha, filename: 'src/framePump.ts', status: 'modified', additions: 4, deletions: 1, changes: 5, blob_url: 'https://github.com/octo-org/example-app/blob/main/src/framePump.ts', raw_url: 'https://github.com/octo-org/example-app/raw/main/src/framePump.ts', contents_url: 'https://api.github.com/repos/octo-org/example-app/contents/src/framePump.ts', patch: '@@ -1 +1 @@' }] };
+      if (path === '/repos/octo-org/example-app/pulls/1284/files') return { statusCode: 200, body: [{ sha: GITHUB_PULL_REQUEST_RESPONSE.head.sha, filename: 'src/framePump.ts', status: 'modified', additions: 1, deletions: 1, changes: 2, blob_url: 'https://github.com/octo-org/example-app/blob/main/src/framePump.ts', raw_url: 'https://github.com/octo-org/example-app/raw/main/src/framePump.ts', contents_url: 'https://api.github.com/repos/octo-org/example-app/contents/src/framePump.ts', patch: '@@ -1 +1 @@\n-before\n+after' }] };
       if (path === '/repos/octo-org/example-tools') return { statusCode: 200, body: GITHUB_OTHER_REPOSITORY_RESPONSE };
       if (path === '/repos/octo-org/example-tools/issues/7') return { statusCode: 200, body: GITHUB_ISSUE_RESPONSE };
       if (path === '/repos/octo-org/example-tools/issues/7/timeline') return { statusCode: 200, body: [] };
@@ -146,8 +153,7 @@ it('reads PR overview, files and timeline, handles issue sibling and typed refre
   } });
 });
 
-// Board p381 (2026-11-27 12:01 UTC): direct UI starts lack host-owned private After delivery.
-it.skip('links a Review started directly through the UI Action executor to the current PR entry', async ({ signal }) => {
+it('links a Review started directly through the UI Action executor to the current PR entry', async ({ signal }) => {
   const ui = await connectUiTriageActionClient({ serverUrl: server!.baseUrl, accountSecret,
     additionalPlugins: [githubAccountPlugin] });
   try {
@@ -166,10 +172,26 @@ it.skip('links a Review started directly through the UI Action executor to the c
         v: 1, kind: 'create', source: source.instance.source,
         draft: { v: 1, binding, localInstanceKey, configuration, locator, keyStability: GITHUB_TRIAGE_INSTANCE_KEY_STABILITY_V1 },
       }));
-    if (created.kind !== 'active') throw new Error(`GitHub source setup settled ${created.kind}`);
-    const entryRef = { source: source.instance.source, ...pullRequestRef };
+    if (created.kind !== 'active') {
+      const code = 'failure' in created ? created.failure?.code : undefined;
+      const admission = created.kind === 'invalidCaller' ? created.admission : undefined;
+      throw new Error(`GitHub source setup settled ${created.kind}${code ? ` (${code})` : ''}${admission ? ` ${JSON.stringify(admission)}` : ''}`);
+    }
+    const resolved = TriageResolveResourceActionResultV1Schema.parse(await triage(
+      TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, {
+        v: 1, resource: { kind: 'pullRequest', url: GITHUB_PULL_REQUEST_RESPONSE.html_url },
+      }));
+    if (resolved.kind !== 'resolved') throw new Error(`GitHub PR resolution settled ${resolved.kind}`);
+    const selected = { v: 1, entryRef: resolved.entryRef, sourceInstanceId: resolved.sourceInstance.sourceInstanceId };
     const readDetail = async () => TriageReadEntryDetailResultV1Schema.parse(await triage(
-      TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, { v: 1, entryRef, sourceInstanceId: created.sourceInstanceId }));
+      TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, selected));
+    const observed = TriageReobserveEntryResultV1Schema.parse(await triage(
+      TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1, {
+        ...selected, lastKnownLocator: resolved.locator, forSessionPullRequest: true, includeComparisonSource: true,
+      }));
+    if (observed.kind !== 'observed' || observed.comparisonSource?.kind !== 'pullRequest') {
+      throw new Error('The configured source did not provide a PR comparison');
+    }
     const before = await readDetail();
     expect(before.kind).toBe('read');
     expect(before).not.toHaveProperty('admittedReview');
@@ -177,14 +199,12 @@ it.skip('links a Review started directly through the UI Action executor to the c
     const cwd = join(testDir, 'direct-review');
     await initGitRepo({ repoDir: cwd });
     execGit(cwd, ['commit', '--allow-empty', '-m', 'Direct Review fixture']);
-    const pr = GITHUB_PULL_REQUEST_RESPONSE;
     const input = {
       target: { kind: 'detached' }, cwd, instructions: 'Review this pull request.',
       reviewers: reviewReviewersForEngineIdsV1(['claude']),
-      source: { kind: 'pullRequest', locator: { providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
-        repository: GITHUB_REPOSITORY_RESPONSE.full_name, number: pr.number, baseOid: pr.base.sha, headOid: pr.head.sha } },
+      source: observed.comparisonSource,
     } as const;
-    const start = await ui.executeConfirmed('review.start', input,
+    const start = await ui.executeConfirmed(REVIEW_START_ACTION_ID_V1, input,
       { ...context, executionRunTargetMachineId: machineId, externalActionTarget: { kind: 'machine', machineId } });
     if (!start.ok) throw new Error(`Direct Review start refused: ${start.errorCode}`);
     const admitted = readReviewStartActionResultV1(start.result, input);
