@@ -8,7 +8,7 @@ import { validateExecutionRunProfileResult } from '../execution/runs/resultContr
 import { normalizePluginJsonSchema } from '../plugins/actions/protocolComposableSchema.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
-import type { ActionExecuteResult, ActionFailureCauseV1 } from './actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult, type ActionFailureCauseV1 } from './actionExecutionResult.js';
 import type { ExecutionRunGetResponse } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunStartRunCreationSchema, type ExecutionRunStartRunCreation } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunOutputObservationSchema, type ExecutionRunOutputObservation } from '../reviews/reviewNarration.js';
@@ -230,13 +230,17 @@ export function prepareActionCompletionV1(
   executed: ActionExecuteResult,
   context?: ActionCompletionContextV1,
 ): ActionCompletionResult
-  | Readonly<{ kind: 'failed'; errorCode: string; noRunsLaunched: true }>
+  | Readonly<{ kind: 'failed'; errorCode: string; error?: string; value?: JsonValue; failureCause?: ActionFailureCauseV1; noRunsLaunched: true }>
   | Readonly<{ kind: 'awaiting'; state: ActionCompletionStateV1 }> {
   if (!executed.ok) {
     const details = StrictJsonValueSchema.safeParse(executed.details);
+    const noEffectAttempted = (declaration?.awaits === 'workflow_runs' || declaration?.awaits === 'action_operations')
+      && executed.effectAttempted === false
+      && executed.errorCode !== 'action_failed'
+      && !isActionOutcomeUnknownErrorCodeV1(executed.errorCode);
     return { kind: 'failed', errorCode: executed.errorCode, error: executed.error, ...(details.success ? { value: details.data } : {}),
       ...(executed.failureCause === undefined ? {} : { failureCause: executed.failureCause }),
-      ...(declaration?.awaits === 'workflow_runs' && executed.effectAttempted === false ? { noRunsLaunched: true as const } : {}) };
+      ...(noEffectAttempted ? { noRunsLaunched: true as const } : {}) };
   }
   const output = StrictJsonValueSchema.safeParse(executed.result);
   if (!output.success) return { kind: 'failed', errorCode: 'invalid_action_output' };

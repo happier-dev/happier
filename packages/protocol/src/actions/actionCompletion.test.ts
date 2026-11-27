@@ -264,3 +264,69 @@ it('freezes cached Action completion contracts so callers cannot poison shared W
   }).toThrow(TypeError);
   expect(freezeActionCompletionContractV1(reviewStartExecutionRunCompletion).awaits).toBe(reviewStartExecutionRunCompletion.awaits);
 });
+
+it('marks pre-effect action_operations failures as noRunsLaunched while failing closed on ambiguous or unknown outcomes', () => {
+  const deployCompletion = getActionSpec('deployments.deploy').completion;
+  const projectScriptCompletion = getActionSpec('projects.script.run').completion;
+  const reviewCompletion = getActionSpec('review.start').completion;
+  expect(deployCompletion?.awaits).toBe('action_operations');
+  expect(projectScriptCompletion?.awaits).toBe('action_operations');
+  expect(reviewCompletion?.awaits).toBe('workflow_runs');
+
+  const details = {
+    kind: 'deploymentImageResolutionFailure',
+    service: 'web',
+    reference: 'postgres:17',
+    reason: 'deployment_image_rate_limited',
+  } as const;
+  const failureCause = {
+    phase: 'deployment.native.image.registry.deployment_image_rate_limited',
+    errorClass: 'Error',
+    errorCode: 'deployment_image_rate_limited',
+    httpStatus: null,
+  } as const;
+
+  const preparedDeploy = prepareActionCompletionV1(deployCompletion, {
+    ok: false,
+    errorCode: 'native_failed',
+    error: 'The registry rate limit prevented resolving image postgres:17 for service web.',
+    effectAttempted: false,
+    details,
+    failureCause,
+  });
+  expect(preparedDeploy).toEqual({
+    kind: 'failed',
+    errorCode: 'native_failed',
+    error: 'The registry rate limit prevented resolving image postgres:17 for service web.',
+    value: details,
+    failureCause,
+    noRunsLaunched: true,
+  });
+
+  const preparedProject = prepareActionCompletionV1(projectScriptCompletion, {
+    ok: false,
+    errorCode: 'machine_admission_required',
+    error: 'machine_admission_required',
+    effectAttempted: false,
+  });
+  expect(preparedProject).toMatchObject({
+    kind: 'failed',
+    errorCode: 'machine_admission_required',
+    noRunsLaunched: true,
+  });
+
+  for (const completion of [deployCompletion, projectScriptCompletion, reviewCompletion]) {
+    for (const ambiguous of [
+      { ok: false as const, errorCode: 'native_failed', error: 'missing effect proof' },
+      { ok: false as const, errorCode: 'native_failed', error: 'effect started', effectAttempted: true },
+      { ok: false as const, errorCode: 'action_failed', error: 'action_failed', effectAttempted: false },
+      { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: false },
+      { ok: false as const, errorCode: 'action_outcome_unknown', error: 'action_outcome_unknown', effectAttempted: false },
+      { ok: false as const, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown', effectAttempted: false },
+    ]) {
+      const prepared = prepareActionCompletionV1(completion, ambiguous);
+      expect(prepared.kind).toBe('failed');
+      expect('noRunsLaunched' in prepared).toBe(false);
+    }
+  }
+});

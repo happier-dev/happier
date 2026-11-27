@@ -10,10 +10,12 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTeardownNothingDeployedInputV1Schema, DeploymentTeardownRequestInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createWorkflowCoordinator } from './coordinator';
-import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
+import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 
 it('keeps nothing-deployed teardown empty-only when its schema is materialized', () => {
@@ -119,3 +121,174 @@ it.each(['machine_unavailable', 'RPC_FORBIDDEN', 'invalid_input'] as const)(
     expect(preparations).toBe(preparedBeforeReconnect + 1);
     expect(teardownDispatches).toBe(1);
   });
+
+it('settles pre-effect deployments.deploy target refusal as failed/interrupted without replay instead of outcome_uncertain', async () => {
+  const machineId = 'deploy-machine';
+  const input = DeploymentDeployInputV1Schema.parse({
+    serverId: 'home',
+    environmentId: 'prod-env',
+    targetLinkId: 'prod-target',
+    expectedRevision: 8,
+    expectedTargetLinkRevision: 1,
+    requestKey: 'move-deploy-rate-limited',
+    contentArtifactId: 'candidate',
+    contentHeaderVersion: 1,
+    contentBodyVersion: 1,
+    services: ['web'],
+  });
+  const definition = {
+    version: 1 as const,
+    inputs: [],
+    defaults: {},
+    blocks: [{
+      kind: 'action' as const,
+      id: 'deploy',
+      actionId: 'deployments.deploy',
+      input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal' as const, value }])),
+    }],
+  };
+  const details = {
+    kind: 'deploymentImageResolutionFailure',
+    service: 'web',
+    reference: 'postgres:17',
+    reason: 'deployment_image_rate_limited',
+  } as const;
+  const failureCause = {
+    phase: 'deployment.native.image.registry.deployment_image_rate_limited',
+    errorClass: 'Error',
+    errorCode: 'deployment_image_rate_limited',
+    httpStatus: null,
+  } as const;
+  const preEffectRefusal: ActionExecuteFailure = {
+    ok: false,
+    errorCode: 'native_failed',
+    error: 'The registry rate limit prevented resolving image postgres:17 for service web.',
+    effectAttempted: false,
+    details,
+    failureCause,
+  };
+  let deployCalls = 0;
+  const transport: NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']> = async id => {
+    if (id === 'deployments.environments.get') {
+      return {
+        ok: true,
+        environment: createDeploymentEnvironmentHeaderV1({ id: input.environmentId, revision: 8 }),
+        targetLinks: [createDeploymentTargetLinkHeaderV1({ id: input.targetLinkId, environmentId: input.environmentId })],
+      };
+    }
+    deployCalls++;
+    return preEffectRefusal;
+  };
+  const executor = createActionExecutor({
+    ...createUnavailableActionTransportDeps(),
+    deploymentAction: transport,
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport),
+  });
+  const store = createInMemoryWorkflowCoordinatorStore();
+  const coordinator = createTestWorkflowCoordinator({
+    store,
+    executeStep: async () => { throw new Error('No Agent step'); },
+    resolveWorkspace: async () => ({ ok: true, workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' } }),
+    action: {
+      executor,
+      buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true, serverId: 'home' }),
+      observeRun: async () => { throw new Error('No Agent Run'); },
+      observeOperation: async () => { throw new Error('No operation launched on pre-effect refusal'); },
+    },
+  });
+  const runInput = {
+    runId: randomUUID(),
+    definition,
+    inputs: {},
+    executionTarget: { kind: 'session' as const },
+    authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const },
+    originSessionId: 'origin',
+  };
+  const first = await coordinator.run(runInput);
+  expect(first).toMatchObject({ state: 'interrupted', reason: 'native_failed' });
+  expect(store.list().find(row => row.blockId === 'deploy')).toMatchObject({
+    lifecycle: 'failed',
+    reason: 'native_failed',
+    reasonMessage: preEffectRefusal.error,
+    result: details,
+    failureCause,
+  });
+  expect(deployCalls).toBe(1);
+  // Re-entering the same Run never auto-replays the failed attempt.
+  expect(await coordinator.run(runInput)).toMatchObject({ state: 'interrupted', reason: 'native_failed' });
+  expect(deployCalls).toBe(1);
+});
+
+it.each([
+  ['missing effectAttempted', { ok: false, errorCode: 'native_failed', error: 'rate limited' } satisfies ActionExecuteFailure],
+  ['effectAttempted true', { ok: false, errorCode: 'native_failed', error: 'rate limited', effectAttempted: true } satisfies ActionExecuteFailure],
+  ['action_failed with effectAttempted false', { ok: false, errorCode: 'action_failed', error: 'action_failed', effectAttempted: false } satisfies ActionExecuteFailure],
+  ['outcome_unknown with effectAttempted false', { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: false } satisfies ActionExecuteFailure],
+] as const)('keeps deployments.deploy failure in outcome_uncertain when %s and never replays', async (_label, failure) => {
+  const machineId = 'deploy-machine';
+  const input = DeploymentDeployInputV1Schema.parse({
+    serverId: 'home',
+    environmentId: 'prod-env',
+    targetLinkId: 'prod-target',
+    expectedRevision: 8,
+    expectedTargetLinkRevision: 1,
+    requestKey: 'move-deploy-ambiguous',
+    contentArtifactId: 'candidate',
+    contentHeaderVersion: 1,
+    contentBodyVersion: 1,
+    services: ['web'],
+  });
+  const definition = {
+    version: 1 as const,
+    inputs: [],
+    defaults: {},
+    blocks: [{
+      kind: 'action' as const,
+      id: 'deploy',
+      actionId: 'deployments.deploy',
+      input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal' as const, value }])),
+    }],
+  };
+  let deployCalls = 0;
+  const transport: NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']> = async id => {
+    if (id === 'deployments.environments.get') {
+      return {
+        ok: true,
+        environment: createDeploymentEnvironmentHeaderV1({ id: input.environmentId, revision: 8 }),
+        targetLinks: [createDeploymentTargetLinkHeaderV1({ id: input.targetLinkId, environmentId: input.environmentId })],
+      };
+    }
+    deployCalls++;
+    return failure;
+  };
+  const executor = createActionExecutor({
+    ...createUnavailableActionTransportDeps(),
+    deploymentAction: transport,
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport),
+  });
+  const store = createInMemoryWorkflowCoordinatorStore();
+  const coordinator = createTestWorkflowCoordinator({
+    store,
+    executeStep: async () => { throw new Error('No Agent step'); },
+    resolveWorkspace: async () => ({ ok: true, workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' } }),
+    action: {
+      executor,
+      buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true, serverId: 'home' }),
+      observeRun: async () => { throw new Error('No Agent Run'); },
+      observeOperation: async () => { throw new Error('No operation snapshot'); },
+    },
+  });
+  const runInput = {
+    runId: randomUUID(),
+    definition,
+    inputs: {},
+    executionTarget: { kind: 'session' as const },
+    authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const },
+    originSessionId: 'origin',
+  };
+  expect(await coordinator.run(runInput)).toMatchObject({ state: 'outcome_uncertain' });
+  expect(store.list().find(row => row.blockId === 'deploy')).toMatchObject({ lifecycle: 'outcome_uncertain' });
+  expect(deployCalls).toBe(1);
+  expect(await coordinator.run(runInput)).toMatchObject({ state: 'outcome_uncertain' });
+  expect(deployCalls).toBe(1);
+});
