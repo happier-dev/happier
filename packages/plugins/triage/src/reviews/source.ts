@@ -81,11 +81,30 @@ export async function getReviewV1(input: TriageGetInputV1, context: Context): Pr
     return observation(result.review, result.human.needsYou, await readTitles([result.review.reviewId], context));
 }
 export async function scanReviewsV1(input: TriageScanInputV1, context: Context): Promise<TriageScanResultV1> {
-    const result = await context.services.actions.execute('reviews.list', { limit: input.page.kind === 'initial' ? input.page.limit : MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
-        ...(input.page.kind === 'continuation' ? { cursor: input.page.continuation.token } : {}) }, { signal: context.signal });
+    let limit: number;
+    let cursor: string | undefined;
+    if (input.page.kind === 'initial') {
+        limit = input.page.limit;
+    } else {
+        let continuation: unknown;
+        try { continuation = JSON.parse(input.page.continuation.token); }
+        catch { /* An invalid token cannot resume the Review scan. */ }
+        if (typeof continuation !== 'object' || continuation === null
+            || !('cursor' in continuation) || typeof continuation.cursor !== 'string' || continuation.cursor.length === 0
+            || !('limit' in continuation) || typeof continuation.limit !== 'number'
+            || !Number.isSafeInteger(continuation.limit) || continuation.limit < 1) {
+            return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'review_invalid_continuation' } };
+        }
+        cursor = continuation.cursor;
+        limit = continuation.limit;
+    }
+    const result = await context.services.actions.execute('reviews.list', { limit,
+        ...(cursor === undefined ? {} : { cursor }) }, { signal: context.signal });
     if (isPluginActionApprovalRequestCreated(result)) return { kind: 'failed', failure: unavailable };
     const titles = await readTitles(result.items.map(review => review.reviewId), context);
     const observations = result.items.map(review => observation(review, review.needsYou, titles));
+    // The native cursor names a position. Only the source's token carries the admitted page size.
     return result.cursor === null ? { kind: 'complete', observations, evidence: { kind: 'walkFinished' } }
-        : { kind: 'page', observations, continuation: { v: 1, token: result.cursor }, evidence: { kind: 'partial', reason: 'pageLimit' } };
+        : { kind: 'page', observations, continuation: { v: 1, token: JSON.stringify({ cursor: result.cursor, limit }) },
+            evidence: { kind: 'partial', reason: 'pageLimit' } };
 }
