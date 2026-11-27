@@ -24,6 +24,7 @@ type SupporterRecordRow = Readonly<{
     kind: string | null;
     grantedAt: Date | null;
     recurringActive: boolean;
+    recurringSince: Date | null;
     revokedAt: Date | null;
 }>;
 
@@ -33,6 +34,7 @@ export const SUPPORTER_RECORD_SELECT = {
     kind: true,
     grantedAt: true,
     recurringActive: true,
+    recurringSince: true,
     revokedAt: true,
 } as const;
 
@@ -81,6 +83,7 @@ export function toSupporterFactsV1(record: SupporterRecordRow): SupporterRecordF
         kind: kind.success ? kind.data : null,
         grantedAt: record.grantedAt?.getTime() ?? null,
         recurringActive: record.recurringActive,
+        recurringSince: record.recurringSince?.getTime() ?? null,
         revokedAt: record.revokedAt?.getTime() ?? null,
     };
 }
@@ -100,6 +103,8 @@ export type SupporterPurchaseFacts = Readonly<{
     kind: SupporterKindV1;
     /** When support started, from the provider's earliest purchase. */
     firstPurchaseAt: Date | null;
+    /** Start of the latest live recurring purchase, when the provider supplies it. */
+    latestRecurringPurchaseAt?: Date | null;
 }>;
 
 /**
@@ -128,6 +133,7 @@ export async function applySupporterPurchaseFactsInTx(tx: Tx, params: Readonly<{
     if (facts.revoked) revokedAt ??= params.now;
     else if (facts.earned) revokedAt = null;
     const grantedAt = facts.firstPurchaseAt ?? params.now;
+    const recurringSince = facts.recurringActive ? facts.latestRecurringPurchaseAt ?? null : null;
 
     if (!existing) {
         await tx.supporterRecord.create({
@@ -138,6 +144,7 @@ export async function applySupporterPurchaseFactsInTx(tx: Tx, params: Readonly<{
                 kind: facts.kind,
                 grantedAt,
                 recurringActive: facts.recurringActive,
+                recurringSince,
                 revokedAt,
             },
         });
@@ -149,12 +156,16 @@ export async function applySupporterPurchaseFactsInTx(tx: Tx, params: Readonly<{
         kind?: string;
         grantedAt?: Date;
         recurringActive?: boolean;
+        recurringSince?: Date | null;
         revokedAt?: Date | null;
     } = {};
     if (purchased && existing.number === null) data.number = await allocateSupporterNumberInTx(tx);
     if (purchased && existing.kind !== facts.kind) data.kind = facts.kind;
     if (purchased && existing.grantedAt === null) data.grantedAt = grantedAt;
-    if (existing.recurringActive !== facts.recurringActive) data.recurringActive = facts.recurringActive;
+    if (existing.recurringActive !== facts.recurringActive) {
+        data.recurringActive = facts.recurringActive;
+        data.recurringSince = recurringSince;
+    }
     if ((existing.revokedAt?.getTime() ?? null) !== (revokedAt?.getTime() ?? null)) data.revokedAt = revokedAt;
     if (Object.keys(data).length === 0) return { changed: false, revokedNow: false };
 
@@ -181,6 +192,7 @@ export async function writeAccountSupporterRecordInTx(tx: Tx, params: Readonly<{
         kind: facts?.kind ?? null,
         grantedAt: facts?.grantedAt != null ? new Date(facts.grantedAt) : null,
         recurringActive: facts?.recurringActive ?? false,
+        recurringSince: facts?.recurringActive && facts.recurringSince != null ? new Date(facts.recurringSince) : null,
         revokedAt: facts?.revokedAt != null ? new Date(facts.revokedAt) : null,
     };
     if (existing && sameSupporterRow(existing, next)) return { changed: false };
@@ -198,5 +210,6 @@ function sameSupporterRow(left: SupporterRecordRow, right: SupporterRecordRow): 
         && left.kind === right.kind
         && (left.grantedAt?.getTime() ?? null) === (right.grantedAt?.getTime() ?? null)
         && left.recurringActive === right.recurringActive
+        && (left.recurringSince?.getTime() ?? null) === (right.recurringSince?.getTime() ?? null)
         && (left.revokedAt?.getTime() ?? null) === (right.revokedAt?.getTime() ?? null);
 }

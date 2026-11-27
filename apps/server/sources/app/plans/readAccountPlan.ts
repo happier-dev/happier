@@ -40,7 +40,7 @@ export async function readAccountPlanInTx(tx: Tx, params: Readonly<{
         countAccountPinsInTx(tx, params.accountId, params.authentication),
         tx.supporterRecord.findUnique({
             where: { accountId: params.accountId },
-            select: { number: true, grantedAt: true, revokedAt: true },
+            select: { number: true, grantedAt: true, revokedAt: true, recurringSince: true },
         }),
     ]);
     if (!entitlement) return null;
@@ -76,7 +76,7 @@ export async function readAccountPlanInTx(tx: Tx, params: Readonly<{
             active: supporterActive,
             since: supporterActive ? record.grantedAt?.getTime() ?? null : null,
             number: supporterActive ? record.number : null,
-            recurringSince: null,
+            recurringSince: supporterActive ? record.recurringSince?.getTime() ?? null : null,
         },
         supporterRing: account.supporterRing,
         offers: {

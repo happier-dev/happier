@@ -3,6 +3,9 @@ import { isSandboxPlanSource } from "@/app/plans/accountPlanState";
 import type { DerivedBillingFacts, DerivedPlanFacts } from "./reconcileBilling";
 import type { RevenueCatSubscriber } from "./revenueCatClient";
 
+/** Past due retains access until Polar ends the subscription. */
+export const LIVE_SUBSCRIPTION_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due"]);
+
 export function pickBillingPlan(plans: readonly DerivedPlanFacts[], planOrder: readonly string[]): DerivedPlanFacts | null {
     return plans.reduce<DerivedPlanFacts | null>((current, candidate) => {
         if (!current) return candidate;
@@ -17,6 +20,8 @@ export function combineBillingFacts(facts: readonly DerivedBillingFacts[], planO
     const support = facts.map(({ supporter }) => supporter);
     const earned = support.some((item) => item.earned);
     const dates = support.flatMap(({ firstPurchaseAt }) => firstPurchaseAt ? [firstPurchaseAt.getTime()] : []);
+    const recurringDates = support.flatMap(({ latestRecurringPurchaseAt }) =>
+        latestRecurringPurchaseAt ? [latestRecurringPurchaseAt.getTime()] : []);
     return {
         plan: pickBillingPlan(facts.flatMap(({ plan }) => plan ? [plan] : []), planOrder),
         supporter: {
@@ -27,6 +32,7 @@ export function combineBillingFacts(facts: readonly DerivedBillingFacts[], planO
                 ?? support.find((item) => item.earned && item.kind === "supporter_once")?.kind
                 ?? support.find((item) => item.earned || item.revoked)?.kind ?? "plan",
             firstPurchaseAt: dates.length ? new Date(Math.min(...dates)) : null,
+            latestRecurringPurchaseAt: recurringDates.length ? new Date(Math.max(...recurringDates)) : null,
         },
     };
 }
@@ -61,6 +67,7 @@ export function deriveRevenueCatFacts(subscriber: RevenueCatSubscriber | null, p
                 recurringActive: live && !sandbox,
                 kind: isPlan ? "plan" : subscription ? "supporter_monthly" : "supporter_once",
                 firstPurchaseAt: dates.length ? new Date(Math.min(...dates)) : null,
+                latestRecurringPurchaseAt: live && productionSubscription ? new Date(productionSubscription.purchase_date) : null,
             },
         });
     }

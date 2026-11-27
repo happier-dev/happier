@@ -3,7 +3,7 @@ import { z } from "zod/mini";
 
 import type { Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { isActiveSupporterRecord } from "@/app/billing/supporterRecords";
+import { isActiveSupporterRecord, SUPPORTER_RECORD_SELECT } from "@/app/billing/supporterRecords";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 
@@ -47,8 +47,7 @@ export async function readProvenSupporterRecord(tx: Tx, proof: SupporterProof) {
     const record = await tx.supporterRecord.findUnique({
         where: proof.kind === "account" ? { accountId: proof.accountId } : { code: proof.code },
         select: {
-            id: true, accountId: true, number: true, kind: true,
-            grantedAt: true, recurringActive: true, revokedAt: true,
+            id: true, accountId: true, ...SUPPORTER_RECORD_SELECT,
             ...SUPPORTER_PROFILE_SELECT,
         },
     });

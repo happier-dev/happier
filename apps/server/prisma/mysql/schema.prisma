@@ -1062,6 +1062,7 @@ model SupporterRecord {
     kind            String?
     grantedAt       DateTime?
     recurringActive Boolean   @default(false)
+    recurringSince  DateTime?
     /// Derived at each re-read: a refund leaving nothing paid. Never set by hand.
     revokedAt       DateTime?
     publicName      String?

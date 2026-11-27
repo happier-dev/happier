@@ -8,10 +8,8 @@ import { isPrismaErrorCode } from "@/storage/db";
 import type { PolarClient, PolarOrder, PolarSubscription } from "./polarClient";
 import { applySupporterPurchaseFactsInTx, isSupporterCode, transferSupporterRecordInTx, type SupporterPurchaseFacts } from "./supporterRecords";
 import type { RevenueCatClient } from "./revenueCatClient";
-import { combineBillingFacts, deriveRevenueCatFacts, pickBillingPlan } from "./billingFacts";
+import { combineBillingFacts, deriveRevenueCatFacts, LIVE_SUBSCRIPTION_STATUSES, pickBillingPlan } from "./billingFacts";
 
-/** Polar statuses that still grant access. `past_due` keeps paid state until Polar ends it. */
-const LIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"]);
 /** Orders whose money remains paid (a partial refund changes nothing). */
 const PAID_ORDER_STATUSES = new Set(["paid", "partially_refunded"]);
 const SUPPORTER_PRODUCT_KIND = "supporter";
@@ -90,6 +88,10 @@ export function deriveBillingFacts(input: Readonly<{
         ...supportOrders.map((order) => toDate(order.created_at)),
         ...supportSubscriptions.map((subscription) => toDate(subscription.started_at)),
     ].filter((date): date is Date => date !== null);
+    const recurringDates = liveSupportSubscriptions.flatMap((subscription) => {
+        const startedAt = toDate(subscription.started_at);
+        return startedAt ? [startedAt.getTime()] : [];
+    });
 
     return {
         plan: pickBillingPlan(livePlans, input.planOrder),
@@ -99,6 +101,7 @@ export function deriveBillingFacts(input: Readonly<{
             recurringActive: liveSupportSubscriptions.length > 0,
             kind,
             firstPurchaseAt: purchaseDates.length > 0 ? new Date(Math.min(...purchaseDates.map((date) => date.getTime()))) : null,
+            latestRecurringPurchaseAt: recurringDates.length ? new Date(Math.max(...recurringDates)) : null,
         },
     };
 }

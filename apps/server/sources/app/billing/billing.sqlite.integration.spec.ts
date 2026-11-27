@@ -223,6 +223,20 @@ describe("Polar billing end to end on a real database", () => {
         const readPlan = async () => AccountPlanResponseV1Schema.parse((await app.inject({ method: "GET", url: "/v1/account/plan", headers: { "x-test-user-id": accountId } })).json());
 
         expect(await refresh()).toBe(200);
+        const firstRecurringSince = Date.parse(String(sub.started_at));
+        expect((await readPlan()).supporter.recurringSince).toBe(firstRecurringSince);
+        Object.assign(sub, { status: "past_due", started_at: new Date().toISOString() });
+        expect(await refresh()).toBe(200);
+        expect((await readPlan()).supporter.recurringSince).toBe(firstRecurringSince);
+
+        Object.assign(sub, { status: "canceled" });
+        expect(await refresh()).toBe(200);
+        expect((await readPlan()).supporter).toMatchObject({ active: true, recurringSince: null });
+
+        const restartedAt = new Date().toISOString();
+        Object.assign(sub, { status: "active", started_at: restartedAt });
+        expect(await refresh()).toBe(200);
+        expect((await readPlan()).supporter.recurringSince).toBe(Date.parse(restartedAt));
         const ring = await app.inject({ method: "PUT", url: "/v1/account/supporter/ring", headers: { "x-test-user-id": accountId }, payload: { visible: true } });
         expect(ring.statusCode).toBe(200);
         const number = (await readPlan()).supporter.number;

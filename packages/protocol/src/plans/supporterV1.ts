@@ -28,9 +28,25 @@ export const SupporterRecordFactsV1Schema = lazyZodSchema(() => z.object({
   kind: z.nullable(SupporterKindV1Schema),
   grantedAt: z.nullable(z.int()),
   recurringActive: z.boolean(),
+  recurringSince: z.optional(z.nullable(z.int())),
   revokedAt: z.nullable(z.int()),
 }));
 export type SupporterRecordFactsV1 = z.infer<typeof SupporterRecordFactsV1Schema>;
+
+/** Completed UTC calendar months, with the anniversary clamped in shorter months. */
+export function countSupporterMonths(recurringSinceMs: number, nowMs: number): number {
+  if (nowMs <= recurringSinceMs) return 0;
+  const start = new Date(recurringSinceMs);
+  const now = new Date(nowMs);
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+  const months = (year - start.getUTCFullYear()) * 12 + month - start.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const day = Math.min(start.getUTCDate(), lastDay);
+  const anniversary = Date.UTC(year, month, day, start.getUTCHours(), start.getUTCMinutes(),
+    start.getUTCSeconds(), start.getUTCMilliseconds());
+  return Math.max(0, months - Number(nowMs < anniversary));
+}
 
 // Absent on servers that predate the Cloud supporter profile or do not own it.
 const supporterProfileReadShape = () => ({
