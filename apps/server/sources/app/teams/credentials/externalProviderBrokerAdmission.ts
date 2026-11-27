@@ -3,8 +3,8 @@ import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 
 import type { Tx } from '@/storage/inTx';
 import { admitTeamCredentialBrokerMachineForResourceInTx, resolveTeamCredentialBrokerPlacementFingerprint } from './brokerPlacementResolver';
-import { readExternalBrokerOperation } from './externalBrokerOperation';
-import { resolveTeamCredentialResourceSourceInTx } from './resourceSourceResolver';
+import { readExternalBrokerOperation, readExternalBrokerOperationKeyInTx } from './externalBrokerOperation';
+import { projectTeamCredentialUsageSourceMemberKey } from './sourceResolution';
 import { admitTeamCredentialUsageInTx } from './teamCredentialUsageAdmission';
 import { recordTeamCredentialExternalTerminalUsageEventInTx } from '@/app/usage/usageWriteService';
 import { resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx } from './externalApiKey';
@@ -15,7 +15,7 @@ const failure = (
     usageLimit?: ExternalAdmissionFailure['usageLimit'],
 ): ExternalAdmissionFailure => ({ ok: false, reasonCode, ...(usageLimit ? { usageLimit } : {}) });
 
-async function authorizeCurrentExternalProviderKeyInTx(
+async function authorizeExternalProviderKeyInTx(
     tx: Tx,
     input: Readonly<{
         authenticatedBrokerAccountId: string;
@@ -26,11 +26,14 @@ async function authorizeCurrentExternalProviderKeyInTx(
     }>,
 ) {
     const { binding, brokerMachineId, expectedResourceRevision } = input;
-    const key = await resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx(tx, {
-        kind: 'admitted_key',
-        keyId: binding.externalApiKeyId,
-    }, input.observedAt);
-    if (!key.ok) return failure(key.reason);
+    const key = binding.operationId === null
+        ? await resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx(tx, {
+            kind: 'admitted_key',
+            keyId: binding.externalApiKeyId,
+        }, input.observedAt)
+        : await readExternalBrokerOperationKeyInTx(tx, binding.externalApiKeyId);
+    if (!key) return failure('operation_not_current');
+    if ('ok' in key && !key.ok) return failure(key.reason);
     if (key.resourceId !== binding.resourceId || key.teamId !== binding.teamId
         || key.assignedTeamMembershipId !== binding.assignedTeamMembershipId
         || key.assignedAccountId !== binding.assignedAccountId) return failure('operation_not_current');
@@ -63,25 +66,21 @@ async function authorizeCurrentExternalProviderKeyInTx(
         if (!source.success || JSON.stringify(source.data) !== operation.sourceBindingJson) {
             return failure('operation_not_current');
         }
+        return { ok: true as const, resource, externalApiKeyId: key.keyId, source: source.data };
     }
-    // The presented Machine is the one the external placement owner already
-    // resolved for this key's per-key operation and dispatched to — the
-    // Machine that established it, or a fresh Pool selection. Pool tier
-    // reordering, disabling and removal affect future opens only (L11/03 §6
-    // step 7), so current membership is not an ongoing ACL here; an exact
-    // placement still names its one Machine and eligibility is rechecked.
+    // A read-only catalog before the first inference has no retained job.
+    // Authorize that standalone disclosure without establishing custody.
     const broker = await admitTeamCredentialBrokerMachineForResourceInTx(tx, {
         resource,
         brokerMachineId,
         selection: 'established',
     });
     if (!broker.ok) return failure(broker.error === 'update_required' ? 'broker_unavailable' : broker.error);
-    return { ok: true as const, resource, externalApiKeyId: key.keyId };
+    return { ok: true as const, resource, externalApiKeyId: key.keyId, source: null };
 }
 
-/** Rechecks external-key metadata authority without reserving allowance,
- * recording usage, or resolving source credentials. A successful catalog
- * dispatch advances admitted-use time without creating a UsageEvent. */
+/** Uses the retained operation, or admits a standalone read before first use.
+ * A successful catalog dispatch advances last-used time without a UsageEvent. */
 export async function authorizeTeamCredentialExternalProviderModelCatalogInTx(
     tx: Tx,
     input: Readonly<{
@@ -92,7 +91,7 @@ export async function authorizeTeamCredentialExternalProviderModelCatalogInTx(
 ): Promise<Readonly<{ ok: true }> | ReturnType<typeof failure>> {
     const parsed = TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema.safeParse(input.request);
     if (!parsed.success) return failure('invalid_request');
-    const authorized = await authorizeCurrentExternalProviderKeyInTx(tx, {
+    const authorized = await authorizeExternalProviderKeyInTx(tx, {
         authenticatedBrokerAccountId: input.authenticatedBrokerAccountId,
         binding: parsed.data.binding,
         brokerMachineId: parsed.data.brokerMachineId,
@@ -104,7 +103,6 @@ export async function authorizeTeamCredentialExternalProviderModelCatalogInTx(
         where: {
             id: authorized.externalApiKeyId,
             resourceId: authorized.resource.id,
-            membership: { status: 'active' },
             OR: [
                 { lastUsedAt: null },
                 { lastUsedAt: { lt: input.observedAt } },
@@ -117,7 +115,6 @@ export async function authorizeTeamCredentialExternalProviderModelCatalogInTx(
             where: {
                 id: authorized.externalApiKeyId,
                 resourceId: authorized.resource.id,
-                membership: { status: 'active' },
             },
             select: { lastUsedAt: true },
         });
@@ -128,9 +125,7 @@ export async function authorizeTeamCredentialExternalProviderModelCatalogInTx(
     return { ok: true };
 }
 
-/** Rechecks the external key and all mutable authority inside the same
- * transaction that records the request-count fact. The bearer itself never
- * leaves the public edge. */
+/** Confirms the sealed operation and atomically reserves recorded usage. */
 export async function admitTeamCredentialExternalProviderRequestInTx(
     tx: Tx,
     input: Readonly<{
@@ -144,7 +139,11 @@ export async function admitTeamCredentialExternalProviderRequestInTx(
     const { binding, brokerMachineId, expectedResourceRevision, application, requestFacts } = parsed.data;
     if (binding.kind !== 'external_api_key') return failure('invalid_request');
     if (binding.operationId === null) return failure('operation_not_current');
-    const authorized = await authorizeCurrentExternalProviderKeyInTx(tx, {
+    const expectedProtocol = requestFacts.routeKind === 'openai_responses'
+        ? 'openai-responses'
+        : requestFacts.routeKind === 'openai_chat_completions' ? 'openai-chat' : 'anthropic';
+    if (application.protocol !== expectedProtocol) return failure('invalid_request');
+    const authorized = await authorizeExternalProviderKeyInTx(tx, {
         authenticatedBrokerAccountId: input.authenticatedBrokerAccountId,
         binding,
         brokerMachineId,
@@ -152,18 +151,8 @@ export async function admitTeamCredentialExternalProviderRequestInTx(
         observedAt: input.observedAt,
     });
     if (!authorized.ok) return authorized;
-    const resource = authorized.resource;
-    const expectedProtocol = requestFacts.routeKind === 'openai_responses'
-        ? 'openai-responses'
-        : requestFacts.routeKind === 'openai_chat_completions' ? 'openai-chat' : 'anthropic';
-    if (application.protocol !== expectedProtocol) return failure('invalid_request');
-    const source = readTeamCredentialSourceBinding(resource.sourceBindingJson);
-    if (!source.success) return failure('resource_unavailable');
-    const current = await resolveTeamCredentialResourceSourceInTx(tx, {
-        custodianAccountId: resource.custodianAccountId, source: source.data,
-    });
-    if (current.status !== 'current') return failure('resource_unavailable');
-    if (current.authenticationFailure) return failure(current.authenticationFailure);
+    const { resource, source } = authorized;
+    if (!source) return failure('operation_not_current');
     const requestId = `external:${binding.externalApiKeyId}:${binding.requestId}`;
     const usage = await admitTeamCredentialUsageInTx(tx, {
         storageAccountId: binding.assignedAccountId,
@@ -176,7 +165,7 @@ export async function admitTeamCredentialExternalProviderRequestInTx(
         authority: {
             kind: 'teamCredentialAdmission', requestingAccountId: binding.assignedAccountId,
             resourceId: resource.id, externalApiKeyId: binding.externalApiKeyId,
-            sourceCredentialId: current.usageSourceMemberKey, workerMachineId: null, brokerMachineId,
+            sourceCredentialId: projectTeamCredentialUsageSourceMemberKey(source), workerMachineId: null, brokerMachineId,
             deliveryMode: 'external_api',
             executionRunId: null,
         },
@@ -190,7 +179,7 @@ export async function admitTeamCredentialExternalProviderRequestInTx(
     const terminalRequestId = requestFacts.generation ? requestId : null;
     return {
         ok: true, resourceId: resource.id, resourceRevision: resource.revision,
-        brokerMachineId, source: source.data,
+        brokerMachineId, source,
         operation: {
             kind: 'external_api_key', externalApiKeyId: binding.externalApiKeyId,
             operationId: binding.operationId,

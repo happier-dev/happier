@@ -5,13 +5,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createServiceAccountTokenIdentityFields } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 import { createTeamCredentialExternalApiKeyInTx } from '@/app/teams/credentials/externalApiKey';
+import {
+    admitTeamCredentialExternalProviderRequestInTx,
+    authorizeTeamCredentialExternalProviderModelCatalogInTx,
+} from '@/app/teams/credentials/externalProviderBrokerAdmission';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createDbMaintenanceClient } from '@/storage/prisma';
 import { recordDriverStatements } from '@/testkit/driverStatements';
 import { plainPrivateLabel, storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 
-import { registerExternalProviderApiRoutes } from './registerExternalProviderApiRoutes';
+import { registerExternalProviderApiRoutes, type ExternalProviderBrokerDispatch } from './registerExternalProviderApiRoutes';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('external Provider Pool open cost', () => {
     beforeAll(async () => {
@@ -70,6 +74,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('external Provid
         const readEligibility = vi.fn(async ({ machineIds }: { machineIds: readonly string[] }) => ({
             eligibleMachineIds: new Set(machineIds),
         }));
+        const dispatch = vi.fn<ExternalProviderBrokerDispatch>(async () => ({
+            ok: true, statusCode: 200, headers: {}, body: (async function* () { yield Buffer.from('{}'); })(),
+        }));
+        const entitlementReads = () => statements.filter(sql => /"TeamCredentialMemberGrant"/u.test(sql)).length;
         const app = Fastify();
         try {
             await counted.$connect();
@@ -87,7 +95,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('external Provid
                     HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: privacyKit
                         .encodeBase64(new Uint8Array(32).fill(9), 'base64url').replace(/=+$/u, ''),
                 },
-                dispatch: async () => ({ ok: true, statusCode: 200, headers: {}, body: (async function* () { yield Buffer.from('{}'); })() }),
+                dispatch,
                 readCurrentBrokerPresence: async () => ({ state: 'known', machineIds: new Set(machines) }),
                 readPoolSourceEligibility: readEligibility,
             });
@@ -110,17 +118,58 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('external Provid
                     transactions: statements.filter(sql => /^BEGIN\b/iu.test(sql)).length,
                     eligibilityCalls: readEligibility.mock.calls.length,
                     duplicateProbes: probedIds.length - new Set(probedIds).size,
+                    entitlementReads: entitlementReads(),
                 });
                 expect(new Set(probedIds).size).toBe(uniqueMachines);
             }
             console.info('External broker ingress per-request cost', JSON.stringify(counts));
-            expect(counts.map(({ stage, transactions, eligibilityCalls, duplicateProbes }) => ({
-                stage, transactions, eligibilityCalls, duplicateProbes,
-            })), JSON.stringify(counts)).toEqual([
-                { stage: 'catalog', transactions: 5, eligibilityCalls: 1, duplicateProbes: 0 },
-                { stage: 'first inference', transactions: 5, eligibilityCalls: 1, duplicateProbes: 0 },
-                { stage: 'established inference', transactions: 4, eligibilityCalls: 1, duplicateProbes: 0 },
-            ]);
+            const opened = dispatch.mock.calls[1]![0];
+            const operationRequest = {
+                v: 1,
+                binding: {
+                    v: 1, kind: 'external_api_key', teamId: opened.request.teamId, resourceId: opened.request.resourceId,
+                    requestId: opened.request.requestId, externalApiKeyId: opened.request.caller.keyId,
+                    assignedAccountId: opened.request.caller.assignedAccountId,
+                    assignedTeamMembershipId: opened.request.caller.assignedTeamMembershipId,
+                    operationId: opened.target.operationId,
+                    brokerPlacementFingerprint: opened.target.brokerPlacementFingerprint,
+                },
+                brokerMachineId: opened.target.brokerMachineId,
+                expectedResourceRevision: resource.revision,
+                application: {
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
+                    implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                    endpointTemplateId: 'cliproxyapi-openai-chat',
+                    protocol: 'openai-chat',
+                },
+            };
+            const laterCall = { authenticatedBrokerAccountId: custodian.id, observedAt: new Date() };
+            statements.length = 0;
+            await expect(inTx(tx => admitTeamCredentialExternalProviderRequestInTx(tx, {
+                ...laterCall, request: { ...operationRequest,
+                    requestFacts: { routeKind: 'openai_chat_completions', modelId: 'model-1', generation: true, reasoningEffort: null } },
+            }))).resolves.toMatchObject({ ok: true, usageEventId: expect.any(String) });
+            const inferenceEntitlementReads = entitlementReads();
+            statements.length = 0;
+            await expect(inTx(tx => authorizeTeamCredentialExternalProviderModelCatalogInTx(tx, {
+                ...laterCall, request: operationRequest,
+            }))).resolves.toEqual({ ok: true });
+            const catalogEntitlementReads = entitlementReads();
+            const observed = {
+                open: counts.map(({ stage, transactions, eligibilityCalls, duplicateProbes, entitlementReads }) => ({
+                    stage, transactions, eligibilityCalls, duplicateProbes, entitlementReads,
+                })),
+                later: { inferenceEntitlementReads, catalogEntitlementReads },
+            };
+            console.info('External broker entitlement reads', JSON.stringify(observed));
+            expect(observed).toEqual({
+                open: [
+                    { stage: 'catalog', transactions: 4, eligibilityCalls: 1, duplicateProbes: 0, entitlementReads: 1 },
+                    { stage: 'first inference', transactions: 4, eligibilityCalls: 1, duplicateProbes: 0, entitlementReads: 1 },
+                    { stage: 'established inference', transactions: 3, eligibilityCalls: 1, duplicateProbes: 0, entitlementReads: 1 },
+                ],
+                later: { inferenceEntitlementReads: 0, catalogEntitlementReads: 0 },
+            });
         } finally {
             db.$transaction = originalTransaction;
             await app.close();

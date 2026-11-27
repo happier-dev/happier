@@ -63,6 +63,20 @@ type ConnectedPoolSourceBinding = Extract<
     { kind: "connected_pool" }
 >;
 
+/** Usage can attribute the exact admitted source without acquiring it again. */
+export function projectTeamCredentialUsageSourceMemberKey(source: TeamCredentialSourceBinding): string | null {
+    if (source.kind === "connected_pool") return null;
+    return computeTeamCredentialSourceMemberKeyV1(source.kind === "connected_account" ? {
+        kind: "connected_account",
+        service: source.target.account.service,
+        connectedAccountId: source.target.account.accountId,
+    } : {
+        kind: "provider_credential_slot",
+        connectionId: source.connectionId,
+        credentialSlotId: source.credentialSlotId,
+    });
+}
+
 export function readConnectedAccountSourceDirectExport(
     source: ConnectedAccountSourceBinding,
     current: QualifiedConnectedAccountSourceIdentity,
@@ -90,11 +104,7 @@ export function projectConnectedAccountSourceResolution(
             : "supported",
         ...(directExport?.directExportFailure ? { directExportFailure: directExport.directExportFailure } : {}),
         requestPolicyCurrentness: { kind: "connected_account", identity: current },
-        usageSourceMemberKey: computeTeamCredentialSourceMemberKeyV1({
-            kind: "connected_account",
-            service: source.target.account.service,
-            connectedAccountId: source.target.account.accountId,
-        }),
+        usageSourceMemberKey: projectTeamCredentialUsageSourceMemberKey(source),
         metadata: {
             kind: source.kind,
             service: source.target.account.service,
@@ -130,7 +140,7 @@ export function projectConnectedPoolSourceResolution(
         ...(exporting.length > 0 && exporting.every(member => member.directExportFailure !== undefined)
             ? { directExportFailure: exporting[0]!.directExportFailure } : {}),
         requestPolicyCurrentness: { kind: "connected_pool", snapshot: current },
-        usageSourceMemberKey: null,
+        usageSourceMemberKey: projectTeamCredentialUsageSourceMemberKey(source),
         metadata: {
             kind: source.kind,
             service: source.target.service,
@@ -153,11 +163,7 @@ export function projectProviderConnectionSourceResolution(
             connectionSecurityFingerprint: source.connectionSecurityFingerprint,
             credentialSlotId: source.credentialSlotId,
         },
-        usageSourceMemberKey: computeTeamCredentialSourceMemberKeyV1({
-            kind: "provider_credential_slot",
-            connectionId: source.connectionId,
-            credentialSlotId: source.credentialSlotId,
-        }),
+        usageSourceMemberKey: projectTeamCredentialUsageSourceMemberKey(source),
         metadata: {
             kind: source.kind,
             connectionId: source.connectionId,

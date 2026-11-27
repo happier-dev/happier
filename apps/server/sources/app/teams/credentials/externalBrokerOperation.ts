@@ -27,6 +27,35 @@ export function readExternalBrokerOperation(value: string): ExternalBrokerOperat
     }
 }
 
+/** The key row owns the retained operation and its immutable assignee. */
+export async function readExternalBrokerOperationKeyInTx(tx: Tx, keyId: string) {
+    const key = await tx.teamCredentialExternalApiKey.findUnique({
+        where: { id: keyId },
+        select: {
+            id: true, resourceId: true, teamMembershipId: true, currentBrokerOperationJson: true,
+            membership: { select: { accountId: true } },
+            resource: { select: {
+                teamId: true, custodianAccountId: true, revision: true, sourceBindingJson: true,
+                brokerMachineId: true, brokerPoolId: true,
+            } },
+        },
+    });
+    if (!key) return null;
+    return {
+        keyId: key.id,
+        resourceId: key.resourceId,
+        assignedTeamMembershipId: key.teamMembershipId,
+        assignedAccountId: key.membership.accountId,
+        currentBrokerOperationJson: key.currentBrokerOperationJson,
+        teamId: key.resource.teamId,
+        custodianAccountId: key.resource.custodianAccountId,
+        resourceRevision: key.resource.revision,
+        sourceBindingJson: key.resource.sourceBindingJson,
+        brokerMachineId: key.resource.brokerMachineId,
+        brokerPoolId: key.resource.brokerPoolId,
+    };
+}
+
 /** Called only with the exact Machine identity authenticated by the Machine socket owner. */
 export async function retireExternalBrokerOperationInTx(tx: Tx, input: Readonly<{
     authenticatedAccountId: string;

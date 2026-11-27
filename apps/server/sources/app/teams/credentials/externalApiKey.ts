@@ -78,18 +78,7 @@ export type RevokeAllTeamCredentialExternalApiKeysResult =
     | Readonly<{ ok: false; error: "invalid_resource_input" | "resource_not_found" | "resource_forbidden" | "team_authentication_required" | "team_authentication_policy_unavailable" }>;
 
 export type VerifyTeamCredentialExternalApiKeyResult =
-    | Readonly<{
-        ok: true;
-        keyId: string;
-        resourceId: string;
-        teamId: string;
-        assignedAccountId: string;
-        assignedTeamMembershipId: string;
-        custodianAccountId: string;
-        brokerMachineId: string | null;
-        brokerPoolId: string | null;
-        expiresAt: Date | null;
-    }>
+    | Extract<CurrentTeamCredentialExternalApiKeyAuthorityResult, { ok: true }>
     | Readonly<{ ok: false; reason: "invalid_token" }>;
 
 export type CurrentTeamCredentialExternalApiKeyAuthorityResult =
@@ -455,10 +444,8 @@ export async function revokeTeamCredentialExternalApiKeysForMembershipInTx(
 }
 
 /**
- * The one currentness evaluator shared by public bearer verification and the
- * broker's per-request admission recheck. The admitted-key arm is internal
- * provenance: the public bearer is stripped at the Home edge and is never sent
- * to the broker Machine.
+ * Admits a public bearer or a catalog read with no retained operation. The
+ * public bearer is stripped at the Home edge and never sent to the broker.
  */
 export async function resolveCurrentTeamCredentialExternalApiKeyAuthorityInTx(
     tx: Tx,
@@ -561,9 +548,5 @@ export async function verifyTeamCredentialExternalApiKeyInTx(
         nowInput,
     );
     if (!result.ok) return { ok: false, reason: "invalid_token" };
-    const {
-        resourceRevision: _resourceRevision, sourceBindingJson: _sourceBindingJson,
-        currentBrokerOperationJson: _currentBrokerOperationJson, ...verified
-    } = result;
-    return verified;
+    return result;
 }

@@ -9,12 +9,9 @@ import type { Fastify } from "@/app/api/types";
 import { readHomeEffectiveEnv, resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { inTx } from "@/storage/inTx";
-import {
-    verifyTeamCredentialExternalApiKeyInTx,
-    type VerifyTeamCredentialExternalApiKeyResult,
-} from "@/app/teams/credentials/externalApiKey";
 import { getMachineDaemonPresenceInventory } from "@/app/machines/machineDaemonPresence";
 import {
+    readTeamCredentialExternalBrokerOpenInTx,
     resolveTeamCredentialExternalBrokerPlacement,
     type ExternalBrokerPoolSourceEligibilityReader,
 } from "@/app/teams/credentials/externalBrokerPlacement";
@@ -64,8 +61,6 @@ export type ExternalProviderBrokerDispatch = (input: Readonly<{
     target: Readonly<{ custodianAccountId: string; brokerMachineId: string; operationId: string | null; brokerPlacementFingerprint: string }>;
     signal: AbortSignal;
 }>) => Promise<ExternalProviderBrokerDispatchResult>;
-
-type VerifyExternalKey = (token: string) => Promise<VerifyTeamCredentialExternalApiKeyResult>;
 
 function errorStatus(code: TeamCredentialExternalProviderErrorCodeV1): number {
     if (code === "invalid_api_key") return 401;
@@ -162,7 +157,6 @@ async function* streamWithCancellation(
 export function registerExternalProviderApiRoutes(
     app: Fastify,
     dependencies: Readonly<{
-        verify?: VerifyExternalKey;
         dispatch?: ExternalProviderBrokerDispatch;
         env?: NodeJS.ProcessEnv;
         readCurrentBrokerPresence?: Parameters<typeof resolveTeamCredentialExternalBrokerPlacement>[0]["readCurrentPresence"];
@@ -171,8 +165,6 @@ export function registerExternalProviderApiRoutes(
     }> = {},
 ): void {
     const env = dependencies.env ?? process.env;
-    const verify = dependencies.verify ?? ((token) => inTx((tx) =>
-        verifyTeamCredentialExternalApiKeyInTx(tx, { token })));
     const operationGate = async (request: FastifyRequest, reply: FastifyReply) => {
         const availability = resolveTeamCredentialExternalApiAvailability(
             resolveServerFeaturesForGating(await readHomeEffectiveEnv({ env, request })),
@@ -203,8 +195,9 @@ export function registerExternalProviderApiRoutes(
                 reply.header("cache-control", "no-store");
                 const token = readExternalProviderApiCredential(request.headers, request.raw.rawHeaders);
                 if (!token) return sendError(reply, "invalid_api_key");
-                const verified = await verify(token);
+                const verified = await inTx(tx => readTeamCredentialExternalBrokerOpenInTx(tx, token));
                 if (!verified.ok) return sendError(reply, "invalid_api_key");
+                const { authority } = verified;
                 const headers = forwardHeaders(request.headers, request.raw.rawHeaders);
                 if (!headers || request.url.includes("?")) return sendError(reply, "invalid_request");
                 const bodyBase64 = descriptor.method === "GET"
@@ -215,13 +208,13 @@ export function registerExternalProviderApiRoutes(
                 const applicationRequest = TeamCredentialExternalProviderApplicationRequestV1Schema.safeParse({
                     v: 1,
                     requestId: randomUUID(),
-                    teamId: verified.teamId,
-                    resourceId: verified.resourceId,
+                    teamId: authority.teamId,
+                    resourceId: authority.resourceId,
                     caller: {
                         kind: "external_api_key",
-                        keyId: verified.keyId,
-                        assignedAccountId: verified.assignedAccountId,
-                        assignedTeamMembershipId: verified.assignedTeamMembershipId,
+                        keyId: authority.keyId,
+                        assignedAccountId: authority.assignedAccountId,
+                        assignedTeamMembershipId: authority.assignedTeamMembershipId,
                     },
                     route,
                     method: descriptor.method,
@@ -244,8 +237,7 @@ export function registerExternalProviderApiRoutes(
                 request.raw.once("aborted", abort);
                 reply.raw.once("close", abort);
                 const placement = await resolveTeamCredentialExternalBrokerPlacement({
-                    externalApiKeyId: verified.keyId,
-                    observedAt: new Date(),
+                    open: verified,
                     catalogOnly: route === "models",
                     signal: cancellation.signal,
                     readCurrentPresence: readCurrentBrokerPresence,

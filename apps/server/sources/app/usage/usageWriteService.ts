@@ -976,20 +976,6 @@ export async function recordTeamCredentialAdmissionUsageEventInTx(
         throw new Error("team credential usage session not found");
     }
     const source = "team_credential_admission";
-    if (params.authority.externalApiKeyId !== null) {
-        const externalApiKey = await tx.teamCredentialExternalApiKey.findFirst({
-            where: {
-                id: params.authority.externalApiKeyId,
-                resourceId: params.authority.resourceId,
-                membership: {
-                    accountId: params.authority.requestingAccountId,
-                    status: "active",
-                },
-            },
-            select: { id: true },
-        });
-        if (!externalApiKey) throw new Error("team credential usage external key authority mismatch");
-    }
     const idempotencyKey = buildTeamCredentialAdmissionIdempotencyKey({
         storageAccountId: params.accountId,
         resourceId: params.authority.resourceId,
@@ -1094,7 +1080,7 @@ export async function recordTeamCredentialAdmissionUsageEventInTx(
             where: {
                 id: params.authority.externalApiKeyId,
                 resourceId: params.authority.resourceId,
-                membership: { accountId: params.authority.requestingAccountId, status: "active" },
+                membership: { accountId: params.authority.requestingAccountId },
             },
             data: { lastUsedAt: params.observedAt },
         });

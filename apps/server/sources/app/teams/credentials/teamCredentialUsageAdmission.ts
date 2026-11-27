@@ -40,10 +40,10 @@ export type TeamCredentialUsageAdmissionResult =
     }>;
 
 /**
- * The one atomic recorded-usage admission effect. The caller must first prove
- * current resource, Team, source, Session/Run and broker authority in this same
- * transaction; this owner then evaluates the current recorded ceilings and
- * creates the immutable request fact plus external-key last-used update.
+ * The one atomic recorded-usage admission effect. The caller establishes
+ * authority or confirms that the admitted operation is still active in the
+ * same transaction. This owner evaluates recorded ceilings and creates the
+ * immutable request fact plus any external-key last-used update.
  *
  * Every admitted request on every `usageRoute` is accounted here, including
  * non-generation work such as token counting: callers do not decide whether a

@@ -3302,11 +3302,12 @@ Resource access therefore has three distinct delivery/privacy contracts:
   An external API key's retained operation must stay on its selected exact Machine. Pool tier
   reordering, disabling and removal affect future opens only. Lost presence, unavailable source
   readiness or a failed RPC is not proof of retirement and must not trigger reselection.
-  **Development completion gap:** the current admission UsageEvent anchor cannot establish
-  operation lifetime or arbitrate requests before first admission. The approved correction
-  extends the existing external-key/admission aggregate with a private current-operation binding
-  and compare-and-clear retirement from actual daemon custody cleanup. That integrated path is
-  not yet complete; read-only model listing must not establish an operation. The Home admits the current Account, Team resource, Session or execution run, policy
+  In 0.3 development, the Home seals the exact Machine on the key before inference dispatch.
+  Daemon custody cleanup retires that binding by matching its operation identity.
+  Catalog reads before the first inference authorize a standalone disclosure and leave
+  custody unset. Later catalog and inference calls through a retained operation verify the
+  key and exact operation. Inference reserves usage against that operation.
+  The Home admits the current Account, Team resource, Session or execution run, policy
   and placement once per job, at broker open. Each later request reads only whether that job
   is still active (signed credential epoch, resource row and revision, the active Session,
   or the Run occurrence) and admits its usage and limits. In 0.3 development, a Session request
@@ -3395,8 +3396,11 @@ The assigned member is also the external key's authentication principal. A self-
 captures that Account's current authentication evidence at creation. A key created for another
 member carries no manager proof: the assignee authorizes the exact resource/key through
 `teams.credentials.externalKeys.authorize`. The existing key row stores the canonical Lane 03
-evidence snapshot; bearer verification and broker admission recheck it against current identity,
-Team policy, membership, and resource entitlement. Authorization never returns or replaces the
+evidence snapshot. Public bearer verification evaluates current identity, Team policy,
+membership and resource entitlement once before placement. The seal confirms the
+key, resource and selected Machine. Later Home calls on the retained operation consume
+that admission, and the next public open evaluates current entitlement again.
+Authorization never returns or replaces the
 bearer. Qualified managers list all safe key summaries; entitled assignees can list their own
 summaries to repair authentication, without source or audience internals.
 

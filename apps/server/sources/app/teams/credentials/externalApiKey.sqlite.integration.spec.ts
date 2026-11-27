@@ -235,8 +235,6 @@ describe("Team credential external API key owner", () => {
         await expect(inTx(tx => authorizeTeamCredentialExternalProviderModelCatalogInTx(tx, {
             authenticatedBrokerAccountId: manager.id, request: modelAuthorization, observedAt: admittedAt,
         }))).resolves.toEqual({ ok: false, reasonCode: "operation_not_current" });
-        const verification = await inTx(tx => verifyTeamCredentialExternalApiKeyInTx(tx, { token: created.token }));
-        expect(verification).not.toHaveProperty("currentBrokerOperationJson");
         const listed = await inTx(tx => listTeamCredentialExternalApiKeysInTx(tx, {
             actorAccountId: manager.id, resourceId: resource.id, authentication: TEST_AUTHENTICATION,
         }));
@@ -347,11 +345,15 @@ describe("Team credential external API key owner", () => {
         await db.teamCredentialMemberGrant.delete({
             where: { resourceId_teamMembershipId: { resourceId: resource.id, teamMembershipId: membership.id } },
         });
+        await expect(inTx(tx => verifyTeamCredentialExternalApiKeyInTx(tx, { token: created.token })))
+            .resolves.toEqual({ ok: false, reason: "invalid_token" });
+        // The retained operation consumes its prior admission and still has to
+        // reserve usage. This fixture has already exhausted its request limit.
         await expect(inTx(tx => admitTeamCredentialExternalProviderRequestInTx(tx, {
             authenticatedBrokerAccountId: manager.id,
             request: admissionRequest("grant-revoked"),
             observedAt: new Date(admittedAt.getTime() + 200),
-        }))).resolves.toEqual({ ok: false, reasonCode: "resource_forbidden" });
+        }))).resolves.toMatchObject({ ok: false, reasonCode: "team_credential_usage_limit" });
         expect((await db.teamCredentialExternalApiKey.findUniqueOrThrow({ where: { id: created.key.keyId } })).lastUsedAt).toEqual(admittedAt);
         await db.teamCredentialMemberGrant.create({
             data: { resourceId: resource.id, teamMembershipId: membership.id, deliveryMode: "brokered" },
@@ -361,6 +363,8 @@ describe("Team credential external API key owner", () => {
             mode: "restricted",
             accepted: [{ kind: "home_method", methodId: "key_challenge" }],
         } } });
+        await expect(inTx(tx => verifyTeamCredentialExternalApiKeyInTx(tx, { token: created.token })))
+            .resolves.toEqual({ ok: false, reason: "invalid_token" });
         await expect(inTx(tx => authorizeTeamCredentialExternalProviderModelCatalogInTx(tx, {
             authenticatedBrokerAccountId: manager.id,
             request: modelAuthorization,
@@ -370,7 +374,7 @@ describe("Team credential external API key owner", () => {
             authenticatedBrokerAccountId: manager.id,
             request: admissionRequest("request-restricted"),
             observedAt: new Date(admittedAt.getTime() + 500),
-        }))).resolves.toEqual({ ok: false, reasonCode: "resource_forbidden" });
+        }))).resolves.toMatchObject({ ok: false, reasonCode: "team_credential_usage_limit" });
         await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: null } });
         const deniedAt = new Date(admittedAt.getTime() + 1_000);
         await expect(inTx(tx => admitTeamCredentialExternalProviderRequestInTx(tx, {
