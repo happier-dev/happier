@@ -20,7 +20,10 @@ import type { ActionExecutorDeps } from './executor/types.js';
 describe('committed Review source admission', () => {
   it.each([false, true])('delivers captured PR identity and head privately to After observers (retained capture: %s)', async retained => {
     const records = createInMemoryReviewRecordPortV1();
-    const observeActionExecution = vi.fn<NonNullable<ActionExecutorDeps['observeActionExecution']>>(async () => undefined);
+    const observer = Promise.withResolvers<void>();
+    const observeActionExecution = vi.fn<NonNullable<ActionExecutorDeps['observeActionExecution']>>(
+      ({ actionId }) => actionId === 'review.start' ? observer.promise : undefined,
+    );
     const source = { kind: 'pullRequest' as const, locator: { providerId: 'github', repository: 'acme/reviews', number: 42 } };
     const comparisonId = 'a'.repeat(64);
     const pullRequestUrl = 'https://github.com/acme/reviews/pull/42';
@@ -39,10 +42,17 @@ describe('committed Review source admission', () => {
       },
       executionRunStart: async () => ({ runId: 'reviewer-run', callId: 'reviewer-call', sidechainId: 'reviewer-call' }),
     });
-    const started = await executor.execute('review.start', { sessionId: 'review-session', cwd: '/review-repo', source,
+    const execution = executor.execute('review.start', { sessionId: 'review-session', cwd: '/review-repo', source,
       ...(retained ? { comparisonId } : {}), instructions: 'Review this PR.', reviewers: [{ kind: 'engine', engineId: 'codex' }],
     }, { surface: 'ui' });
-    expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
+    let started: Awaited<typeof execution> | undefined;
+    void execution.then(result => { started = result; });
+    try {
+      await vi.waitFor(() => expect(started).toMatchObject({ ok: true }));
+    } finally {
+      observer.resolve();
+      await execution;
+    }
     const reviewObservations = observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'review.start');
     expect(reviewObservations).toHaveLength(1);
     const after = reviewObservations[0]?.[0];

@@ -2634,10 +2634,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         ? projectApprovalExecutionOutcomeUnknownV1({ ok: false, ...failure })
         : { ok: false, ...failure, error: redactBugReportSensitiveText(failure.error) };
     });
-    if (originIsCurrent && actionId !== null && args.observeExecution) {
-      await observeTerminalAction(actionId, replayInput, executionContext, exec,
-        executionContext.actionCaller ?? replayCaller);
-    }
     const { request: nextExecuted, exec: settledExec } = projectSettledApprovalExecution({ request, actionId, exec,
       dispatchEffectAttempted: effectAttempted, executedAtMs: Date.now() });
 
@@ -2665,15 +2661,22 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       if (persisted) return finishExecution(persisted, settledExec);
       return executionOutcomeUnknown(failure);
     };
-    let updated: unknown;
     try {
-      updated = await approvalsUpdate({ artifactId: args.artifactId, request: nextExecuted, serverId: args.artifactServerId });
-    } catch (error) {
-      return terminalPersistenceFailure({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
+      let updated: unknown;
+      try {
+        updated = await approvalsUpdate({ artifactId: args.artifactId, request: nextExecuted, serverId: args.artifactServerId });
+      } catch (error) {
+        return await terminalPersistenceFailure({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
+      }
+      const updateFailure = readActionFailureEnvelope(updated);
+      if (updateFailure) return await terminalPersistenceFailure(updateFailure);
+      return await finishExecution(nextExecuted, settledExec);
+    } finally {
+      if (originIsCurrent && actionId !== null && args.observeExecution) {
+        void observeTerminalAction(actionId, replayInput, executionContext, exec,
+          executionContext.actionCaller ?? replayCaller);
+      }
     }
-    const updateFailure = readActionFailureEnvelope(updated);
-    if (updateFailure) return terminalPersistenceFailure(updateFailure);
-    return finishExecution(nextExecuted, settledExec);
   }
 
   async function publishApprovalDecisionResult(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext) {
@@ -8930,12 +8933,12 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           ? { discussionPublicationPolicy: discussionPreparation.policy } : {}),
       },
     ));
-    const observeResult = async (result: ActionExecuteResult): Promise<void> => {
-      await observeTerminalAction(actionId, parsedSemanticInput.data, ctx, result, caller);
+    const observeResult = (result: ActionExecuteResult): void => {
+      void observeTerminalAction(actionId, parsedSemanticInput.data, ctx, result, caller);
     };
     if (prepared.kind === 'settled') {
       const result = await (settlementContext.actionAutomationAdmission?.settle(prepared.result, settlementContext) ?? prepared.result);
-      await observeResult(result);
+      observeResult(result);
       return { ...prepared, result };
     }
 
@@ -8944,7 +8947,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       admission: prepared.admission,
       invocation: createOneShotInvocation(async () => {
         const result = await prepared.invocation.run();
-        await observeResult(result);
+        observeResult(result);
         return result;
       }),
     };

@@ -1371,6 +1371,8 @@ These source contracts do not establish loaded-runtime certification.
 In unreleased 0.3 source, a PR `review.start` result carries
 `reviewTarget: { locator: { providerId, repository, number }, headOid, url? }`
 beside its `reviewRound` binding in the private `action.execute.after` hook.
+The Action returns independently of the observer's provider reads and relation
+write. The hook receives the caller's cancellation signal when available.
 `headOid` is the captured comparison's after endpoint, including when opening
 a retained comparison. When supplied by the comparison provider, `url` is the
 captured PR URL Triage uses to resolve the entry through its configured sources. These facts do not enter server-readable Review

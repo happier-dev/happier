@@ -187,15 +187,15 @@ function withHookTimeout<TResult>(params: Readonly<{
         }), Math.trunc(timeoutMs))
       : undefined;
     timeout?.unref?.();
+    params.promise.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
     if (params.callerSignal?.aborted) {
       cancel();
       return;
     }
     params.callerSignal?.addEventListener('abort', cancel, { once: true });
-    params.promise.then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error)),
-    );
   });
 }
 

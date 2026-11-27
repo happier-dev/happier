@@ -209,6 +209,72 @@ describe('execution interception through the canonical plugin hook dispatcher', 
     }
   });
 
+  it('releases an in-flight Action After dispatch when the caller cancels', async () => {
+    const controller = new AbortController();
+    const entered = Promise.withResolvers<unknown>();
+    const pending = Promise.withResolvers<void>();
+    const handler = resolvedHook({
+      pluginId: 'observer.plugin',
+      hookId: 'action.execute.after',
+      priority: 0,
+      registrationIndex: 0,
+      handler: async (_event, context) => {
+        entered.resolve(context);
+        await pending.promise;
+      },
+    });
+    const request = {
+      runtimeRegistry: runtimeRegistry('action.execute.after', [handler]),
+      payload: {
+        ...actionBeforeEvent({ sessionId: 'session-1', title: 'start' }).payload,
+        outcome: { status: 'succeeded' as const, result: { updated: true } },
+      },
+      signal: controller.signal,
+    };
+
+    const dispatch = observeActionExecutionThroughRuntimeRegistry(request);
+    let settled = false;
+    void dispatch.then(() => { settled = true; });
+    try {
+      const context = await entered.promise;
+      controller.abort();
+      expect(context).toMatchObject({ signal: controller.signal });
+      await vi.waitFor(() => expect(settled).toBe(true));
+    } finally {
+      pending.resolve();
+      await dispatch;
+    }
+  });
+
+  it('settles an already cancelled After dispatch even if the handler rejects on abort', async () => {
+    const signal = AbortSignal.abort();
+    const handler = resolvedHook({
+      pluginId: 'observer.plugin',
+      hookId: 'action.execute.after',
+      priority: 0,
+      registrationIndex: 0,
+      handler: async (_event, context) => {
+        (context as { signal: AbortSignal }).signal.throwIfAborted();
+      },
+    });
+    const result = await dispatchPluginHookEvent({
+      runtimeRegistry: runtimeRegistry('action.execute.after', [handler]),
+      event: {
+        ...actionBeforeEvent({ sessionId: 'session-1', title: 'start' }),
+        eventId: 'action.execute.after',
+        category: 'lifecycle',
+        payload: {
+          ...actionBeforeEvent({ sessionId: 'session-1', title: 'start' }).payload,
+          outcome: { status: 'succeeded', result: { updated: true } },
+        },
+      },
+      context: { signal },
+    });
+    expect(result.outcomes).toEqual([
+      expect.objectContaining({ status: 'rejected', error: 'plugin_hook_handler_cancelled' }),
+    ]);
+  });
+
   it('keeps after hooks observational and failure-isolated', async () => {
     const handler = resolvedHook({
       pluginId: 'observer.plugin',

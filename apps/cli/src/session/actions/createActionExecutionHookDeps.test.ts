@@ -32,10 +32,11 @@ describe('createActionExecutionHookDeps', () => {
     });
     const deps = createActionExecutionHookDeps();
     if (!deps.observeActionExecution) throw new Error('expected the Action observer');
+    const signal = new AbortController().signal;
     const observe = (actorAccountId: string, surface: 'ui' | 'cli') => deps.observeActionExecution?.({
       actionId: 'review.start',
       input: { source: { kind: 'pullRequest' } },
-      context: { surface, machineAdmission: { actorAccountId, custodianAccountId: 'owner',
+      context: { surface, signal, machineAdmission: { actorAccountId, custodianAccountId: 'owner',
         machineId: 'machine-1', installationId: 'installation-1', role: 'use', encryptionMode: 'plain' } },
       caller: { kind: 'host' },
       result: { ok: true, result: { reviewRound: { roundId: 'round-1' } } },
@@ -45,6 +46,7 @@ describe('createActionExecutionHookDeps', () => {
     expect(mocks.observe).not.toHaveBeenCalled();
     await observe('owner', 'ui');
     expect(mocks.observe).toHaveBeenCalledTimes(1);
+    expect(mocks.observe).toHaveBeenLastCalledWith(expect.objectContaining({ signal, actionMachineId: 'machine-1' }));
     await observe('owner', 'cli');
     expect(mocks.observe).toHaveBeenCalledTimes(2);
   });

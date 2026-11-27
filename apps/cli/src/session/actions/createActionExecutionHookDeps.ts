@@ -151,6 +151,7 @@ export function createActionExecutionHookDeps(): Pick<
           runtimeRegistry: lease.registry,
           payload: buildAfterPayload(observation),
           ...(actionMachineId === undefined ? {} : { actionMachineId }),
+          ...(observation.context.signal ? { signal: observation.context.signal } : {}),
         });
       } finally {
         await lease.release();

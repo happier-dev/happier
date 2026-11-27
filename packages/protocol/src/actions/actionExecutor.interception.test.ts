@@ -787,7 +787,10 @@ describe('createActionExecutor execution interception', () => {
       status: 'continue' as const,
       input: request.input,
     }));
-    const observeActionExecution = vi.fn(async () => undefined);
+    const observer = Promise.withResolvers<void>();
+    const observeActionExecution = vi.fn<NonNullable<ActionExecutorDeps['observeActionExecution']>>(
+      ({ actionId }) => actionId === 'session.title.set' ? observer.promise : undefined,
+    );
     const executor = createExecutor({
       sessionStateFieldSet,
       interceptActionExecution,
@@ -827,12 +830,22 @@ describe('createActionExecutor execution interception', () => {
     });
     expect(observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'session.title.set')).toHaveLength(0);
 
-    const decision = await executor.execute(
+    const deciding = executor.execute(
       'approval.request.decide',
       { artifactId: 'approval-1', decision: 'approve' },
       { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
     );
-    expect(decision).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    let decision: Awaited<typeof deciding> | undefined;
+    void deciding.then(result => { decision = result; });
+    try {
+      await vi.waitFor(() => expect(decision).toMatchObject({
+        ok: true, result: { status: 'executed', execution: { ok: true } },
+      }));
+      expect(storedRequest).toMatchObject({ status: 'executed' });
+    } finally {
+      observer.resolve();
+      await deciding;
+    }
 
     expect(sessionStateFieldSet).toHaveBeenCalledOnce();
     expect(observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'session.title.set'))
