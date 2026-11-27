@@ -102,18 +102,25 @@ it('opens a Key flow check and reads its trend and routes from its collector onc
   expect(screen.findHostByTestId('services.check.response')).toBeFalsy();
 });
 
-it('Monitoring loads the selected 24 h response for an error-rate flow whose latest check did not report latency', async () => {
+it('Monitoring plots collector p95 intervals when the saved check reports only error rate', async () => {
   const config: TelemetryKeyFlowConfigV1 = { ...keyFlow,
     measure: { ...keyFlow.measure, statistic: 'errorRate' }, threshold: { operator: 'above', value: 0.01 } };
   const check = row('keyFlow', config, { status: 'degraded', observedAt: NOW, evidence: { kind: 'none' } });
   const scope = { serverId: 'server-1', accountId: 'account-1' };
   const calls: unknown[] = [];
-  const history = { ...read, trend: read.trend.map((interval) => ({ ...interval, unit: '1' as const, value: interval.errorRate })) };
+  // Retained R4 intervals include fractional ends and different intervals sharing an end.
+  const ends = [1795772245844, 1795772247409.9998, 1795772247409.9998, 1795772248737];
+  const starts = [1795772245827, 1795772245844, 1795772247397, 1795772247409.9998];
+  const at = (timestamp: number) => NOW - 60_000 + (timestamp - ends[3]!);
+  const intervals = ends.map((end, index) => ({ since: at(starts[index]!), until: at(end), count: index === 3 ? 2 : 1 }));
+  const latencyHistory = intervals.map(interval => ({ ...interval, unit: 'ms', value: 4750, p95: 4750 }));
+  const errorHistory = intervals.map(interval => ({ ...interval, unit: '1', value: 0.4, errorRate: 0.4 }));
   const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
     async invokeContributedAction(request) {
       calls.push({ action: request.action, target: request.context.externalActionTarget,
         serverId: request.context.serverId, input: request.input });
-      return { ok: true, result: history };
+      const input = request.input as { measure: { statistic: string } };
+      return { ok: true, result: { ...read, trend: input.measure.statistic === 'p95' ? latencyHistory : errorHistory } };
     },
   }), scope.accountId);
   const execute = createFrontDoorUiActionExecutor(executor, { serverId: scope.serverId, expectedAccountId: scope.accountId });
@@ -127,18 +134,18 @@ it('Monitoring loads the selected 24 h response for an error-rate flow whose lat
   const id = 'services.checks.row.automation-keyFlow.trigger-1';
   expect(screen.findByTestId(`${id}:column:recent`)).not.toBeNull();
   expect(screen.findByTestId(`${id}:column:uptime`)).not.toBeNull();
+  await vi.waitFor(() => expect(screen.tree.root.findByType(StackedSeriesChart).props.series).toEqual([
+    expect.objectContaining({ points: latencyHistory.map(interval => ({
+      id: JSON.stringify([interval.since, interval.until]), x: interval.until, y: interval.p95,
+    })) }),
+  ]));
   expect(calls).toEqual([{
     action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1),
     target: { kind: 'machine', machineId: 'collector-b' },
     serverId: scope.serverId,
     input: { serverId: scope.serverId, environmentId: config.environmentId, serviceName: config.serviceName,
-      measure: config.measure, since: NOW - 24 * HOUR, until: NOW },
+      measure: { ...config.measure, statistic: 'p95' }, since: NOW - 24 * HOUR, until: NOW },
   }]);
-  await vi.waitFor(() => expect(screen.tree.root.findByType(StackedSeriesChart).props.series).toEqual([
-    expect.objectContaining({ points: read.trend.map(interval => ({
-      id: JSON.stringify([interval.since, interval.until]), x: interval.until, y: interval.p95,
-    })) }),
-  ]));
 });
 
 it('every other check keeps its retained response chart and reads no collector', async () => {

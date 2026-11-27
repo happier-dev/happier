@@ -36,10 +36,15 @@ export async function readTelemetryCheckHistory(
     // This is the viewer's trend. The retained result carries the owner-priced threshold decision.
     return { routes: [], trend: [...projectAppCallsCostMetricSeriesV1(spend)] };
   }
+  // Response history draws latency and uses the returned error shares alongside it. An error-rate
+  // read returns count intervals without latency. The saved check still owns the error-rate result.
+  const historyMeasure = measure.kind === 'route' && measure.statistic === 'errorRate'
+    ? { ...measure, statistic: 'p95' as const }
+    : measure;
   const read = await execute('action.invoke', {
     action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1)!,
     input: { serverId: input.scope.serverId, environmentId, serviceName,
-      ...(serviceVersion === undefined ? {} : { serviceVersion }), measure, since: input.since, until: input.until },
+      ...(serviceVersion === undefined ? {} : { serviceVersion }), measure: historyMeasure, since: input.since, until: input.until },
   }, { ...operation, externalActionTarget: { kind: 'machine', machineId: input.collectorMachineId } });
   return TelemetryMetricsReadResultV1Schema.parse(read);
 }
