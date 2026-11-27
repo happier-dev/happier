@@ -146,27 +146,17 @@ export type TeamCredentialUsageExportInput = Readonly<{
     costMode: UsageCostMode;
 }>;
 
-function requestCell(result: TeamCredentialUsageQueryResultV1, requestCount: number): string {
+function requestCell(result: TeamCredentialUsageQueryResultV1, requestCount: number): number | '' {
     return result.coverage.requestCountCoverage === 'brokered_only' && requestCount === 0
         ? ''
-        : String(requestCount);
-}
-
-function tokenCell(tokenCount: number | null): string {
-    return tokenCount === null ? '' : String(tokenCount);
+        : requestCount;
 }
 
 function costCell(
     cost: TeamCredentialUsageQueryResultV1['totals']['cost'],
     mode: UsageCostMode,
-): string {
-    const resolved = resolveEffectiveUsageCostUsd(cost, mode);
-    return resolved === null ? '' : String(resolved);
-}
-
-/** Coverage travels in its own columns; NULL alone means this component was not measured. */
-function costComponentCell(amountUsd: number | null): string {
-    return amountUsd === null ? '' : String(amountUsd);
+): number | '' {
+    return resolveEffectiveUsageCostUsd(cost, mode) ?? '';
 }
 
 export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInput): string {
@@ -182,10 +172,10 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
         result.coverage.requestCountCoverage,
         result.coverage.tokenCoverage,
         result.coverage.costCoverage,
-        String(result.coverage.requestAdmissionCount),
-        String(result.coverage.agentObservationCount),
-        String(result.coverage.externalTerminalObservationCount),
-        String(result.coverage.unobservedExternalRequestCount),
+        result.coverage.requestAdmissionCount,
+        result.coverage.agentObservationCount,
+        result.coverage.externalTerminalObservationCount,
+        result.coverage.unobservedExternalRequestCount,
         breakdownScope,
     ];
     return buildUsageCsvDocument([
@@ -205,12 +195,12 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             '',
             '',
             requestCell(result, result.coverage.requestAdmissionCount),
-            tokenCell(resolveUsageMeasuredTokens(result.totals.tokens).total),
+            resolveUsageMeasuredTokens(result.totals.tokens).total ?? '',
             costCell(result.totals.cost, input.costMode),
             result.totals.cost.currency,
             input.costMode,
-            costComponentCell(result.totals.cost.reportedUsd),
-            costComponentCell(result.totals.cost.estimatedUsd),
+            result.totals.cost.reportedUsd ?? '',
+            result.totals.cost.estimatedUsd ?? '',
             ...common,
         ],
         ...(input.breakdown === null ? [] : (result.breakdown ?? []).map((entry) => [
@@ -222,12 +212,12 @@ export function buildTeamCredentialUsageCsv(input: TeamCredentialUsageExportInpu
             entry.key,
             entry.label ?? '',
             requestCell(result, entry.totals.requestCount),
-            tokenCell(resolveUsageMeasuredTokens(entry.totals.tokens).total),
+            resolveUsageMeasuredTokens(entry.totals.tokens).total ?? '',
             costCell(entry.totals.cost, input.costMode),
             entry.totals.cost.currency,
             input.costMode,
-            costComponentCell(entry.totals.cost.reportedUsd),
-            costComponentCell(entry.totals.cost.estimatedUsd),
+            entry.totals.cost.reportedUsd ?? '',
+            entry.totals.cost.estimatedUsd ?? '',
             ...common,
         ])),
     ]);

@@ -35,12 +35,14 @@ export function buildUsageTextFileResult(input: Readonly<Omit<UsageFileResult, '
   return UsageFileResultSchema.parse({ v: 1, ...metadata, base64: encodeBase64(new TextEncoder().encode(content)) });
 }
 
-/** RFC 4180 quoting, shared by personal and Team usage export delivery. */
-export function escapeUsageCsvField(value: string): string {
-  return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+/** Protect text from spreadsheet formula interpretation before applying CSV quoting. */
+export function escapeUsageCsvField(value: string | number): string {
+  if (typeof value === 'number') return String(value);
+  const text = /^[=+@\t\r-]/.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function buildUsageCsvDocument(rows: readonly (readonly string[])[]): string {
+export function buildUsageCsvDocument(rows: readonly (readonly (string | number)[])[]): string {
   return `${rows.map(row => row.map(escapeUsageCsvField).join(',')).join('\n')}\n`;
 }
 
@@ -54,11 +56,11 @@ export function buildUsageFileResult(input: UsageExportInput, value: z.infer<typ
   if (request.format === 'json') {
     content = JSON.stringify({ v: 1, query: normalizeUsageQuery(request.query), fields, asOfMs, accounting: selected }, null, 2);
   } else if (request.format === 'csv') {
-    const rows: string[][] = [['costBasis', 'field', 'index', 'value']];
+    const rows: (string | number)[][] = [['costBasis', 'field', 'index', 'value']];
     for (const field of fields) {
       const section = accounting[field];
       const values = Array.isArray(section) ? section : [section];
-      values.forEach((item, index) => rows.push([request.query.costBasis, field, String(index), item === undefined ? '' : JSON.stringify(item)]));
+      values.forEach((item, index) => rows.push([request.query.costBasis, field, index, item === undefined ? '' : JSON.stringify(item)]));
     }
     content = buildUsageCsvDocument(rows);
   } else {

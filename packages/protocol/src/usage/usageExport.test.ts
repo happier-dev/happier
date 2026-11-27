@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeBase64 } from '../crypto/base64.js';
 import { normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema } from './usageAnalyticsContracts.js';
-import { buildUsageFileResult, UsageExportInputSchema, UsageFileResultSchema } from './usageExport.js';
+import { buildUsageCsvDocument, buildUsageFileResult, UsageExportInputSchema, UsageFileResultSchema } from './usageExport.js';
 import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
 
 const tokens = { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 };
@@ -17,6 +17,12 @@ const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
 const query = normalizeUsageQuery({ costBasis: 'estimated' });
 
 describe('authorized selected-field usage file bytes', () => {
+  it('writes formula-leading text as literals and keeps numeric cells numeric', () => {
+    expect(buildUsageCsvDocument([
+      ['=Member', '+Member', '-12', '@Member', '\tMember', '\rMember', -12, 'Name, "quoted"'],
+    ])).toBe(`'=Member,'+Member,'-12,'@Member,'\tMember,"'\rMember",-12,"Name, ""quoted"""\n`);
+  });
+
   it('exports authorized client coverage from the admitted query producer in every document format', () => {
     const accounting = UsageAnalyticsQueryResponseSchema.parse({ ...response, coverage: {
       status: 'partial', reasons: ['incomplete_history'], missingDimensions: [],
