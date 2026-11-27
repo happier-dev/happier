@@ -779,7 +779,10 @@ it('retains the canonical Project refusal cause through registered PluginExec an
   retireAtNativeAdmission = true;
   // preparation_pending is a Session turn issue, not a native startup code.
   // The startup owner retains its generic exited-before-open result.
+  const agent = h.plugin.registry.contributes.agentDefinitionsById.get(h.retainedAgent.agentId);
+  if (!agent?.identity) throw new Error('Missing installed startup Agent identity');
   await assertStartupFailureThroughCli({ preparationCode: null,
+    agent: { id: agent.id, identity: agent.identity },
     settlementKind: 'returned', sessionId: h.sessionId, publishFailure: async persist => {
       const diagnosticsBeforeHostOpen = diagnostic.mock.calls.length;
       const runtime = await runInstalledFirstConversationRuntime({ fixture: h, homeServerIdentityId: home,
@@ -800,8 +803,7 @@ it('retains the canonical Project refusal cause through registered PluginExec an
       expect(issue).toMatchObject({
         code: 'preparation_pending', source: 'dependency_failure',
       });
-      expect(runtime.assistant).toHaveLength(1);
-      expect(runtime.assistant[0]).toContain(issue!.sanitizedPreview);
+      expect(runtime.assistant).toEqual([]);
       expect(diagnostic.mock.calls.slice(diagnosticsBeforeHostOpen).map(([message]) => String(message)))
         .toContain(JSON.stringify({ kind: 'plugin_exec_installed_account_refused',
           phase: 'installed_account_qualification', reason: 'finite_runtime_unavailable', sessionId: h.sessionId }));

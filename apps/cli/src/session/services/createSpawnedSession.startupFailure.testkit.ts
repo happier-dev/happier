@@ -21,11 +21,11 @@ import { createMachineSessionSpawnRpcHandler } from '@/session/actions/sessionLi
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createLocalMachineActionTransportFixture } from '@/testkit/apiMachineTransport';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { io } from 'socket.io-client';
-import { socketRpcCodec } from '@happier-dev/sync-client';
+import * as sessionSockets from '@/api/session/sockets';
+import { createSocketTransportAdapter, socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
@@ -37,13 +37,7 @@ import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCreden
 import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
-
-// Socket.IO is a network boundary. Keep its ordinary implementation outside
-// this fixture so sibling composed paths retain their own transport behavior.
-vi.mock('socket.io-client', async importOriginal => {
-    const actual = await importOriginal<typeof import('socket.io-client')>();
-    return { ...actual, io: vi.fn(actual.io) };
-});
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 /** The existing startup-refusal composition. Native producers can supply their
  * actual host startup; its lifecycle publishes at the Session
@@ -52,11 +46,13 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
     preparationCode: string | null;
     settlementKind: 'returned' | 'nonce';
     sessionId?: string;
+    agent?: Readonly<{ id: string; title?: string; identity: AgentExecutionTargetV1['identity'] }>;
     expectedFailureCause?: NonNullable<SessionRuntimeIssueV1['failureCause']>;
     expectedRetryable?: false;
     publishFailure?: (persist: (mutation: SessionTurnMutationV1) => Promise<void>) => Promise<void>;
 }>) {
     const { preparationCode, settlementKind } = input;
+    const agent = input.agent ?? { id: 'codex', title: 'Codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
     const home = await mkdtemp(join(tmpdir(), 'happier-native-startup-failure-'));
     const sessionId = input.sessionId ?? 'c1234567890123456789012345';
     const machineId = 'machine-native-startup-failure';
@@ -79,7 +75,9 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
     let publishedIssue: SessionRuntimeIssueV1 | null = null;
     let publicationFailure: unknown;
     const producerFetch = globalThis.fetch;
-    const producerIo = vi.mocked(io).getMockImplementation();
+    const producerSocket = vi.isMockFunction(sessionSockets.createUserScopedSocketConnection)
+        ? vi.mocked(sessionSockets.createUserScopedSocketConnection).getMockImplementation()
+        : sessionSockets.createUserScopedSocketConnection;
     const producerServerHttpBaseUrl = resolveServerHttpBaseUrl();
     const producerGet = vi.isMockFunction(axios.get) ? vi.mocked(axios.get).getMockImplementation() : undefined;
     const producerPost = vi.isMockFunction(axios.post) ? vi.mocked(axios.post).getMockImplementation() : undefined;
@@ -181,25 +179,30 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
             // startup is exercised below; readiness and admission stay real.
             if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
                 protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
-                    codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+                    [agent.id]: { ...agent, capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
                 } },
             };
-            if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { 'cli.codex': {
+            if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { [`cli.${agent.id}`]: {
                 ok: true, checkedAt: 1, data: { installed: true, version: null, latestVersion: null,
                     update: { supported: false, command: null }, signIn: { status: 'signedIn', loginSupport: 'unsupported' },
                     platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] },
             } } };
             return await createLocalMachineActionTransportFixture(machineId).invoke(method, ...args);
         } };
-    bindApiSessionSocketMock(vi.mocked(io), createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
-        if (event !== SOCKET_RPC_EVENTS.CALL || !raw || typeof raw !== 'object'
-            || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) throw new Error('Unexpected Machine RPC envelope');
-        const content = { mode: 'plain' as const };
-        const decoded = await socketRpcCodec.decodeRequestParams(content, raw.params, raw.method);
-        const method = raw.method.slice(raw.method.indexOf(':') + 1);
-        const result = await machineTransport.invoke(method, decoded.params);
-        return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
-    } }));
+    // Substitute the opened connection only for the CLI side of the composition.
+    vi.spyOn(sessionSockets, 'createUserScopedSocketConnection').mockImplementation(options => {
+        if (producerSocket && options.serverUrl !== 'https://fixture.example.test') return producerSocket(options);
+        const socket = createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL || !raw || typeof raw !== 'object'
+                || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) throw new Error('Unexpected Machine RPC envelope');
+            const content = { mode: 'plain' as const };
+            const decoded = await socketRpcCodec.decodeRequestParams(content, raw.params, raw.method);
+            const method = raw.method.slice(raw.method.indexOf(':') + 1);
+            const result = await machineTransport.invoke(method, decoded.params);
+            return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+        } });
+        return { socket, transport: createSocketTransportAdapter(socket, options) } as unknown as ReturnType<typeof sessionSockets.createUserScopedSocketConnection>;
+    });
     const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
         sessionId: 'cli-global', mode: 'plain', ctx: null, rawSession: {}, serverId: 'fixture-home',
         serverHttpBaseUrl: 'https://fixture.example.test',
@@ -230,7 +233,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
         } }));
     const actionInput = { creationKey: 'native-exit', executionTarget: { serverId: 'fixture-home', machineId },
         directory: { kind: 'managed' as const },
-        agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        agentTarget: { kind: 'agent' as const, identity: agent.identity },
         initialInput: { text: 'Must wait for a native runner' }, initialTriggers: [],
         connectedServices: { v: 2 as const, bindingsByServiceId: {} }, memoryEnabled: false };
     const invoke = (observeSessionCommit = false) => {
@@ -322,8 +325,6 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 await once(child, 'exit');
             }
         }));
-        if (producerIo) vi.mocked(io).mockImplementation(producerIo);
-        else bindApiSessionSocketMock(vi.mocked(io), createApiSessionSocketStub());
         vi.restoreAllMocks(); vi.unstubAllGlobals(); resetServerFeaturesClientForTests();
         await rm(home, { recursive: true, force: true });
     }
