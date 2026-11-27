@@ -1001,6 +1001,14 @@ describe('resolveUsagePageAggregation', () => {
     expect(refused.results[0]?.howYouWork?.agentCalendar?.periodSummary.totals.busyMs).toBeNull();
     expect(refused.results[0]?.howYouWork?.agentCalendar?.period).toEqual(laterPeriod);
     expect(UsageQueryBatchResultSchema.safeParse(refused).success).toBe(true);
+    const credentialRefusal = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: refreshed,
+      accounting: [{ query, period: laterPeriod, value: observed(laterPeriod), status: 'available', asOfMs: laterMs }],
+      howYouWork: [{ query, asOfMs: laterMs, errorCode: 'credential_scope_denied' }],
+    }, bundledUsageModelPriceCatalog).results[0]!;
+    expect(credentialRefusal.sources).toContainEqual(expect.objectContaining({
+      source: 'how_you_work', status: 'error', errorCode: 'credential_scope_denied',
+    }));
+    expect(credentialRefusal.howYouWork?.agentCalendar?.periodSummary.totals.busyMs).toBeNull();
     const completed = resolveUsagePageAggregation({ queries: [query], nowMs: laterMs, previous: refreshed,
       accounting: [{ query, period: laterPeriod, value: observed(laterPeriod), status: 'available', asOfMs: laterMs }],
       howYouWork: [{ query, asOfMs: laterMs, detail: { status: 'partial', facts: [

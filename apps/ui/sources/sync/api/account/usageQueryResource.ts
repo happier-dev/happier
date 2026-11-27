@@ -15,7 +15,7 @@ import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
 import { collectUsageWorkSources, readUsageWorkSessionTurns, resolveUsageWorkSessionTarget } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, projectUsageQuotaSourceCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, projectUsageQuotaSourceCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, readUsageAuthorityRefusalCode, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { isMachineRpcTimeoutError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
@@ -689,7 +689,7 @@ type SessionInputLoadRequest = Readonly<{
 
 /** Collect only this finite phase's cache misses; the existing reader owns reuse and retirement. */
 async function readSessionInputPhase(ids: readonly string[], readTranscript: boolean, readSession: SessionInputReader,
-    onFailure: (sessionId: string, error: unknown) => boolean,
+    onFailure: (sessionId: string, error: unknown) => SessionInputEvidence | null,
     loadBatch: (requests: readonly SessionInputLoadRequest[], signal: AbortSignal) => Promise<void>,
     onValue: (id: string, value: SessionInputEvidence | null) => void,
     onProgress?: (id: string, value: SessionInputEvidence) => void,
@@ -711,9 +711,9 @@ async function readSessionInputPhase(ids: readonly string[], readTranscript: boo
         demandSignal,
         );
         if (read instanceof Promise) pending.push(read.catch(error => {
-            const settled = !demandSignal?.aborted && onFailure(sessionId, error);
-            if (!settled && !(error instanceof SessionPartsHttpError) && readUsageHistoryFailure(error).retryable) throw error;
-            return null;
+            const admitted = demandSignal?.aborted ? null : onFailure(sessionId, error);
+            if (!(error instanceof SessionPartsHttpError) && readUsageHistoryFailure(error).retryable) throw error;
+            return admitted;
         }).then(accept));
         else accept(read);
     }
@@ -747,6 +747,9 @@ function canReuseSessionContext(retained: SessionInputEvidence | undefined, admi
         && retained.session.agentStateVersion === admitted.session.agentStateVersion
         && retained.session.metadataLayoutVersion === admitted.session.metadataLayoutVersion;
 }
+
+/** The Home refused this evidence request before any of its Session rows. */
+class SessionEvidenceRequestHttpError extends SessionPartsHttpError {}
 
 class SessionEvidenceBatchReadError extends RetryableServerResponseError {
     readonly errorCode: string;
@@ -820,7 +823,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             if (!response.ok) {
                 const payload: unknown = await response.json().catch(() => null);
                 const requirement = OperationUpdateRequiredV1Schema.safeParse(payload);
-                throw new SessionPartsHttpError(response.status, payload, requirement.success ? requirement.data
+                throw new SessionEvidenceRequestHttpError(response.status, payload, requirement.success ? requirement.data
                     : response.status === 404 ? { kind: 'update_required', operation: 'usage.query', component: 'server',
                         reason: 'usage_session_evidence_unsupported' } : undefined);
             }
@@ -993,8 +996,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             idsByQuery.set(key, selectedIds);
         } catch (error) {
             if (!(error instanceof SessionPartsHttpError)) throw error;
-            const errorCode = error.updateRequired ? 'update_required' : 'usage_session_evidence_read_failed';
-            if (previous && error.httpStatus >= 500 && !error.updateRequired) {
+            const { errorCode, retryable } = readUsageHistoryFailure(error);
+            if (previous && retryable && error.httpStatus >= 500) {
                 throw new SessionEvidenceBatchReadError(error.httpStatus, errorCode);
             }
             history?.failed(errorCode);
@@ -1037,9 +1040,9 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         // Session inputs are shared across output queries. Only this exact
         // aggregate can retain its complete admitted population on replacement.
         if (previous && error instanceof SessionPartsHttpError && failure.retryable && error.httpStatus >= 500) {
-            throw new RetryableServerResponseError(error.httpStatus, 'Session input replacement unavailable');
+            throw new SessionEvidenceBatchReadError(error.httpStatus, failure.errorCode);
         }
-        return false;
+        return failure;
     };
     const loadTranscript = async (sessionId: string, assertCurrent: () => void, signal: AbortSignal,
         retained: SessionInputEvidence | undefined, publish: (value: SessionInputEvidence) => void,
@@ -1111,7 +1114,6 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                                     if (response && 'kind' in response.body && response.body.kind === 'update_required') {
                                         throw new SessionPartsHttpError(response.status, response.body, response.body);
                                     }
-                                    if (response && response.status >= 500) throw new RetryableServerResponseError(response.status, 'Session input evidence unavailable');
                                     if (response) throw new SessionPartsHttpError(response.status, response.body);
                                     throw new Error('Session input evidence unavailable');
                                 }
@@ -1123,7 +1125,9 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                         // Only an ordinary transport failure can retain the
                         // freshly admitted Session facts. Access/format failures
                         // quarantine them; no previously loaded content is revived.
-                        if (!isTransientConnectivityError(error)) throw error;
+                        const unavailablePart = error instanceof SessionPartsHttpError
+                            && error.httpStatus >= 500 && !error.updateRequired;
+                        if (!unavailablePart && !isTransientConnectivityError(error)) throw error;
                         recordReadFailure(sessionId, error);
                     }
                     if (page !== null && session.encryptionMode === 'e2ee') {
@@ -1210,6 +1214,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         readUsageAccountingSessionMembership(activityAccounting));
     const evidencePhase = new UsageQueryEvidencePhase(selectedIds.length, query.includeTranscriptEvidence, populationObserved);
     const selected = evidencePhase.selected;
+    let transcriptRefusal: string | undefined;
     const project = (admitted: boolean): (HowYouWorkEvidenceSnapshot & { opened: OpenedUsageSessionSelection })[] => queries.map(query => {
         // Loaded Sessions supply demand, never an access/content fallback after
         // a fresh exact-Account admission fails or denies transcript access.
@@ -1233,7 +1238,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             [...selected.values()].filter(value => value && canReadUnconvertedSessionHistory(value)).length);
         return { query, asOfMs: Date.now(), sessions, sessionCoverage, detail, opened,
             ...(updateRequired ? { errorCode: 'update_required', updateRequired }
-                : projectedReadFailure ? { errorCode: 'usage_session_evidence_read_failed' } : {}) };
+                : projectedReadFailure ? { errorCode: readUsageHistoryFailure(projectedReadFailure).errorCode } : {}) };
     });
     const publish = () => {
         if (signal?.aborted || !context.accountLifetime.isCurrent()) return;
@@ -1247,8 +1252,13 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         const { admitted, refused, sources } = phase;
         // Summary output settles at admission while this finite read continues conversion.
         const sessionReadErrorCode = sessionReadFailure?.errorCode;
-        onProgress?.(admitted || refused ? project(admitted) : [], sessionReadErrorCode ? sources.map(source => source.status === 'partial'
-            ? { ...source, errorCode: sessionReadErrorCode } : source) : sources, admitted && !query.includeTranscriptEvidence);
+        onProgress?.(admitted || refused ? project(admitted) : [], sources.map(source => {
+            if (source.status !== 'partial') return source;
+            if (source.source === 'how_you_work:transcripts' && transcriptRefusal) {
+                return { ...source, status: 'error', errorCode: transcriptRefusal };
+            }
+            return sessionReadErrorCode ? { ...source, errorCode: sessionReadErrorCode } : source;
+        }), admitted && !query.includeTranscriptEvidence);
     };
     publish();
     const onValue = (sessionId: string, value: SessionInputEvidence | null, complete: boolean) => {
@@ -1270,7 +1280,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     };
     const needsTranscript = (value: SessionInputEvidence | null | undefined) => readTranscript && value && !value.completeMessageCoverage
         && (history?.readUnconverted !== true || canReadUnconvertedSessionHistory(value));
-    const summaries = await readSessionInputPhase(selectedIds, false, readSession, recordPhaseReadFailure, async (requests, ownerSignal) => {
+    const summaries = await readSessionInputPhase(selectedIds, false, readSession, (id, error) => {
+        recordPhaseReadFailure(id, error);
+        return null;
+    }, async (requests, ownerSignal) => {
         try {
             const discovery = discovered.get(getUsageQueryKey(query));
             const inputs = new Map(discovery && usageSessionInputDemandCovers(discovery.demand, summaryDemandKey)
@@ -1308,7 +1321,15 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     }, (id, value) => onValue(id, value, !needsTranscript(value)), undefined, undefined, summaryDemandKey, getUsageQueryKey(query), signal);
     // Private facts follow the same Usage window and admitted population.
     // Held private evidence never holds interval publication.
-    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => needsTranscript(summaries.get(id))), true, readSession, recordPhaseReadFailure, async (requests, ownerSignal) => {
+    if (readTranscript) await readSessionInputPhase(selectedIds.filter(id => needsTranscript(summaries.get(id))), true, readSession, (id, error) => {
+        const { bodyErrorCode } = recordPhaseReadFailure(id, error);
+        if (error instanceof SessionEvidenceRequestHttpError && readUsageAuthorityRefusalCode(bodyErrorCode) !== null) {
+            transcriptRefusal ??= bodyErrorCode;
+            // This request could not read transcripts. The separate summary already opened this Session.
+            return summaries.get(id) ?? null;
+        }
+        return null;
+    }, async (requests, ownerSignal) => {
         const messageIds = requests.filter(request => {
                 const admitted = summaries.get(request.sessionId)!;
                 return admitted.session.access?.capabilities.readTranscript !== false

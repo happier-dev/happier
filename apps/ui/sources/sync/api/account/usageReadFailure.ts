@@ -1,5 +1,4 @@
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { readUsageAuthorityRefusalCode, USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 type CoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode' | 'unreadSessions'>;
 
@@ -30,17 +29,7 @@ export function isUsageQuotaOwnershipUnproven(state: UsageQuerySourceState): boo
 /** Typed scope denials keep their cause and require a scope or authority change. */
 export function usageScopeRefusalCode(state: CoverageStatus) {
     if (!isUsageCoverageFailure(state)) return null;
-    switch (state.errorCode) {
-        case 'denied':
-        case 'permission_denied':
-        case 'unauthorized':
-        case 'forbidden':
-        case RPC_ERROR_CODES.FORBIDDEN:
-        case 'not_found':
-            return state.errorCode;
-        default:
-            return null;
-    }
+    return state.errorCode === 'not_found' ? state.errorCode : readUsageAuthorityRefusalCode(state.errorCode);
 }
 
 export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): boolean {

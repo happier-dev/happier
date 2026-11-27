@@ -1260,6 +1260,101 @@ describe('mounted Usage page scope commands', () => {
         expect(reader!.readCurrentUiContext()!.commands.find(row => row.id === command!.id)).toBeUndefined();
     });
 
+    it('discloses a Home Activity credential refusal without offering Retry', async () => {
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-activity-scope.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+                ? Response.json(createRootLayoutFeaturesResponse())
+                : request.path === '/v1/kv/bulk' ? Response.json({ values: [] })
+                : request.path === '/v2/usage/query' ? Response.json(accounting)
+                : request.path === '/v2/usage/query-batch' ? undefined
+                : request.path === USAGE_SESSION_EVIDENCE_PATH
+                    ? Response.json({ error: 'credential_scope_denied' }, { status: 403 })
+                    : artifacts.handle(request.url.toString(), { method: request.method })
+                        ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort />
+                <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        await waitForHomeGovernance(() => {
+            expect(screen.findHostByTestId('usage-page.header.scopeRefused')).not.toBeNull();
+        });
+        expect(screen.getTextContent()).toContain(t('usage.board.page.scopeReadRefused'));
+        expect(screen.findHostByTestId('usage-page.header.retry')).toBeNull();
+        expect(screen.findHostByTestId('usage-page.header.historyAction')).toBeNull();
+        expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === t('usage.board.page.retryRead'))).toBe(false);
+    });
+
+    it.each(['request-wide refusal', 'ordinary partial'] as const)('keeps admitted Overview Activity with a later %s', async variant => {
+        const refused = variant === 'request-wide refusal';
+        const nowMs = 1_710_000_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+        const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+        const id = 'admitted-before-transcripts';
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        let discovered = false;
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-late-refusal.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+                    if (demand.query.includeTranscriptEvidence) {
+                        expect(discovered).toBe(true);
+                        if (refused) return Response.json({ error: 'credential_scope_denied' }, { status: 403 });
+                    } else {
+                        discovered = true;
+                    }
+                    return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
+                        detail: { status: 200, body: { session: createPlainSessionWithDisplayRecordFixture({ id, seq: 1 }) } },
+                        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs, turns: [{
+                            turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900,
+                            terminalAt: nowMs - 600, updatedAt: nowMs,
+                        }] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: false } : {}),
+                    }] });
+                }
+                return artifacts.handle(request.url.toString(), { method: request.method })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort />
+                <UsageWidgetPage initialFilters={{ layoutId: 'overview', period: 'today', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const summary = () => screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice;
+        const transcript = () => screen.findAllByType(UsageCoachWidget)[0]?.props.slice.sources.find((source: { source: string }) => source.source === 'how_you_work:transcripts');
+        await waitForHomeGovernance(() => {
+            expect(transcript()).toMatchObject(refused ? { status: expect.stringMatching(/^(partial|error)$/), errorCode: 'credential_scope_denied' }
+                : { status: 'partial' });
+        });
+        expect.soft(summary()?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+        expect(summary()?.howYouWork?.intervals?.lanes.flatMap((lane: { busy: { startMs: number }[] }) => lane.busy)
+            .map((interval: { startMs: number }) => interval.startMs)).toContain(nowMs - 900);
+        if (refused) {
+            expect(screen.findHostByTestId('usage-page.header.scopeRefused')).not.toBeNull();
+            const details = screen.findAllByType(TechnicalDetailsDisclosure).find(node => node.props.testID === 'usage-page.header.scopeRefused.technicalDetails');
+            expect(details?.props.lines).toContainEqual(expect.objectContaining({ value: 'credential_scope_denied' }));
+            expect(screen.findHostByTestId('usage-page.header.retry')).toBeNull();
+            expect(screen.findHostByTestId('usage-page.header.historyAction')).toBeNull();
+        } else {
+            expect(screen.findHostByTestId('usage-page.header.scopeRefused')).toBeNull();
+        }
+    });
+
     it.each(['quota', 'quota and accounting', 'ownership refusal', 'ownership refusal and saved Views failure'] as const)('owns the Plans read notice for %s', async (cause) => {
         let failed = true;
         const accountingFails = cause === 'quota and accounting';

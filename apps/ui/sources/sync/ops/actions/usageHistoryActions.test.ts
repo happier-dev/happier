@@ -283,7 +283,7 @@ describe('Usage history through the shared Account Action', () => {
     };
     const first = new AbortController();
     const settled = await invoke('read', first.signal);
-    expect(settled).toMatchObject({ status: 'partial', errorCode: 'usage_session_evidence_read_failed', progress: { failed: 0 } });
+    expect(settled).toMatchObject({ status: 'partial', errorCode: 'http_error', progress: { failed: 0 } });
     first.abort();
     const beforeObserve = home.requests.length;
     expect(await invoke('status')).toEqual(settled);

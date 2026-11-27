@@ -706,10 +706,27 @@ function isUsageDetailPhase(source: UsageQuerySourceState): boolean {
   return source.source.startsWith('how_you_work:');
 }
 
+/** Usage refusals that require new authority before private evidence can be read. */
+export function readUsageAuthorityRefusalCode(errorCode?: string) {
+  switch (errorCode) {
+    case 'denied':
+    case 'permission_denied':
+    case 'credential_scope_denied':
+    case 'unauthorized':
+    case 'forbidden':
+    case 'team_authentication_required':
+    case RPC_ERROR_CODES.FORBIDDEN:
+    case RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED:
+      return errorCode;
+    default:
+      return null;
+  }
+}
+
 export function canRetainUsageReadFailure(errorCode?: string): boolean {
-  return !['denied', 'permission_denied', 'unauthorized', 'forbidden', 'ownership_unproven', 'stale_surface', 'cancelled', 'plugin_resource_context_unavailable',
-    RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED,
-    RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE].includes(errorCode ?? '');
+  return readUsageAuthorityRefusalCode(errorCode) === null
+    && !['ownership_unproven', 'stale_surface', 'cancelled', 'plugin_resource_context_unavailable',
+      RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE].includes(errorCode ?? '');
 }
 
 function isUsageDetailSourceReadable(source: UsageQuerySourceState): boolean {

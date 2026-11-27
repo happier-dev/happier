@@ -1,5 +1,6 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readSessionReadBatchFailureCodeV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import { readUsageAuthorityRefusalCode } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
@@ -7,8 +8,8 @@ import { isBlockedSessionContentAvailability } from '@/sync/domains/session/encr
 
 /** These settled facts need an input or availability change before another attempt can help. */
 function isLastingCoverageReason(code: string): boolean {
+    if (readUsageAuthorityRefusalCode(code) !== null) return true;
     switch (code) {
-        case 'forbidden':
         case 'not_found':
         case 'invalid_response':
         case 'update_required':
@@ -36,7 +37,7 @@ function isLastingCoverageReason(code: string): boolean {
 
 /** Preserve the Session reader's content-free cause; never expose its body or message. */
 export function readUsageHistoryFailure(error: unknown): Readonly<{
-    errorCode: string; retryable: boolean; errorName?: string; httpStatus?: number;
+    errorCode: string; retryable: boolean; bodyErrorCode?: string; errorName?: string; httpStatus?: number;
 }> {
     const httpStatus = error && typeof error === 'object' && 'httpStatus' in error && typeof error.httpStatus === 'number'
         ? error.httpStatus : error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
@@ -51,6 +52,7 @@ export function readUsageHistoryFailure(error: unknown): Readonly<{
         : code ?? bodyCode ?? (httpStatus === 403 ? 'forbidden' : httpStatus === 404 ? 'not_found'
             : httpStatus !== undefined ? 'http_error' : isTransientConnectivityError(error) ? 'network_error' : 'usage_session_evidence_read_failed');
     return { errorCode, retryable: httpStatus !== 403 && httpStatus !== 404 && !isLastingCoverageReason(errorCode),
+        ...(bodyCode !== undefined ? { bodyErrorCode: bodyCode } : {}),
         ...(error instanceof Error ? { errorName: error instanceof SessionPartsInvalidResponseError ? 'SessionPartsInvalidResponseError' : error.name } : {}),
         ...(httpStatus !== undefined ? { httpStatus } : {}) };
 }

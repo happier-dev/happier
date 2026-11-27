@@ -496,7 +496,7 @@ describe('usage query captured Resource adapter', () => {
       if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
       const input = UsageSessionEvidenceRequestSchema.parse(request.body);
       if (input.requests[0]!.sessionIds === undefined) return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [] })), results: [] });
-      if (component === 'http') return Response.json({ error: 'forbidden' }, { status: 403 });
+      if (component === 'http') return Response.json({ error: 'credential_scope_denied' }, { status: 403 });
       return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })), results: [{ sessionId: id,
         detail: component === 'detail' ? { status: 403, body: { error: 'forbidden' } }
           : { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1 }) } },
@@ -511,7 +511,7 @@ describe('usage query captured Resource adapter', () => {
       machines: ['machine-a'], includeWorkEvidence: false })] });
     expect(batch.results[0]?.accounting?.totals.tokens.total).toBe(15);
     if (component === 'http') expect(batch.results[0]?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work',
-      errorCode: 'usage_session_evidence_read_failed' }));
+      errorCode: 'credential_scope_denied' }));
     else expect(batch.results[0]?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'unknown' }));
     expect(batch.results[0]?.howYouWork?.inputs).toBeNull();
   });
@@ -8602,7 +8602,7 @@ describe('usage query captured Resource adapter', () => {
     }
   });
 
-  it.each(['refused', 'unreadable-session', 'unreadable-transcript'] as const)('settles partial reading with one readable and one %s Session', async outcome => {
+  it.each(['refused', 'unreadable-session', 'unreadable-transcript', 'transcript-timeout'] as const)('settles partial reading with one readable and one %s Session', async outcome => {
     const transcript = createDeferred<Response>();
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
@@ -8615,6 +8615,9 @@ describe('usage query captured Resource adapter', () => {
       if (turnsId) return Response.json({ v: 1, sessionId: turnsId, updatedAt: 900,
         turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 }] });
       if (request.path === '/v1/sessions/readable/messages') return transcript.promise;
+      if (request.path === '/v1/sessions/unreadable/messages' && outcome === 'transcript-timeout') {
+        return Response.json({ error: 'database_transaction_timeout' }, { status: 503 });
+      }
       if (request.path === '/v1/sessions/unreadable/messages') return Response.json({ messages: [{
         id: 'unopened', seq: 1, createdAt: 200, content: { t: 'encrypted', c: 'unavailable' },
       }], hasMore: false });
@@ -8639,12 +8642,14 @@ describe('usage query captured Resource adapter', () => {
       expect(entry.getSnapshot().pending).toBe('idle');
       expect(slice()?.pending).toBe(false);
       expect(slice()?.howYouWork?.detailStatus).toBe('partial');
-      expect(slice()?.howYouWork?.sessionCoverage).toEqual({ selected: 2, admitted: outcome === 'unreadable-transcript' ? 2 : 1,
-        notRead: outcome === 'unreadable-transcript' ? 2 : 1 });
-      expect(slice()?.howYouWork?.intervals?.agentTimeMs).toBe(outcome === 'unreadable-transcript' ? 600 : 300);
+      const bothSummariesAdmitted = outcome === 'unreadable-transcript' || outcome === 'transcript-timeout';
+      expect(slice()?.howYouWork?.sessionCoverage).toEqual({ selected: 2, admitted: bothSummariesAdmitted ? 2 : 1,
+        notRead: bothSummariesAdmitted ? 2 : 1 });
+      expect(slice()?.howYouWork?.intervals?.agentTimeMs).toBe(bothSummariesAdmitted ? 600 : 300);
       expect(slice()?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'partial' }));
       expect(slice()?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work:transcripts', status: 'partial',
-        ...(outcome === 'refused' ? { errorCode: 'forbidden' } : {}) }));
+        ...(outcome === 'refused' ? { errorCode: 'forbidden' }
+          : outcome === 'transcript-timeout' ? { errorCode: 'database_transaction_timeout' } : {}) }));
       expect(slice()?.sources.some(source => source.source.startsWith('how_you_work') && source.status === 'pending')).toBe(false);
     } finally { transcript.resolve(Response.json({ messages: [], hasMore: false })); await reading; release(); }
   });
@@ -10960,7 +10965,7 @@ describe('usage query captured Resource adapter', () => {
         else {
           expect.soft(failed.results[0]!.pending, 'failed evidence has settled, rather than reading forever').toBe(false);
           expect.soft(failed.results[0]!.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'stale',
-            errorCode: failureSource === 'turns' ? 'http_error' : 'usage_session_evidence_read_failed' }));
+            errorCode: 'http_error' }));
         }
         expect(UsageQueryBatchResultSchema.safeParse(failed).success).toBe(true);
         if (failureSource !== 'accounting') {
@@ -13266,13 +13271,28 @@ describe('Usage projected batch settlement', () => {
   it('keeps a failed history selection partial without inventing failed Sessions', async () => {
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
-      if (request.path === USAGE_SESSION_EVIDENCE_PATH) return Response.json({ error: 'unavailable' }, { status: 503 });
+      if (request.path === USAGE_SESSION_EVIDENCE_PATH) return Response.json({ error: 'database_transaction_timeout' }, { status: 503 });
       return undefined;
     });
     const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false, includeComparison: false });
     const { readUiUsageHistory } = await import('./usageQueryResource');
     expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'partial',
-      errorCode: 'usage_session_evidence_read_failed', progress: { failed: 0 } });
+      errorCode: 'database_transaction_timeout', progress: { failed: 0 } });
+  });
+
+  it.each([{ body: { error: 'credential_scope_denied' }, code: 'credential_scope_denied' },
+    { body: {}, code: 'forbidden' }])('settles a refused history selection without Retry ($code)', async ({ body, code }) => {
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === USAGE_SESSION_EVIDENCE_PATH) return Response.json(body, { status: 403 });
+      return undefined;
+    });
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false, includeComparison: false });
+    const { readUiUsageHistory } = await import('./usageQueryResource');
+    const { getUsageHistoryReadOperation } = await import('./usageHistoryReadState');
+    const state = await readUiUsageHistory(captured, { query });
+    expect.soft(state).toMatchObject({ status: 'partial', errorCode: code, progress: { failed: 0 } });
+    expect(getUsageHistoryReadOperation(state)).toBeNull();
   });
 
   it('counts one failed Session across two failed reads and removes it after a successful read', async () => {

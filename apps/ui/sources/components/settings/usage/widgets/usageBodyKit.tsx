@@ -722,7 +722,7 @@ export function UsageBodyReadFailed(props: Readonly<{
   const gaps = resourceFailure ? [] : readUsageCoverageGaps(props.slice, props.sources);
   const failed = resourceFailure || gaps.some(gap => gap.status === 'error');
   const hidden = pageHasDetail && failed && !resourceFailure && usageCoverageLineMode(gaps, true) === 'hidden';
-  const visibleGaps = pageHasDetail ? gaps.filter(gap => !isUsagePageReadSource(gap.source)) : gaps;
+  const visibleGaps = pageHasDetail ? gaps.filter(gap => !isUsagePageReadSource(gap)) : gaps;
   const refusal = readUsageScopeRefusal(resourceFailure
     ? [{ source: 'accounting', status: 'error', errorCode: props.errorCode }] : visibleGaps);
   const canRetry = resourceFailure ? !refusal : visibleGaps.some(canRetryUsageCoverageFailure) || gaps.length === 0;
@@ -1030,7 +1030,7 @@ export function usageCoverageLineMode(gaps: readonly UsageCoverageStatus[], page
   if (gaps.length === 0) return 'hidden';
   // A failed page read is said once by the page header; only a
   // widget's own failed read (a comparison, a pool selection) keeps its line beside the body.
-  const ownFailure = gaps.some(gap => isUsageCoverageFailure(gap) && !isUsagePageReadSource(gap.source));
+  const ownFailure = gaps.some(gap => isUsageCoverageFailure(gap) && !isUsagePageReadSource(gap));
   if (gaps.some(isUsageCoverageFailure)) return pageHasDetail ? ownFailure ? 'failed' : 'hidden' : 'detail';
   return pageHasDetail ? 'hidden' : 'detail';
 }
@@ -1038,12 +1038,13 @@ export function usageCoverageLineMode(gaps: readonly UsageCoverageStatus[], page
 /** The page header's one "Still reading …" fact: every source any view's read still waits on, named once. */
 const USAGE_PAGE_READ_SOURCES: ReadonlySet<string> = new Set(['accounting', 'quota', 'work', 'how_you_work']);
 
-function isUsagePageReadSource(source: string): boolean {
-  return USAGE_PAGE_READ_SOURCES.has(usagePageReadFamily(source));
+function isUsagePageReadSource(source: UsageCoverageStatus): boolean {
+  return USAGE_PAGE_READ_SOURCES.has(usagePageReadFamily(source.source))
+    || (source.source === 'how_you_work:transcripts' && usageScopeRefusalCode(source) !== null);
 }
 
 function readUsagePageFailures(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): UsageQuerySourceState[] {
-  return slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source)
+  return slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source)
     && !isUsageWorkSettledWithEvidence(source)));
 }
 
@@ -1055,7 +1056,7 @@ export function readUsageSourceNeedsNewerServer(slice: Pick<UsageQueryResultSlic
 /** The page header's one "Reading … needs a newer server" fact: shared reads this Home's server is too old for. */
 export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): string | null {
   const names = [...new Set(slices.flatMap(slice => slice.sources
-    .filter(source => isUsagePageReadSource(source.source) && needsNewerServer(source))
+    .filter(source => isUsagePageReadSource(source) && needsNewerServer(source))
     .map(source => usageSourceTitle(usagePageReadFamily(source.source)))))];
   return names.length ? t('usage.board.page.coverageNeedsNewerServer', { sources: names.join(', ') }) : null;
 }
@@ -1187,7 +1188,7 @@ export function UsageCoverageLine(
   const allGaps = readUsageCoverageGaps(props.slice, props.sources);
   const mode = usageCoverageLineMode(allGaps, pageHasDetail);
   const visibleGaps = mode === 'failed'
-    ? allGaps.filter(gap => isUsageCoverageFailure(gap) && !isUsagePageReadSource(gap.source)) : allGaps;
+    ? allGaps.filter(gap => isUsageCoverageFailure(gap) && !isUsagePageReadSource(gap)) : allGaps;
   const refusal = readUsageScopeRefusal(visibleGaps);
   const gaps = visibleGaps.filter(gap => !usageScopeRefusalCode(gap));
   const failed = gaps.some(gap => isUsageCoverageFailure(gap) && !needsNewerServer(gap));
