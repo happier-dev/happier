@@ -115,3 +115,23 @@ it('keeps a header-only database navigable while its body is pending and exposes
     expect(screen.findByTestId('project-deployments.environment.data.failed')).toBeNull();
   } finally { pending.resolve(); await screen.unmount(); account.dispose(); }
 });
+
+it('offers the native Database page only after that service serves', async () => {
+  const base = createDeploymentEnvironmentDetailV1();
+  const detail = readDetail({ content: { ...base.content, template: {
+    templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '17', ref: { kind: 'version', version: '17' } },
+    definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+    services: ['postgres'], data: [{ engine: 'postgres', service: 'postgres' }],
+  } } });
+  const onOpen = vi.fn();
+  const page = (servingServices: readonly string[]) => <DeploymentDataCard scope={{ serverId: 'home', accountId: 'owner' }}
+    detail={detail} place="Database Machine" onAdd={() => {}} onBackups={() => {}} onOpen={onOpen} servingServices={servingServices} />;
+  const screen = await renderScreen(page(['web']));
+  const database = 'project-deployments.environment.data.database.postgres';
+  try {
+    expect(screen.findByTestId(database)).toBeNull();
+    await act(async () => screen.update(page(['web', 'postgres'])));
+    await screen.pressByTestIdAsync(database);
+    expect(onOpen).toHaveBeenCalledWith('postgres');
+  } finally { await screen.unmount(); }
+});

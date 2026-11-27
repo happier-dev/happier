@@ -178,7 +178,8 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
     const deploymentRecovery = scope === 'deployment'
-        ? readDeploymentRefusalRecovery(failure.errorCode, failure.details, undefined, failure.failureCause?.errorCode)
+        ? readDeploymentRefusalRecovery(failure.errorCode, failure.details, undefined, failure.failureCause?.errorCode,
+            { failureCause: failure.failureCause })
         : null;
     // A deploy refused before review names the required secrets that have no value (names only, never values).
     const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
@@ -197,6 +198,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
+            : deploymentRecovery?.nextAction.destination === 'registryCredentials' ? deploymentRecovery.remedy
             : fallbackReason || deploymentRecovery?.remedy || fallback || null);
     return {
         reason: scope === 'deployment' ? readDeploymentConnectionPermissionRemedy(failure.errorCode, failure.details) ?? reason : reason,

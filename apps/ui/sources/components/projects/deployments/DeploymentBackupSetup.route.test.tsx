@@ -224,6 +224,38 @@ it('shows unknown local capacity before effects and keeps zero capacity eligible
   } finally { await screen.unmount(); }
 });
 
+it.each(['test', 'save'] as const)('shows the registry limit and opens Container registries when Backups %s is refused', async intent => {
+  const base = createDeploymentEnvironmentDetailV1();
+  const initial = createDeploymentEnvironmentDetailV1({ content: { ...base.content, bindings: [
+    { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+      source: { kind: 'secret', ref: 'happier:shared-secret:v1:repository-password', resourceRevision: 1 } },
+  ] } });
+  const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+  const definition = declaredDestination('local');
+  if (!definition) throw new Error('Expected canonical local destination');
+  const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
+    pluginVersion: PLUGIN_MANIFEST.version, definition };
+  const { HappyError } = await import('@/utils/errors/errors');
+  const configure = vi.fn<ConfigureProps['configure']>(async () => {
+    throw new HappyError('native_failed', false, { code: 'native_failed', failureCause: {
+      phase: 'deployment.native.image.registry.deployment_image_rate_limited', errorClass: 'Error',
+      errorCode: 'deployment_image_rate_limited', httpStatus: null, nativeErrorReason: 'docker_hub',
+    } });
+  });
+  const openRecovery = vi.fn();
+  const screen = await renderScreen(<DeploymentBackupSetupSheet detail={detail} destination={destination}
+    machine="Backup Machine" testID="limited-setup" configure={configure}
+    sourceChoices={[{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }]}
+    review={{ pendingId: null, request() {}, openRecovery }} onChanged={() => {}} onClose={() => {}} />);
+  try {
+    await act(async () => screen.findAllByType(HappierInputField).find(field => field.props.field.path === 'path')!.props.onChange('/backups'));
+    await screen.pressByTestIdAsync(`limited-setup.${intent}`);
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain('Docker Hub is limiting pulls on Backup Machine.'));
+    await screen.pressByTestIdAsync('limited-setup.refused.recovery');
+    expect(openRecovery).toHaveBeenCalledWith('registryCredentials');
+  } finally { await screen.unmount(); }
+});
+
 it('shows the saved custom schedule for the stable Environment before a deployment exists', async () => {
   await homes.reset();
   const serverId = await homes.addHome({ name: 'Scheduled backups', serverUrl: 'https://scheduled-backups.test',

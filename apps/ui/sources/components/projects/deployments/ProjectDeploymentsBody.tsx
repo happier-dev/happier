@@ -391,6 +391,7 @@ const ProjectDeploymentsPage = React.memo(
         // A Machine-scoped remedy (a missing tool, the build Machine) opens that Machine's Setup; Machines only when none is named.
         case 'machines': case 'buildMachineSetup': router.push(machineId ? machinePageHref({ door: 'rail',
           target: { machineId, serverId: props.serverId }, tab: { id: 'setup' } }) : SETTINGS_ROUTES.machines); return;
+        case 'registryCredentials': openEnvironmentTab({ tab: 'settings', section: 'registry' }); return;
         case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
         case 'store': router.push(PLUGINS_APP_ROUTE); return;
       }

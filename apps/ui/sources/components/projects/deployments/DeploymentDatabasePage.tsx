@@ -370,6 +370,7 @@ export function DeploymentDatabasePage(
     ...(uploadTarget ? { uploadTarget } : {}),
     restore: restoreAction,
     onApproval: props.review.request,
+    ...(props.review.openRecovery ? { onOpenRegistryCredentials: () => props.review.openRecovery?.('registryCredentials') } : {}),
   }) : null;
 
   const lastGood = ready?.history?.lastSuccessfulBackup ?? null;

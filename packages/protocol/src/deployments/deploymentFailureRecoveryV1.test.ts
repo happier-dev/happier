@@ -60,7 +60,7 @@ const reachableFailures = [
     ['deployment_port_in_use', 'source'],
     ['deployment_image_pull_denied', 'connectedAccounts'],
     ['deployment_image_not_found', 'source'],
-    ['deployment_image_rate_limited', 'connectedAccounts'],
+    ['deployment_image_rate_limited', 'registryCredentials'],
     ['deployment_network_unavailable', 'machines'],
     ['deployment_build_script_missing', 'source'],
     ['deployment_build_input_missing', 'source'],

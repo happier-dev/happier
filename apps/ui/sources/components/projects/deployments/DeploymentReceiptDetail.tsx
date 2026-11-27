@@ -211,8 +211,9 @@ export const DeploymentReceiptDetail = React.memo(
       [opened?.facts.failure?.nativeCleanupWarnings, warnings],
     );
     const machineIds = React.useMemo(
-      () => [...new Set([...(opened?.content.machines ?? []), ...nativeCleanupWarnings.map(warning => warning.machineId)])],
-      [opened?.content.machines, nativeCleanupWarnings],
+      () => [...new Set([...(opened?.content.machines ?? []), ...(opened?.content.buildMachineId ? [opened.content.buildMachineId] : []),
+        ...nativeCleanupWarnings.map(warning => warning.machineId)])],
+      [opened?.content.machines, opened?.content.buildMachineId, nativeCleanupWarnings],
     );
     const machineNames = useMachineDisplayNamesById(machineIds, { serverId: props.serverId });
     const { theme } = useUnistyles();
@@ -333,14 +334,15 @@ export const DeploymentReceiptDetail = React.memo(
     const platform = facts.placement === 'platform';
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
-      ? readDeploymentRefusalRecovery(facts.failure.code, facts.failure) : null;
+      ? readDeploymentRefusalRecovery(facts.failure.code, facts.failure, undefined, undefined,
+        { machine: machineNames[content.buildMachineId ?? content.machines[0] ?? ''] ?? undefined }) : null;
     const failureCause = facts.failure?.failureCause;
     const failureCode = failureCause?.errorCode ?? facts.failure?.code;
     const homeStorageUnavailable = deployment.state === 'failed'
       && failureCause?.errorCode === 'database_connection_unavailable' && failureCause.httpStatus === 503;
     const recordedCause = deployment.state !== 'failed' ? null
       : homeStorageUnavailable ? t('projects.deployments.receipt.homeStorageUnavailable')
-      : facts.failure?.nativeActivation && recovery ? recovery.remedy
+      : recovery && (facts.failure?.nativeActivation || recovery.nextAction.destination === 'registryCredentials') ? recovery.remedy
       : facts.failure ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
       : t('workflows.recovery.causeNotRecorded');
     const { deploy, teardown, promote, environmentId } = props;

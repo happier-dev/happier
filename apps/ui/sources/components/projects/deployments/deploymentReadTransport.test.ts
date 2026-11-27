@@ -214,6 +214,11 @@ describe('deployment scoped read transport', () => {
                 kind: 'environment', environmentId: environment.id, service: 'database', database: 'fixture-db' } } },
         }, databaseSizes: [{ service: 'database', size: { status: 'unavailable', reason: 'active_deployment_required' } }] }] } });
         expect(homes.requests.slice(start).some(request => /\/v1\/actions\/(action.invoke|deployments.data.size)/.test(request.path))).toBe(false);
+        // Authored data is useful in Automation setup, but the Database page
+        // cannot describe an operational service before any release served it.
+        const direct = await createDeploymentReadTransport(lifetime).listDataServicePage(scope,
+            { environmentId: environment.id, database: 'database' }, { signal: new AbortController().signal });
+        expect(direct).toMatchObject({ ok: true, value: { items: [{ selected: { address: null } }] } });
     });
 
     it('recovers the serving Database Automation subject from the exact receipt when discovery fails', async () => {

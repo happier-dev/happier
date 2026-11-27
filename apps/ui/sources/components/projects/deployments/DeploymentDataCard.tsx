@@ -22,6 +22,7 @@ export function DeploymentDataCard(props: Readonly<{
   onBackups: () => void;
   /** Where the template's database runs (its Machine), named after its service; null when not known. */
   place?: string | null;
+  servingServices?: readonly string[];
   /** Opens one database's page in place: the template's data service, or a linked data target's id. */
   onOpen?: (database: string) => void;
 }>) {
@@ -41,8 +42,8 @@ export function DeploymentDataCard(props: Readonly<{
       {databases?.map(data => <Item key={data.service} title={databaseEngineTitle(data)}
         subtitle={[data.port === undefined ? data.service
           : t('projects.deployments.dataService', { service: data.service, port: data.port }),
-          ...(props.place ? [props.place] : [])].join(' · ')}
-        {...(props.onOpen ? { testID: `${id}.database.${data.service}`, onPress: () => props.onOpen?.(data.service) } : { mode: 'info' as const })} />)}
+          ...(props.place && props.servingServices?.includes(data.service) ? [props.place] : [])].join(' · ')}
+        {...(props.onOpen && props.servingServices?.includes(data.service) ? { testID: `${id}.database.${data.service}`, onPress: () => props.onOpen?.(data.service) } : { mode: 'info' as const })} />)}
       {targets.map(link => {
         const opened = openedById.get(link.targetLink.id);
         const data = opened?.content.data;

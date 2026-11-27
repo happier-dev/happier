@@ -8,7 +8,7 @@ export const DEPLOYMENT_ENVIRONMENT_TABS_V1 = ['overview', 'history', 'variables
 export type DeploymentEnvironmentTabV1 = (typeof DEPLOYMENT_ENVIRONMENT_TABS_V1)[number];
 
 export const DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1 = [
-    'servers-build', 'sharing', 'controller', 'rollout', 'checks-alerts', 'database-access', 'backups', 'previews',
+    'servers-build', 'registry', 'sharing', 'controller', 'rollout', 'checks-alerts', 'database-access', 'backups', 'previews',
 ] as const;
 export type DeploymentEnvironmentSettingsSectionV1 = (typeof DEPLOYMENT_ENVIRONMENT_SETTINGS_SECTIONS_V1)[number];
 

@@ -10,7 +10,7 @@ import type { MachineNativeEffectContext } from './machineNativeEffectAdmission'
 import { MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
-import { NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
+import { NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeComposeRegistryHost, readNativeComposeRegistryRateLimit } from './nativeComposeFailure';
 import { logger } from '@/ui/logger';
 
 /** Host-only custody from the containing native admission, never receipt data. */
@@ -69,9 +69,7 @@ export type NativeComposeImageAcquisition = Readonly<{
 
 export function resolveNativeComposeRegistryForReference<T extends Pick<NativeComposeRegistryAcquisition, 'origin' | 'access'>>(
     reference: string, registries: readonly T[] | undefined) {
-    const repository = reference.includes('@') ? reference.slice(0, reference.lastIndexOf('@')) : reference;
-    const first = repository.split('/')[0];
-    const registryHost = repository.includes('/') && first && (first.includes('.') || first.includes(':') || first === 'localhost') ? first : 'docker.io';
+    const registryHost = readNativeComposeRegistryHost(reference);
     const matching = (registries ?? []).filter(candidate => {
         const host = new URL(candidate.origin).host;
         return (host === 'index.docker.io' ? 'docker.io' : host) === registryHost;
@@ -321,7 +319,7 @@ export function resolveNativeComposeDeploymentImageReferences(input: Readonly<{
 export function createNativeComposeImageIdentity(input: Readonly<{
     /** undefined is local/source IO; null is explicit anonymous registry IO. */
     run(args: readonly string[], signal?: AbortSignal, registry?: NativeComposeRegistryAcquisition | null,
-        authority?: NativeComposeEffectAuthority): Promise<Readonly<{ stdout: string; exitCode?: number }>>;
+        authority?: NativeComposeEffectAuthority): Promise<Readonly<{ stdout: string; stderr?: string; exitCode?: number }>>;
     directory(): Promise<string>;
 }>) {
     const proven = new Map<string, Readonly<{ reference: string; config: Record<string, unknown> }>>();
@@ -498,20 +496,25 @@ export function createNativeComposeImageIdentity(input: Readonly<{
                     }
                 }
             }
-            const parse = (raw: string): Record<string, unknown> => {
-                let value: unknown;
-                try { value = JSON.parse(raw); } catch (error) {
-                    logger.warnLocalFile('[Native Compose] Image manifest parse failed', projectActionFailureCauseV1(error, 'native_compose.image.manifest.parse', { allowUnknownErrorCode: false }));
-                    return refuse('deployment_image_manifest_mismatch');
-                }
-                if (!record(value) || value.schemaVersion !== 2) return refuse('deployment_image_manifest_mismatch');
-                return value;
-            };
             const raw = async (reference: string) => {
                 signal?.throwIfAborted();
                 const result = await input.run(['buildx', 'imagetools', 'inspect', '--raw', reference], signal, registry);
                 signal?.throwIfAborted();
-                return { bytes: result.stdout, digest: `sha256:${createHash('sha256').update(result.stdout).digest('hex')}`, value: parse(result.stdout) };
+                let value: unknown;
+                let parseError: unknown;
+                if (!result.exitCode) {
+                    try { value = JSON.parse(result.stdout); }
+                    catch (error) { parseError = error; }
+                }
+                if (!record(value) || value.schemaVersion !== 2) {
+                    const failureCause = readNativeComposeRegistryRateLimit(reference, `${result.stdout}\n${result.stderr ?? ''}`);
+                    if (failureCause) throw new PluginError({ code: 'native_failed',
+                        message: 'The registry is limiting image pulls', failureCause });
+                    if (parseError) logger.warnLocalFile('[Native Compose] Image manifest parse failed',
+                        projectActionFailureCauseV1(parseError, 'native_compose.image.manifest.parse', { allowUnknownErrorCode: false }));
+                    return refuse('deployment_image_manifest_mismatch');
+                }
+                return { bytes: result.stdout, digest: `sha256:${createHash('sha256').update(result.stdout).digest('hex')}`, value };
             };
             const single = (mediaType: unknown) => mediaType === 'application/vnd.oci.image.manifest.v1+json'
                 || mediaType === 'application/vnd.docker.distribution.manifest.v2+json';

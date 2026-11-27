@@ -452,6 +452,11 @@ export const DeploymentEnvironmentDetail = React.memo(
       readMachineOnline,
     );
 
+    const activeValue = active.snapshot.value;
+    const activeReceipt = activeValue?.content ? activeValue : null;
+    const services = React.useMemo(() => activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES, [activeReceipt]);
+    const servingServices = React.useMemo(() => services.map(service => service.name), [services]);
+
     if (!detail) {
       // Shaped like the page while the Environment read settles (R5); a failed read is one card with Retry.
       if (environment.snapshot.status !== 'unavailable') {
@@ -520,8 +525,6 @@ export const DeploymentEnvironmentDetail = React.memo(
 
     const machineName = (machineId: string) =>
       machineNames[machineId] ?? t('projects.deployments.aMachine');
-    const activeValue = active.snapshot.value;
-    const activeReceipt = activeValue?.content ? activeValue : null;
     const servingTelemetryFacts = tab === 'telemetry' && activeReceipt?.deployment.id === activeId
       ? activeReceipt.content.machineResults.flatMap(member => {
         const version = detail.memberVersions[member.machineId];
@@ -532,7 +535,6 @@ export const DeploymentEnvironmentDetail = React.memo(
     const appAuthoredSampling = servingTelemetryFacts.some(fact => fact.provenance === 'authored');
     const appCollectorServices = [...new Set(servingTelemetryFacts
       .filter(fact => fact.collectorOrigin === 'appOwned').map(fact => fact.service))];
-    const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
     // What serves is live at its address; a first deploy that serves ends there (P60 §1 step 5): its address
     // leads the page and Open is the one primary until the Environment has deployed again.
     // The active receipt serves by definition; the live-address owner decides which states and Domains count.
@@ -876,6 +878,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         ...(uploadTarget ? { uploadTarget } : {}),
         restore: (input, operation) => restoreAction(input, operation),
         onApproval: review.request,
+        onOpenRegistryCredentials: () => openTab('settings', 'registry'),
       });
     } : null;
     const moveEligibility = readDeploymentMoveEligibility(detail, runtime, activeReceipt, lifetime);
@@ -1361,7 +1364,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 source={active.snapshot.value.content.sourceIntent} revision={liveSource} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
-                lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
+                servingServices={servingServices} lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
@@ -1591,6 +1594,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               editing={environmentEditing}
               onAddDatabase={openAddDatabase}
               onOpenDatabase={props.onOpenDatabase ?? null}
+              servingServices={servingServices}
               referenceEnvironments={props.referenceEnvironments}
               onOpenMachineServices={(machineId) => router.push(machinePageHref({
                 door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services' },
@@ -1709,10 +1713,11 @@ export function DeployOutcomeBanner(
   const unsupported = outcome.reason === 'unsupported' && !cancel && !domain;
   const failure = outcome.failure ? presentActionFailureOutcome(outcome.failure, 'deployment') : null;
   // The recovery owner's remedy and route for this refusal (E4): a stored generic remedy never hides a typed cause.
-  const typedRecovery = readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details, outcome.request);
+  const recoveryContext = { failureCause: outcome.failure?.failureCause, machine: props.machine };
+  const typedRecovery = readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details, outcome.request, undefined, recoveryContext);
   // The press's own request (an exact pull-request head) chose a more specific remedy than the refusal's stored one.
   const requestSpecific = outcome.request !== undefined
-    && typedRecovery?.remedy !== readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details)?.remedy;
+    && typedRecovery?.remedy !== readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details, undefined, undefined, recoveryContext)?.remedy;
   // Action settlement carries the same log fact that the exact Receipt reads. Older responses may only carry its ID.
   const failedReceipt = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data;
   const failedDeploymentId = failedReceipt?.deploymentId;
@@ -1724,7 +1729,7 @@ export function DeployOutcomeBanner(
   const recoveryMachineId = recovery?.nextAction.machineId
     ?? (recovery?.nextAction.destination === 'machines' ? props.machineId : undefined);
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
-  const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy && !leadsNowhere
+  const canonicalReason = typedRecovery?.nextAction.destination === 'registryCredentials' ? typedRecovery.remedy : failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy && !leadsNowhere
     ? failure.reason : null;
   const { openRecovery } = controller;
   // A refusal whose way forward is a review needs the person, not a retry of a failure: amber, paired with that review.

@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
-import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import {
   createDeploymentEnvironmentHeaderV1,
+  createDeploymentReceiptHeaderV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -108,6 +109,7 @@ async function renderRestore(answer: Answer) {
     environment: createDeploymentEnvironmentHeaderV1({
       serverId: homeId,
       revision: 7,
+      runtimeTargetLinkId: 'target-link',
     }),
   });
   const environmentId = detail.environment.id;
@@ -131,14 +133,17 @@ async function renderRestore(answer: Answer) {
     ownership: { environmentId, prefix: 'app' },
     retention: { kind: 'keepEverything' },
   } satisfies NonNullable<DeploymentEnvironmentContentV1['backup']>;
-  const base = createDeploymentReceiptDetailV1();
+  const base = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+    id: 'deployment-a', environmentId, targetLinkId: 'target-link',
+    contentArtifactId: 'restore-serving-receipt-content', state: 'succeeded',
+  }) });
   const content = DeploymentOwnServerContentV1Schema.parse({
     ...base.content,
     ownServer: {
       approvedInputBasis: {
         v: 1, environmentId, environmentRevision: 1, targetLinkId: base.deployment.targetLinkId,
         targetLinkRevision: 1, sourceIntent: base.content.sourceIntent, manifestFingerprint: 'manifest',
-        configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1', services: ['app'], profiles: [],
+        configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1', services: ['app', 'postgres'], profiles: [],
         members: [{ machineId: 'machine-a', installationId: 'installation-a' }], bindings: [], images: [],
         ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true, migration: { service: 'app', argv: ['migrate'] },
           migrationFailurePolicy: 'ask', backupBeforeMigration: true },
@@ -160,8 +165,11 @@ async function renderRestore(answer: Answer) {
     deployment: base.deployment,
     content,
   });
+  const targetLink = createDeploymentTargetLinkHeaderV1({
+    id: base.deployment.targetLinkId, environmentId, activeDeploymentId: base.deployment.id,
+  });
   const withBackup = {
-    ...detail,
+    ...detail, targetLinks: [{ targetLink, content: detail.targetLinks[0]!.content }],
     content: { ...detail.content, backup: backupConfiguration,
       template: { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17',
         ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
@@ -175,6 +183,14 @@ async function renderRestore(answer: Answer) {
     artifactId: withBackup.environment.contentArtifactId,
     header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Database with a kept backup' },
     body: JSON.stringify(withBackup.content),
+  });
+  homes.answer(serverId, `/v1/deployments/receipts/${receipt.deployment.id}`, {
+    body: { ok: true, deployment: receipt.deployment, cancellable: false },
+  });
+  await account.createArtifactDocument({
+    artifactId: receipt.deployment.contentArtifactId,
+    header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Serving database', steps: content.steps },
+    body: JSON.stringify(content),
   });
   const { listDataServicePage } = createDeploymentReadTransport(account.accountLifetime);
   const controller = createDeploymentReadControllerV1({

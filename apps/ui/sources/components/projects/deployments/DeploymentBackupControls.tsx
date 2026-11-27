@@ -65,7 +65,7 @@ import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storag
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
-import { deploymentActionRefusalRemedy, deploymentBackupCredentialLabel as credentialLabel } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentBackupCredentialLabel as credentialLabel, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentBackupKeepFields as KEEP_FIELDS, deploymentBackupKeepLabels as KEEP_LABEL,
   deploymentBackupRetentionDraftFrom as draftFrom, retentionFromDraft,
@@ -267,10 +267,12 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   actions: ActionsFactory | null;
   lifetime?: ServerAccountScopeLifetime;
   testID: string;
+  machineName?: (id: string) => string;
+  onOpenRecovery?: DeploymentReviewHandle['openRecovery'];
 }>) {
   const { theme } = useUnistyles();
   const target = deploymentBackupTargetOperands(props.detail, props.configuration);
-  const [tested, setTested] = React.useState<Readonly<{ ok: boolean; line: string }> | null>(null);
+  const [tested, setTested] = React.useState<Readonly<{ ok: boolean; line: string; registryLabel?: string }> | null>(null);
   const [running, setRunning] = React.useState(false);
   const projection = usePluginUiProjectionCurrentness({ serverId: props.detail.environment.serverId,
     machineId: props.detail.environment.controllerMachineId, sections: BACKUP_DESTINATION_SECTIONS });
@@ -302,7 +304,12 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
       const outcome = readDeploymentActionError(error);
       const failure = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
         ?? { errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
-      setTested({ ok: false, line: failure?.reason ?? t('projects.deployments.settingsSections.destinationRetry') });
+      const machineId = target.machineId;
+      const recovery = outcome.kind === 'refused' ? readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details, undefined, undefined,
+        { failureCause: outcome.failure?.failureCause, machine: machineId ? props.machineName?.(machineId) : undefined }) : null;
+      if (recovery?.nextAction.destination === 'registryCredentials') {
+        setTested({ ok: false, line: recovery.remedy, registryLabel: recovery.nextAction.label });
+      } else setTested({ ok: false, line: failure?.reason ?? t('projects.deployments.settingsSections.destinationRetry') });
     }
     finally { setRunning(false); }
   };
@@ -320,6 +327,8 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
           title={t('projects.deployments.settingsSections.destinationTest')} disabled={running} onPress={test} />
       ) : undefined}
     />
+    {tested?.registryLabel && props.onOpenRecovery ? <Item testID={`${props.testID}.destination.recovery`}
+      title={tested.registryLabel} onPress={() => props.onOpenRecovery?.('registryCredentials')} /> : null}
     <BackupPathCapacityReview capacity={pathCapacity.capacity}
       machine={pathCapacity.machineName} testID={`${props.testID}.destination`} />
     {destination?.definition.locality === 'local' ? <Item testID={`${props.testID}.destination.localWarning`}
@@ -719,6 +728,10 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const configFields = resolveEffectiveInputFields({ inputHints }, fields);
   const refused = change.outcome?.kind === 'refused' ? change.outcome : null;
   const failureDetails = refused?.failure?.details;
+  const registryRecovery = refused ? readDeploymentRefusalRecovery(refused.code, failureDetails, undefined, undefined,
+    { failureCause: refused.failure?.failureCause, machine: props.machine }) : null;
+  const openRegistry = props.mode !== 'intent' && registryRecovery?.nextAction.destination === 'registryCredentials'
+    ? props.review.openRecovery : undefined;
   const receiverFailure = failureDetails && typeof failureDetails === 'object' && 'receiver' in failureDetails
     ? DeploymentBackupReceiverFailureDetailsV1Schema.safeParse({ receiver: failureDetails.receiver }).data?.receiver : undefined;
   const failedReceiver = receiverMachines.find(machine => machine.id === receiverFailure?.machineId);
@@ -804,7 +817,11 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
         scope={props.lifetime?.scope ?? null} locked={locked}
         onChoose={props.lifetime ? () => { void chooseSecret(role); } : null} />))}</ItemGroup>}
     {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
-      reason={failedReceiverLabel ? [failedReceiverLabel, receiverReason].filter(Boolean).join(' · ') : receiverReason ?? undefined} diagnosticCode={refused.code} /> : null}
+      reason={registryRecovery?.nextAction.destination === 'registryCredentials' ? registryRecovery.remedy
+        : failedReceiverLabel ? [failedReceiverLabel, receiverReason].filter(Boolean).join(' · ') : receiverReason ?? undefined}
+      action={openRegistry && registryRecovery ? { testID: `${id}.refused.recovery`, label: registryRecovery.nextAction.label,
+        onPress: () => { onClose(); openRegistry('registryCredentials'); } } : undefined}
+      diagnosticCode={refused.code} /> : null}
     {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner controller={scheduleChange.banner}
       machine={props.machine} copy="setting" /> : null}
     {setChrome ? null : footer}

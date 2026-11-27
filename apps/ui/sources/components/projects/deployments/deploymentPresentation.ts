@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
@@ -504,8 +505,20 @@ export function deploymentActorIsViewer(actor: ActionActorV1 | null | undefined,
  */
 export function readDeploymentRefusalRecovery(
   errorCode: string, details?: unknown, request?: DeploymentRefusalRequestV1, causeCode?: string | null,
+  context?: { failureCause?: ActionFailureCauseV1; machine?: string | null },
 ) {
-  const recovery = readDeploymentRefusalRecoveryV1(errorCode, details, request);
+  const recovery = readDeploymentRefusalRecoveryV1(context?.failureCause?.errorCode === 'deployment_image_rate_limited'
+    ? context.failureCause.errorCode : errorCode, details, request);
+  if (recovery?.nextAction.destination === 'registryCredentials') {
+    const cause = context?.failureCause ?? ActionFailureCauseV1Schema.safeParse(
+      details && typeof details === 'object' && 'failureCause' in details ? details.failureCause : undefined,
+    ).data;
+    const registry = cause && 'nativeErrorReason' in cause && cause.nativeErrorReason === 'docker_hub'
+      ? 'Docker Hub' : t('projects.deployments.settingsSections.registryGenericName');
+    return { ...recovery, remedy: t('projects.deployments.settingsSections.registryRateLimited', {
+      registry, machine: context?.machine ?? t('machine.thisMachineInSentence'),
+    }), nextAction: { ...recovery.nextAction, label: t('projects.deployments.settingsSections.registryTitle') } };
+  }
   if (!recovery) return null;
   const { destination, machineId } = recovery.nextAction;
   const reason = destination === 'machineAdminAccess' && machineId && causeCode

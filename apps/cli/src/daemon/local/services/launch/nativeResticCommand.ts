@@ -18,6 +18,7 @@ import { admitNativeServiceCommandForHost, executeAdmittedServiceCommand, type A
 import { machineNativeEffectAdmission, type MachineNativeEffectContext, type MachineNativeEffectOperation } from './machineNativeEffectAdmission';
 import { createNativeComposeImageIdentity, normalizeNativeComposePlatform } from './nativeComposeImageIdentity';
 import { readNativeComposeEngine } from './nativeComposeEngine';
+import { readNativeComposeRegistryRateLimit } from './nativeComposeFailure';
 import type { NativeComposeProjectRender } from './nativeComposeLifecycle';
 import { nativeSqliteCommand, type NativeSqliteOperation } from './nativeSqliteCommand';
 import { refuseNativeResticHostNetwork } from './nativeResticFailure';
@@ -409,7 +410,12 @@ export async function withNativeBackupRepositoryForHost<T>(input: NativeBackupRe
             await identity.acquire(image, { references: [image.registryReference], purpose: 'operationRuntime',
                 authority: { context }, pull: async (_registry, reference) => {
                     const result = await run(['pull', '--platform', image.platform, reference], signal);
-                    if (result.exitCode !== 0) return refuse();
+                    if (result.exitCode !== 0) {
+                        const failureCause = readNativeComposeRegistryRateLimit(reference, `${result.stdout}\n${result.stderr ?? ''}`);
+                        if (failureCause) throw new PluginError({ code: 'native_failed',
+                            message: 'The registry is limiting image pulls', failureCause });
+                        return refuse();
+                    }
                 } });
             return image;
         });

@@ -36,7 +36,7 @@ export function describeDeploymentImageResolutionFailureV1(failure: z.infer<type
  */
 export type DeploymentFailureRecoveryDestinationV1 =
     | 'source' | 'domains' | 'variables' | 'permissions' | 'settings' | 'history' | 'logs'
-    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'store' | 'review' | 'deploy' | 'reinstall';
+    | 'machines' | 'machineAdminAccess' | 'buildMachineSetup' | 'connectedAccounts' | 'registryCredentials' | 'store' | 'review' | 'deploy' | 'reinstall';
 export type DeploymentFailureRecoveryNextActionV1 = Readonly<{
     kind: 'navigate'; destination: DeploymentFailureRecoveryDestinationV1; label: string; machineId?: string;
     openProject?: OpenProjectInputV1;
@@ -72,7 +72,7 @@ const recoveries = {
     deployment_port_in_use: recovery('A host port requested by the Compose definition is already in use. Review its published ports and the service using that port, then change the definition or stop the conflicting service through its reviewed controls.', 'source', 'Review published ports'),
     deployment_image_pull_denied: recovery('The image registry refused access to a required image. Check the image name and the connected registry account used by this Environment, then review the deployment again.', 'connectedAccounts', 'Review registry access'),
     deployment_image_not_found: recovery('The registry could not find a required image manifest. Check the image name, tag or digest in the Compose definition or Dockerfile and deploy a revision with an available image.', 'source', 'Check image reference'),
-    deployment_image_rate_limited: recovery('The image registry refused the download because its pull limit was reached. Review the registry account used for this deployment, or wait for the registry limit to reset before trying again.', 'connectedAccounts', 'Review registry account'),
+    deployment_image_rate_limited: recovery('The registry is limiting image pulls. Try again later or add registry credentials.', 'registryCredentials', 'Container registries'),
     deployment_network_address_pool_exhausted: recovery('Docker has no free subnet for this deployment. Free unused Docker networks on the executing Machine, then try again.', 'machines', 'Review Machine networks'),
     deployment_network_unavailable: recovery('The executing Machine could not resolve or reach a required network destination. Check its DNS and outbound network access before trying the deployment again.', 'machines', 'Check Machine network'),
     deployment_build_script_missing: recovery('The build requested a build script that the package manifest does not declare. Add the script or correct the Dockerfile build command, commit the change, and deploy that revision.', 'source', 'Review build script'),
@@ -365,6 +365,7 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     details = recoveryDetails(details);
     const image = DeploymentImageResolutionFailureV1Schema.safeParse(details).data;
     if (image) {
+        if (image.reason === 'deployment_image_rate_limited') return recoveries.deployment_image_rate_limited;
         const reason = describeDeploymentImageResolutionFailureV1(image);
         return image.reason === 'deployment_image_pull_denied'
             ? recovery(`${reason} Check the registry credential used for this image.`, 'connectedAccounts', 'Open registry credentials')

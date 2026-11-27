@@ -140,6 +140,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       onAddDatabase?: (() => void) | null;
       /** Pushes one database's page (P9), where its backup operations live; absent where no page can open. */
       onOpenDatabase?: ((database: string) => void) | null;
+      servingServices?: readonly string[];
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -460,7 +461,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
 
         <DeploymentMigrationSettings detail={detail} editing={editing} machineName={machineName} />
-        <DeploymentRegistryCredentials detail={detail} editing={editing} lifetime={props.lifetime ?? null} machineName={machineName} />
+        <View ref={revealHost('registry')} collapsable={false}>
+          <DeploymentRegistryCredentials detail={detail} editing={editing} lifetime={props.lifetime ?? null} machineName={machineName} />
+        </View>
         </> : null}
 
         {/* dSettings KEEP order: private sharing follows the registry credentials. */}
@@ -611,6 +614,7 @@ type SectionProps = Readonly<{
   /** Opens Add a database for an Environment with nothing to back up yet. */
   onAddDatabase?: (() => void) | null;
   onOpenDatabase?: ((database: string) => void) | null;
+  servingServices?: readonly string[];
   testID: string;
 }>;
 
@@ -709,7 +713,8 @@ function BackupRows(props: SectionProps) {
     ? createDeploymentActions(lifetime, projectSourceId) : null, [manager, lifetime, props.review, projectSourceId]);
   const editing = manager ? props.editing ?? null : null;
   const configured = backup && !('notNeeded' in backup) ? backup : null;
-  const databases = props.onOpenDatabase ? props.detail.content.template?.data ?? [] : [];
+  const databases = props.onOpenDatabase
+    ? props.detail.content.template?.data?.filter(data => props.servingServices?.includes(data.service)) ?? [] : [];
   const operationsHere = databases.length === 0;
   const factsInput = operationsHere && configured ? deploymentBackupTargetOperands(props.detail, configured) : null;
   const backupFacts = useDeploymentBackupFacts(actions, factsInput, true);
@@ -783,7 +788,8 @@ function BackupRows(props: SectionProps) {
         mode="info"
       />
       <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions}
-        lifetime={props.lifetime ?? undefined} testID={props.testID} />
+        lifetime={props.lifetime ?? undefined} testID={props.testID} machineName={props.machineName}
+        onOpenRecovery={props.review?.openRecovery} />
       <DeploymentBackupCredentialRows
         detail={props.detail} configuration={backup} lifetime={actions ? props.lifetime ?? null : null}
         actions={actions} review={props.review ?? null} onChanged={editing?.onChanged ?? noop}

@@ -4,8 +4,9 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { presentActionFailureOutcome, type ApprovalFailureDiagnostics } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { t } from '@/text';
+import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { DeploymentPartialResult } from './deploymentActionOutcome';
-import { deploymentStateLabel } from './deploymentPresentation';
+import { deploymentStateLabel, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 /** A producer's acknowledged effects beside the one failed step; no step is inferred or retried. */
@@ -13,9 +14,14 @@ export function DeploymentPartialProgress(props: Readonly<{
   progress: DeploymentPartialResult;
   failure: ApprovalFailureDiagnostics;
   testID: string;
+  machine?: string;
+  onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>) {
   const { progress, testID } = props;
   const outcome = presentActionFailureOutcome(props.failure, 'deployment');
+  const recovery = readDeploymentRefusalRecovery(props.failure.errorCode, props.failure.details, undefined, undefined,
+    { failureCause: props.failure.failureCause, machine: props.machine });
+  const registry = recovery?.nextAction.destination === 'registryCredentials' ? recovery : null;
   const stepLabel = {
     generation: t('projects.deployments.variablesTitle'),
     repository: t('projects.deployments.settingsSections.moveToRepository.review'),
@@ -44,8 +50,10 @@ export function DeploymentPartialProgress(props: Readonly<{
       <AttentionBanner testID={`${testID}.failed`} placement="inline" tone="danger"
         title={t(progress.phase === 'domains' ? 'projects.deployments.domainChangeFailedTitle'
           : progress.phase === 'deploy' ? 'projects.deployments.deployFailedTitle' : 'projects.deployments.settingChangeFailedTitle')}
-        description={outcome.reason ?? undefined}
+        description={registry?.remedy ?? outcome.reason ?? undefined}
         details={outcome.technicalDetails.map(line => `${line.label}: ${line.value}`)} />
+      {registry && props.onOpenRecovery ? <Item testID={`${testID}.recovery`} title={registry.nextAction.label}
+        onPress={() => props.onOpenRecovery?.(registry.nextAction.destination)} /> : null}
     </ItemGroup>
   </>;
 }

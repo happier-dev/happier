@@ -70,3 +70,24 @@ export function classifyNativeComposeFailure(output: string, registryReference?:
     return registryReference && output.split(/\r?\n/u).some(line => line.trim() === `ERROR: ${registryReference}: not found`)
         ? 'deployment_image_not_found' : null;
 }
+
+export function readNativeComposeRegistryHost(reference: string): string {
+    const repository = reference.split('@', 1)[0]!;
+    const first = repository.split('/', 1)[0]!;
+    return repository.includes('/') && (first.includes('.') || first.includes(':') || first === 'localhost')
+        ? first : 'docker.io';
+}
+
+export function readNativeComposeRegistryRateLimit(reference: string, output: string): ActionFailureCauseV1 | undefined {
+    // Buildx's manifest HEAD may preserve the HTTP status alone.
+    const throttledStatus = /\b429 Too Many Requests\b/iu.test(output);
+    if (!throttledStatus && classifyNativeComposeFailure(output) !== 'deployment_image_rate_limited') return undefined;
+    const registry = readNativeComposeRegistryHost(reference).toLowerCase();
+    return {
+        phase: `${NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE}.deployment_image_rate_limited`,
+        errorClass: 'Error',
+        errorCode: 'deployment_image_rate_limited',
+        httpStatus: throttledStatus ? 429 : null,
+        ...(['docker.io', 'index.docker.io', 'registry-1.docker.io'].includes(registry) ? { nativeErrorReason: 'docker_hub' } : {}),
+    };
+}

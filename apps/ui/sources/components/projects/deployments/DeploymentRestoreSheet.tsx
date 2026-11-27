@@ -33,6 +33,7 @@ import { actionOperationStore } from '@/sync/domains/actionOperations/actionOper
 import type { DeploymentBackupSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentUiRestoreInput } from './deploymentActions';
 import { readDeploymentActionError } from './deploymentActionOutcome';
+import { readDeploymentRefusalRecovery } from './deploymentPresentation';
 import {
   isDeploymentRestoreCheckStale,
   readDeploymentRestorePreparation,
@@ -65,6 +66,7 @@ export type DeploymentRestoreSheetInput = Readonly<{
   ) => Promise<DeploymentBackupRestoreResultV1>;
   /** A held approval continues on the page's one approval handle. */
   onApproval: (artifactId: string) => void;
+  onOpenRegistryCredentials?: () => void;
   /**
    * The restore points to choose from, read when the sheet opens. Without it the sheet restores `backup`.
    * A point the restore Action can't admit yet is listed but not selectable.
@@ -85,7 +87,7 @@ export type DeploymentRestoreChoice = Readonly<{
 type Choices =
   | Readonly<{ status: 'loading' }>
   | Readonly<{ status: 'ready'; choices: readonly DeploymentRestoreChoice[] }>
-  | Readonly<{ status: 'failed'; failure: ReturnType<typeof presentActionFailureOutcome> | null }>;
+  | Readonly<{ status: 'failed'; failure: ActionExecuteFailure | null }>;
 
 type Settled = Exclude<DeploymentBackupRestoreResultV1, { kind: 'prepared' }>;
 type Step =
@@ -193,8 +195,8 @@ function DeploymentRestoreSheet(
       (error: unknown) => {
         if (controller.signal.aborted) return;
         const outcome = readDeploymentActionError(error);
-        const failure = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
-          ?? { errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
+        const failure = outcome.kind === 'refused'
+          ? outcome.failure ?? { ok: false as const, errorCode: outcome.code, error: outcome.code } : null;
         setChoices({ status: 'failed', failure });
       },
     );
@@ -399,7 +401,20 @@ function DeploymentRestoreSheet(
     </ItemGroup>
   ) : null;
 
+  const registryRecovery = (failure: ActionExecuteFailure | null | undefined) => {
+    if (!failure) return null;
+    const recovery = readDeploymentRefusalRecovery(failure.errorCode, failure.details, undefined, undefined,
+      { failureCause: failure.failureCause, machine: props.machine });
+    return recovery?.nextAction.destination === 'registryCredentials' ? recovery : null;
+  };
+  const openRegistry = props.onOpenRegistryCredentials ? () => {
+    onClose();
+    props.onOpenRegistryCredentials?.();
+  } : null;
+  const refusalRegistry = registryRecovery(refusal?.failure);
   if (step.kind === 'choose') {
+    const loadFailure = choices.status === 'failed' ? choices.failure : null;
+    const registry = registryRecovery(loadFailure);
     const availableChoices = choices.status === 'ready' ? choices.choices
       : choices.status === 'failed' && props.fallbackChoice ? [props.fallbackChoice] : [];
     return (
@@ -414,9 +429,10 @@ function DeploymentRestoreSheet(
             ) : choices.status === 'failed' ? (
               <SurfaceStateCard testID="project-deployments.restore.choices.failed" size="line" kind="error"
                 title={t('projects.deployments.restoreChooseFailed')}
-                reason={choices.failure?.reason ?? undefined}
-                diagnosticCode={choices.failure?.code}
-                action={{ label: t('common.retry'), onPress: () => setChoicesGeneration((value) => value + 1) }} />
+                reason={registry?.remedy ?? (loadFailure ? presentActionFailureOutcome(loadFailure, 'deployment').reason ?? undefined : undefined)}
+                diagnosticCode={loadFailure?.errorCode}
+                action={registry && openRegistry ? { label: registry.nextAction.label, onPress: openRegistry }
+                  : { label: t('common.retry'), onPress: () => setChoicesGeneration((value) => value + 1) }} />
             ) : availableChoices.length === 0 ? (
               <SurfaceStateCard testID="project-deployments.restore.choices.empty" size="line" kind="empty"
                 title={t('projects.deployments.databaseRestoreNone')} />
@@ -549,6 +565,10 @@ function DeploymentRestoreSheet(
                   ? t('projects.deployments.restoreBackupUnusable')
                   : t('projects.deployments.restoreRefused')
             }
+            reason={refusalRegistry?.remedy}
+            action={openRegistry && refusalRegistry ? {
+              label: refusalRegistry.nextAction.label, onPress: openRegistry,
+            } : undefined}
             diagnosticCode={refusal.code}
             diagnosticDetail={refusal.failure ? presentActionFailureOutcome(refusal.failure, 'deployment')
               .technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n') : undefined}

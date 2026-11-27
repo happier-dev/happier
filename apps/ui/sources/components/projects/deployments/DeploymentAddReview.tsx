@@ -225,10 +225,11 @@ export function DeploymentAddReview(props: Readonly<{
             {needsReview ? <SurfaceStateCard testID="project-deployments.add.needsReview" size="line" kind="unavailable"
               title={t('projects.deployments.addNeedsReview')} /> : null}
             {partial && press.outcome?.kind === 'refused' && press.outcome.failure ? (
-              <DeploymentPartialProgress testID="project-deployments.add.progress" progress={partial} failure={press.outcome.failure} />
+              <DeploymentPartialProgress testID="project-deployments.add.progress" progress={partial} failure={press.outcome.failure} machine={props.machine}
+                onOpenRecovery={props.onOpenRecovery ? destination => { props.onClose(); props.onOpenRecovery?.(destination); } : undefined} />
             ) : null}
             {/* Partial results keep the failed step and saved work together in their existing presenter. */}
-            {!partial && refusal ? <DeploymentAddRefusal testID="project-deployments.add.refused" refusal={refusal}
+            {!partial && refusal ? <DeploymentAddRefusal testID="project-deployments.add.refused" refusal={refusal} machine={props.machine}
               {...(props.onOpenRecovery ? { onOpenRecovery: (destination: DeploymentFailureRecoveryDestinationV1) => {
                 props.onClose(); props.onOpenRecovery?.(destination);
               } } : {})} /> : null}
@@ -247,11 +248,12 @@ export function DeploymentAddReview(props: Readonly<{
 export function DeploymentAddRefusal(props: Readonly<{
   testID: string;
   refusal: AddRefusal;
+  machine?: string;
   onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>) {
   const { onOpenRecovery, refusal } = props;
   const recovery = readDeploymentRefusalRecovery(refusal.code, refusal.failure?.details,
-    refusal.request, refusal.failure?.failureCause?.errorCode);
+    refusal.request, refusal.failure?.failureCause?.errorCode, { failureCause: refusal.failure?.failureCause, machine: props.machine });
   if (!recovery) {
     return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={t('projects.deployments.addRefused')}
       reason={deploymentActionRefusalRemedy(refusal.code)} diagnosticCode={refusal.code} />;

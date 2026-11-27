@@ -10,6 +10,31 @@ import { NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
 import { nativeRegistryPause310 as fixture } from './nativeComposeImageRegistry.testkit';
 import { nativeDocker29LocalBuild } from './nativeComposeImageDocker29.testkit';
 
+// The Docker Hub registry's documented pull-limit body, with the OCI error code
+// observed by the #220 acceptance probe. Docker can relay either form verbatim.
+const rateLimitMessage = 'You have reached your unauthenticated pull rate limit.';
+
+it.each([
+    { stdout: `toomanyrequests: ${rateLimitMessage}`, exitCode: 0 },
+    { stdout: JSON.stringify({ errors: [{ code: 'TOOMANYREQUESTS', message: rateLimitMessage }] }), exitCode: 0 },
+    { stdout: '', stderr: `ERROR: toomanyrequests: ${rateLimitMessage}`, exitCode: 1 },
+    { stdout: '', stderr: 'ERROR: unexpected status from HEAD request to registry manifest: 429 Too Many Requests', exitCode: 1 },
+])('retains a registry rate limit relayed in raw manifest output (%j)', async (result) => {
+    const native = createNativeComposeImageIdentity({
+        async directory() { throw new Error('Registry discovery must not stage image bytes'); },
+        async run(args) {
+            return args[0] === 'image' ? { stdout: '', exitCode: 1 } : result;
+        },
+    });
+    await expect(native.resolveVariants({ service: 'database', reference: 'postgres:17' })).rejects.toMatchObject({
+        code: 'native_failed',
+        data: { failureCause: {
+            phase: `${NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE}.deployment_image_rate_limited`,
+            errorCode: 'deployment_image_rate_limited', nativeErrorReason: 'docker_hub',
+        } },
+    });
+});
+
 function boundary(options: Readonly<{ corruptIndex?: boolean; corruptManifest?: boolean; defaultArm64Variant?: boolean; armOnly?: boolean; duplicateFirst?: boolean; publishedBuild?: boolean }> = {}) {
     const requests: string[][] = [];
     const repository = fixture.reference;

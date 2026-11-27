@@ -354,7 +354,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 }) : null;
                 let selected: DeploymentDataServiceReadItemV1['selected'];
                 if (selectedMetadata && query.database !== undefined) {
-                    const result = await readSelectedDatabase(account, options.signal, query.database, data[0], selectedMetadata.targetLinks);
+                    const result = await readSelectedDatabase(account, options.signal, query.database,
+                        runtimeTargetLink?.activeDeploymentId ? data[0] : undefined, selectedMetadata.targetLinks);
                     if (!result.ok) return result;
                     const address = result.value;
                     const selectedLink = address && address.kind !== 'selfHosted' ? address.link : null;
@@ -417,15 +418,25 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     : descriptor ? { ok: true, value: descriptor }
                         : { ok: false, failure: databaseSubjectFailure ?? failure('database_target_unavailable').failure };
                 // The controller can be unavailable while the saved serving receipt still identifies the native Database.
-                if (databaseSubjectFailure && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId
+                const selectedNative = selection?.kind === 'native_service' ? selection.service : undefined;
+                if ((databaseSubjectFailure || selectedNative && !descriptor)
+                    && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId
                     && data.some(service => service.engine === 'postgres' || service.engine === 'mysql')) {
                     const serving = await readReceipt(scope, environment.id, runtimeTargetLink.activeDeploymentId, options);
+                    let selectedServed = false;
                     if (serving.ok && serving.value.content && serving.value.deployment.targetLinkId === runtimeTargetLink.id) {
-                        const basis = serving.value.content.ownServer?.approvedInputBasis;
+                        const content = serving.value.content;
+                        const basis = content.ownServer?.approvedInputBasis;
+                        const services = basis?.services ?? content.images.map(image => image.service);
+                        selectedServed = selectedNative !== undefined && services.includes(selectedNative);
                         if (basis?.environmentId === environment.id && basis.targetLinkId === runtimeTargetLink.id) {
                             projectDeclaredDatabaseSubjects(basis.bindings, basis.services);
                             if (!hasManagedData && data.every(service => (service.engine !== 'postgres' && service.engine !== 'mysql') || databaseSubjects.has(service.service))) databaseSubjectFailure = undefined;
                         }
+                    }
+                    if (selectedNative && selected && !descriptor && !selectedServed) {
+                        items.push({ ...item, selected: { ...selected, address: null } });
+                        continue;
                     }
                 }
                 if (databaseSubjectFailure) coverage = 'partial';

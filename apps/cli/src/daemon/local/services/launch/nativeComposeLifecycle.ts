@@ -2,7 +2,7 @@ import type { DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1,
     type DeploymentNativeActivationFailureV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeComposeCommandFailure, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
+import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeComposeCommandFailure, readNativeComposeRegistryRateLimit, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
@@ -836,8 +836,8 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
 }
 
 function nativeRefusal(reason: string, step = 'deployment.native', errorCode: string | null = null,
-    effectAttempted?: true, nativeCompose?: DeploymentNativeComposeFailureV1): never {
-    const failureCause: ActionFailureCauseV1 = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
+    effectAttempted?: true, nativeCompose?: DeploymentNativeComposeFailureV1, registryCause?: ActionFailureCauseV1): never {
+    const failureCause: ActionFailureCauseV1 = registryCause ?? { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
     let details: { requiredFact: string; remedy: string; nativeCompose: DeploymentNativeComposeFailureV1 } | undefined;
     if (nativeCompose) {
         const { requiredFact, remedy } = projectDeploymentFailureRecoveryV1({ failureCause }, 'native_failed');
@@ -996,11 +996,13 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             if (args[0] === 'buildx' && args[1] === 'bake' && !args.includes('--print')) {
                 throw new NativeComposeBakeFailure(output.exitCode, nativeOutput, authority ? true : undefined);
             }
-            const cause = classifyNativeComposeFailure(nativeOutput, registryInspect ? args.at(-1) : undefined);
+            const registryReference = registryInspect || args[0] === 'pull' ? args.at(-1) : undefined;
+            const registryCause = registryReference ? readNativeComposeRegistryRateLimit(registryReference, nativeOutput) : undefined;
+            const cause = registryCause?.errorCode ?? classifyNativeComposeFailure(nativeOutput, registryInspect ? registryReference : undefined);
             return nativeRefusal(cause ?? 'native_compose_command_failed', step, cause,
                 // A returned process result proves this admitted native effect ran.
                 // Launch errors and read-only native commands remain unknown.
-                authority ? true : undefined, nativeCompose);
+                authority ? true : undefined, nativeCompose, registryCause);
         }
         return output;
     };
