@@ -3069,6 +3069,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
           }
           const key = computeDaemonSpawnRequestKey(normalizedOptions);
+          let transitionLaunch: ReturnType<typeof observeTransitionTargetSpawn>;
           return await spawnRequestCoalescer.run(key, async () => {
             if (typeof normalizedOptions.accountSettingsVersionHint === 'number') {
               try {
@@ -3081,9 +3082,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }
             }
             const normalizedExistingSessionId = typeof normalizedOptions.existingSessionId === 'string' ? normalizedOptions.existingSessionId.trim() : '';
-            const recordCredentialPreflightRefusal = normalizedExistingSessionId
-              ? observeTransitionTargetSpawn(normalizedExistingSessionId, requestedSpawnNonce ?? undefined)
-              : undefined;
+            if (normalizedExistingSessionId) {
+              const authorization = normalizedOptions.executionAuthorization;
+              transitionLaunch = observeTransitionTargetSpawn(
+                normalizedExistingSessionId,
+                requestedSpawnNonce ?? undefined,
+                authorization?.provenance === 'user_request' ? authorization.requestId : undefined,
+              );
+            }
             if (!normalizedExistingSessionId && !normalizeSpawnNonceForAck(normalizedOptions.spawnNonce)) {
               normalizedOptions = {
                 ...normalizedOptions,
@@ -3806,7 +3812,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                         // Which account refused the spawn: the code alone cannot say.
                         ...readConnectedServiceSpawnFailureLogFields(credentialRefreshErrorResult),
                       });
-                      if (!effectiveResume) recordCredentialPreflightRefusal?.();
+                      if (!effectiveResume) transitionLaunch?.credentialRefused();
                       return credentialRefreshErrorResult;
                     }
                     logger.debug('[DAEMON RUN] Connected services resolution failed', error);
@@ -4810,7 +4816,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     };
                   }
               });
-          });
+          }).finally(() => transitionLaunch?.finish());
                 };
 
         const temporaryThrottleResumeSnapshotsBySessionId = new Map<string, TrackedSession>();

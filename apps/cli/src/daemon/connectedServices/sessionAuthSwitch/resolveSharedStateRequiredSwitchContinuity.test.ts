@@ -32,8 +32,9 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
     try {
       pendingEligibility.mockResolvedValue('eligible');
       await runFirstTransitionLaunch(attempt, async nonce => {
-        const refused = observeTransitionTargetSpawn(attempt.sessionId, nonce);
-        refused?.();
+        const launch = observeTransitionTargetSpawn(attempt.sessionId, nonce);
+        launch?.credentialRefused();
+        launch?.finish();
       });
       const input = {
         agentId: 'claude' as const,
@@ -129,14 +130,16 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       cwd: '/tmp/project',
     };
 
-    it('still fails closed when a session file is referenced without a resume id', async () => {
-      // A referenced session file means a conversation does exist; only its id is unknown, which is
-      // exactly the state loss this check exists to refuse to paper over.
+    it.each([
+      { candidatePersistedSessionFile: '/tmp/project/session.jsonl' },
+      { vendorResumeId: 'existing-conversation' },
+    ])('requires continuity proof with existing native evidence %j', async (nativeEvidence) => {
       await expect(resolveSharedStateRequiredSwitchContinuity({
         ...baseInput,
         accountSettings: sharedCodexSettings(),
-        candidatePersistedSessionFile: '/tmp/project/session.jsonl',
-      } as any)).resolves.toMatchObject({
+        failedFirstLaunch: 'retry_original_transition',
+        ...nativeEvidence,
+      })).resolves.toMatchObject({
         mode: 'unsupported',
         errorCode: 'provider_session_state_unavailable_for_resume',
       });
