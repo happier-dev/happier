@@ -1,7 +1,8 @@
 import tweetnacl from 'tweetnacl';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1, normalizePluginAccountCollectionContractV1,
-    PluginAccountCollectionContributionV1Schema } from '@happier-dev/protocol';
+    PluginAccountCollectionContributionV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
 import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import { TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
 import { createHttpCollectionBoundary } from './accountPluginDataStorage.testkit';
@@ -14,6 +15,7 @@ import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedSer
 import { createStablePluginConnectedAccountsHost } from '../invocation/services/connectedAccounts';
 import type { PluginConnectedAccountBindingScope } from '../invocation/services/types';
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
+import { runSentryIssueObserver } from '../../../../../../packages/plugins/sentry/src/source/issueObserver';
 import { scanSentrySource } from '../../../../../../packages/plugins/sentry/src/source/operations';
 import { encodeSentryInstanceConfiguration } from '../../../../../../packages/plugins/sentry/src/instances/sentryInstanceConfiguration';
 import { SENTRY_ACTION_IDS, SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SCOPE_SEPARATOR } from '../../../../../../packages/plugins/sentry/src/sentryContracts';
@@ -42,8 +44,9 @@ const definition = {
 } satisfies PluginCheckpointedEventSourceDefinitionV1;
 
 
-it('correlates a saved Sentry Watch refusal with the binding decision while the exact foreground read succeeds', async () => {
-    const signal = new AbortController().signal;
+it('reuses the saved Sentry Account for observation without a background purpose default', async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
     const account = instance.binding.account;
     const purpose = { consumer: { pluginId: PLUGIN_ID, localId: SENTRY_ACTION_IDS.scan }, purpose: instance.binding.purpose };
     const owner = createConnectedAccountPurposeBindingOwner({
@@ -84,7 +87,7 @@ it('correlates a saved Sentry Watch refusal with the binding decision while the 
     const background = host.bind(backgroundSeed, [scope]);
     const withoutGrant = host.bind(backgroundSeed, []);
     const http = createPluginHttpFixture({ request: async input => ({
-        status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode('[]'),
+        status: 200, finalUrl: input.url, headers: recorded.headers, body: new TextEncoder().encode('[]'),
     }) });
     const warnings = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     try {
@@ -92,7 +95,7 @@ it('correlates a saved Sentry Watch refusal with the binding decision while the 
         const scanWith = (connectedAccounts: typeof foreground) => scanSentrySource(scan, {
             signal, services: { connectedAccounts, http },
         });
-        await expect(scanWith(foreground)).resolves.toMatchObject({ kind: 'complete' });
+        await expect(scanWith(foreground)).resolves.toMatchObject({ kind: 'complete', evidence: { kind: 'walkFinished' } });
         await expect(scanWith(background)).resolves.toMatchObject({
             kind: 'failed', failure: { code: 'plugin_connected_account_binding_out_of_scope' },
         });
@@ -111,6 +114,46 @@ it('correlates a saved Sentry Watch refusal with the binding decision while the 
         await expect(scanWith(withoutGrant)).resolves.toMatchObject({
             kind: 'failed', failure: { code: 'plugin_connected_account_purpose_undeclared' },
         });
+
+        // The catalog and Action transport are fixture boundaries. Each scan
+        // still runs the real provider and Connected Accounts materializer.
+        const statuses: unknown[] = [];
+        const observed = Promise.withResolvers<void>();
+        const running = runSentryIssueObserver({
+            ...backgroundSeed,
+            materialization: definition.observationTransport.watcherMaterializationRef,
+            services: {
+                http, connectedAccounts: background,
+                storage: { account: { collection: () => ({}) } },
+                events: { host: { subscribe: () => ({ dispose() {} }) } },
+                actions: { execute: async (action: string | PluginContributionIdentityV1, raw: unknown) => {
+                    if (action === 'automation.event.sources.list') {
+                        return (raw as { knownRevision?: string }).knownRevision === '1'
+                            ? { kind: 'unchanged', revision: '1' }
+                            : { kind: 'page', revision: '1', definitions: [definition], nextCursor: null };
+                    }
+                    if (action === 'automation.event.source.status.report') {
+                        if ((raw as { kind?: string }).kind === 'source') {
+                            statuses.push(raw);
+                            observed.resolve();
+                        }
+                        return {};
+                    }
+                    if (typeof action !== 'string' && action.pluginId === PLUGIN_ID && action.localId === SENTRY_ACTION_IDS.scan) {
+                        const invocation = ActionInvokeInputSchema.parse({ action, input: raw });
+                        return scanSentrySource(invocation.input, { signal, services: { http, connectedAccounts: foreground } });
+                    }
+                    return { kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle: 'active', configured: instance }] };
+                } },
+            },
+        } as unknown as BackgroundServiceContext);
+        try {
+            await Promise.race([running, observed.promise]);
+            expect(statuses).toContainEqual(expect.objectContaining({ state: 'observing' }));
+        } finally {
+            controller.abort();
+            await running;
+        }
     } finally {
         warnings.mockRestore();
         selection.dispose();

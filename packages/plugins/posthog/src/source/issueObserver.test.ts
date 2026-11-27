@@ -7,8 +7,9 @@ import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testin
 import { describe, expect, it, vi } from 'vitest';
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
+import { POSTHOG_ACTION_IDS, POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../posthogContracts.js';
 import { encodePosthogConfiguration } from './instance.js';
+import { scanPosthogSource } from './operations.js';
 import recorded from '../api/__fixtures__/queryIssuesPage1.json' with { type: 'json' };
 
 type CheckpointRow = { id: string; sourceInstanceId: string; checkpoint: Record<string, JsonValue> };
@@ -117,17 +118,22 @@ describe('PostHog issue observer through plugin activation', () => {
       return { deliveries: [], replayed: false,
         ...(status === 'resolved' ? {} : { notice: { artifactId: 'notice-1', changed: true, opened: true } }) };
     });
+    const scanServices = {
+      http: createPluginHttpFixture({ request }),
+      connectedAccounts: {
+        listAccounts: async () => ({ status: 'complete' as const, accounts: [{ account: instance.binding.account,
+          state: 'connected' as const, connectedAccountOrigins: ['https://eu.posthog.com'], connectedAccountBases: ['https://eu.posthog.com'] }] }),
+        materializeListedAccount: async () => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-token' } }),
+      },
+    };
     const context = (signal: AbortSignal) => ({ surface: 'background', signal, materialization: currentHost,
       plugin: { id: 'happier.posthog', version: '0.0.0' },
       contribution: { id: 'issue-observer', qualifiedId: 'happier.posthog/backgroundServices/issue-observer' },
       services: {
-        http: createPluginHttpFixture({ request }), notifications: { send },
-        connectedAccounts: { listAccounts: async () => ({ status: 'complete', accounts: [{ account: instance.binding.account,
-          state: 'connected', connectedAccountOrigins: ['https://eu.posthog.com'], connectedAccountBases: ['https://eu.posthog.com'] }] }),
-        materializeListedAccount: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }) },
+        notifications: { send },
         storage: { account: { collection: () => collection } },
         events: { host: { subscribe: () => ({ dispose() {} }) } },
-        actions: { execute: async (action: unknown, input: { knownRevision?: string; payload?: JsonValue; definitions?: readonly Record<string, JsonValue>[]; task?: string; handoff?: JsonValue; occurrenceId?: string; occurredAt?: number; observedDelta?: number }) => {
+        actions: { execute: async (action: unknown, input: { knownRevision?: string; payload?: JsonValue; definitions?: readonly Record<string, JsonValue>[]; task?: string; handoff?: JsonValue; occurrenceId?: string; occurredAt?: number; observedDelta?: number }, options?: { signal?: AbortSignal }) => {
           if (action === 'automation.event.sources.list') return input.knownRevision === '1' ? { kind: 'unchanged', revision: '1' }
             : { kind: 'page', revision: '1', definitions: subscribed ? [definition,
               ...(mixedSubscribers ? [{ ...definition, automationId: 'automation-2', triggerId: 'trigger-2',
@@ -150,6 +156,9 @@ describe('PostHog issue observer through plugin activation', () => {
                 : { kind: admissionOutcome, checkpointSafe: true, runId: 'workflow-1' }) };
           }
           if (action && typeof action === 'object' && 'localId' in action) {
+            if (action.localId === POSTHOG_ACTION_IDS.scan) {
+              return scanPosthogSource(input, { signal: options?.signal ?? signal, surface: 'plugin', services: scanServices });
+            }
             if (action.localId === 'actions/read-v1') {
               catalogTasks.push(input.task);
               return { v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [{ label: 'Investigate', selection: {

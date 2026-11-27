@@ -9,7 +9,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceConfiguration.js';
-import { SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SCOPE_SEPARATOR } from '../sentryContracts.js';
+import { SENTRY_ACTION_IDS, SENTRY_CONNECTED_ACCOUNT_PURPOSE, SENTRY_SCOPE_SEPARATOR } from '../sentryContracts.js';
+import { scanSentrySource } from './operations.js';
 import recorded from '../fixtures/issuesListPage2.json' with { type: 'json' };
 
 type CheckpointRow = { id: string; sourceInstanceId: string; checkpoint: Record<string, JsonValue> };
@@ -104,21 +105,23 @@ describe('Sentry issue observer through plugin activation', () => {
       return { deliveries: [], replayed: outcomeNoticeFailed,
         notice: { artifactId: 'notice-1', changed: !outcomeNoticeFailed, opened: !outcomeNoticeFailed } };
     });
+    const scanServices = {
+      http: createPluginHttpFixture({ request }),
+      connectedAccounts: {
+        listAccounts: async () => ({ status: 'complete' as const, accounts: [{ account: instance.binding.account,
+          state: 'connected' as const, connectedAccountOrigins: ['https://us.sentry.io'], connectedAccountBases: ['https://us.sentry.io'] }] }),
+        materializeListedAccount: async () => ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer fixture-token' } }),
+      },
+    };
     const context = {
       surface: 'background', signal: controller.signal, materialization,
       plugin: { id: 'happier.sentry', version: '0.0.0' },
       contribution: { id: 'issue-observer', qualifiedId: 'happier.sentry/backgroundServices/issue-observer' },
       services: {
-        http: createPluginHttpFixture({ request }),
-        connectedAccounts: {
-          listAccounts: async () => ({ status: 'complete', accounts: [{ account: instance.binding.account,
-            state: 'connected', connectedAccountOrigins: ['https://us.sentry.io'], connectedAccountBases: ['https://us.sentry.io'] }] }),
-          materializeListedAccount: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }),
-        },
         storage: { account: { collection: () => collection } },
         notifications: { send },
         events: { host: { subscribe: () => ({ dispose() {} }) } },
-        actions: { execute: async (action: unknown, input: { knownRevision?: string; payload?: JsonValue; handoff?: JsonValue; occurredAt?: number; definitions?: readonly { automationId: string; triggerId: string; triggerRevision: number; sourceSelectorId: string }[] }) => {
+        actions: { execute: async (action: unknown, input: { knownRevision?: string; payload?: JsonValue; handoff?: JsonValue; occurredAt?: number; definitions?: readonly { automationId: string; triggerId: string; triggerRevision: number; sourceSelectorId: string }[] }, options?: { signal?: AbortSignal }) => {
           if (action === 'automation.event.sources.list') {
             catalogReads += 1;
             return input.knownRevision === '1' ? { kind: 'unchanged', revision: '1' }
@@ -133,6 +136,9 @@ describe('Sentry issue observer through plugin activation', () => {
               : { kind: 'blocked', reason: 'capacity', checkpointSafe: false }) };
           }
           if (action && typeof action === 'object' && 'localId' in action) {
+            if (action.localId === SENTRY_ACTION_IDS.scan) {
+              return scanSentrySource(input, { signal: options?.signal ?? controller.signal, services: scanServices });
+            }
             if (action.localId === 'actions/read-v1') {
               choiceReads += 1;
               return investigationOutcome === 'catalogUnavailable'

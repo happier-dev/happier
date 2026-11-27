@@ -552,9 +552,12 @@ without that operand retain the existing caller-scoped inventory walk.
 ### Sentry and PostHog issue observations (0.3 development source)
 
 Both native source plugins declare the strict `issue-transition` Event and use
-the same finite Triage issue adapter. Their existing scan/client owners retain
-credential selection, opaque pagination and native failure evidence. The public
-SDK's daemon-only checkpointed observer owns assignment, invalidation, cadence
+the same finite Triage issue adapter. Each observer passes the saved configured
+instance to its provider's existing Account scan Action. The Action's declared
+purpose admits the exact Connected Account in that instance, so a Watch works
+with an empty background-service purpose default. The provider retains opaque
+pagination and native failure evidence. The public SDK's daemon-only
+checkpointed observer owns assignment, invalidation, cadence
 and admission safety; neither plugin adds a second timer or server poller.
 Event setup states its default of 300 seconds (five minutes) and saves the
 person's explicit period in sourceConfig. Provider retry deadlines can delay
