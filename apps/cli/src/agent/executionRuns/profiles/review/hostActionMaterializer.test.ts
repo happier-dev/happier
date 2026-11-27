@@ -4,7 +4,9 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ActionExecutorContext, ReviewCommentCreateRequestV1 } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 import {
   createReviewCommentHostActionMaterializer,
@@ -14,7 +16,9 @@ import {
 } from './hostActionMaterializer';
 
 const roots: string[] = [];
+const releaseSecrets: Array<() => void> = [];
 afterEach(async () => {
+  for (const release of releaseSecrets.splice(0)) release();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -225,8 +229,14 @@ describe('createReviewCommentHostActionMaterializer', () => {
     expect(dispatched[0]).toMatchObject({ body: 'Use the canonical owner.', runId: 'run-1', snapshot: { selectedLines: ['two'] } });
   });
 
-  it('bounds thrown action failures and continues later proposals with deterministic partial truth', async () => {
+  it.each(['returned', 'thrown'] as const)('retains a %s typed refusal while continuing later proposals', async (mode) => {
     const cwd = await fixture();
+    const secret = 'synthetic-review-publish-secret';
+    releaseSecrets.push(registerTranscriptSecret(secret));
+    const failure = { ok: false as const, errorCode: 'review_comment_permission_denied', error: `The reviewer cannot publish with ${secret}.`,
+      requestId: 'review-create-request', effectAttempted: false,
+      failureCause: { phase: 'review.comments.create', errorClass: 'HttpStatusError' as const,
+        errorCode: 'review_comment_permission_denied', httpStatus: 403 } };
     const dispatchedMutationIds: string[] = [];
     const materialize = createReviewCommentHostActionMaterializer({
       cwd,
@@ -237,17 +247,21 @@ describe('createReviewCommentHostActionMaterializer', () => {
       requestCurrentIntent: async (subject) => ({ status: 'approved', fingerprint: subject.subjectFingerprint }),
       executeHostAction: async (_actionId, input) => {
         dispatchedMutationIds.push(input.clientMutationId);
-        if (input.findingId === 'finding-1') throw new Error('transport secret must not escape');
+        if (input.findingId === 'finding-1') {
+          if (mode === 'thrown') throw createActionExecuteFailureError(failure);
+          return failure;
+        }
         return { ok: true, result: { comment: { id: 'comment-2' }, replayed: false } };
       },
     });
 
-    await expect(materialize()).resolves.toEqual({
+    const { ok: _ok, ...diagnostic } = failure;
+    await expect(materialize()).resolves.toMatchObject({
       ok: true,
       result: {
         status: 'partial',
         comments: [{ findingId: 'finding-2', commentId: 'comment-2', replayed: false }],
-        failures: [{ findingId: 'finding-1', errorCode: 'review_comment_action_failed' }],
+        failures: [{ findingId: 'finding-1', ...diagnostic, error: `The reviewer cannot publish with ${TRANSCRIPT_SECRET_REDACTED}.` }],
       },
     });
     expect(dispatchedMutationIds).toHaveLength(2);

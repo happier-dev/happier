@@ -27,6 +27,10 @@ import { registerApiRoutes } from '@/app/api/api';
 import { resolveApiRateLimitPluginOptions } from '@/app/api/utils/apiRateLimitPolicy';
 import { homeDomainActionPathForMethod } from '@/app/api/routes/actions/homeDomainActionRoute';
 import type { Fastify } from '@/app/api/types';
+import { ReviewHumanStateV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { registerReviewHumanRoutes } from './reviewHumanRoutes';
+import { registerReviewReadRoutes } from './readRoutes';
+import { ReviewListResponseV1Schema } from '@happier-dev/protocol/reviews/reviewListV1';
 
 function registerHttpRoutes(app: Fastify) {
     app.register(import('@fastify/rate-limit'), resolveApiRateLimitPluginOptions(process.env));
@@ -39,6 +43,56 @@ describe('Review requested-person HTTP flow', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'review-human-', initAuth: true, initEncrypt: true }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it('retains the Review continuation refusal reason through the declared HTTP response schema', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await withAuthenticatedTestApp(registerReviewReadRoutes, async app => {
+            const list = (cursor?: string) => app.inject({ method: 'POST',
+                url: homeDomainActionPathForMethod('reviews.list', 'POST'),
+                headers: { 'x-test-user-id': owner.id }, payload: { limit: 1, ...(cursor ? { cursor } : {}) } });
+            const control = await list();
+            expect(control.statusCode, control.body).toBe(200);
+            expect(ReviewListResponseV1Schema.parse(control.json()).items).toEqual([]);
+            const refused = await list(Buffer.from('{').toString('base64url'));
+            expect(refused.statusCode, refused.body).toBe(400);
+            expect(refused.json()).toEqual({ error: 'review_comment_invalid_filter', message: 'Invalid Review continuation' });
+        });
+    });
+
+    it('keeps database unavailability distinct from invalid human Review input and recovers', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId: owner.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            reviewMetadata: { create: { subjectKind: 'comparison', sourceKind: 'direct', state: 'completed',
+                currentRoundOrdinal: 1, startedAt: new Date(1), finishedAt: new Date(2) } } } });
+        await withAuthenticatedTestApp(registerReviewHumanRoutes, async app => {
+            const request = () => app.inject({ method: 'POST', url: `/v1/reviews/${reviewId}/reviewers`,
+                headers: { 'x-test-user-id': owner.id }, payload: { roundOrdinal: 1, reviewers: [] } });
+            const control = await request();
+            expect(control.statusCode, control.body).toBe(200);
+            expect(ReviewHumanStateV1Schema.parse(control.json())).toMatchObject({ reviewId, roundOrdinal: 1 });
+            // Fail only database IO; transaction, admission, projection and HTTP error owners remain real.
+            for (const failure of [
+                new Error('timeout exceeded when trying to connect'),
+                Object.assign(new Error('private database connection detail'), { code: 'P1017' }),
+            ]) {
+                const transaction = db.$transaction;
+                db.$transaction = async () => { throw failure; };
+                try {
+                    const unavailable = await request();
+                    expect(unavailable.statusCode, unavailable.body).toBe(503);
+                    expect(unavailable.json()).toEqual({ error: 'database_connection_unavailable', statusCode: 503 });
+                    expect(unavailable.body).not.toContain(failure.message);
+                } finally {
+                    db.$transaction = transaction;
+                }
+                const recovered = await request();
+                expect(recovered.statusCode, recovered.body).toBe(200);
+                expect(ReviewHumanStateV1Schema.parse(recovered.json())).toEqual(control.json());
+            }
+        });
+    });
 
     it('keeps sealed Review title and prose out of serialized needs-you facts', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'e2ee' } });

@@ -1,4 +1,5 @@
 import type { PluginMachineMaterializationRefV1 } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { configuration } from '@/configuration';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
@@ -27,8 +28,6 @@ export async function readCurrentReviewHostPluginAuthority(
     if (!authority) return null;
     const caller = lease.registry.resolveCurrentPluginMaterializationRef?.(pluginId) ?? null;
     return { ...authority, caller: caller?.pluginId === pluginId ? caller : null };
-  } catch {
-    return null;
   } finally {
     await lease?.release();
   }
@@ -40,22 +39,20 @@ export function createRunnerReviewHostPluginAuthorityReader(sessionId: string): 
   return async pluginId => {
     const path = environment[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
     if (!path) return null;
-    try {
-      const current = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
-        happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
-        path, expectedSessionId: sessionId });
-      if (!current) return null;
-      const response = await dispatchCurrentAgentRuntimeDaemonServiceRequest({
-        authority: { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
-          path, sessionId, runner: current.runner, retainedAgent: current.retainedAgent },
-        timeoutMs: null,
-        createRequest: token => ({ v: 1, context: { token, sessionId },
-          operation: { kind: 'execution_run.review_plugin_authority.resolve_v1', pluginId } }),
-      });
-      return response.ok && response.result.kind === 'execution_run.review_plugin_authority'
-        ? response.result.authority : null;
-    } catch {
-      return null;
-    }
+    const current = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
+      happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+      path, expectedSessionId: sessionId });
+    if (!current) return null;
+    const response = await dispatchCurrentAgentRuntimeDaemonServiceRequest({
+      authority: { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
+        path, sessionId, runner: current.runner, retainedAgent: current.retainedAgent },
+      timeoutMs: null,
+      createRequest: token => ({ v: 1, context: { token, sessionId },
+        operation: { kind: 'execution_run.review_plugin_authority.resolve_v1', pluginId } }),
+    });
+    if (!response.ok) throw createActionExecuteFailureError({ ok: false,
+      errorCode: response.error.code, error: response.error.message,
+      ...(response.error.failureCause ? { failureCause: response.error.failureCause } : {}) });
+    return response.result.kind === 'execution_run.review_plugin_authority' ? response.result.authority : null;
   };
 }

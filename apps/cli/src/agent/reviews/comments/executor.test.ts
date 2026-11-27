@@ -7,7 +7,8 @@ import { sealReviewCommentSensitiveEnvelopeV1 } from '@happier-dev/protocol/revi
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { REVIEW_ARTIFACT_KIND_V1, ReviewArtifactHeaderV1Schema, ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
-import { createCliReviewCommentActionExecutorFromCredentials } from './executor';
+import { createCliReviewCommentActionExecutorFromCredentials, createCliReviewCommentRpcActionExecutorFromCredentials } from './executor';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ReviewCommentActionOutputSchemasV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import {
@@ -133,6 +134,36 @@ function settlementResponseFor(body: unknown): unknown {
 }
 
 describe('createCliReviewCommentActionExecutorFromCredentials', () => {
+    it('retains the server refusal reason and request reference through the RPC adapter', async () => {
+        vi.mocked(axios.get).mockResolvedValueOnce({ status: 200, data: { mode: 'plain', updatedAt: 1 } })
+            .mockResolvedValueOnce({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        axiosPostMock.mockResolvedValueOnce({ status: 403, data: {
+            error: 'review_comment_permission_denied', message: 'Review Edit access is required to publish findings',
+            requestId: 'review-request-1',
+        } });
+        const executor = createCliReviewCommentRpcActionExecutorFromCredentials({ credentials: {
+            token: `header.${Buffer.from(JSON.stringify({ sub: 'rpc-account-1' })).toString('base64url')}.signature`, encryption: null } });
+        expect(await executor.execute('reviews.comments.transition', { commentId: 'comment-1', projectId: 'project-1',
+            expectedState: 'open', toState: 'dismissed', reason: 'Reviewed', expectedServerRevision: 1, clientMutationId: 'mutation-1' }))
+            .toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied',
+                error: 'Review Edit access is required to publish findings', requestId: 'review-request-1',
+                failureCause: { errorCode: 'review_comment_permission_denied', httpStatus: 403 } });
+    });
+
+    it('carries a typed transport refusal intact through the RPC adapter', async () => {
+        vi.mocked(axios.get).mockResolvedValueOnce({ status: 200, data: { mode: 'plain', updatedAt: 1 } })
+            .mockResolvedValueOnce({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        const failure = { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'Review Edit access is required',
+            requestId: 'review-request-2', details: { reviewId: 'review-1' }, effectAttempted: false,
+            failureCause: { phase: 'review.transport', errorClass: 'HttpStatusError', errorCode: 'review_comment_permission_denied', httpStatus: 403 } } satisfies ActionExecuteFailure;
+        axiosPostMock.mockRejectedValueOnce(createActionExecuteFailureError(failure));
+        const executor = createCliReviewCommentRpcActionExecutorFromCredentials({ credentials: {
+            token: `header.${Buffer.from(JSON.stringify({ sub: 'rpc-account-2' })).toString('base64url')}.signature`, encryption: null } });
+        expect(await executor.execute('reviews.comments.transition', { commentId: 'comment-1', projectId: 'project-1',
+            expectedState: 'open', toState: 'dismissed', reason: 'Reviewed', expectedServerRevision: 1, clientMutationId: 'mutation-1' }))
+            .toMatchObject(failure);
+    });
+
     it.each([
         { status: 403, expectedCode: 'review_comment_permission_denied' },
         { status: 401, expectedCode: 'not_authenticated' },

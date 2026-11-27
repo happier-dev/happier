@@ -1,6 +1,7 @@
 import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import type {
   AcpConfigOptionOverridesV1,
+  ActionExecuteFailure,
   AgentSessionConfigurationSnapshotV1,
   BackendTargetRefV1,
   ConnectedServiceBindingsV2,
@@ -341,11 +342,8 @@ export type ExecutionRunActionParams = Readonly<{
   input?: unknown;
 }>;
 
-export type ExecutionRunActionResult = Readonly<{
+export type ExecutionRunActionResult = Readonly<Partial<Omit<ActionExecuteFailure, 'ok'>> & {
   ok: boolean;
-  errorCode?: string;
-  error?: string;
-  details?: Pick<ExecutionRunError, 'runtimeIssueV1' | 'uxDiagnostic'>;
   updatedToolResult?: unknown;
   result?: unknown;
 }>;

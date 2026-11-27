@@ -1,5 +1,6 @@
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffSummaryReviewProvenance } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ExecutionRunProfileStartParams } from '../ExecutionRunIntentProfile';
 import { readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { buildDiffSummaryPrompt } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
@@ -27,7 +28,7 @@ export async function prepareReviewWalkthroughTurn(params: Readonly<{
   const current = typeof original.resultId === 'string' ? await scmDiffSummaryResultStore.read({
     cwd, ...(params.start.sessionId ? { sessionId: params.start.sessionId } : {}), resultId: original.resultId,
   }) : null;
-  if (current && !current.success) throw new Error(current.error);
+  if (current && !current.success) throw createActionExecuteFailureError({ ...current, ok: false });
   const patch = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: params.start.sessionId,
     request: { ...params.start, intent: 'scm_diff_summary', intentInput: {
       cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['walkthrough'],
@@ -57,7 +58,7 @@ export async function prepareSavedReviewWalkthroughInput(start: ExecutionRunProf
   if (!saved.result.output.runId) {
     const bound = await scmDiffSummaryResultStore.bindRun({ ...saved.scope, expectedRevision: saved.result.revision,
       runId: start.runId, ...(saved.result.generator ? { generator: saved.result.generator } : {}) });
-    if (!bound.success) throw new Error(bound.error);
+    if (!bound.success) throw createActionExecuteFailureError({ ...bound, ok: false });
     saved.result = bound.result;
   }
   const localId = `review-walkthrough:${start.runId}:${saved.result.revision}`;
@@ -67,7 +68,7 @@ export async function prepareSavedReviewWalkthroughInput(start: ExecutionRunProf
     ...saved.scope, inputId: localId, expectedRevision: saved.result.revision, outputs: ['walkthrough'],
     reviewFindingCitations,
   });
-  if (!begun.success) throw new Error(begun.error);
+  if (!begun.success) throw createActionExecuteFailureError({ ...begun, ok: false });
   const narrativeTask = [
     provenance.narrationMode === 'continued_review'
       ? 'Continue this review Run by writing the walkthrough. The findings were already published. Do not repeat the review.'

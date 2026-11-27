@@ -1,11 +1,11 @@
-import { ReviewHumanGetInputV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictSubmitInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { ReviewHumanErrorCodeV1Schema, ReviewHumanGetInputV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictSubmitInputV1Schema, type ReviewHumanErrorCodeV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
 import { z } from 'zod/mini';
 import type { Fastify } from '@/app/api/types';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { resolveReviewAccessInTx } from './reviewAccess';
 import { readAdmittedReviewHumanStateInTx, setAdmittedReviewersInTx, submitAdmittedReviewVerdictInTx } from './reviewHumanService';
 
-function statusFor(code: string): 400 | 403 | 404 | 409 | 503 {
+export function reviewHumanErrorHttpStatus(code: ReviewHumanErrorCodeV1): 400 | 403 | 404 | 409 {
     if (code === 'review_access_forbidden' || code === 'present_user_required') return 403;
     if (code === 'review_not_found' || code === 'review_reviewer_not_requested') return 404;
     if (code === 'review_verdict_revision_mismatch') return 409;
@@ -13,8 +13,9 @@ function statusFor(code: string): 400 | 403 | 404 | 409 | 503 {
 }
 
 function sendError(reply: { code(status: number): { send(body: { error: string }): unknown } }, error: unknown) {
-    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'review_invalid_request';
-    return reply.code(statusFor(code)).send({ error: code });
+    const code = ReviewHumanErrorCodeV1Schema.safeParse(error && typeof error === 'object' && 'code' in error ? error.code : undefined);
+    if (!code.success) throw error;
+    return reply.code(reviewHumanErrorHttpStatus(code.data)).send({ error: code.data });
 }
 
 export function registerReviewHumanRoutes(app: Fastify) {

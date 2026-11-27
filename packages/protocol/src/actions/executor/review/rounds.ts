@@ -52,7 +52,9 @@ export async function resolveReviewProjectSourceV1(deps: ActionExecutorDeps, ctx
         ...(project && 'workspaceRefId' in project ? { workspaceId: project.workspaceRefId } : {}) }, ctx.serverIdentityId ?? serverId ?? '', refs,
         normalizeServerId ? { normalizeServerId: id => normalizeServerId(id) ?? '' } : {}) });
   }
-  if (source?.kind === 'unavailable') throw new RpcError('project_association_unavailable', 'project_association_unavailable');
+  if (source?.kind === 'unavailable') throw createActionExecuteFailureError({ ok: false,
+    errorCode: 'project_association_unavailable', error: 'project_association_unavailable',
+    ...(source.failureCause ? { failureCause: source.failureCause } : {}) });
   return source?.kind === 'source' ? source.sourceId : undefined;
 }
 

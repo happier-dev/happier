@@ -6,6 +6,7 @@ import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ScmDiffSummaryModelOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmDiffSummaryReviewProvenance } from '@happier-dev/protocol';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { buildReviewGuidanceBlock, buildStandardReviewPrompt } from '../../../reviews/prompt/buildStandardReviewPrompt';
@@ -23,6 +24,7 @@ import { presentScmDiffSummaryModelContext } from '@/agent/runtime/bridges/execu
 import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
 import { bindScmExecutionRunProfileAccountScope } from '@/agent/runtime/bridges/executionRun/profileStart';
 import { buildNativeReviewOutputSchema } from '../../../reviews/normalize/nativeReviewOutputSchema';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 function requestsWalkthrough(input: unknown) {
   const outputs = readScmDiffSummaryIntent(input).outputs;
@@ -141,12 +143,14 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
         reviewNarration: { phase: 'writing', resultId: nextInput.intentInput.resultId,
           runId: params.start.runId, ...provenance } } };
     } catch (error) {
+      const failure = normalizeActionExecutorThrownError(error, 'review.narration.prepare');
+      const message = redactTranscriptSecrets(failure.error);
       await ScmDiffSummaryProfile.onTerminal!({ start: params.start, status: 'failed', finishedAtMs: params.finishedAtMs,
         diagnostic: { code: readExecutionRunErrorCode(error) ?? 'SUMMARY_FAILED',
-          message: error instanceof Error ? error.message : 'Review narration preparation failed' } });
+          message } });
       return { ...completed, toolResultMeta: { ...completed.toolResultMeta,
-        reviewNarration: { phase: 'failed', errorCode: 'review_narration_failed',
-          error: error instanceof Error ? error.message : 'Review narration preparation failed',
+        reviewNarration: { phase: 'failed', ...failure,
+          error: message,
           resultId: input.resultId, runId: params.start.runId, ...provenance } } };
     }
   },

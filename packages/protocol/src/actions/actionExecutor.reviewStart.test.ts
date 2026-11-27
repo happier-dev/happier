@@ -78,6 +78,21 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each(['native', 'workflow'] as const)('retains the Project association read cause before %s Review admission', async mode => {
+    const failureCause = { phase: 'session.project_context.read', errorClass: 'HttpStatusError',
+      errorCode: 'storage_unavailable', httpStatus: 503 } as const;
+    const executor = createActionExecutor({
+      sessionStatusGet: async input => ({ session: { id: input.sessionId, createdAt: 1, updatedAt: 1, active: true,
+        activeAt: 1, encryption: null, path: '/repo', machineId: 'machine-1' },
+        projectContextSource: { kind: 'unavailable', failureCause } }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+    });
+    const reviewers = [{ kind: 'engine', engineId: 'codex' }];
+    expect(await executor.execute('review.start', { sessionId: 'source', cwd: '/repo',
+      source: { kind: 'workingTree' }, instructions: 'Review.', reviewers,
+      ...(mode === 'workflow' ? { steps: [{ kind: 'review', instructions: 'Review.', reviewers }] } : {}),
+    }, { surface: 'ui' })).toMatchObject({ ok: false, errorCode: 'project_association_unavailable', failureCause });
+  });
   it.each(['native', 'workflow'] as const)('reads the source Session once for %s Review comparison and Project admission', async mode => {
     const records = createInMemoryReviewRecordPortV1();
     const statusReads: unknown[] = [];

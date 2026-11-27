@@ -13,9 +13,11 @@ import { inReadSnapshot } from '@/storage/inTx';
 import { listReviewsInTx, readAdmittedReviewDetailInTx, readReviewHistoryInTx } from './reviewListService';
 import { resolveReviewAccessInTx } from './reviewAccess';
 import { readAdmittedReviewHumanStateInTx } from './reviewHumanService';
+import { reviewHumanErrorHttpStatus } from './reviewHumanRoutes';
+import { ReviewCommentOperationError } from './comments/errors';
 
 const ReadErrorSchema = z.union([
-    z.strictObject({ error: ReviewCommentOperationErrorCodeV1Schema }),
+    z.strictObject({ error: ReviewCommentOperationErrorCodeV1Schema, message: z.optional(z.string()) }),
     ReviewHumanErrorV1Schema,
     TeamErrorV1Schema,
 ]);
@@ -23,18 +25,16 @@ const errorResponses = { 400: ReadErrorSchema, 403: ReadErrorSchema, 404: ReadEr
     409: ReadErrorSchema, 503: ReadErrorSchema } as const;
 
 type ReadErrorReply = { code(status: 400 | 403 | 404 | 409 | 503): {
-    send(payload: { error: z.infer<typeof ReviewCommentOperationErrorCodeV1Schema> | z.infer<typeof ReviewHumanErrorCodeV1Schema> | z.infer<typeof TeamErrorCodeV1Schema> }): unknown;
+    send(payload: { error: z.infer<typeof ReviewCommentOperationErrorCodeV1Schema> | z.infer<typeof ReviewHumanErrorCodeV1Schema> | z.infer<typeof TeamErrorCodeV1Schema>; message?: string }): unknown;
 } };
 
 function sendReadError(reply: ReadErrorReply, error: unknown) {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-    if (code === 'review_comment_invalid_filter') return reply.code(400).send({ error: code });
+    if (code === 'review_comment_invalid_filter') return reply.code(400).send({ error: code,
+        ...(error instanceof ReviewCommentOperationError ? { message: error.message } : {}) });
     const human = ReviewHumanErrorCodeV1Schema.safeParse(code);
     if (human.success) {
-        const status = human.data === 'review_not_found' || human.data === 'review_reviewer_not_requested' ? 404
-            : human.data === 'review_access_forbidden' || human.data === 'present_user_required' ? 403
-                : human.data === 'review_verdict_revision_mismatch' ? 409 : 400;
-        return reply.code(status).send({ error: human.data });
+        return reply.code(reviewHumanErrorHttpStatus(human.data)).send({ error: human.data });
     }
     const team = TeamErrorCodeV1Schema.safeParse(code);
     if (team.success) return reply.code(teamErrorHttpStatusV1(team.data)).send({ error: team.data });

@@ -10,6 +10,7 @@ import { resolveScmPullRequestReviewScope, ScmComparisonSchema, ScmDiffSummaryGe
 import { describe, expect, it, vi } from 'vitest';
 
 import { ReviewProfile } from './ReviewProfile';
+import { prepareReviewWalkthroughTurn } from './reviewWalkthroughTurn';
 import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
@@ -159,6 +160,31 @@ describe('ReviewProfile', () => {
       await rm(fixture.rootPath, { recursive: true, force: true });
     }
   }));
+  it('retains the saved-result refusal when preparing a walkthrough from published findings', async () =>
+    runWithScmAccountScope('review-walkthrough-missing', () => runWithRealGitScmRuntime(async () => {
+      const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-walkthrough-missing-' });
+      let comparisonId: string | undefined;
+      try {
+        const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' },
+          registry: createScmBackendRegistry([createGitBackend()]) });
+        comparisonId = captured.comparison.id;
+        const start: ExecutionRunProfileStartParams = { sessionId: null, runId: 'review', callId: 'review-call',
+          sidechainId: 'review-call', intent: 'review', backendId: 'claude',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Explain the review.',
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1,
+          intentInput: { cwd: fixture.rootPath, resultId: '00000000-0000-0000-0000-000000000001' } };
+        const refusal = await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath,
+          resultId: '00000000-0000-0000-0000-000000000001' });
+        expect(refusal).toMatchObject({ success: false, errorCode: 'result_not_found' });
+        if (refusal.success) throw new Error('Expected the saved result to be unavailable');
+        await expect(prepareReviewWalkthroughTurn({ start, comparisonId, findingsContext: 'Published findings',
+          provenance: { reviewedRuns: [], narrationMode: 'continued_review', comparisonFreshness: 'unchanged' } }))
+          .rejects.toMatchObject({ errorCode: refusal.errorCode, error: refusal.error });
+      } finally {
+        if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId });
+        await rm(fixture.rootPath, { recursive: true, force: true });
+      }
+    })));
   it('does not demand native budget for findings-only review', async () => {
     return runWithScmAccountScope('account', async () => {
     let budgetDemands = 0;
@@ -275,7 +301,9 @@ describe('ReviewProfile', () => {
       if (replaced) {
         expect(first?.structuredMeta?.payload).toMatchObject({ summary: 'No findings in this captured comparison.', findings: [] });
         expect(first?.nextInput).toBeUndefined();
-        expect(first?.toolResultMeta).toMatchObject({ reviewNarration: { phase: 'failed', errorCode: 'review_narration_failed' } });
+        expect(first?.toolResultMeta).toMatchObject({ reviewNarration: { phase: 'failed', errorCode: 'action_failed',
+          error: 'The saved review generator was replaced',
+          failureCause: { phase: 'review.narration.prepare', errorClass: 'Error' } } });
         expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true,
           result: { output: { runId: 'replacement-narrator', outputs: { walkthrough: { state: 'pending' } } } } });
         return;

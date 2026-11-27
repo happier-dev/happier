@@ -2,6 +2,8 @@ import { readActiveMachineId } from '@/daemon/machineIdentity/machineRegistratio
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { createHash, randomBytes as nodeRandomBytes, randomUUID } from 'node:crypto';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -262,8 +264,13 @@ function throwForReviewCommentHttpStatus(response: AxiosResponse<unknown>): neve
     const error = isAuthenticationStatus(status)
         ? createAuthenticationHttpStatusError(status, message, response.data)
         : createHttpStatusError(status, message, readServerRefusalCode(response.data) ?? 'review_comment_request_failed');
+    const payload = response.data && typeof response.data === 'object' && !Array.isArray(response.data)
+        ? response.data as JsonRecord : {};
+    const refusal = readActionFailureEnvelope(response.data) ?? readActionFailureEnvelope({
+        ...payload, ok: false, errorCode: error.code!, error: payload.error ?? error.message,
+    })!;
     throw Object.assign(error, {
-        cause: createActionExecuteFailureError({ ok: false, errorCode: error.code!, error: error.message }),
+        cause: createActionExecuteFailureError(refusal),
     });
 }
 
@@ -294,20 +301,6 @@ async function executeReviewCommentHttpRequest(params: Readonly<{
         throwForReviewCommentHttpStatus(response);
     }
     return response.data;
-}
-
-function readFailureCode(error: unknown): string {
-    if (error && typeof error === 'object' && !Array.isArray(error)) {
-        const code = (error as JsonRecord).code;
-        if (typeof code === 'string' && code.trim().length > 0) {
-            return code;
-        }
-    }
-    return 'review_comment_request_failed';
-}
-
-function readFailureMessage(error: unknown): string {
-    return error instanceof Error ? error.message : readFailureCode(error);
 }
 
 export function createCliReviewCommentActionExecutorFromCredentials(
@@ -494,8 +487,7 @@ export function createCliReviewCommentRpcActionExecutorFromCredentials(
             } catch (error) {
                 return {
                     ok: false,
-                    errorCode: readFailureCode(error),
-                    error: readFailureMessage(error),
+                    ...normalizeActionExecutorThrownError(error),
                 };
             }
         },

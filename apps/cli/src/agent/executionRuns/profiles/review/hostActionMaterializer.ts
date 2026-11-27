@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { evaluatePluginFinalPolicy } from '@happier-dev/protocol/plugins/actions/policy';
 import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
 import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
-import type { ActionExecuteResult, ActionExecutorContext, PluginSourceCustodyV1, ReviewCommentCreateRequestV1, ReviewCommentProposalV1, ReviewCommentSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionExecuteFailure, ActionExecuteResult, ActionExecutorContext, PluginSourceCustodyV1, ReviewCommentCreateRequestV1, ReviewCommentProposalV1, ReviewCommentSnapshotV1 } from '@happier-dev/protocol';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 import {
   resolvePluginFinalPolicyAuthorizationFacts,
@@ -75,7 +77,7 @@ export type ReviewCommentHostActionMaterializationResult =
     result: Readonly<{
       status: 'created' | 'partial' | 'failed';
       comments: readonly Readonly<{ findingId?: string; commentId: string; replayed: boolean }>[];
-      failures?: readonly Readonly<{ findingId?: string; errorCode: string }>[];
+      failures?: readonly Readonly<{ findingId?: string; errorCode: string } & Partial<Omit<ActionExecuteFailure, 'ok'>>>[];
     }>;
   }>;
 
@@ -278,7 +280,7 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
     const prepared = initialPrepared.prepared;
 
     const comments: Array<Readonly<{ findingId?: string; commentId: string; replayed: boolean }>> = [];
-    const failures: Array<Readonly<{ findingId?: string; errorCode: string }>> = [];
+    const failures: Array<Readonly<{ findingId?: string; errorCode: string } & Partial<Omit<ActionExecuteFailure, 'ok'>>>> = [];
     for (const [itemIndex, item] of prepared.entries()) {
       if (!deps.isRunActive()) {
         for (const remaining of prepared.slice(itemIndex)) {
@@ -317,17 +319,21 @@ export function createReviewCommentHostActionMaterializer(deps: Readonly<{
       let result: ActionExecuteResult;
       try {
         result = await deps.executeHostAction('reviews.comments.create', item.request, context);
-      } catch {
+      } catch (error) {
+        const failure = normalizeActionExecutorThrownError(error, 'review.comments.create');
         failures.push({
           ...(item.proposal.findingId ? { findingId: item.proposal.findingId } : {}),
-          errorCode: 'review_comment_action_failed',
+          ...failure,
+          error: redactTranscriptSecrets(failure.error),
         });
         continue;
       }
       if (!result.ok) {
+        const { ok: _ok, ...failure } = result;
         failures.push({
           ...(item.proposal.findingId ? { findingId: item.proposal.findingId } : {}),
-          errorCode: result.errorCode.slice(0, 512),
+          ...failure,
+          error: redactTranscriptSecrets(failure.error),
         });
         continue;
       }
